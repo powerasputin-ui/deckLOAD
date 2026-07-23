@@ -259,6 +259,21 @@ export interface PackOptions {
   gap?: number // spacing between items
   boardOffset?: number // margin from the ship's board (deck edge)
   clearance?: number // max stack height above deck (0 = single tier)
+  pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
+}
+
+export interface PinnedPlacement {
+  id: string // unique pin id
+  itemId: string
+  name: string
+  x: number
+  y: number
+  width: number
+  length: number
+  layers: number
+  rotated: boolean
+  color: string
+  weight?: number
 }
 
 // Compute how many tiers (layers) can be stacked for an item.
@@ -280,6 +295,8 @@ export function packDeck(
     typeof options === 'string' ? 0 : Math.max(0, options.boardOffset ?? 0)
   const clearance =
     typeof options === 'string' ? 0 : Math.max(0, options.clearance ?? 0)
+  const pinned =
+    typeof options === 'string' ? [] : options.pinned ?? []
 
   const totalArea = deckWidth * deckLength
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
@@ -309,8 +326,45 @@ export function packDeck(
 
   const freeRects: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
 
+  // Account for units already placed in pinned stacks: reduce the quantity to pack
+  const remainingByItem = new Map<string, number>()
+  for (const it of items) remainingByItem.set(it.id, it.quantity)
+  for (const pin of pinned) {
+    const r = remainingByItem.get(pin.itemId) ?? 0
+    remainingByItem.set(pin.itemId, Math.max(0, r - pin.layers))
+  }
+
+  // Reserve space for pinned stacks first: subtract their cells from free space
+  let index = 0
+  for (const pin of pinned) {
+    // Place the pinned cell so subsequent packing avoids it
+    placeRect(
+      { x: pin.x, y: pin.y, width: pin.width + gap, height: pin.length + gap },
+      freeRects
+    )
+    result.placed.push({
+      itemId: pin.itemId,
+      name: pin.name,
+      x: pin.x,
+      y: pin.y,
+      width: pin.width,
+      length: pin.length,
+      height: 0,
+      layers: pin.layers,
+      stackedCount: pin.layers,
+      rotated: pin.rotated,
+      color: pin.color,
+      weight: pin.weight,
+      index: index++,
+    })
+    result.usedArea += pin.width * pin.length
+    result.placedCount += pin.layers
+    if (pin.weight) result.totalWeight += pin.weight * pin.layers
+  }
+
   // Expand each item into the number of STACKS (floor footprints) needed.
-  // A stack holds up to `layers` units vertically.
+  // A stack holds up to `layers` units vertically. Only the REMAINING quantity
+  // (after pinned stacks) is expanded.
   interface Stack {
     item: CargoItem
     layers: number
@@ -318,16 +372,18 @@ export function packDeck(
   }
   const stacks: Stack[] = []
   const perItemRemaining = new Map<string, number>()
-  for (const it of items) perItemRemaining.set(it.id, it.quantity)
+  for (const it of items) perItemRemaining.set(it.id, remainingByItem.get(it.id) ?? it.quantity)
 
   for (const item of items) {
     if (item.width <= 0 || item.length <= 0) continue
+    const remaining = remainingByItem.get(item.id) ?? 0
+    if (remaining <= 0) continue
     const layers = maxLayersFor(item, clearance)
-    let remaining = item.quantity
-    while (remaining > 0) {
-      const units = Math.min(layers, remaining)
+    let r = remaining
+    while (r > 0) {
+      const units = Math.min(layers, r)
       stacks.push({ item, layers, unitsInStack: units })
-      remaining -= units
+      r -= units
     }
   }
 
@@ -348,7 +404,7 @@ export function packDeck(
   }
   stacks.sort(stackCmp)
 
-  let index = 0
+  let stackIdx = 0
 
   for (const { item, layers, unitsInStack } of stacks) {
     if (perItemRemaining.get(item.id)! <= 0) continue
@@ -406,7 +462,7 @@ export function packDeck(
       rotated: pos.rotated,
       color: item.color,
       weight: item.weight,
-      index: index++,
+      index: stackIdx++,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack

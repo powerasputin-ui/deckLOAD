@@ -8,6 +8,7 @@ import {
   type PackingResult,
   type PlacedItem,
   type ManualPlacement,
+  type PinnedPlacement,
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
 import { v4 as uuid } from 'uuid'
@@ -29,6 +30,14 @@ interface DeckVisualizationProps {
   onMoveManual?: (id: string, x: number, y: number) => void
   onRemoveManual?: (id: string) => void
   manualPlacements: ManualPlacement[]
+  // Interactive auto mode
+  pinnedPlacements: PinnedPlacement[]
+  selectedPinIds: string[]
+  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => void
+  onUpdatePinned?: (id: string, x: number, y: number) => void
+  onRemovePinned?: (id: string) => void
+  onTogglePinSelection?: (id: string, additive: boolean) => void
+  onClearSelection?: () => void
 }
 
 const EDGE_PAD_PX = 6 // visual inset so items never touch the deck border
@@ -50,6 +59,13 @@ export function DeckVisualization({
   onMoveManual,
   onRemoveManual,
   manualPlacements,
+  pinnedPlacements,
+  selectedPinIds,
+  onPinPlaced,
+  onUpdatePinned,
+  onRemovePinned,
+  onTogglePinSelection,
+  onClearSelection,
 }: DeckVisualizationProps) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -59,7 +75,15 @@ export function DeckVisualization({
     startMouse: { x: number; y: number }
     startPlace: { x: number; y: number }
   } | null>(null)
+  const [pinDrag, setPinDrag] = useState<{
+    id: string
+    startDeck: { x: number; y: number }
+    startPlace: { x: number; y: number }
+    moved: boolean
+  } | null>(null)
   const [selectedManual, setSelectedManual] = useState<string | null>(null)
+
+  const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
 
   const edgePad = boardOffset
 
@@ -167,6 +191,47 @@ export function DeckVisualization({
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
+  // Pin a placed auto-mode item so it becomes user-controlled
+  const handlePinPointerDown = (
+    e: React.PointerEvent,
+    placed: PlacedItem,
+    existingPinId?: string
+  ) => {
+    if (!isInteractiveAuto) return
+    e.stopPropagation()
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    // If clicking an already-pinned item, keep it; otherwise create a pin
+    let pinId = existingPinId
+    if (!pinId) {
+      pinId = onPinPlaced({
+        itemId: placed.itemId,
+        name: placed.name,
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        length: placed.length,
+        layers: placed.layers,
+        rotated: placed.rotated,
+        color: placed.color,
+        weight: placed.weight,
+      })
+    } else if (!additive) {
+      onTogglePinSelection?.(pinId, false)
+    }
+    if (additive && pinId) {
+      onTogglePinSelection?.(pinId, true)
+    }
+    const startDeck = screenToDeck(e.clientX, e.clientY)
+    if (!startDeck || !pinId) return
+    setPinDrag({
+      id: pinId,
+      startDeck,
+      startPlace: { x: placed.x, y: placed.y },
+      moved: false,
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
   const handlePointerMove = (e: React.PointerEvent) => {
     if (mode === 'manual' && activeStamp && !dragState) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -175,9 +240,6 @@ export function DeckVisualization({
     if (dragState && onMoveManual) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
-      const dx = pos.x - (dragState.startMouse.x ? 0 : 0)
-      void dx
-      // Use delta in deck coords
       const startDeck = screenToDeck(dragState.startMouse.x, dragState.startMouse.y)
       if (!startDeck) return
       const deltaX = pos.x - startDeck.x
@@ -195,10 +257,43 @@ export function DeckVisualization({
         onMoveManual(dragState.id, clamped.x, clamped.y)
       }
     }
+    if (pinDrag && onUpdatePinned) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const deltaX = pos.x - pinDrag.startDeck.x
+      const deltaY = pos.y - pinDrag.startDeck.y
+      // Only mark moved if delta is significant (>0.1 unit)
+      if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
+        setPinDrag((d) => (d ? { ...d, moved: true } : d))
+      }
+      const pin = pinnedPlacements.find((p) => p.id === pinDrag.id)
+      if (!pin) return
+      const nx = pinDrag.startPlace.x + deltaX
+      const ny = pinDrag.startPlace.y + deltaY
+      const clamped = clampToDeck(
+        { x: nx, y: ny, width: pin.width, length: pin.length },
+        deckWidth,
+        deckLength,
+        edgePad
+      )
+      onUpdatePinned(pinDrag.id, clamped.x, clamped.y)
+    }
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
+    // Click on empty deck area in interactive auto mode clears selection
+    if (isInteractiveAuto && !pinDrag && !dragState) {
+      const target = e.target as Element
+      // Only clear if clicked directly on the SVG background or deck rect
+      if (target.tagName === 'rect' || target.tagName === 'svg' || target.tagName === 'SVG') {
+        const fill = target.getAttribute('fill')
+        if (fill === '#ffffff' || fill === 'url(#deck-grid)' || target.tagName === 'svg') {
+          onClearSelection?.()
+        }
+      }
+    }
     setDragState(null)
+    setPinDrag(null)
   }
 
   const handleManualLeave = () => {
@@ -327,6 +422,16 @@ export function DeckVisualization({
           const ph = p.length * scale
           const isHover = hoveredItemId === p.itemId
           const isSelected = mode === 'manual' && selectedManual === p.manualId
+          // Find pinned placement matching this placed item (same position + itemId)
+          const matchingPin = isInteractiveAuto
+            ? pinnedPlacements.find(
+                (pin) =>
+                  pin.itemId === p.itemId &&
+                  Math.abs(pin.x - p.x) < 0.01 &&
+                  Math.abs(pin.y - p.y) < 0.01
+              )
+            : undefined
+          const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
@@ -335,15 +440,46 @@ export function DeckVisualization({
               y={toY(p.y)}
               w={pw}
               h={ph}
-              hovered={isHover || isSelected}
+              hovered={isHover || isSelected || isPinnedSelected}
               showLabels={showLabels}
               fmt={fmt}
               onHover={onHover}
               manualMode={mode === 'manual'}
-              onPointerDown={mode === 'manual' && p.manualId ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!) : undefined}
+              pinned={!!matchingPin}
+              pinnedSelected={isPinnedSelected}
+              onPointerDown={
+                mode === 'manual' && p.manualId
+                  ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
+                  : isInteractiveAuto
+                    ? (e) => handlePinPointerDown(e, p, matchingPin?.id)
+                    : undefined
+              }
             />
           )
         })}
+
+        {/* Auto mode: delete button on a selected pinned item (single selection) */}
+        {isInteractiveAuto &&
+          selectedPinIds.length === 1 &&
+          onRemovePinned &&
+          (() => {
+            const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
+            if (!pin) return null
+            const cx = toX(pin.x + pin.width)
+            const cy = toY(pin.y)
+            return (
+              <g
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemovePinned(pin.id)
+                }}
+              >
+                <circle cx={cx} cy={cy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+                <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+              </g>
+            )
+          })()}
 
         {/* Manual mode: delete button on selected */}
         {mode === 'manual' &&
@@ -419,6 +555,8 @@ function PlacedRect({
   onHover,
   manualMode,
   onPointerDown,
+  pinned,
+  pinnedSelected,
 }: {
   item: PlacedItem
   x: number
@@ -431,13 +569,28 @@ function PlacedRect({
   onHover: (id: string | null) => void
   manualMode: boolean
   onPointerDown?: (e: React.PointerEvent) => void
+  pinned?: boolean
+  pinnedSelected?: boolean
 }) {
+  const strokeColor = pinnedSelected
+    ? '#7c3aed'
+    : pinned
+      ? '#0f172a'
+      : hovered
+        ? '#0f172a'
+        : 'rgba(15,23,42,0.55)'
+  const strokeWidth = pinnedSelected ? 3 : pinned || hovered ? 2 : 1
+  const cursor = manualMode
+    ? onPointerDown ? 'move' : 'default'
+    : onPointerDown
+      ? 'grab'
+      : 'pointer'
   return (
     <g
       onMouseEnter={() => onHover(item.itemId)}
       onMouseLeave={() => onHover(null)}
       onPointerDown={onPointerDown}
-      style={{ cursor: manualMode ? (onPointerDown ? 'move' : 'default') : 'pointer', transition: 'opacity 0.15s' }}
+      style={{ cursor, transition: 'opacity 0.15s' }}
     >
       <rect
         x={x}
@@ -447,9 +600,16 @@ function PlacedRect({
         rx={2}
         fill={item.color}
         fillOpacity={hovered ? 0.95 : 0.78}
-        stroke={hovered ? '#0f172a' : 'rgba(15,23,42,0.55)'}
-        strokeWidth={hovered ? 2 : 1}
+        stroke={strokeColor}
+        strokeWidth={strokeWidth}
+        strokeDasharray={pinned ? '4 2' : undefined}
       />
+      {pinned && (
+        <g className="pointer-events-none">
+          <rect x={x + w - 16} y={y + h - 14} width={14} height={11} rx={2} fill="rgba(124,58,237,0.9)" />
+          <text x={x + w - 9} y={y + h - 5} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">PIN</text>
+        </g>
+      )}
       {showLabels && w > 30 && h > 18 && (
         <>
           <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill="#fff" className="select-none pointer-events-none">

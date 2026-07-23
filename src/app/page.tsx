@@ -35,6 +35,7 @@ import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
 import { ManualToolbar } from '@/components/calculator/ManualToolbar'
 import { Sidebar } from '@/components/calculator/Sidebar'
+import { SelectionToolbar } from '@/components/calculator/SelectionToolbar'
 import { toast } from 'sonner'
 
 export default function Home() {
@@ -53,6 +54,14 @@ export default function Home() {
   const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const stampRotated = useCalculator((s) => s.stampRotated)
+  const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
+  const selectedPinIds = useCalculator((s) => s.selectedPinIds)
+  const pinFromPlaced = useCalculator((s) => s.pinFromPlaced)
+  const updatePinned = useCalculator((s) => s.updatePinned)
+  const removePinned = useCalculator((s) => s.removePinned)
+  const clearPinned = useCalculator((s) => s.clearPinned)
+  const togglePinSelection = useCalculator((s) => s.togglePinSelection)
+  const clearSelection = useCalculator((s) => s.clearSelection)
 
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -82,6 +91,8 @@ export default function Home() {
       deck: { ...proj.deck },
       items: proj.items.map((it) => ({ ...it })),
       manualPlacements: proj.manualPlacements.map((m) => ({ ...m })),
+      pinnedPlacements: (proj.pinnedPlacements ?? []).map((p) => ({ ...p })),
+      selectedPinIds: [],
       mode: proj.mode,
       sortStrategy: proj.sortStrategy,
       globalRotation: proj.globalRotation,
@@ -103,6 +114,7 @@ export default function Home() {
         deck,
         items: items.map((it) => ({ ...it })),
         manualPlacements: manualPlacements.map((m) => ({ ...m })),
+        pinnedPlacements: pinnedPlacements.map((p) => ({ ...p })),
         mode,
         sortStrategy,
         globalRotation,
@@ -112,7 +124,7 @@ export default function Home() {
       })
     }, 400)
     return () => clearTimeout(t)
-  }, [activeId, deck, items, manualPlacements, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
+  }, [activeId, deck, items, manualPlacements, pinnedPlacements, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
 
   const result = useMemo(() => {
     if (mode === 'manual') {
@@ -127,8 +139,9 @@ export default function Home() {
       gap: deck.gap,
       boardOffset: deck.boardOffset,
       clearance: deck.clearance,
+      pinned: pinnedPlacements,
     })
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements])
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacements])
 
   const activeStamp = useMemo(() => {
     if (mode !== 'manual' || !activeStampId) return null
@@ -142,6 +155,8 @@ export default function Home() {
       deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
       items: [],
       manualPlacements: [],
+      pinnedPlacements: [],
+      selectedPinIds: [],
       mode: 'auto',
       activeStampId: null,
       stampRotated: false,
@@ -158,6 +173,8 @@ export default function Home() {
         { id: crypto.randomUUID(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
       ],
       manualPlacements: [],
+      pinnedPlacements: [],
+      selectedPinIds: [],
       mode: 'auto',
       activeStampId: null,
     })
@@ -257,6 +274,9 @@ export default function Home() {
                       <LegendDot color="#0ea5e9" label="Груз" />
                       <LegendDot hatch label="Свободно" />
                       <LegendDot icon="↻" label="Повернут" />
+                      {mode === 'auto' && (
+                        <LegendDot color="#7c3aed" label="Закреплён" />
+                      )}
                     </div>
                   </div>
                 </CardHeader>
@@ -285,6 +305,13 @@ export default function Home() {
                     onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                     onRemoveManual={removeManualPlacement}
                     manualPlacements={manualPlacements}
+                    pinnedPlacements={pinnedPlacements}
+                    selectedPinIds={selectedPinIds}
+                    onPinPlaced={(p) => pinFromPlaced(p)}
+                    onUpdatePinned={(id, x, y) => updatePinned(id, { x, y })}
+                    onRemovePinned={removePinned}
+                    onTogglePinSelection={togglePinSelection}
+                    onClearSelection={clearSelection}
                   />
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
@@ -304,6 +331,12 @@ export default function Home() {
             {/* Right panel: items + stats */}
             <div className="xl:col-span-4 space-y-4">
               {mode === 'manual' && <ManualToolbar placedCount={new Map()} />}
+              {mode === 'auto' && (
+                <SelectionToolbar
+                  pinnedPlacements={pinnedPlacements}
+                  selectedPinIds={selectedPinIds}
+                />
+              )}
               <StatsPanel result={result} unit={deck.unit} />
               <ItemList
                 result={result}

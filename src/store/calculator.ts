@@ -4,6 +4,7 @@ import type {
   CargoItem,
   SortStrategy,
   ManualPlacement,
+  PinnedPlacement,
 } from '@/lib/packing'
 
 export type Unit = 'm' | 'cm' | 'ft'
@@ -47,6 +48,8 @@ interface CalculatorState {
   showLabels: boolean
   mode: Mode
   manualPlacements: ManualPlacement[]
+  pinnedPlacements: PinnedPlacement[]
+  selectedPinIds: string[]
   activeStampId: string | null
   stampRotated: boolean
 
@@ -70,6 +73,14 @@ interface CalculatorState {
   updateManualPlacement: (id: string, patch: Partial<ManualPlacement>) => void
   removeManualPlacement: (id: string) => void
   clearManualPlacements: () => void
+  // Pinned (interactive auto mode)
+  pinFromPlaced: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string
+  updatePinned: (id: string, patch: Partial<PinnedPlacement>) => void
+  removePinned: (id: string) => void
+  clearPinned: () => void
+  togglePinSelection: (id: string, additive: boolean) => void
+  selectPins: (ids: string[]) => void
+  clearSelection: () => void
 }
 
 function nextColor(items: CargoItem[]): string {
@@ -142,6 +153,8 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
   showLabels: true,
   mode: 'auto',
   manualPlacements: [],
+  pinnedPlacements: [],
+  selectedPinIds: [],
   activeStampId: null,
   stampRotated: false,
 
@@ -175,12 +188,13 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
     const items = p.items.map((partial, i) =>
       makeItem(Array(i).fill({}), partial)
     )
-    set({ deck: { ...p.deck, gap: get().deck.gap }, items, manualPlacements: [], activeStampId: items[0]?.id ?? null })
+    set({ deck: { ...p.deck, gap: get().deck.gap }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], activeStampId: items[0]?.id ?? null })
   },
   setMode: (m) =>
     set((s) => ({
       mode: m,
       activeStampId: m === 'manual' && !s.activeStampId ? s.items[0]?.id ?? null : s.activeStampId,
+      selectedPinIds: [],
     })),
   setActiveStamp: (id) => set({ activeStampId: id }),
   toggleStampRotation: () => set((s) => ({ stampRotated: !s.stampRotated })),
@@ -199,6 +213,55 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
         s.activeStampId === id ? null : s.activeStampId,
     })),
   clearManualPlacements: () => set({ manualPlacements: [] }),
+
+  pinFromPlaced: (placed) => {
+    const id = uuid()
+    set((s) => ({
+      pinnedPlacements: [
+        ...s.pinnedPlacements,
+        {
+          id,
+          itemId: placed.itemId,
+          name: placed.name,
+          x: placed.x,
+          y: placed.y,
+          width: placed.width,
+          length: placed.length,
+          layers: placed.layers,
+          rotated: placed.rotated,
+          color: placed.color,
+          weight: placed.weight,
+        },
+      ],
+      selectedPinIds: [id],
+    }))
+    return id
+  },
+  updatePinned: (id, patch) =>
+    set((s) => ({
+      pinnedPlacements: s.pinnedPlacements.map((p) =>
+        p.id === id ? { ...p, ...patch } : p
+      ),
+    })),
+  removePinned: (id) =>
+    set((s) => ({
+      pinnedPlacements: s.pinnedPlacements.filter((p) => p.id !== id),
+      selectedPinIds: s.selectedPinIds.filter((sid) => sid !== id),
+    })),
+  clearPinned: () => set({ pinnedPlacements: [], selectedPinIds: [] }),
+  togglePinSelection: (id, additive) =>
+    set((s) => {
+      if (additive) {
+        return {
+          selectedPinIds: s.selectedPinIds.includes(id)
+            ? s.selectedPinIds.filter((sid) => sid !== id)
+            : [...s.selectedPinIds, id],
+        }
+      }
+      return { selectedPinIds: s.selectedPinIds.includes(id) ? [] : [id] }
+    }),
+  selectPins: (ids) => set({ selectedPinIds: ids }),
+  clearSelection: () => set({ selectedPinIds: [] }),
 }))
 
 export { UNIT_LABEL, PALETTE }

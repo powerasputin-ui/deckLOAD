@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, ManualPlacement, SortStrategy } from '@/lib/packing'
+import type { CargoItem, ManualPlacement, SortStrategy, PinnedPlacement } from '@/lib/packing'
 import type { DeckConfig, Mode } from './calculator'
 
 export interface Project {
@@ -11,6 +11,7 @@ export interface Project {
   deck: DeckConfig
   items: CargoItem[]
   manualPlacements: ManualPlacement[]
+  pinnedPlacements: PinnedPlacement[]
   mode: Mode
   sortStrategy: SortStrategy
   globalRotation: boolean
@@ -34,6 +35,7 @@ interface ProjectsState {
     deck: DeckConfig
     items: CargoItem[]
     manualPlacements: ManualPlacement[]
+    pinnedPlacements: PinnedPlacement[]
     mode: Mode
     sortStrategy: SortStrategy
     globalRotation: boolean
@@ -63,6 +65,7 @@ function freshProject(name: string, withDemo = false): Project {
         ]
       : [],
     manualPlacements: [],
+    pinnedPlacements: [],
     mode: 'auto',
     sortStrategy: 'area-desc',
     globalRotation: true,
@@ -170,6 +173,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
                 deck: data.deck,
                 items: data.items,
                 manualPlacements: data.manualPlacements,
+                pinnedPlacements: data.pinnedPlacements,
                 mode: data.mode,
                 sortStrategy: data.sortStrategy,
                 globalRotation: data.globalRotation,
@@ -197,6 +201,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       updatedAt: now,
       items: src.items.map((it) => ({ ...it, id: uuid() })),
       manualPlacements: src.manualPlacements.map((m) => ({ ...m, id: uuid() })),
+      pinnedPlacements: src.pinnedPlacements.map((p) => ({ ...p, id: uuid() })),
     }
     set((s) => {
       const next = { projects: [...s.projects, copy], activeId: copy.id }
