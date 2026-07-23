@@ -50,6 +50,7 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
   const removeItem = useCalculator((s) => s.removeItem)
   const duplicateItem = useCalculator((s) => s.duplicateItem)
   const globalRotation = useCalculator((s) => s.globalRotation)
+  const mode = useCalculator((s) => s.mode)
 
   // count placed per item id
   const placedCount = new Map<string, number>()
@@ -187,17 +188,23 @@ function ItemRow({
             </Badge>
           </div>
 
-          <div className="grid grid-cols-4 gap-1.5 mt-2">
+          <div className="grid grid-cols-5 gap-1.5 mt-2">
             <NumField
-              label="Ширина"
+              label="Шир."
               value={item.width}
               onChange={(v) => onUpdate({ width: v })}
               unit={unit}
             />
             <NumField
-              label="Длина"
+              label="Длин."
               value={item.length}
               onChange={(v) => onUpdate({ length: v })}
+              unit={unit}
+            />
+            <NumField
+              label="Выс."
+              value={item.height ?? 0}
+              onChange={(v) => onUpdate({ height: v })}
               unit={unit}
             />
             <NumField

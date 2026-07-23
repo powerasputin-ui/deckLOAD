@@ -15,6 +15,7 @@ export interface CargoItem {
   name: string
   width: number // along X axis
   length: number // along Y axis
+  height: number // vertical (for tier/stacking calculations); 0 = ignore
   quantity: number
   color: string
   allowRotation: boolean
@@ -28,6 +29,9 @@ export interface PlacedItem {
   y: number
   width: number
   length: number
+  height: number
+  layers: number // how many tiers stacked on this footprint
+  stackedCount: number // units actually placed here (layers)
   rotated: boolean
   color: string
   weight?: number
@@ -42,14 +46,31 @@ export interface UnplacedItem {
   reason: string
 }
 
+export interface ItemBreakdown {
+  itemId: string
+  name: string
+  color: string
+  requested: number
+  placed: number // units placed (including stacking)
+  footprints: number // number of floor slots occupied
+  layers: number // max tiers for this item type
+  area: number // footprint area used
+  weight: number // total weight of placed units
+  unitWeight: number
+}
+
 export interface PackingResult {
   placed: PlacedItem[]
   unplaced: UnplacedItem[]
+  breakdown: ItemBreakdown[]
+  requestedCount: number // total number of item units requested
+  placedCount: number // total units placed (including stacking)
   totalArea: number
   usedArea: number
   freeArea: number
-  utilization: number // 0..1
+  utilization: number // 0..1 (footprint)
   totalWeight: number
+  maxStackHeight: number
   deckWidth: number
   deckLength: number
 }
@@ -233,92 +254,201 @@ function sortItems(items: CargoItem[], strategy: SortStrategy): CargoItem[] {
   return expanded
 }
 
+export interface PackOptions {
+  sortStrategy?: SortStrategy
+  gap?: number // spacing between items
+  boardOffset?: number // margin from the ship's board (deck edge)
+  clearance?: number // max stack height above deck (0 = single tier)
+}
+
+// Compute how many tiers (layers) can be stacked for an item.
+export function maxLayersFor(item: { height: number }, clearance: number): number {
+  if (clearance <= 0 || item.height <= 0) return 1
+  return Math.max(1, Math.floor(clearance / item.height + 1e-9))
+}
+
 export function packDeck(
   deckWidth: number,
   deckLength: number,
   items: CargoItem[],
-  sortStrategy: SortStrategy = 'area-desc'
+  options: PackOptions | SortStrategy = 'area-desc'
 ): PackingResult {
+  const sortStrategy =
+    typeof options === 'string' ? options : options.sortStrategy ?? 'area-desc'
+  const gap = Math.max(0, typeof options === 'string' ? 0 : options.gap ?? 0)
+  const boardOffset =
+    typeof options === 'string' ? 0 : Math.max(0, options.boardOffset ?? 0)
+  const clearance =
+    typeof options === 'string' ? 0 : Math.max(0, options.clearance ?? 0)
+
   const totalArea = deckWidth * deckLength
+  const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
     unplaced: [],
+    breakdown: [],
+    requestedCount,
+    placedCount: 0,
     totalArea,
     usedArea: 0,
     freeArea: totalArea,
     utilization: 0,
     totalWeight: 0,
+    maxStackHeight: 0,
     deckWidth,
     deckLength,
   }
 
   if (deckWidth <= 0 || deckLength <= 0) return result
 
-  const freeRects: FreeRect[] = [
-    { x: 0, y: 0, width: deckWidth, height: deckLength },
-  ]
+  // Usable region after board offset (margin from the ship's board)
+  const ux = boardOffset
+  const uy = boardOffset
+  const uw = Math.max(0, deckWidth - boardOffset * 2)
+  const ul = Math.max(0, deckLength - boardOffset * 2)
 
-  const sorted = sortItems(items, sortStrategy)
+  const freeRects: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
+
+  // Expand each item into the number of STACKS (floor footprints) needed.
+  // A stack holds up to `layers` units vertically.
+  interface Stack {
+    item: CargoItem
+    layers: number
+    unitsInStack: number // units this particular stack will hold
+  }
+  const stacks: Stack[] = []
+  const perItemRemaining = new Map<string, number>()
+  for (const it of items) perItemRemaining.set(it.id, it.quantity)
+
+  for (const item of items) {
+    if (item.width <= 0 || item.length <= 0) continue
+    const layers = maxLayersFor(item, clearance)
+    let remaining = item.quantity
+    while (remaining > 0) {
+      const units = Math.min(layers, remaining)
+      stacks.push({ item, layers, unitsInStack: units })
+      remaining -= units
+    }
+  }
+
+  // Sort stacks by footprint area desc for better packing
+  const stackCmp = (a: Stack, b: Stack): number => {
+    switch (sortStrategy) {
+      case 'area-desc':
+        return b.item.width * b.item.length - a.item.width * a.item.length
+      case 'area-asc':
+        return a.item.width * a.item.length - b.item.width * b.item.length
+      case 'width-desc':
+        return b.item.width - a.item.width
+      case 'height-desc':
+        return b.item.length - a.item.length
+      default:
+        return 0
+    }
+  }
+  stacks.sort(stackCmp)
+
   let index = 0
 
-  for (const item of sorted) {
-    if (item.width <= 0 || item.length <= 0) {
-      result.unplaced.push({
-        itemId: item.id,
-        name: item.name,
-        width: item.width,
-        length: item.length,
-        reason: 'Некорректные размеры',
-      })
-      continue
-    }
-    // Skip if item larger than deck in both orientations
-    const fitsNormal = item.width <= deckWidth && item.length <= deckLength
+  for (const { item, layers, unitsInStack } of stacks) {
+    if (perItemRemaining.get(item.id)! <= 0) continue
+
+    const cellW = item.width + gap
+    const cellL = item.length + gap
+    const cellWRot = item.length + gap
+    const cellLRot = item.width + gap
+
+    const fitsNormal = cellW <= uw && cellL <= ul
     const fitsRotated =
-      item.allowRotation && item.length <= deckWidth && item.width <= deckLength
+      item.allowRotation && cellWRot <= uw && cellLRot <= ul
     if (!fitsNormal && !fitsRotated) {
-      result.unplaced.push({
-        itemId: item.id,
-        name: item.name,
-        width: item.width,
-        length: item.length,
-        reason: 'Превышает размеры палубы',
-      })
+      // Record unplaced only once per item type (avoid flooding)
+      if (!result.unplaced.some((u) => u.itemId === item.id)) {
+        result.unplaced.push({
+          itemId: item.id,
+          name: item.name,
+          width: item.width,
+          length: item.length,
+          reason: 'Превышает размеры палубы',
+        })
+      }
       continue
     }
 
-    const pos = findPosition(
-      freeRects,
-      item.width,
-      item.length,
-      item.allowRotation
-    )
+    const pos = findPosition(freeRects, cellW, cellL, item.allowRotation)
     if (!pos) {
-      result.unplaced.push({
-        itemId: item.id,
-        name: item.name,
-        width: item.width,
-        length: item.length,
-        reason: 'Недостаточно свободного места',
-      })
+      if (!result.unplaced.some((u) => u.itemId === item.id)) {
+        result.unplaced.push({
+          itemId: item.id,
+          name: item.name,
+          width: item.width,
+          length: item.length,
+          reason: 'Недостаточно свободного места',
+        })
+      }
       continue
     }
 
     placeRect(pos.node, freeRects)
+    const visW = pos.rotated ? item.length : item.width
+    const visL = pos.rotated ? item.width : item.length
+    const stackHeight = item.height > 0 ? item.height * unitsInStack : 0
     result.placed.push({
       itemId: item.id,
       name: item.name,
       x: pos.node.x,
       y: pos.node.y,
-      width: pos.node.width,
-      length: pos.node.height,
+      width: visW,
+      length: visL,
+      height: item.height,
+      layers: unitsInStack,
+      stackedCount: unitsInStack,
       rotated: pos.rotated,
       color: item.color,
       weight: item.weight,
       index: index++,
     })
-    result.usedArea += pos.node.width * pos.node.height
-    if (item.weight) result.totalWeight += item.weight
+    result.usedArea += visW * visL
+    result.placedCount += unitsInStack
+    if (item.weight) result.totalWeight += item.weight * unitsInStack
+    if (stackHeight > result.maxStackHeight) result.maxStackHeight = stackHeight
+    perItemRemaining.set(item.id, perItemRemaining.get(item.id)! - unitsInStack)
+  }
+
+  // Any remaining unplaced units
+  for (const item of items) {
+    const remaining = perItemRemaining.get(item.id) ?? 0
+    if (remaining > 0 && !result.unplaced.some((u) => u.itemId === item.id)) {
+      result.unplaced.push({
+        itemId: item.id,
+        name: item.name,
+        width: item.width,
+        length: item.length,
+        reason: `Не вместилось ${remaining} ед.`,
+      })
+    }
+  }
+
+  // Build per-item breakdown
+  for (const item of items) {
+    const placedForItem = result.placed.filter((p) => p.itemId === item.id)
+    const placedUnits = placedForItem.reduce((s, p) => s + p.stackedCount, 0)
+    const footprints = placedForItem.length
+    const layers = maxLayersFor(item, clearance)
+    const area = placedForItem.reduce((s, p) => s + p.width * p.length, 0)
+    const unitWeight = item.weight ?? 0
+    result.breakdown.push({
+      itemId: item.id,
+      name: item.name,
+      color: item.color,
+      requested: item.quantity,
+      placed: placedUnits,
+      footprints,
+      layers,
+      area,
+      weight: unitWeight * placedUnits,
+      unitWeight,
+    })
   }
 
   result.freeArea = Math.max(0, totalArea - result.usedArea)
@@ -326,22 +456,152 @@ export function packDeck(
   return result
 }
 
-// Compute remaining free rectangles for visualization
+// Compute remaining free rectangles for visualization. Uses cells that include
+// the inter-item gap so the hatched region matches what the packer sees.
 export function computeFreeRects(
   deckWidth: number,
   deckLength: number,
-  placed: PlacedItem[]
+  placed: PlacedItem[],
+  gap = 0,
+  boardOffset = 0
 ): Rect[] {
-  let free: FreeRect[] = [
-    { x: 0, y: 0, width: deckWidth, height: deckLength },
-  ]
+  const ux = boardOffset
+  const uy = boardOffset
+  const uw = Math.max(0, deckWidth - boardOffset * 2)
+  const ul = Math.max(0, deckLength - boardOffset * 2)
+  let free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
   for (const p of placed) {
     placeRect(
-      { x: p.x, y: p.y, width: p.width, height: p.length },
+      { x: p.x, y: p.y, width: p.width + gap, height: p.length + gap },
       free
     )
   }
-  return free.filter(
-    (f) => f.width > 1e-6 && f.height > 1e-6
-  )
+  return free.filter((f) => f.width > 1e-6 && f.height > 1e-6)
+}
+
+// ---- Manual placement helpers ----
+
+export interface ManualPlacement {
+  id: string
+  itemId: string
+  name: string
+  x: number
+  y: number
+  width: number
+  length: number
+  rotated: boolean
+  color: string
+  weight?: number
+}
+
+// Check whether a manual placement collides with any existing one.
+export function collidesWith(
+  placement: { x: number; y: number; width: number; length: number },
+  others: { x: number; y: number; width: number; length: number }[],
+  gap = 0
+): boolean {
+  const a = {
+    x: placement.x - gap / 2,
+    y: placement.y - gap / 2,
+    w: placement.width + gap,
+    h: placement.length + gap,
+  }
+  return others.some((o) => {
+    const b = {
+      x: o.x - gap / 2,
+      y: o.y - gap / 2,
+      w: o.width + gap,
+      h: o.length + gap,
+    }
+    return !(
+      a.x + a.w <= b.x ||
+      b.x + b.w <= a.x ||
+      a.y + a.h <= b.y ||
+      b.y + b.h <= a.y
+    )
+  })
+}
+
+// Clamp a placement so it stays fully inside the deck.
+export function clampToDeck(
+  placement: { x: number; y: number; width: number; length: number },
+  deckWidth: number,
+  deckLength: number,
+  edgePadding = 0
+): { x: number; y: number; width: number; length: number } {
+  const minX = edgePadding
+  const minY = edgePadding
+  const maxX = deckWidth - edgePadding - placement.width
+  const maxY = deckLength - edgePadding - placement.length
+  return {
+    x: Math.max(minX, Math.min(maxX, placement.x)),
+    y: Math.max(minY, Math.min(maxY, placement.y)),
+    width: placement.width,
+    length: placement.length,
+  }
+}
+
+export function packingResultFromManual(
+  deckWidth: number,
+  deckLength: number,
+  placements: ManualPlacement[],
+  totalRequested: number
+): PackingResult {
+  const totalArea = deckWidth * deckLength
+  const usedArea = placements.reduce((s, p) => s + p.width * p.length, 0)
+  const totalWeight = placements.reduce((s, p) => s + (p.weight ?? 0), 0)
+
+  const placed = placements.map((p, i) => ({
+    itemId: p.itemId,
+    name: p.name,
+    x: p.x,
+    y: p.y,
+    width: p.width,
+    length: p.length,
+    height: 0,
+    layers: 1,
+    stackedCount: 1,
+    rotated: p.rotated,
+    color: p.color,
+    weight: p.weight,
+    index: i,
+  }))
+
+  // Breakdown by itemId
+  const map = new Map<string, ItemBreakdown>()
+  for (const p of placed) {
+    const b = map.get(p.itemId) ?? {
+      itemId: p.itemId,
+      name: p.name,
+      color: p.color,
+      requested: 0,
+      placed: 0,
+      footprints: 0,
+      layers: 1,
+      area: 0,
+      weight: 0,
+      unitWeight: p.weight ?? 0,
+    }
+    b.placed += 1
+    b.footprints += 1
+    b.area += p.width * p.length
+    b.weight += p.weight ?? 0
+    map.set(p.itemId, b)
+  }
+
+  return {
+    placed,
+    unplaced: [],
+    breakdown: [...map.values()],
+    requestedCount: totalRequested,
+    placedCount: placed.length,
+    totalArea,
+    usedArea,
+    freeArea: Math.max(0, totalArea - usedArea),
+    utilization: totalArea > 0 ? usedArea / totalArea : 0,
+    totalWeight,
+    maxStackHeight: 0,
+    deckWidth,
+    deckLength,
+  }
 }

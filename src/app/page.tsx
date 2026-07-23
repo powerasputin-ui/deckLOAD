@@ -1,7 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Ship, RotateCw, Github, Anchor } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Ship,
+  RotateCw,
+  Wand2,
+  MousePointerClick,
+  Anchor,
+  Github,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
@@ -12,12 +19,23 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card'
-import { useCalculator } from '@/store/calculator'
-import { packDeck } from '@/lib/packing'
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@/components/ui/toggle-group'
+import { useCalculator, UNIT_LABEL } from '@/store/calculator'
+import { useProjects } from '@/store/projects'
+import {
+  packDeck,
+  packingResultFromManual,
+  type ManualPlacement,
+} from '@/lib/packing'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
-import { DeckConfigPanel } from '@/components/calculator/DeckConfigPanel'
 import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
+import { ManualToolbar } from '@/components/calculator/ManualToolbar'
+import { Sidebar } from '@/components/calculator/Sidebar'
+import { toast } from 'sonner'
 
 export default function Home() {
   const deck = useCalculator((s) => s.deck)
@@ -28,138 +46,285 @@ export default function Home() {
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
+  const mode = useCalculator((s) => s.mode)
+  const setMode = useCalculator((s) => s.setMode)
+  const manualPlacements = useCalculator((s) => s.manualPlacements)
+  const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
+  const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
+  const activeStampId = useCalculator((s) => s.activeStampId)
+  const stampRotated = useCalculator((s) => s.stampRotated)
+
+  const projects = useProjects((s) => s.projects)
+  const activeId = useProjects((s) => s.activeId)
+  const hydrated = useProjects((s) => s.hydrated)
+  const hydrate = useProjects((s) => s.hydrate)
+  const activeProject = projects.find((p) => p.id === activeId)
+  const saveSnapshot = useProjects((s) => s.saveSnapshot)
+  const createProject = useProjects((s) => s.createProject)
+  const switchTo = useProjects((s) => s.switchTo)
 
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const loadedProjectId = useRef<string | null>(null)
+
+  // Hydrate projects from localStorage on mount (synchronous)
+  useEffect(() => {
+    hydrate()
+  }, [hydrate])
+
+  // Load project into calculator store when activeId changes (after hydration)
+  useEffect(() => {
+    if (!hydrated || !activeId) return
+    if (loadedProjectId.current === activeId) return
+    const proj = projects.find((p) => p.id === activeId)
+    if (!proj) return
+    useCalculator.setState({
+      deck: { ...proj.deck },
+      items: proj.items.map((it) => ({ ...it })),
+      manualPlacements: proj.manualPlacements.map((m) => ({ ...m })),
+      mode: proj.mode,
+      sortStrategy: proj.sortStrategy,
+      globalRotation: proj.globalRotation,
+      showFreeSpace: proj.showFreeSpace,
+      showGrid: proj.showGrid,
+      showLabels: proj.showLabels,
+      activeStampId: proj.mode === 'manual' ? proj.items[0]?.id ?? null : null,
+      stampRotated: false,
+    })
+    loadedProjectId.current = activeId
+  }, [hydrated, activeId, projects])
+
+  // Auto-save snapshot (debounced)
+  useEffect(() => {
+    if (!activeId || loadedProjectId.current !== activeId) return
+    const t = setTimeout(() => {
+      saveSnapshot({
+        id: activeId,
+        deck,
+        items: items.map((it) => ({ ...it })),
+        manualPlacements: manualPlacements.map((m) => ({ ...m })),
+        mode,
+        sortStrategy,
+        globalRotation,
+        showFreeSpace,
+        showGrid,
+        showLabels,
+      })
+    }, 400)
+    return () => clearTimeout(t)
+  }, [activeId, deck, items, manualPlacements, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
 
   const result = useMemo(() => {
+    if (mode === 'manual') {
+      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+      return packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested)
+    }
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
-    return packDeck(deck.width, deck.length, effectiveItems, sortStrategy)
-  }, [deck.width, deck.length, items, sortStrategy, globalRotation])
+    return packDeck(deck.width, deck.length, effectiveItems, {
+      sortStrategy,
+      gap: deck.gap,
+      boardOffset: deck.boardOffset,
+      clearance: deck.clearance,
+    })
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements])
+
+  const activeStamp = useMemo(() => {
+    if (mode !== 'manual' || !activeStampId) return null
+    const it = items.find((x) => x.id === activeStampId)
+    if (!it) return null
+    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
+  }, [mode, activeStampId, items])
+
+  const handleNewCalculation = () => {
+    useCalculator.setState({
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [],
+      manualPlacements: [],
+      mode: 'auto',
+      activeStampId: null,
+      stampRotated: false,
+    })
+    toast.success('Текущий расчёт очищен')
+  }
+
+  const handleResetCurrent = () => {
+    useCalculator.setState({
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5.2 },
+      items: [
+        { id: crypto.randomUUID(), name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 },
+        { id: crypto.randomUUID(), name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 },
+        { id: crypto.randomUUID(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
+      ],
+      manualPlacements: [],
+      mode: 'auto',
+      activeStampId: null,
+    })
+    toast.info('Восстановлен демонстрационный пример')
+  }
 
   return (
-    <div className="min-h-screen flex flex-col bg-muted/30">
-      {/* Header */}
-      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto max-w-[1600px] px-4 py-3 flex items-center gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-primary text-primary-foreground">
-              <Ship className="h-5 w-5" />
-            </div>
-            <div className="leading-tight">
-              <h1 className="text-base font-bold tracking-tight">
-                DeckLoad — Калькулятор загрузки палубы
-              </h1>
-              <p className="text-xs text-muted-foreground hidden sm:block">
-                Расчёт размещения грузов, свободного пространства и коэффициента
-                загрузки с поддержкой вращения
-              </p>
-            </div>
+    <div className="h-screen flex flex-col bg-muted/30 overflow-hidden">
+      {/* Top bar */}
+      <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-sm font-semibold truncate">
+              {activeProject?.name ?? 'DeckLoad'}
+            </h1>
+            {activeProject && (
+              <span className="text-xs text-muted-foreground hidden md:inline">
+                · {activeProject.deck.width}×{activeProject.deck.length} {activeProject.deck.unit}
+              </span>
+            )}
           </div>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <Badge variant="outline" className="hidden md:inline-flex">
+            <Badge variant="outline" className="hidden lg:inline-flex">
               <Anchor className="h-3 w-3 mr-1" />
-              {deck.width}×{deck.length} {deck.unit}
+              {result.placed.length}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
             </Badge>
-            <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5">
-              <RotateCw
-                className={`h-4 w-4 transition-colors ${globalRotation ? 'text-primary' : 'text-muted-foreground'}`}
-              />
-              <span className="text-sm font-medium hidden sm:inline">
-                Вращение
-              </span>
+
+            {/* Mode toggle */}
+            <ToggleGroup
+              type="single"
+              value={mode}
+              onValueChange={(v) => {
+                if (v) {
+                  setMode(v as 'auto' | 'manual')
+                  toast.info(v === 'auto' ? 'Автоматический режим' : 'Ручной режим')
+                }
+              }}
+              className="rounded-lg border bg-card"
+            >
+              <ToggleGroupItem value="auto" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                <Wand2 className="h-3.5 w-3.5 mr-1" />
+                <span className="text-xs font-medium hidden sm:inline">Авто</span>
+              </ToggleGroupItem>
+              <ToggleGroupItem value="manual" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                <MousePointerClick className="h-3.5 w-3.5 mr-1" />
+                <span className="text-xs font-medium hidden sm:inline">Ручной</span>
+              </ToggleGroupItem>
+            </ToggleGroup>
+
+            {/* Rotation toggle */}
+            <div className={'flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 transition-opacity ' + (mode === 'auto' ? '' : 'opacity-40 pointer-events-none')}>
+              <RotateCw className={`h-4 w-4 transition-colors ${globalRotation ? 'text-primary' : 'text-muted-foreground'}`} />
+              <span className="text-xs font-medium hidden sm:inline">Вращение</span>
               <Switch
                 checked={globalRotation}
                 onCheckedChange={toggleGlobalRotation}
                 aria-label="Переключить вращение"
+                disabled={mode === 'manual'}
               />
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main */}
-      <main className="flex-1 mx-auto w-full max-w-[1600px] px-4 py-4">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left: config */}
-          <div className="lg:col-span-3 space-y-4">
-            <DeckConfigPanel />
-            <StatsPanel result={result} unit={deck.unit} />
-          </div>
+      {/* Workspace */}
+      <div className="flex-1 flex min-h-0">
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((v) => !v)}
+          onNewCalculation={handleNewCalculation}
+          onResetCurrent={handleResetCurrent}
+        />
 
-          {/* Center: visualization */}
-          <div className="lg:col-span-6">
-            <Card className="h-full">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div>
-                    <CardTitle className="text-base">Схема палубы</CardTitle>
-                    <CardDescription>
-                      Вид сверху. Зелёная штриховка — свободное пространство
-                    </CardDescription>
+        {/* Main content */}
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
+            {/* Visualization */}
+            <div className="xl:col-span-8">
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Ship className="h-4 w-4 text-primary" />
+                        Схема палубы
+                        {mode === 'manual' && (
+                          <Badge variant="secondary" className="text-[10px]">ручной режим</Badge>
+                        )}
+                      </CardTitle>
+                      <CardDescription className="mt-0.5">
+                        Вид сверху · зелёная штриховка — свободное пространство
+                        {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
+                      <LegendDot color="#0ea5e9" label="Груз" />
+                      <LegendDot hatch label="Свободно" />
+                      <LegendDot icon="↻" label="Повернут" />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <LegendDot color="#0ea5e9" label="Груз" />
-                    <LegendDot hatch label="Свободно" />
-                    <LegendDot icon="↻" label="Повернут" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <DeckVisualization
-                  result={result}
-                  unit={deck.unit}
-                  showFreeSpace={showFreeSpace}
-                  showGrid={showGrid}
-                  showLabels={showLabels}
-                  hoveredItemId={hoveredItemId}
-                  onHover={setHoveredItemId}
-                />
-                <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>
-                    Размещено {result.placed.length} из{' '}
-                    {result.placed.length + result.unplaced.length} ед.
-                  </span>
-                  <span>
-                    Загрузка:{' '}
-                    <span className="font-semibold text-foreground">
-                      {Math.round(result.utilization * 100)}%
+                </CardHeader>
+                <CardContent>
+                  <DeckVisualization
+                    result={result}
+                    unit={deck.unit}
+                    gap={deck.gap}
+                    boardOffset={deck.boardOffset}
+                    showFreeSpace={showFreeSpace}
+                    showGrid={showGrid}
+                    showLabels={showLabels}
+                    hoveredItemId={hoveredItemId}
+                    onHover={setHoveredItemId}
+                    mode={mode}
+                    activeStamp={activeStamp}
+                    stampRotated={stampRotated}
+                    onPlace={(p) => {
+                      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+                      if (manualPlacements.length >= totalRequested) {
+                        toast.warning('Все грузы уже размещены')
+                        return
+                      }
+                      useCalculator.getState().addManualPlacement(p)
+                    }}
+                    onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
+                    onRemoveManual={removeManualPlacement}
+                    manualPlacements={manualPlacements}
+                  />
+                  <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      Размещено {result.placed.length} из {result.requestedCount} ед.
                     </span>
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                    <span>
+                      Загрузка:{' '}
+                      <span className="font-semibold text-foreground">
+                        {Math.round(result.utilization * 100)}%
+                      </span>
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-          {/* Right: items */}
-          <div className="lg:col-span-3">
-            <ItemList
-              result={result}
-              unit={deck.unit}
-              hoveredItemId={hoveredItemId}
-              onHover={setHoveredItemId}
-            />
+            {/* Right panel: items + stats */}
+            <div className="xl:col-span-4 space-y-4">
+              {mode === 'manual' && <ManualToolbar placedCount={new Map()} />}
+              <StatsPanel result={result} unit={deck.unit} />
+              <ItemList
+                result={result}
+                unit={deck.unit}
+                hoveredItemId={hoveredItemId}
+                onHover={setHoveredItemId}
+              />
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
 
       {/* Footer */}
-      <footer className="mt-auto border-t bg-background">
-        <div className="mx-auto max-w-[1600px] px-4 py-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span>
-            DeckLoad Calculator · Алгоритм Maximal Rectangles (BSSF) · 2D-упаковка с
-            вращением
+      <footer className="shrink-0 border-t bg-background py-2 px-4">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span className="truncate">
+            DeckLoad · Maximal Rectangles (BSSF) · вращение, отступы, мульти-проекты
           </span>
-          <Button variant="ghost" size="sm" asChild className="h-7">
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs"
-            >
-              <Github className="h-3.5 w-3.5 mr-1" />
+          <Button variant="ghost" size="sm" asChild className="h-6 hidden sm:inline-flex">
+            <a href="https://github.com" target="_blank" rel="noreferrer" className="text-xs">
+              <Github className="h-3 w-3 mr-1" />
               Исходники
             </a>
           </Button>

@@ -1,6 +1,6 @@
 'use client'
 
-import { TrendingUp, LayoutGrid, Square, PackageX, Weight, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { TrendingUp, LayoutGrid, Square, PackageX, Weight, CheckCircle2, AlertTriangle, Package, Layers } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import {
   Card,
@@ -27,10 +27,15 @@ export function StatsPanel({ result, unit }: StatsPanelProps) {
     placed,
     unplaced,
     totalWeight,
+    requestedCount,
+    placedCount,
+    breakdown,
+    maxStackHeight,
   } = result
 
   const utilPct = Math.round(utilization * 100)
   const unitSym = UNIT_LABEL[unit]
+  const unplacedCount = Math.max(0, requestedCount - placedCount)
 
   return (
     <Card>
@@ -98,26 +103,110 @@ export function StatsPanel({ result, unit }: StatsPanelProps) {
         </div>
 
         {/* Counts */}
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-3 gap-2.5">
           <div className="rounded-lg border bg-emerald-50/50 dark:bg-emerald-950/20 p-3">
             <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
               <CheckCircle2 className="h-4 w-4" />
               <span className="text-xs font-medium">Размещено</span>
             </div>
-            <div className="text-2xl font-bold tabular-nums mt-1">
+            <div className="text-xl font-bold tabular-nums mt-1">
+              {placedCount}
+            </div>
+            <div className="text-[10px] text-muted-foreground">ед. груза</div>
+          </div>
+          <div className="rounded-lg border bg-blue-50/50 dark:bg-blue-950/20 p-3">
+            <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400">
+              <LayoutGrid className="h-4 w-4" />
+              <span className="text-xs font-medium">Стопок</span>
+            </div>
+            <div className="text-xl font-bold tabular-nums mt-1">
               {placed.length}
             </div>
+            <div className="text-[10px] text-muted-foreground">на палубе</div>
           </div>
           <div className="rounded-lg border bg-red-50/50 dark:bg-red-950/20 p-3">
             <div className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
               <AlertTriangle className="h-4 w-4" />
-              <span className="text-xs font-medium">Не помещается</span>
+              <span className="text-xs font-medium">Не влезло</span>
             </div>
-            <div className="text-2xl font-bold tabular-nums mt-1">
-              {unplaced.length}
+            <div className="text-xl font-bold tabular-nums mt-1">
+              {unplacedCount}
             </div>
+            <div className="text-[10px] text-muted-foreground">ед. груза</div>
           </div>
         </div>
+
+        {/* Stack height indicator */}
+        {maxStackHeight > 0 && (
+          <div className="rounded-lg border bg-violet-50/50 dark:bg-violet-950/20 p-2.5 text-xs flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-violet-700 dark:text-violet-400">
+              <Layers className="h-3.5 w-3.5" />
+              Макс. высота штабеля
+            </span>
+            <span className="font-bold tabular-nums">
+              {fmt(maxStackHeight)} {unitSym}
+            </span>
+          </div>
+        )}
+
+        {/* Per-item breakdown */}
+        {breakdown.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              <Package className="h-4 w-4 text-primary" />
+              Учёт по грузам
+            </div>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr className="text-left">
+                    <th className="px-2 py-1.5 font-medium">Груз</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Ярусы</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Стопки</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Ед.</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Площадь</th>
+                    <th className="px-2 py-1.5 font-medium text-right">Вес</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdown.map((b) => {
+                    const partial = b.placed < b.requested
+                    return (
+                      <tr key={b.itemId} className="border-t">
+                        <td className="px-2 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="h-2.5 w-2.5 rounded-sm shrink-0 border border-black/10"
+                              style={{ backgroundColor: b.color }}
+                            />
+                            <span className="truncate max-w-[90px]" title={b.name}>
+                              {b.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-1.5 py-1.5 text-right tabular-nums">
+                          {b.layers > 1 ? `×${b.layers}` : '1'}
+                        </td>
+                        <td className="px-1.5 py-1.5 text-right tabular-nums text-muted-foreground">
+                          {b.footprints}
+                        </td>
+                        <td className={'px-1.5 py-1.5 text-right tabular-nums font-medium ' + (partial ? 'text-amber-600' : '')}>
+                          {b.placed}/{b.requested}
+                        </td>
+                        <td className="px-1.5 py-1.5 text-right tabular-nums text-muted-foreground">
+                          {fmt(b.area)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">
+                          {b.weight > 0 ? fmt(b.weight) : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Unplaced list */}
         {unplaced.length > 0 && (

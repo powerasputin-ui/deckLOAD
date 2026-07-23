@@ -1,8 +1,13 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, SortStrategy } from '@/lib/packing'
+import type {
+  CargoItem,
+  SortStrategy,
+  ManualPlacement,
+} from '@/lib/packing'
 
 export type Unit = 'm' | 'cm' | 'ft'
+export type Mode = 'auto' | 'manual'
 
 const UNIT_LABEL: Record<Unit, string> = {
   m: 'м',
@@ -14,6 +19,9 @@ export interface DeckConfig {
   width: number
   length: number
   unit: Unit
+  gap: number // spacing between items
+  boardOffset: number // margin from the ship's board (deck edge)
+  clearance: number // max stack height above deck (0 = single tier / unlimited)
 }
 
 const PALETTE = [
@@ -37,6 +45,10 @@ interface CalculatorState {
   showFreeSpace: boolean
   showGrid: boolean
   showLabels: boolean
+  mode: Mode
+  manualPlacements: ManualPlacement[]
+  activeStampId: string | null
+  stampRotated: boolean
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -51,6 +63,13 @@ interface CalculatorState {
   toggleGrid: () => void
   toggleLabels: () => void
   loadPreset: (preset: 'containers' | 'pallets' | 'vehicles' | 'mixed') => void
+  setMode: (m: Mode) => void
+  setActiveStamp: (id: string | null) => void
+  toggleStampRotation: () => void
+  addManualPlacement: (p: ManualPlacement) => void
+  updateManualPlacement: (id: string, patch: Partial<ManualPlacement>) => void
+  removeManualPlacement: (id: string) => void
+  clearManualPlacements: () => void
 }
 
 function nextColor(items: CargoItem[]): string {
@@ -63,6 +82,7 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     name: partial?.name ?? `Груз ${items.length + 1}`,
     width: partial?.width ?? 2,
     length: partial?.length ?? 1.2,
+    height: partial?.height ?? 0,
     quantity: partial?.quantity ?? 1,
     color: partial?.color ?? nextColor(items),
     allowRotation: partial?.allowRotation ?? true,
@@ -75,51 +95,55 @@ const PRESETS: Record<
   { deck: DeckConfig; items: Partial<CargoItem>[] }
 > = {
   containers: {
-    deck: { width: 30, length: 12, unit: 'm' },
+    deck: { width: 30, length: 12, unit: 'm', gap: 0.15, boardOffset: 0.5, clearance: 7.8 },
     items: [
-      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, quantity: 6, allowRotation: true, weight: 2200 },
-      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, quantity: 4, allowRotation: true, weight: 3800 },
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, quantity: 12, allowRotation: true, weight: 500 },
+      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 6, allowRotation: true, weight: 2200 },
+      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, quantity: 4, allowRotation: true, weight: 3800 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, allowRotation: true, weight: 500 },
     ],
   },
   pallets: {
-    deck: { width: 10, length: 6, unit: 'm' },
+    deck: { width: 10, length: 6, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 1.8 },
     items: [
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, quantity: 30, allowRotation: true, weight: 500 },
-      { name: 'Паллета IND', width: 1.0, length: 1.2, quantity: 10, allowRotation: true, weight: 700 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 30, allowRotation: true, weight: 500 },
+      { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, quantity: 10, allowRotation: true, weight: 700 },
     ],
   },
   vehicles: {
-    deck: { width: 50, length: 16, unit: 'm' },
+    deck: { width: 50, length: 16, unit: 'm', gap: 0.2, boardOffset: 0.5, clearance: 0 },
     items: [
-      { name: 'Седан', width: 4.6, length: 1.8, quantity: 8, allowRotation: true, weight: 1400 },
-      { name: 'Внедорожник', width: 4.9, length: 1.95, quantity: 6, allowRotation: true, weight: 2100 },
-      { name: 'Пикап', width: 5.3, length: 1.95, quantity: 4, allowRotation: true, weight: 1900 },
+      { name: 'Седан', width: 4.6, length: 1.8, height: 1.4, quantity: 8, allowRotation: true, weight: 1400 },
+      { name: 'Внедорожник', width: 4.9, length: 1.95, height: 1.8, quantity: 6, allowRotation: true, weight: 2100 },
+      { name: 'Пикап', width: 5.3, length: 1.95, height: 1.9, quantity: 4, allowRotation: true, weight: 1900 },
     ],
   },
   mixed: {
-    deck: { width: 24, length: 10, unit: 'm' },
+    deck: { width: 24, length: 10, unit: 'm', gap: 0.1, boardOffset: 0.3, clearance: 3.5 },
     items: [
-      { name: 'Ящик L', width: 2.0, length: 1.5, quantity: 6, allowRotation: true, weight: 800 },
-      { name: 'Ящик M', width: 1.2, length: 0.9, quantity: 12, allowRotation: true, weight: 350 },
-      { name: 'Бочка', width: 0.9, length: 0.9, quantity: 16, allowRotation: false, weight: 220 },
-      { name: 'Труба', width: 6.0, length: 0.5, quantity: 4, allowRotation: false, weight: 600 },
+      { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, quantity: 6, allowRotation: true, weight: 800 },
+      { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, quantity: 12, allowRotation: true, weight: 350 },
+      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, quantity: 16, allowRotation: false, weight: 220 },
+      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, quantity: 4, allowRotation: false, weight: 600 },
     ],
   },
 }
 
 export const useCalculator = create<CalculatorState>((set, get) => ({
-  deck: { width: 20, length: 8, unit: 'm' },
+  deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
   items: [
-    makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, quantity: 4, allowRotation: true, weight: 2200 }),
-    makeItem([{}], { name: 'Паллета EUR', width: 1.2, length: 0.8, quantity: 12, allowRotation: true, weight: 500 }),
-    makeItem([{}, {}], { name: 'Ящик', width: 1.5, length: 1.0, quantity: 6, allowRotation: true, weight: 300 }),
+    makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, allowRotation: true, weight: 2200 }),
+    makeItem([{}], { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, allowRotation: true, weight: 500 }),
+    makeItem([{}, {}], { name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, allowRotation: true, weight: 300 }),
   ],
   sortStrategy: 'area-desc',
   globalRotation: true,
   showFreeSpace: true,
   showGrid: true,
   showLabels: true,
+  mode: 'auto',
+  manualPlacements: [],
+  activeStampId: null,
+  stampRotated: false,
 
   setDeck: (patch) =>
     set((s) => ({ deck: { ...s.deck, ...patch } })),
@@ -151,8 +175,30 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
     const items = p.items.map((partial, i) =>
       makeItem(Array(i).fill({}), partial)
     )
-    set({ deck: p.deck, items })
+    set({ deck: { ...p.deck, gap: get().deck.gap }, items, manualPlacements: [], activeStampId: items[0]?.id ?? null })
   },
+  setMode: (m) =>
+    set((s) => ({
+      mode: m,
+      activeStampId: m === 'manual' && !s.activeStampId ? s.items[0]?.id ?? null : s.activeStampId,
+    })),
+  setActiveStamp: (id) => set({ activeStampId: id }),
+  toggleStampRotation: () => set((s) => ({ stampRotated: !s.stampRotated })),
+  addManualPlacement: (p) =>
+    set((s) => ({ manualPlacements: [...s.manualPlacements, p] })),
+  updateManualPlacement: (id, patch) =>
+    set((s) => ({
+      manualPlacements: s.manualPlacements.map((mp) =>
+        mp.id === id ? { ...mp, ...patch } : mp
+      ),
+    })),
+  removeManualPlacement: (id) =>
+    set((s) => ({
+      manualPlacements: s.manualPlacements.filter((mp) => mp.id !== id),
+      activeStampId:
+        s.activeStampId === id ? null : s.activeStampId,
+    })),
+  clearManualPlacements: () => set({ manualPlacements: [] }),
 }))
 
 export { UNIT_LABEL, PALETTE }
