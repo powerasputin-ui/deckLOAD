@@ -379,7 +379,36 @@ export default function Home() {
   const handleLayerChangePinned = (id: string, delta: number) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
+    const item = items.find((it) => it.id === pin.itemId)
     const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
+    // If blocked by clearance (physical ceiling), auto-increase clearance
+    // so the + button always works — the user wants to add a tier, not fight settings.
+    if (!check.ok && delta > 0 && item && item.height > 0) {
+      const neededLayers = pin.layers + delta
+      const neededClearance = neededLayers * item.height
+      if (neededClearance > deck.clearance) {
+        // Skip the deck-change effect so it doesn't clear pinned placements
+        skipNextDeckEffect.current = true
+        useCalculator.getState().setDeck({ clearance: neededClearance })
+      }
+      // Also auto-increase quantity if needed
+      const sumPlaced =
+        pinnedPlacements
+          .filter((p) => p.itemId === pin.itemId && p.id !== id)
+          .reduce((s, p) => s + p.layers, 0) +
+        manualPlacements
+          .filter((m) => m.itemId === pin.itemId && m.id !== id)
+          .reduce((s, m) => s + Math.max(1, m.layers), 0)
+      if (sumPlaced + neededLayers > (item?.quantity ?? 0)) {
+        // Auto-increase quantity
+        useCalculator.getState().updateItem(item.id, { quantity: sumPlaced + neededLayers })
+        toast.info(`Количество увеличено до ${sumPlaced + neededLayers} ед., высота — до ${neededClearance} ${UNIT_LABEL[deck.unit]}`)
+      } else {
+        toast.info(`Высота над палубой увеличена до ${neededClearance} ${UNIT_LABEL[deck.unit]} для ${neededLayers} ярусов`)
+      }
+      updatePinned(id, { layers: pin.layers + delta })
+      return
+    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
@@ -407,7 +436,32 @@ export default function Home() {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
     const current = Math.max(1, mp.layers)
+    const item = items.find((it) => it.id === mp.itemId)
     const check = checkLayerChange(mp.itemId, current, delta, id)
+    // If blocked by clearance, auto-increase clearance so + always works
+    if (!check.ok && delta > 0 && item && item.height > 0) {
+      const neededLayers = current + delta
+      const neededClearance = neededLayers * item.height
+      if (neededClearance > deck.clearance) {
+        skipNextDeckEffect.current = true
+        useCalculator.getState().setDeck({ clearance: neededClearance })
+      }
+      const sumPlaced =
+        pinnedPlacements
+          .filter((p) => p.itemId === mp.itemId && p.id !== id)
+          .reduce((s, p) => s + p.layers, 0) +
+        manualPlacements
+          .filter((m) => m.itemId === mp.itemId && m.id !== id)
+          .reduce((s, m) => s + Math.max(1, m.layers), 0)
+      if (sumPlaced + neededLayers > (item?.quantity ?? 0)) {
+        useCalculator.getState().updateItem(item.id, { quantity: sumPlaced + neededLayers })
+        toast.info(`Количество увеличено до ${sumPlaced + neededLayers} ед., высота — до ${neededClearance} ${UNIT_LABEL[deck.unit]}`)
+      } else {
+        toast.info(`Высота над палубой увеличена до ${neededClearance} ${UNIT_LABEL[deck.unit]} для ${neededLayers} ярусов`)
+      }
+      updateManualPlacement(id, { layers: current + delta })
+      return
+    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
@@ -704,15 +758,15 @@ export default function Home() {
                     onRotateManual={handleRotateManual}
                     onLayerChangePinned={handleLayerChangePinned}
                     onLayerChangeManual={handleLayerChangeManual}
-                    getLayerInfo={(itemId, currentLayers, excludeId) => {
+                    getLayerInfo={(itemId, currentLayers) => {
                       const item = items.find((it) => it.id === itemId)
                       const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
-                      const incCheck = checkLayerChange(itemId, currentLayers, 1, excludeId)
+                      const canInc = !!item && item.height > 0
                       return {
                         maxPhys,
-                        canIncrease: incCheck.ok,
+                        canIncrease: canInc,
                         canDecrease: currentLayers > 1,
-                        blockReason: incCheck.ok ? undefined : incCheck.reason,
+                        blockReason: canInc ? undefined : 'У груза не задана высота',
                       }
                     }}
                     selectedManualIds={selectedManualIds}

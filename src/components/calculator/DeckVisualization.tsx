@@ -194,6 +194,8 @@ export function DeckVisualization({
       color: activeStamp.color,
       weight: activeStamp.weight,
     })
+    // Clear preview after placement
+    setHoverPos(null)
   }
 
   const handleManualPointerDown = (
@@ -315,9 +317,22 @@ export function DeckVisualization({
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (mode === 'manual' && activeStamp && !dragState) {
+    if (mode === 'manual' && activeStamp && !dragState && !pinDrag) {
       const pos = screenToDeck(e.clientX, e.clientY)
-      if (pos) setHoverPos(pos)
+      if (pos) {
+        // Only show preview if cursor is inside the deck usable area
+        const off = edgePad
+        const inside =
+          pos.x >= off &&
+          pos.y >= off &&
+          pos.x <= deckWidth - off &&
+          pos.y <= deckLength - off
+        if (inside) {
+          setHoverPos(pos)
+        } else {
+          setHoverPos(null)
+        }
+      }
     }
     if (dragState && onMoveManual) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -415,6 +430,7 @@ export function DeckVisualization({
         onClick={mode === 'manual' ? handleDeckClick : undefined}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerLeave={() => setHoverPos(null)}
       >
         <defs>
           <pattern
