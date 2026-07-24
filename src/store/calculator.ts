@@ -160,9 +160,9 @@ const PRESETS: Record<
 export const useCalculator = create<CalculatorState>((set) => ({
   deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
   items: [
-    makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, allowRotation: true, weight: 2200 }),
-    makeItem([{}], { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, allowRotation: true, weight: 500 }),
-    makeItem([{}, {}], { name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, allowRotation: true, weight: 300 }),
+    makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 }),
+    makeItem([], { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 }),
+    makeItem([], { name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 }),
   ],
   sortStrategy: 'area-desc',
   globalRotation: true,
@@ -241,8 +241,8 @@ export const useCalculator = create<CalculatorState>((set) => ({
   loadPreset: (preset) => {
     const p = PRESETS[preset]
     if (!p) return
-    const items = p.items.map((partial, i) =>
-      makeItem(Array(i).fill({}), partial)
+    const items = p.items.map((partial) =>
+      makeItem([], partial)
     )
     // Use the preset's deck config as-is (including its unit/gap) so values stay
     // consistent. The caller shows a toast if the unit changes.

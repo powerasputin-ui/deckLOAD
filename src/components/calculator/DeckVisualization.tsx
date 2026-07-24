@@ -33,7 +33,7 @@ interface DeckVisualizationProps {
   // Interactive auto mode
   pinnedPlacements: PinnedPlacement[]
   selectedPinIds: string[]
-  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => void
+  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string | undefined
   onUpdatePinned?: (id: string, x: number, y: number) => void
   onRemovePinned?: (id: string) => void
   onRotatePinned?: (id: string) => void
