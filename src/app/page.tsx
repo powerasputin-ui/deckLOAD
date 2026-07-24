@@ -592,9 +592,11 @@ export default function Home() {
       <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
         <div className="flex items-center gap-3 px-4 py-2.5">
           <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shrink-0">
-              <Ship className="h-4 w-4" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="DeckLoad"
+              className="h-8 w-8 rounded-lg object-cover shrink-0"
+            />
             <div className="leading-tight">
               <div className="text-sm font-bold">DeckLoad</div>
               <div className="text-[11px] text-muted-foreground hidden sm:block">

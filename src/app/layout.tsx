@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "DeckLoad" }],
   icons: {
-    icon: "/logo.svg",
+    icon: "/logo.png",
   },
 };
 
