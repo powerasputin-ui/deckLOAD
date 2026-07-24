@@ -12,6 +12,7 @@ import {
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
 import { v4 as uuid } from 'uuid'
+import { toast } from 'sonner'
 
 interface DeckVisualizationProps {
   result: PackingResult
@@ -45,7 +46,7 @@ interface DeckVisualizationProps {
   onLayerChangePinned?: (id: string, delta: number) => void
   onLayerChangeManual?: (id: string, delta: number) => void
   // Layer validation info for single-selected placement
-  getLayerInfo?: (itemId: string, currentLayers: number, excludeId?: string) => { maxPhys: number; canIncrease: boolean; canDecrease: boolean }
+  getLayerInfo?: (itemId: string, currentLayers: number, excludeId?: string) => { maxPhys: number; canIncrease: boolean; canDecrease: boolean; blockReason?: string }
   // Manual multi-selection
   selectedManualIds?: string[]
   onToggleManualSelection?: (id: string, additive: boolean) => void
@@ -561,6 +562,7 @@ export function DeckVisualization({
             const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
             const canInc = layerInfo?.canIncrease ?? true
+            const blockReason = layerInfo?.blockReason
             return (
               <>
                 {onRotatePinned && (
@@ -580,12 +582,16 @@ export function DeckVisualization({
                     style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (canInc) onLayerChangePinned(pin.id, 1)
+                      if (canInc) {
+                        onLayerChangePinned(pin.id, 1)
+                      } else {
+                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+                      }
                     }}
                   >
-                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : `Потолок: ${maxPhys} ярус(ов)`}</title>
-                    <circle cx={lcx} cy={lcy - 11} r={9} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy - 10} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">+</text>
+                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
                   </g>
                 )}
                 {onLayerChangePinned && (
@@ -593,12 +599,16 @@ export function DeckVisualization({
                     style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (pin.layers > 1) onLayerChangePinned(pin.id, -1)
+                      if (pin.layers > 1) {
+                        onLayerChangePinned(pin.id, -1)
+                      } else {
+                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+                      }
                     }}
                   >
                     <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 11} r={9} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy + 12} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">−</text>
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
                   </g>
                 )}
                 {onRemovePinned && (
@@ -640,6 +650,7 @@ export function DeckVisualization({
             const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
             const canInc = layerInfo?.canIncrease ?? true
+            const blockReason = layerInfo?.blockReason
             return (
               <>
                 {onRotateManual && (
@@ -659,12 +670,16 @@ export function DeckVisualization({
                     style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (canInc) onLayerChangeManual(mp.id, 1)
+                      if (canInc) {
+                        onLayerChangeManual(mp.id, 1)
+                      } else {
+                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+                      }
                     }}
                   >
-                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : `Потолок: ${maxPhys} ярус(ов)`}</title>
-                    <circle cx={lcx} cy={lcy - 11} r={9} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy - 10} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">+</text>
+                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
                   </g>
                 )}
                 {onLayerChangeManual && (
@@ -672,12 +687,16 @@ export function DeckVisualization({
                     style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (currentLayers > 1) onLayerChangeManual(mp.id, -1)
+                      if (currentLayers > 1) {
+                        onLayerChangeManual(mp.id, -1)
+                      } else {
+                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+                      }
                     }}
                   >
                     <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 11} r={9} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy + 12} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">−</text>
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
                   </g>
                 )}
                 {onRemoveManual && (

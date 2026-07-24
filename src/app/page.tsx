@@ -678,6 +678,7 @@ export default function Home() {
                         maxPhys,
                         canIncrease: incCheck.ok,
                         canDecrease: currentLayers > 1,
+                        blockReason: incCheck.ok ? undefined : incCheck.reason,
                       }
                     }}
                     selectedManualIds={selectedManualIds}
