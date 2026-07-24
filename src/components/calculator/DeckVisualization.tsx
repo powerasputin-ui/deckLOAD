@@ -173,6 +173,7 @@ export function DeckVisualization({
       y: clamped.y,
       width: stampDims.w,
       length: stampDims.l,
+      layers: 1,
       rotated: stampRotated,
       color: activeStamp.color,
       weight: activeStamp.weight,

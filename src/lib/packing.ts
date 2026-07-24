@@ -75,7 +75,7 @@ export interface PackingResult {
   deckLength: number
 }
 
-export type SortStrategy = 'area-desc' | 'area-asc' | 'width-desc' | 'height-desc' | 'quantity-desc' | 'none'
+export type SortStrategy = 'area-desc' | 'area-asc' | 'width-desc' | 'length-desc' | 'quantity-desc' | 'none'
 
 type FreeRect = Rect
 
@@ -85,6 +85,19 @@ function intersects(a: Rect, b: Rect): boolean {
     b.x + b.width <= a.x ||
     b.y >= a.y + a.height ||
     b.y + b.height <= a.y
+  )
+}
+
+// Simple overlap check for placement validation (uses w/l naming).
+function rectsOverlap(
+  a: { x: number; y: number; w: number; l: number },
+  b: { x: number; y: number; w: number; l: number }
+): boolean {
+  return !(
+    a.x + a.w <= b.x ||
+    b.x + b.w <= a.x ||
+    a.y + a.l <= b.y ||
+    b.y + b.l <= a.y
   )
 }
 
@@ -306,10 +319,44 @@ export function packDeck(
     remainingByItem.set(pin.itemId, Math.max(0, r - pin.layers))
   }
 
-  // Reserve space for pinned stacks first: subtract their cells from free space
+  // Reserve space for pinned stacks first: subtract their cells from free space.
+  // Validate each pin: reject if it lies outside the usable area or overlaps
+  // an already-accepted pin (these become unplaced instead of silently counted).
   let index = 0
+  const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
-    // Place the pinned cell so subsequent packing avoids it
+    const inside =
+      pin.x >= ux - 1e-6 &&
+      pin.y >= uy - 1e-6 &&
+      pin.x + pin.width <= ux + uw + 1e-6 &&
+      pin.y + pin.length <= uy + ul + 1e-6
+    if (!inside) {
+      result.unplaced.push({
+        itemId: pin.itemId,
+        name: pin.name,
+        width: pin.width,
+        length: pin.length,
+        reason: 'Закреплённая позиция вне палубы',
+      })
+      continue
+    }
+    const overlapsAccepted = acceptedPins.some((ap) =>
+      rectsOverlap(
+        { x: pin.x, y: pin.y, w: pin.width, l: pin.length },
+        { x: ap.x, y: ap.y, w: ap.width, l: ap.length }
+      )
+    )
+    if (overlapsAccepted) {
+      result.unplaced.push({
+        itemId: pin.itemId,
+        name: pin.name,
+        width: pin.width,
+        length: pin.length,
+        reason: 'Закреплённая позиция пересекается с другим грузом',
+      })
+      continue
+    }
+    acceptedPins.push(pin)
     placeRect(
       { x: pin.x, y: pin.y, width: pin.width + gap, height: pin.length + gap },
       freeRects
@@ -368,8 +415,10 @@ export function packDeck(
         return a.item.width * a.item.length - b.item.width * b.item.length
       case 'width-desc':
         return b.item.width - a.item.width
-      case 'height-desc':
+      case 'length-desc':
         return b.item.length - a.item.length
+      case 'quantity-desc':
+        return b.item.quantity - a.item.quantity
       default:
         return 0
     }
@@ -480,7 +529,7 @@ export function packDeck(
   }
 
   result.freeArea = Math.max(0, totalArea - result.usedArea)
-  result.utilization = totalArea > 0 ? result.usedArea / totalArea : 0
+  result.utilization = totalArea > 0 ? Math.min(1, result.usedArea / totalArea) : 0
   return result
 }
 
@@ -517,6 +566,7 @@ export interface ManualPlacement {
   y: number
   width: number
   length: number
+  layers: number // how many tiers stacked on this footprint
   rotated: boolean
   color: string
   weight?: number
@@ -577,7 +627,11 @@ export function packingResultFromManual(
 ): PackingResult {
   const totalArea = deckWidth * deckLength
   const usedArea = placements.reduce((s, p) => s + p.width * p.length, 0)
-  const totalWeight = placements.reduce((s, p) => s + (p.weight ?? 0), 0)
+  const totalWeight = placements.reduce(
+    (s, p) => s + (p.weight ?? 0) * Math.max(1, p.layers),
+    0
+  )
+  const placedCount = placements.reduce((s, p) => s + Math.max(1, p.layers), 0)
 
   const placed = placements.map((p, i) => ({
     itemId: p.itemId,
@@ -587,8 +641,8 @@ export function packingResultFromManual(
     width: p.width,
     length: p.length,
     height: 0,
-    layers: 1,
-    stackedCount: 1,
+    layers: Math.max(1, p.layers),
+    stackedCount: Math.max(1, p.layers),
     rotated: p.rotated,
     color: p.color,
     weight: p.weight,
@@ -610,10 +664,10 @@ export function packingResultFromManual(
       weight: 0,
       unitWeight: p.weight ?? 0,
     }
-    b.placed += 1
+    b.placed += p.stackedCount
     b.footprints += 1
     b.area += p.width * p.length
-    b.weight += p.weight ?? 0
+    b.weight += (p.weight ?? 0) * p.stackedCount
     map.set(p.itemId, b)
   }
 
@@ -622,11 +676,11 @@ export function packingResultFromManual(
     unplaced: [],
     breakdown: [...map.values()],
     requestedCount: totalRequested,
-    placedCount: placed.length,
+    placedCount,
     totalArea,
     usedArea,
     freeArea: Math.max(0, totalArea - usedArea),
-    utilization: totalArea > 0 ? usedArea / totalArea : 0,
+    utilization: totalArea > 0 ? Math.min(1, usedArea / totalArea) : 0,
     totalWeight,
     maxStackHeight: 0,
     deckWidth,

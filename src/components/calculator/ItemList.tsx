@@ -51,10 +51,10 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
   const duplicateItem = useCalculator((s) => s.duplicateItem)
   const globalRotation = useCalculator((s) => s.globalRotation)
 
-  // count placed per item id
+  // count placed UNITS per item id (stackedCount, not footprints)
   const placedCount = new Map<string, number>()
   for (const p of result.placed) {
-    placedCount.set(p.itemId, (placedCount.get(p.itemId) ?? 0) + 1)
+    placedCount.set(p.itemId, (placedCount.get(p.itemId) ?? 0) + (p.stackedCount ?? 1))
   }
 
   return (

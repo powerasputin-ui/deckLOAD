@@ -459,7 +459,8 @@ function DeckSettings() {
               <SelectItem value="area-desc">По площади (крупные сначала)</SelectItem>
               <SelectItem value="area-asc">По площади (мелкие сначала)</SelectItem>
               <SelectItem value="width-desc">По ширине (убыв.)</SelectItem>
-              <SelectItem value="height-desc">По длине (убыв.)</SelectItem>
+              <SelectItem value="length-desc">По длине (убыв.)</SelectItem>
+              <SelectItem value="quantity-desc">По количеству (убыв.)</SelectItem>
               <SelectItem value="none">В порядке ввода</SelectItem>
             </SelectContent>
           </Select>
@@ -510,19 +511,27 @@ function Toggle({
 
 function PresetsSection() {
   const loadPreset = useCalculator((s) => s.loadPreset)
+  const currentUnit = useCalculator((s) => s.deck.unit)
+  const handleLoad = (name: 'containers' | 'pallets' | 'vehicles' | 'mixed', label: string) => {
+    if (currentUnit !== 'm') {
+      toast.info('Единицы измерения сброшены на метры')
+    }
+    loadPreset(name)
+    toast.success(`${label} загружен`)
+  }
   return (
     <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>
       <div className="grid grid-cols-2 gap-1.5">
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { loadPreset('containers'); toast.success('Контейнеры загружены') }}>
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('containers', 'Контейнеры')}>
           Контейнеры
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { loadPreset('pallets'); toast.success('Паллеты загружены') }}>
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('pallets', 'Паллеты')}>
           Паллеты
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { loadPreset('vehicles'); toast.success('Авто загружены') }}>
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('vehicles', 'Авто')}>
           Авто
         </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { loadPreset('mixed'); toast.success('Смешанный загружен') }}>
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('mixed', 'Смешанный')}>
           Смешанный
         </Button>
       </div>

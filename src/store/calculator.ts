@@ -153,7 +153,7 @@ const PRESETS: Record<
   },
 }
 
-export const useCalculator = create<CalculatorState>((set, get) => ({
+export const useCalculator = create<CalculatorState>((set) => ({
   deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
   items: [
     makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, allowRotation: true, weight: 2200 }),
@@ -195,6 +195,21 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
           length: conv(it.length),
           height: conv(it.height),
         })),
+        // Convert coordinates/dimensions of all existing placements too
+        manualPlacements: s.manualPlacements.map((m) => ({
+          ...m,
+          x: conv(m.x),
+          y: conv(m.y),
+          width: conv(m.width),
+          length: conv(m.length),
+        })),
+        pinnedPlacements: s.pinnedPlacements.map((p) => ({
+          ...p,
+          x: conv(p.x),
+          y: conv(p.y),
+          width: conv(p.width),
+          length: conv(p.length),
+        })),
       }
     }),
   addItem: (partial) =>
@@ -224,7 +239,9 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
     const items = p.items.map((partial, i) =>
       makeItem(Array(i).fill({}), partial)
     )
-    set({ deck: { ...p.deck, gap: get().deck.gap }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], activeStampId: items[0]?.id ?? null })
+    // Use the preset's deck config as-is (including its unit/gap) so values stay
+    // consistent. The caller shows a toast if the unit changes.
+    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], activeStampId: items[0]?.id ?? null })
   },
   setMode: (m) =>
     set((s) => ({

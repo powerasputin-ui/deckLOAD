@@ -26,6 +26,8 @@ import { useProjects } from '@/store/projects'
 import {
   packDeck,
   packingResultFromManual,
+  clampToDeck,
+  collidesWith,
   type ManualPlacement,
 } from '@/lib/packing'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
@@ -142,15 +144,31 @@ export default function Home() {
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
   }, [mode, activeStampId, items])
 
-  // When gap or boardOffset changes, re-apply the new spacing to all existing
-  // placements so the user sees the gaps update. In manual mode we re-pack and
-  // store the result back as manual placements (preserving the manual workflow).
-  // In auto mode we clear pinned so the packer redistributes with the new gap.
-  const prevSpacing = useRef({ gap: deck.gap, boardOffset: deck.boardOffset })
+  // Re-apply layout when deck geometry or spacing changes. Covers gap, boardOffset,
+  // width, length and clearance — any of these can invalidate existing placements.
+  const prevDeck = useRef({
+    gap: deck.gap,
+    boardOffset: deck.boardOffset,
+    width: deck.width,
+    length: deck.length,
+    clearance: deck.clearance,
+  })
   useEffect(() => {
-    const prev = prevSpacing.current
-    if (prev.gap === deck.gap && prev.boardOffset === deck.boardOffset) return
-    prevSpacing.current = { gap: deck.gap, boardOffset: deck.boardOffset }
+    const prev = prevDeck.current
+    const same =
+      prev.gap === deck.gap &&
+      prev.boardOffset === deck.boardOffset &&
+      prev.width === deck.width &&
+      prev.length === deck.length &&
+      prev.clearance === deck.clearance
+    if (same) return
+    prevDeck.current = {
+      gap: deck.gap,
+      boardOffset: deck.boardOffset,
+      width: deck.width,
+      length: deck.length,
+      clearance: deck.clearance,
+    }
 
     const s = useCalculator.getState()
     const hasManual = s.manualPlacements.length > 0
@@ -176,6 +194,7 @@ export default function Home() {
         y: p.y,
         width: p.width,
         length: p.length,
+        layers: Math.max(1, p.stackedCount),
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
@@ -183,6 +202,9 @@ export default function Home() {
       useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
     } else {
       useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
+    }
+    if (packed.unplaced.length > 0) {
+      toast.warning(`Параметры изменены: ${packed.unplaced.length} груз(ов) не вместилось`)
     }
   }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
 
@@ -217,12 +239,51 @@ export default function Home() {
     toast.info('Восстановлен демонстрационный пример')
   }
 
+  // Rotate a placement around its center, then validate: clamp inside the deck
+  // (with boardOffset) and reject if it collides with other pinned/manual items.
+  const tryRotatePlacement = (
+    current: { x: number; y: number; width: number; length: number },
+    others: { x: number; y: number; width: number; length: number }[]
+  ): { x: number; y: number; width: number; length: number } | null => {
+    // Keep the center fixed so the rotation visually stays in place
+    const cx = current.x + current.width / 2
+    const cy = current.y + current.length / 2
+    const newW = current.length
+    const newL = current.width
+    let nx = cx - newW / 2
+    let ny = cy - newL / 2
+    // Clamp inside the usable area (boardOffset)
+    const off = deck.boardOffset
+    nx = Math.max(off, Math.min(deck.width - off - newW, nx))
+    ny = Math.max(off, Math.min(deck.length - off - newL, ny))
+    const clamped = clampToDeck(
+      { x: nx, y: ny, width: newW, length: newL },
+      deck.width,
+      deck.length,
+      off
+    )
+    if (collidesWith({ ...clamped, width: newW, length: newL }, others, deck.gap)) {
+      return null
+    }
+    return { x: clamped.x, y: clamped.y, width: newW, length: newL }
+  }
+
   const handleRotatePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
+    const others = pinnedPlacements
+      .filter((p) => p.id !== id)
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+    const rotated = tryRotatePlacement(pin, others)
+    if (!rotated) {
+      toast.warning('Невозможно повернуть: нет места')
+      return
+    }
     updatePinned(id, {
-      width: pin.length,
-      length: pin.width,
+      x: rotated.x,
+      y: rotated.y,
+      width: rotated.width,
+      length: rotated.length,
       rotated: !pin.rotated,
     })
   }
@@ -230,9 +291,19 @@ export default function Home() {
   const handleRotateManual = (id: string) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
+    const others = manualPlacements
+      .filter((m) => m.id !== id)
+      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+    const rotated = tryRotatePlacement(mp, others)
+    if (!rotated) {
+      toast.warning('Невозможно повернуть: нет места')
+      return
+    }
     updateManualPlacement(id, {
-      width: mp.length,
-      length: mp.width,
+      x: rotated.x,
+      y: rotated.y,
+      width: rotated.width,
+      length: rotated.length,
       rotated: !mp.rotated,
     })
   }
@@ -243,7 +314,8 @@ export default function Home() {
   const handleModeChange = (newMode: 'auto' | 'manual') => {
     if (newMode === mode) return
     if (newMode === 'manual') {
-      // Convert current auto-mode result (pinned + auto-packed) into manual placements
+      // Convert current auto-mode result (pinned + auto-packed) into manual placements,
+      // preserving the number of stacked tiers per footprint.
       const newManual: ManualPlacement[] = result.placed.map((p) => ({
         id: crypto.randomUUID(),
         itemId: p.itemId,
@@ -252,6 +324,7 @@ export default function Home() {
         y: p.y,
         width: p.width,
         length: p.length,
+        layers: Math.max(1, p.stackedCount),
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
@@ -265,7 +338,7 @@ export default function Home() {
       })
       toast.info('Ручной режим — размещения сохранены')
     } else {
-      // Convert manual placements into pinned placements; auto-packer will fill the rest
+      // Convert manual placements into pinned placements, preserving layers.
       const newPinned = manualPlacements.map((m) => ({
         id: crypto.randomUUID(),
         itemId: m.itemId,
@@ -274,7 +347,7 @@ export default function Home() {
         y: m.y,
         width: m.width,
         length: m.length,
-        layers: 1,
+        layers: Math.max(1, m.layers),
         rotated: m.rotated,
         color: m.color,
         weight: m.weight,
@@ -313,6 +386,7 @@ export default function Home() {
         y: p.y,
         width: p.width,
         length: p.length,
+        layers: Math.max(1, p.stackedCount),
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
@@ -432,7 +506,11 @@ export default function Home() {
                     stampRotated={stampRotated}
                     onPlace={(p) => {
                       const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-                      if (manualPlacements.length >= totalRequested) {
+                      const placedUnits = manualPlacements.reduce(
+                        (s, m) => s + Math.max(1, m.layers),
+                        0
+                      )
+                      if (placedUnits >= totalRequested) {
                         toast.warning('Все грузы уже размещены')
                         return
                       }
