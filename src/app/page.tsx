@@ -147,53 +147,46 @@ export default function Home() {
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
   }, [mode, activeStampId, items])
 
-  // When gap or boardOffset changes, re-apply the new spacing to existing
-  // placements so they don't overlap or violate the new margin.
-  const prevSpacing = useRef({ gap: deck.gap, boardOffset: deck.boardOffset })
+  // When boardOffset changes, only clamp existing placements into the new
+  // usable area — we do NOT re-pack, so the user's manual arrangement is
+  // preserved. The gap value affects future collision checks and auto-packing
+  // but does not move already-placed items.
+  const prevBoardOffset = useRef(deck.boardOffset)
   useEffect(() => {
-    const prev = prevSpacing.current
-    if (prev.gap === deck.gap && prev.boardOffset === deck.boardOffset) return
-    prevSpacing.current = { gap: deck.gap, boardOffset: deck.boardOffset }
+    if (prevBoardOffset.current === deck.boardOffset) return
+    prevBoardOffset.current = deck.boardOffset
 
-    const hasManual = useCalculator.getState().manualPlacements.length > 0
-    const hasPinned = useCalculator.getState().pinnedPlacements.length > 0
-    if (!hasManual && !hasPinned) return // nothing to repack
-
-    // Repack using the new spacing. In auto mode clear pins so the packer
-    // redistributes freely; in manual mode store the packed result back as
-    // manual placements (preserving the user's manual workflow).
     const s = useCalculator.getState()
-    const effectiveItems = s.globalRotation
-      ? s.items
-      : s.items.map((it) => ({ ...it, allowRotation: false }))
-    const packed = packDeck(deck.width, deck.length, effectiveItems, {
-      sortStrategy: s.sortStrategy,
-      gap: deck.gap,
-      boardOffset: deck.boardOffset,
-      clearance: deck.clearance,
+    const off = deck.boardOffset
+    const clampXY = (x: number, y: number, w: number, l: number) => ({
+      x: Math.max(off, Math.min(deck.width - off - w, x)),
+      y: Math.max(off, Math.min(deck.length - off - l, y)),
     })
 
-    if (s.mode === 'manual') {
-      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
-        id: crypto.randomUUID(),
-        itemId: p.itemId,
-        name: p.name,
-        x: p.x,
-        y: p.y,
-        width: p.width,
-        length: p.length,
-        rotated: p.rotated,
-        color: p.color,
-        weight: p.weight,
-      }))
-      useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
-    } else {
-      // In auto mode, just clear pins so the packer (which already uses the new
-      // gap via useMemo) redistributes everything.
-      useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
+    let changed = false
+    if (s.manualPlacements.length > 0) {
+      const next = s.manualPlacements.map((m) => {
+        const c = clampXY(m.x, m.y, m.width, m.length)
+        if (c.x !== m.x || c.y !== m.y) {
+          changed = true
+          return { ...m, x: c.x, y: c.y }
+        }
+        return m
+      })
+      if (changed) useCalculator.setState({ manualPlacements: next })
     }
-    toast.info('Отступы применены к расстановке')
-  }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
+    if (s.pinnedPlacements.length > 0) {
+      const next = s.pinnedPlacements.map((p) => {
+        const c = clampXY(p.x, p.y, p.width, p.length)
+        if (c.x !== p.x || c.y !== p.y) {
+          changed = true
+          return { ...p, x: c.x, y: c.y }
+        }
+        return p
+      })
+      if (changed) useCalculator.setState({ pinnedPlacements: next })
+    }
+  }, [deck.boardOffset, deck.width, deck.length])
 
   const handleNewCalculation = () => {
     useCalculator.setState({
