@@ -75,14 +75,70 @@ function freshProject(name: string, withDemo = false): Project {
   }
 }
 
+// Normalise a single project loaded from storage: backfill missing fields,
+// coerce layers to a valid number, etc. Prevents NaN propagation in packDeck.
+function normalizeProject(p: Partial<Project>): Project {
+  const now = Date.now()
+  return {
+    id: p.id ?? uuid(),
+    name: p.name ?? 'Без названия',
+    createdAt: p.createdAt ?? now,
+    updatedAt: p.updatedAt ?? now,
+    deck: {
+      width: p.deck?.width ?? 20,
+      length: p.deck?.length ?? 8,
+      unit: p.deck?.unit ?? 'm',
+      gap: p.deck?.gap ?? 0.1,
+      boardOffset: p.deck?.boardOffset ?? 0.2,
+      clearance: p.deck?.clearance ?? 0,
+    },
+    items: Array.isArray(p.items)
+      ? p.items.map((it) => ({
+          id: it.id ?? uuid(),
+          name: it.name ?? 'Груз',
+          width: it.width ?? 1,
+          length: it.length ?? 1,
+          height: it.height ?? 0,
+          quantity: it.quantity ?? 1,
+          color: it.color ?? '#0ea5e9',
+          allowRotation: it.allowRotation ?? true,
+          weight: it.weight,
+        }))
+      : [],
+    manualPlacements: Array.isArray(p.manualPlacements)
+      ? p.manualPlacements.map((m) => ({
+          ...m,
+          id: m.id ?? uuid(),
+          layers: Math.max(1, m.layers ?? 1),
+        }))
+      : [],
+    pinnedPlacements: Array.isArray(p.pinnedPlacements)
+      ? p.pinnedPlacements.map((pp) => ({
+          ...pp,
+          id: pp.id ?? uuid(),
+          layers: Math.max(1, pp.layers ?? 1),
+        }))
+      : [],
+    mode: p.mode ?? 'auto',
+    sortStrategy: p.sortStrategy ?? 'area-desc',
+    globalRotation: p.globalRotation ?? true,
+    showFreeSpace: p.showFreeSpace ?? true,
+    showGrid: p.showGrid ?? true,
+    showLabels: p.showLabels ?? true,
+  }
+}
+
 function loadFromStorage(): { projects: Project[]; activeId: string | null } {
   if (typeof window === 'undefined') return { projects: [], activeId: null }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return { projects: [], activeId: null }
     const parsed = JSON.parse(raw)
+    const projects = Array.isArray(parsed.projects)
+      ? parsed.projects.map(normalizeProject)
+      : []
     return {
-      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      projects,
       activeId: parsed.activeId ?? null,
     }
   } catch {

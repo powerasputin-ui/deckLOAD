@@ -76,6 +76,7 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [variants, setVariants] = useState<PackVariant[]>([])
   const loadedProjectId = useRef<string | null>(null)
+  const skipNextDeckEffect = useRef(false)
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -88,12 +89,16 @@ export default function Home() {
     if (loadedProjectId.current === activeId) return
     const proj = projects.find((p) => p.id === activeId)
     if (!proj) return
+    // Skip the deck-change effect on the next render so it doesn't destroy
+    // the loaded manual/pinned placements by re-packing.
+    skipNextDeckEffect.current = true
     useCalculator.setState({
       deck: { ...proj.deck },
       items: proj.items.map((it) => ({ ...it })),
       manualPlacements: proj.manualPlacements.map((m) => ({ ...m })),
       pinnedPlacements: (proj.pinnedPlacements ?? []).map((p) => ({ ...p })),
       selectedPinIds: [],
+      selectedManualIds: [],
       mode: proj.mode,
       sortStrategy: proj.sortStrategy,
       globalRotation: proj.globalRotation,
@@ -130,7 +135,7 @@ export default function Home() {
   const result = useMemo(() => {
     if (mode === 'manual') {
       const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-      return packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested)
+      return packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance)
     }
     const effectiveItems = globalRotation
       ? items
@@ -153,6 +158,8 @@ export default function Home() {
 
   // Re-apply layout when deck geometry or spacing changes. Covers gap, boardOffset,
   // width, length and clearance — any of these can invalidate existing placements.
+  // IMPORTANT: skip the first run after a project load, otherwise loading a project
+  // with saved manual placements would destroy them (the effect re-packs and overwrites).
   const prevDeck = useRef({
     gap: deck.gap,
     boardOffset: deck.boardOffset,
@@ -161,6 +168,17 @@ export default function Home() {
     clearance: deck.clearance,
   })
   useEffect(() => {
+    if (skipNextDeckEffect.current) {
+      skipNextDeckEffect.current = false
+      prevDeck.current = {
+        gap: deck.gap,
+        boardOffset: deck.boardOffset,
+        width: deck.width,
+        length: deck.length,
+        clearance: deck.clearance,
+      }
+      return
+    }
     const prev = prevDeck.current
     const same =
       prev.gap === deck.gap &&

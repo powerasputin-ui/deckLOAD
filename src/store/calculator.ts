@@ -224,14 +224,29 @@ export const useCalculator = create<CalculatorState>((set) => ({
       items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
     })),
   removeItem: (id) =>
-    set((s) => ({ items: s.items.filter((it) => it.id !== id) })),
+    set((s) => ({
+      items: s.items.filter((it) => it.id !== id),
+      // Also remove orphaned placements referencing the deleted item
+      manualPlacements: s.manualPlacements.filter((m) => m.itemId !== id),
+      pinnedPlacements: s.pinnedPlacements.filter((p) => p.itemId !== id),
+      selectedPinIds: s.selectedPinIds.filter((sid) =>
+        s.pinnedPlacements.some((p) => p.id === sid && p.itemId !== id)
+      ),
+    })),
   duplicateItem: (id) =>
     set((s) => {
       const it = s.items.find((x) => x.id === id)
       if (!it) return s
       return { items: [...s.items, { ...it, id: uuid(), name: `${it.name} (копия)` }] }
     }),
-  clearItems: () => set({ items: [] }),
+  clearItems: () =>
+    set({
+      items: [],
+      manualPlacements: [],
+      pinnedPlacements: [],
+      selectedPinIds: [],
+      selectedManualIds: [],
+    }),
   setSortStrategy: (st) => set({ sortStrategy: st }),
   toggleGlobalRotation: () =>
     set((s) => ({ globalRotation: !s.globalRotation })),

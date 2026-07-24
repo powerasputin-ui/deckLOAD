@@ -1,0 +1,795 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useMemo, useRef, useState } from 'react'
+     4→import {
+     5→  Ship,
+     6→  Wand2,
+     7→  MousePointerClick,
+     8→  Anchor,
+     9→  Github,
+    10→} from 'lucide-react'
+    11→import { Button } from '@/components/ui/button'
+    12→import { Badge } from '@/components/ui/badge'
+    13→import {
+    14→  Card,
+    15→  CardContent,
+    16→  CardHeader,
+    17→  CardTitle,
+    18→  CardDescription,
+    19→} from '@/components/ui/card'
+    20→import {
+    21→  ToggleGroup,
+    22→  ToggleGroupItem,
+    23→} from '@/components/ui/toggle-group'
+    24→import { useCalculator, UNIT_LABEL } from '@/store/calculator'
+    25→import { useProjects } from '@/store/projects'
+    26→import {
+    27→  packDeck,
+    28→  packDeckVariants,
+    29→  packingResultFromManual,
+    30→  clampToDeck,
+    31→  collidesWith,
+    32→  maxLayersFor,
+    33→  type ManualPlacement,
+    34→  type PackVariant,
+    35→} from '@/lib/packing'
+    36→import { DeckVisualization } from '@/components/calculator/DeckVisualization'
+    37→import { ItemList } from '@/components/calculator/ItemList'
+    38→import { StatsPanel } from '@/components/calculator/StatsPanel'
+    39→import { PlacementPanel } from '@/components/calculator/PlacementPanel'
+    40→import { Sidebar } from '@/components/calculator/Sidebar'
+    41→import { toast } from 'sonner'
+    42→
+    43→export default function Home() {
+    44→  const deck = useCalculator((s) => s.deck)
+    45→  const items = useCalculator((s) => s.items)
+    46→  const sortStrategy = useCalculator((s) => s.sortStrategy)
+    47→  const globalRotation = useCalculator((s) => s.globalRotation)
+    48→  const showFreeSpace = useCalculator((s) => s.showFreeSpace)
+    49→  const showGrid = useCalculator((s) => s.showGrid)
+    50→  const showLabels = useCalculator((s) => s.showLabels)
+    51→  const mode = useCalculator((s) => s.mode)
+    52→  const manualPlacements = useCalculator((s) => s.manualPlacements)
+    53→  const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
+    54→  const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
+    55→  const activeStampId = useCalculator((s) => s.activeStampId)
+    56→  const stampRotated = useCalculator((s) => s.stampRotated)
+    57→  const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
+    58→  const selectedPinIds = useCalculator((s) => s.selectedPinIds)
+    59→  const selectedManualIds = useCalculator((s) => s.selectedManualIds)
+    60→  const pinFromPlaced = useCalculator((s) => s.pinFromPlaced)
+    61→  const updatePinned = useCalculator((s) => s.updatePinned)
+    62→  const removePinned = useCalculator((s) => s.removePinned)
+    63→  const togglePinSelection = useCalculator((s) => s.togglePinSelection)
+    64→  const clearSelection = useCalculator((s) => s.clearSelection)
+    65→  const toggleManualSelection = useCalculator((s) => s.toggleManualSelection)
+    66→  const clearManualSelection = useCalculator((s) => s.clearManualSelection)
+    67→
+    68→  const projects = useProjects((s) => s.projects)
+    69→  const activeId = useProjects((s) => s.activeId)
+    70→  const hydrated = useProjects((s) => s.hydrated)
+    71→  const hydrate = useProjects((s) => s.hydrate)
+    72→  const activeProject = projects.find((p) => p.id === activeId)
+    73→  const saveSnapshot = useProjects((s) => s.saveSnapshot)
+    74→
+    75→  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
+    76→  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+    77→  const [variants, setVariants] = useState<PackVariant[]>([])
+    78→  const loadedProjectId = useRef<string | null>(null)
+    79→
+    80→  // Hydrate projects from localStorage on mount (synchronous)
+    81→  useEffect(() => {
+    82→    hydrate()
+    83→  }, [hydrate])
+    84→
+    85→  // Load project into calculator store when activeId changes (after hydration)
+    86→  useEffect(() => {
+    87→    if (!hydrated || !activeId) return
+    88→    if (loadedProjectId.current === activeId) return
+    89→    const proj = projects.find((p) => p.id === activeId)
+    90→    if (!proj) return
+    91→    useCalculator.setState({
+    92→      deck: { ...proj.deck },
+    93→      items: proj.items.map((it) => ({ ...it })),
+    94→      manualPlacements: proj.manualPlacements.map((m) => ({ ...m })),
+    95→      pinnedPlacements: (proj.pinnedPlacements ?? []).map((p) => ({ ...p })),
+    96→      selectedPinIds: [],
+    97→      mode: proj.mode,
+    98→      sortStrategy: proj.sortStrategy,
+    99→      globalRotation: proj.globalRotation,
+   100→      showFreeSpace: proj.showFreeSpace,
+   101→      showGrid: proj.showGrid,
+   102→      showLabels: proj.showLabels,
+   103→      activeStampId: proj.mode === 'manual' ? proj.items[0]?.id ?? null : null,
+   104→      stampRotated: false,
+   105→    })
+   106→    loadedProjectId.current = activeId
+   107→  }, [hydrated, activeId, projects])
+   108→
+   109→  // Auto-save snapshot (debounced)
+   110→  useEffect(() => {
+   111→    if (!activeId || loadedProjectId.current !== activeId) return
+   112→    const t = setTimeout(() => {
+   113→      saveSnapshot({
+   114→        id: activeId,
+   115→        deck,
+   116→        items: items.map((it) => ({ ...it })),
+   117→        manualPlacements: manualPlacements.map((m) => ({ ...m })),
+   118→        pinnedPlacements: pinnedPlacements.map((p) => ({ ...p })),
+   119→        mode,
+   120→        sortStrategy,
+   121→        globalRotation,
+   122→        showFreeSpace,
+   123→        showGrid,
+   124→        showLabels,
+   125→      })
+   126→    }, 400)
+   127→    return () => clearTimeout(t)
+   128→  }, [activeId, deck, items, manualPlacements, pinnedPlacements, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
+   129→
+   130→  const result = useMemo(() => {
+   131→    if (mode === 'manual') {
+   132→      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+   133→      return packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested)
+   134→    }
+   135→    const effectiveItems = globalRotation
+   136→      ? items
+   137→      : items.map((it) => ({ ...it, allowRotation: false }))
+   138→    return packDeck(deck.width, deck.length, effectiveItems, {
+   139→      sortStrategy,
+   140→      gap: deck.gap,
+   141→      boardOffset: deck.boardOffset,
+   142→      clearance: deck.clearance,
+   143→      pinned: pinnedPlacements,
+   144→    })
+   145→  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacements])
+   146→
+   147→  const activeStamp = useMemo(() => {
+   148→    if (mode !== 'manual' || !activeStampId) return null
+   149→    const it = items.find((x) => x.id === activeStampId)
+   150→    if (!it) return null
+   151→    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
+   152→  }, [mode, activeStampId, items])
+   153→
+   154→  // Re-apply layout when deck geometry or spacing changes. Covers gap, boardOffset,
+   155→  // width, length and clearance — any of these can invalidate existing placements.
+   156→  const prevDeck = useRef({
+   157→    gap: deck.gap,
+   158→    boardOffset: deck.boardOffset,
+   159→    width: deck.width,
+   160→    length: deck.length,
+   161→    clearance: deck.clearance,
+   162→  })
+   163→  useEffect(() => {
+   164→    const prev = prevDeck.current
+   165→    const same =
+   166→      prev.gap === deck.gap &&
+   167→      prev.boardOffset === deck.boardOffset &&
+   168→      prev.width === deck.width &&
+   169→      prev.length === deck.length &&
+   170→      prev.clearance === deck.clearance
+   171→    if (same) return
+   172→    prevDeck.current = {
+   173→      gap: deck.gap,
+   174→      boardOffset: deck.boardOffset,
+   175→      width: deck.width,
+   176→      length: deck.length,
+   177→      clearance: deck.clearance,
+   178→    }
+   179→
+   180→    const s = useCalculator.getState()
+   181→    const hasManual = s.manualPlacements.length > 0
+   182→    const hasPinned = s.pinnedPlacements.length > 0
+   183→    if (!hasManual && !hasPinned) return
+   184→
+   185→    const effectiveItems = s.globalRotation
+   186→      ? s.items
+   187→      : s.items.map((it) => ({ ...it, allowRotation: false }))
+   188→    const packed = packDeck(deck.width, deck.length, effectiveItems, {
+   189→      sortStrategy: s.sortStrategy,
+   190→      gap: deck.gap,
+   191→      boardOffset: deck.boardOffset,
+   192→      clearance: deck.clearance,
+   193→    })
+   194→
+   195→    if (s.mode === 'manual') {
+   196→      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
+   197→        id: crypto.randomUUID(),
+   198→        itemId: p.itemId,
+   199→        name: p.name,
+   200→        x: p.x,
+   201→        y: p.y,
+   202→        width: p.width,
+   203→        length: p.length,
+   204→        layers: Math.max(1, p.stackedCount),
+   205→        rotated: p.rotated,
+   206→        color: p.color,
+   207→        weight: p.weight,
+   208→      }))
+   209→      useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
+   210→    } else {
+   211→      useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
+   212→    }
+   213→    // Clear stale variants when deck params change (deferred to avoid setState-in-effect)
+   214→    queueMicrotask(() => setVariants([]))
+   215→    if (packed.unplaced.length > 0) {
+   216→      toast.warning(`Параметры изменены: ${packed.unplaced.length} груз(ов) не вместилось`)
+   217→    }
+   218→  }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
+   219→
+   220→  const handleNewCalculation = () => {
+   221→    useCalculator.setState({
+   222→      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+   223→      items: [],
+   224→      manualPlacements: [],
+   225→      pinnedPlacements: [],
+   226→      selectedPinIds: [],
+   227→      mode: 'auto',
+   228→      activeStampId: null,
+   229→      stampRotated: false,
+   230→    })
+   231→    toast.success('Текущий расчёт очищен')
+   232→  }
+   233→
+   234→  const handleResetCurrent = () => {
+   235→    useCalculator.setState({
+   236→      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5.2 },
+   237→      items: [
+   238→        { id: crypto.randomUUID(), name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 },
+   239→        { id: crypto.randomUUID(), name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 },
+   240→        { id: crypto.randomUUID(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
+   241→      ],
+   242→      manualPlacements: [],
+   243→      pinnedPlacements: [],
+   244→      selectedPinIds: [],
+   245→      mode: 'auto',
+   246→      activeStampId: null,
+   247→    })
+   248→    toast.info('Восстановлен демонстрационный пример')
+   249→  }
+   250→
+   251→  // Rotate a placement around its center, then validate: clamp inside the deck
+   252→  // (with boardOffset) and reject if it collides with other pinned/manual items.
+   253→  const tryRotatePlacement = (
+   254→    current: { x: number; y: number; width: number; length: number },
+   255→    others: { x: number; y: number; width: number; length: number }[]
+   256→  ): { x: number; y: number; width: number; length: number } | null => {
+   257→    // Keep the center fixed so the rotation visually stays in place
+   258→    const cx = current.x + current.width / 2
+   259→    const cy = current.y + current.length / 2
+   260→    const newW = current.length
+   261→    const newL = current.width
+   262→    let nx = cx - newW / 2
+   263→    let ny = cy - newL / 2
+   264→    // Clamp inside the usable area (boardOffset)
+   265→    const off = deck.boardOffset
+   266→    nx = Math.max(off, Math.min(deck.width - off - newW, nx))
+   267→    ny = Math.max(off, Math.min(deck.length - off - newL, ny))
+   268→    const clamped = clampToDeck(
+   269→      { x: nx, y: ny, width: newW, length: newL },
+   270→      deck.width,
+   271→      deck.length,
+   272→      off
+   273→    )
+   274→    if (collidesWith({ ...clamped, width: newW, length: newL }, others, deck.gap)) {
+   275→      return null
+   276→    }
+   277→    return { x: clamped.x, y: clamped.y, width: newW, length: newL }
+   278→  }
+   279→
+   280→  const handleRotatePinned = (id: string) => {
+   281→    const pin = pinnedPlacements.find((p) => p.id === id)
+   282→    if (!pin) return
+   283→    const others = pinnedPlacements
+   284→      .filter((p) => p.id !== id)
+   285→      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+   286→    const rotated = tryRotatePlacement(pin, others)
+   287→    if (!rotated) {
+   288→      toast.warning('Невозможно повернуть: нет места')
+   289→      return
+   290→    }
+   291→    updatePinned(id, {
+   292→      x: rotated.x,
+   293→      y: rotated.y,
+   294→      width: rotated.width,
+   295→      length: rotated.length,
+   296→      rotated: !pin.rotated,
+   297→    })
+   298→  }
+   299→
+   300→  const handleRotateManual = (id: string) => {
+   301→    const mp = manualPlacements.find((m) => m.id === id)
+   302→    if (!mp) return
+   303→    const others = manualPlacements
+   304→      .filter((m) => m.id !== id)
+   305→      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+   306→    const rotated = tryRotatePlacement(mp, others)
+   307→    if (!rotated) {
+   308→      toast.warning('Невозможно повернуть: нет места')
+   309→      return
+   310→    }
+   311→    updateManualPlacement(id, {
+   312→      x: rotated.x,
+   313→      y: rotated.y,
+   314→      width: rotated.width,
+   315→      length: rotated.length,
+   316→      rotated: !mp.rotated,
+   317→    })
+   318→  }
+   319→
+   320→  // Check whether a layer change is allowed for a placement.
+   321→  // - maxPhys: physical ceiling from clearance / item.height
+   322→  // - totalPlacedForItem: current sum of layers across all placements of this item
+   323→  // - item.quantity: total units requested
+   324→  // Returns { ok: boolean, reason?: string }
+   325→  const checkLayerChange = (
+   326→    itemId: string,
+   327→    currentLayers: number,
+   328→    delta: number,
+   329→    excludeId?: string
+   330→  ): { ok: boolean; reason?: string; maxPhys: number } => {
+   331→    const item = items.find((it) => it.id === itemId)
+   332→    if (!item) return { ok: false, reason: 'Груз не найден', maxPhys: 1 }
+   333→    const maxPhys = maxLayersFor(item, deck.clearance)
+   334→    const newLayers = currentLayers + delta
+   335→    if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
+   336→    if (newLayers > maxPhys) {
+   337→      return {
+   338→        ok: false,
+   339→        reason: `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`,
+   340→        maxPhys,
+   341→      }
+   342→    }
+   343→    // Sum of layers across all placements of this item (excluding the one being changed)
+   344→    const sumPlaced =
+   345→      pinnedPlacements
+   346→        .filter((p) => p.itemId === itemId && p.id !== excludeId)
+   347→        .reduce((s, p) => s + p.layers, 0) +
+   348→      manualPlacements
+   349→        .filter((m) => m.itemId === itemId && m.id !== excludeId)
+   350→        .reduce((s, m) => s + Math.max(1, m.layers), 0)
+   351→    if (sumPlaced + newLayers > item.quantity) {
+   352→      return {
+   353→        ok: false,
+   354→        reason: `Все ${item.quantity} ед. этого груза уже размещены — увеличьте количество в списке грузов`,
+   355→        maxPhys,
+   356→      }
+   357→    }
+   358→    return { ok: true, maxPhys }
+   359→  }
+   360→
+   361→  const handleLayerChangePinned = (id: string, delta: number) => {
+   362→    const pin = pinnedPlacements.find((p) => p.id === id)
+   363→    if (!pin) return
+   364→    const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
+   365→    if (!check.ok) {
+   366→      toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+   367→      return
+   368→    }
+   369→    updatePinned(id, { layers: pin.layers + delta })
+   370→  }
+   371→
+   372→  // Remove a pinned placement AND decrease the item's quantity by the number of
+   373→  // layers that were in this pin — otherwise the auto-packer immediately
+   374→  // re-places the freed units, making ✕ look like it "doesn't work".
+   375→  const handleRemovePinned = (id: string) => {
+   376→    const pin = pinnedPlacements.find((p) => p.id === id)
+   377→    if (!pin) return
+   378→    const layersToRemove = pin.layers
+   379→    removePinned(id)
+   380→    const item = items.find((it) => it.id === pin.itemId)
+   381→    if (item) {
+   382→      const newQty = Math.max(0, item.quantity - layersToRemove)
+   383→      useCalculator.getState().updateItem(item.id, { quantity: newQty })
+   384→      toast.info(`Удалено: ${pin.name} (${layersToRemove} ед.)`)
+   385→    }
+   386→  }
+   387→
+   388→  const handleLayerChangeManual = (id: string, delta: number) => {
+   389→    const mp = manualPlacements.find((m) => m.id === id)
+   390→    if (!mp) return
+   391→    const current = Math.max(1, mp.layers)
+   392→    const check = checkLayerChange(mp.itemId, current, delta, id)
+   393→    if (!check.ok) {
+   394→      toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+   395→      return
+   396→    }
+   397→    updateManualPlacement(id, { layers: current + delta })
+   398→  }
+   399→
+   400→  // Group layer change for multiple selected pins
+   401→  const handleGroupLayerChange = (delta: number) => {
+   402→    const selected = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
+   403→    let applied = 0
+   404→    let blocked = 0
+   405→    for (const pin of selected) {
+   406→      const check = checkLayerChange(pin.itemId, pin.layers, delta, pin.id)
+   407→      if (check.ok) {
+   408→        updatePinned(pin.id, { layers: pin.layers + delta })
+   409→        applied++
+   410→      } else {
+   411→        blocked++
+   412→      }
+   413→    }
+   414→    if (applied > 0 && blocked === 0) {
+   415→      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
+   416→    } else if (blocked > 0 && applied === 0) {
+   417→      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
+   418→    } else if (blocked > 0) {
+   419→      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
+   420→    }
+   421→  }
+   422→
+   423→  // Group layer change for multiple selected manual placements
+   424→  const handleGroupLayerChangeManual = (delta: number) => {
+   425→    const selected = manualPlacements.filter((m) => selectedManualIds.includes(m.id))
+   426→    let applied = 0
+   427→    let blocked = 0
+   428→    for (const mp of selected) {
+   429→      const current = Math.max(1, mp.layers)
+   430→      const check = checkLayerChange(mp.itemId, current, delta, mp.id)
+   431→      if (check.ok) {
+   432→        updateManualPlacement(mp.id, { layers: current + delta })
+   433→        applied++
+   434→      } else {
+   435→        blocked++
+   436→      }
+   437→    }
+   438→    if (applied > 0 && blocked === 0) {
+   439→      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
+   440→    } else if (blocked > 0 && applied === 0) {
+   441→      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
+   442→    } else if (blocked > 0) {
+   443→      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
+   444→    }
+   445→  }
+   446→
+   447→  // Switch mode while preserving placements:
+   448→  //  - auto -> manual: all placed items (pinned + auto-packed) become manual placements
+   449→  //  - manual -> auto: all manual placements become pinned, auto-packer keeps their positions
+   450→  const handleModeChange = (newMode: 'auto' | 'manual') => {
+   451→    if (newMode === mode) return
+   452→    if (newMode === 'manual') {
+   453→      // Convert current auto-mode result (pinned + auto-packed) into manual placements,
+   454→      // preserving the number of stacked tiers per footprint.
+   455→      const newManual: ManualPlacement[] = result.placed.map((p) => ({
+   456→        id: crypto.randomUUID(),
+   457→        itemId: p.itemId,
+   458→        name: p.name,
+   459→        x: p.x,
+   460→        y: p.y,
+   461→        width: p.width,
+   462→        length: p.length,
+   463→        layers: Math.max(1, p.stackedCount),
+   464→        rotated: p.rotated,
+   465→        color: p.color,
+   466→        weight: p.weight,
+   467→      }))
+   468→      useCalculator.setState({
+   469→        mode: 'manual',
+   470→        manualPlacements: newManual,
+   471→        pinnedPlacements: [],
+   472→        selectedPinIds: [],
+   473→        activeStampId: items[0]?.id ?? null,
+   474→      })
+   475→      toast.info('Ручной режим — размещения сохранены')
+   476→    } else {
+   477→      // Convert manual placements into pinned placements, preserving layers.
+   478→      const newPinned = manualPlacements.map((m) => ({
+   479→        id: crypto.randomUUID(),
+   480→        itemId: m.itemId,
+   481→        name: m.name,
+   482→        x: m.x,
+   483→        y: m.y,
+   484→        width: m.width,
+   485→        length: m.length,
+   486→        layers: Math.max(1, m.layers),
+   487→        rotated: m.rotated,
+   488→        color: m.color,
+   489→        weight: m.weight,
+   490→      }))
+   491→      useCalculator.setState({
+   492→        mode: 'auto',
+   493→        pinnedPlacements: newPinned,
+   494→        manualPlacements: [],
+   495→        selectedPinIds: [],
+   496→        activeStampId: null,
+   497→      })
+   498→      toast.info('Авто-режим — размещения сохранены как закреплённые')
+   499→    }
+   500→  }
+   501→
+   502→  // Generate several packing variants so the user can choose the best one.
+   503→  // Each click produces a fresh set (new seed) — repeated clicks give different options.
+   504→  const handleAutoRedistribute = () => {
+   505→    const effectiveItems = globalRotation
+   506→      ? items
+   507→      : items.map((it) => ({ ...it, allowRotation: false }))
+   508→    const newVariants = packDeckVariants(
+   509→      deck.width,
+   510→      deck.length,
+   511→      effectiveItems,
+   512→      {
+   513→        sortStrategy,
+   514→        gap: deck.gap,
+   515→        boardOffset: deck.boardOffset,
+   516→        clearance: deck.clearance,
+   517→      },
+   518→      3
+   519→    )
+   520→    setVariants(newVariants)
+   521→    // Apply the best variant immediately
+   522→    if (newVariants.length > 0) {
+   523→      applyVariant(newVariants[0])
+   524→    }
+   525→    toast.success(`Сгенерировано вариантов: ${newVariants.length}`)
+   526→  }
+   527→
+   528→  // Apply a chosen variant: in manual mode store as manual placements,
+   529→  // in auto mode clear pins so the packer result shows through.
+   530→  const applyVariant = (variant: PackVariant) => {
+   531→    const s = useCalculator.getState()
+   532→    if (s.mode === 'manual') {
+   533→      const newManual: ManualPlacement[] = variant.result.placed.map((p) => ({
+   534→        id: crypto.randomUUID(),
+   535→        itemId: p.itemId,
+   536→        name: p.name,
+   537→        x: p.x,
+   538→        y: p.y,
+   539→        width: p.width,
+   540→        length: p.length,
+   541→        layers: Math.max(1, p.stackedCount),
+   542→        rotated: p.rotated,
+   543→        color: p.color,
+   544→        weight: p.weight,
+   545→      }))
+   546→      useCalculator.setState({
+   547→        manualPlacements: newManual,
+   548→        pinnedPlacements: [],
+   549→        selectedPinIds: [],
+   550→      })
+   551→    } else {
+   552→      useCalculator.setState({
+   553→        pinnedPlacements: [],
+   554→        manualPlacements: [],
+   555→        selectedPinIds: [],
+   556→      })
+   557→    }
+   558→  }
+   559→
+   560→  const handleSelectVariant = (variant: PackVariant) => {
+   561→    applyVariant(variant)
+   562→    toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
+   563→  }
+   564→
+   565→  return (
+   566→    <div className="h-screen flex flex-col bg-muted/30 overflow-hidden">
+   567→      {/* Top bar */}
+   568→      <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
+   569→        <div className="flex items-center gap-3 px-4 py-2.5">
+   570→          <div className="flex items-center gap-2 min-w-0">
+   571→            <h1 className="text-sm font-semibold truncate">
+   572→              {activeProject?.name ?? 'DeckLoad'}
+   573→            </h1>
+   574→            {activeProject && (
+   575→              <span className="text-xs text-muted-foreground hidden md:inline">
+   576→                · {activeProject.deck.width}×{activeProject.deck.length} {activeProject.deck.unit}
+   577→              </span>
+   578→            )}
+   579→          </div>
+   580→
+   581→          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+   582→            <Badge variant="outline" className="hidden lg:inline-flex">
+   583→              <Anchor className="h-3 w-3 mr-1" />
+   584→              {result.placed.length}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
+   585→            </Badge>
+   586→
+   587→            {/* Mode toggle */}
+   588→            <ToggleGroup
+   589→              type="single"
+   590→              value={mode}
+   591→              onValueChange={(v) => {
+   592→                if (v) handleModeChange(v as 'auto' | 'manual')
+   593→              }}
+   594→              className="rounded-lg border bg-card"
+   595→            >
+   596→              <ToggleGroupItem value="auto" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+   597→                <Wand2 className="h-3.5 w-3.5 mr-1" />
+   598→                <span className="text-xs font-medium hidden sm:inline">Авто</span>
+   599→              </ToggleGroupItem>
+   600→              <ToggleGroupItem value="manual" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+   601→                <MousePointerClick className="h-3.5 w-3.5 mr-1" />
+   602→                <span className="text-xs font-medium hidden sm:inline">Ручной</span>
+   603→              </ToggleGroupItem>
+   604→            </ToggleGroup>
+   605→          </div>
+   606→        </div>
+   607→      </header>
+   608→
+   609→      {/* Workspace */}
+   610→      <div className="flex-1 flex min-h-0">
+   611→        <Sidebar
+   612→          collapsed={sidebarCollapsed}
+   613→          onToggle={() => setSidebarCollapsed((v) => !v)}
+   614→          onNewCalculation={handleNewCalculation}
+   615→          onResetCurrent={handleResetCurrent}
+   616→        />
+   617→
+   618→        {/* Main content */}
+   619→        <main className="flex-1 min-w-0 overflow-auto">
+   620→          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
+   621→            {/* Visualization */}
+   622→            <div className="xl:col-span-8">
+   623→              <Card className="h-full">
+   624→                <CardHeader className="pb-2">
+   625→                  <div className="flex items-center justify-between gap-2 flex-wrap">
+   626→                    <div>
+   627→                      <CardTitle className="text-base flex items-center gap-2">
+   628→                        <Ship className="h-4 w-4 text-primary" />
+   629→                        Схема палубы
+   630→                        {mode === 'manual' && (
+   631→                          <Badge variant="secondary" className="text-[10px]">ручной режим</Badge>
+   632→                        )}
+   633→                      </CardTitle>
+   634→                      <CardDescription className="mt-0.5">
+   635→                        Вид сверху · зелёная штриховка — свободное пространство
+   636→                        {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+   637→                      </CardDescription>
+   638→                    </div>
+   639→                    <div className="flex items-center gap-2 text-xs flex-wrap">
+   640→                      <LegendDot color="#0ea5e9" label="Груз" />
+   641→                      <LegendDot hatch label="Свободно" />
+   642→                      <LegendDot icon="↻" label="Повернут" />
+   643→                      {mode === 'auto' && (
+   644→                        <LegendDot color="#7c3aed" label="Закреплён" />
+   645→                      )}
+   646→                    </div>
+   647→                  </div>
+   648→                </CardHeader>
+   649→                <CardContent>
+   650→                  <DeckVisualization
+   651→                    result={result}
+   652→                    unit={deck.unit}
+   653→                    gap={deck.gap}
+   654→                    boardOffset={deck.boardOffset}
+   655→                    showFreeSpace={showFreeSpace}
+   656→                    showGrid={showGrid}
+   657→                    showLabels={showLabels}
+   658→                    hoveredItemId={hoveredItemId}
+   659→                    onHover={setHoveredItemId}
+   660→                    mode={mode}
+   661→                    activeStamp={activeStamp}
+   662→                    stampRotated={stampRotated}
+   663→                    onPlace={(p) => {
+   664→                      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+   665→                      const placedUnits = manualPlacements.reduce(
+   666→                        (s, m) => s + Math.max(1, m.layers),
+   667→                        0
+   668→                      )
+   669→                      if (placedUnits >= totalRequested) {
+   670→                        toast.warning('Все грузы уже размещены')
+   671→                        return
+   672→                      }
+   673→                      useCalculator.getState().addManualPlacement(p)
+   674→                    }}
+   675→                    onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
+   676→                    onRemoveManual={removeManualPlacement}
+   677→                    manualPlacements={manualPlacements}
+   678→                    pinnedPlacements={pinnedPlacements}
+   679→                    selectedPinIds={selectedPinIds}
+   680→                    onPinPlaced={(p) => pinFromPlaced(p)}
+   681→                    onUpdatePinned={(id, x, y) => updatePinned(id, { x, y })}
+   682→                    onRemovePinned={handleRemovePinned}
+   683→                    onRotatePinned={handleRotatePinned}
+   684→                    onTogglePinSelection={togglePinSelection}
+   685→                    onClearSelection={clearSelection}
+   686→                    onRotateManual={handleRotateManual}
+   687→                    onLayerChangePinned={handleLayerChangePinned}
+   688→                    onLayerChangeManual={handleLayerChangeManual}
+   689→                    getLayerInfo={(itemId, currentLayers, excludeId) => {
+   690→                      const item = items.find((it) => it.id === itemId)
+   691→                      const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
+   692→                      const incCheck = checkLayerChange(itemId, currentLayers, 1, excludeId)
+   693→                      return {
+   694→                        maxPhys,
+   695→                        canIncrease: incCheck.ok,
+   696→                        canDecrease: currentLayers > 1,
+   697→                        blockReason: incCheck.ok ? undefined : incCheck.reason,
+   698→                      }
+   699→                    }}
+   700→                    selectedManualIds={selectedManualIds}
+   701→                    onToggleManualSelection={toggleManualSelection}
+   702→                    onClearManualSelection={clearManualSelection}
+   703→                  />
+   704→                  <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+   705→                    <span>
+   706→                      Размещено {result.placed.length} из {result.requestedCount} ед.
+   707→                    </span>
+   708→                    <span>
+   709→                      Загрузка:{' '}
+   710→                      <span className="font-semibold text-foreground">
+   711→                        {Math.round(result.utilization * 100)}%
+   712→                      </span>
+   713→                    </span>
+   714→                  </div>
+   715→                </CardContent>
+   716→              </Card>
+   717→            </div>
+   718→
+   719→            {/* Right panel: placement + stats + items */}
+   720→            <div className="xl:col-span-4 space-y-4">
+   721→              <PlacementPanel
+   722→                mode={mode}
+   723→                onAutoRedistribute={handleAutoRedistribute}
+   724→                variants={variants}
+   725→                onSelectVariant={handleSelectVariant}
+   726→                onGroupLayerChange={handleGroupLayerChange}
+   727→                onGroupLayerChangeManual={handleGroupLayerChangeManual}
+   728→                onRemovePinned={handleRemovePinned}
+   729→              />
+   730→              <StatsPanel result={result} unit={deck.unit} />
+   731→              <ItemList
+   732→                result={result}
+   733→                unit={deck.unit}
+   734→                hoveredItemId={hoveredItemId}
+   735→                onHover={setHoveredItemId}
+   736→              />
+   737→            </div>
+   738→          </div>
+   739→        </main>
+   740→      </div>
+   741→
+   742→      {/* Footer */}
+   743→      <footer className="shrink-0 border-t bg-background py-2 px-4">
+   744→        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+   745→          <span className="truncate">
+   746→            DeckLoad · Maximal Rectangles (BSSF) · вращение, отступы, мульти-проекты
+   747→          </span>
+   748→          <Button variant="ghost" size="sm" asChild className="h-6 hidden sm:inline-flex">
+   749→            <a href="https://github.com" target="_blank" rel="noreferrer" className="text-xs">
+   750→              <Github className="h-3 w-3 mr-1" />
+   751→              Исходники
+   752→            </a>
+   753→          </Button>
+   754→        </div>
+   755→      </footer>
+   756→    </div>
+   757→  )
+   758→}
+   759→
+   760→function LegendDot({
+   761→  color,
+   762→  label,
+   763→  hatch,
+   764→  icon,
+   765→}: {
+   766→  color?: string
+   767→  label: string
+   768→  hatch?: boolean
+   769→  icon?: string
+   770→}) {
+   771→  return (
+   772→    <span className="inline-flex items-center gap-1">
+   773→      {hatch ? (
+   774→        <span
+   775→          className="h-3 w-3 rounded-sm border border-emerald-500/50"
+   776→          style={{
+   777→            backgroundImage:
+   778→              'repeating-linear-gradient(45deg, rgba(16,185,129,0.35) 0 2px, transparent 2px 5px)',
+   779→          }}
+   780→        />
+   781→      ) : icon ? (
+   782→        <span className="grid h-3 w-3 place-items-center text-[10px] font-bold text-primary">
+   783→          {icon}
+   784→        </span>
+   785→      ) : (
+   786→        <span
+   787→          className="h-3 w-3 rounded-sm border border-black/10"
+   788→          style={{ backgroundColor: color }}
+   789→        />
+   790→      )}
+   791→      {label}
+   792→    </span>
+   793→  )
+   794→}
+   795→

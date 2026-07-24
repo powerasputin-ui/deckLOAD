@@ -1,0 +1,863 @@
+     1→'use client'
+     2→
+     3→import { useMemo, useRef, useState, useCallback } from 'react'
+     4→import {
+     5→  computeFreeRects,
+     6→  clampToDeck,
+     7→  collidesWith,
+     8→  type PackingResult,
+     9→  type PlacedItem,
+    10→  type ManualPlacement,
+    11→  type PinnedPlacement,
+    12→} from '@/lib/packing'
+    13→import { UNIT_LABEL } from '@/store/calculator'
+    14→import { v4 as uuid } from 'uuid'
+    15→import { toast } from 'sonner'
+    16→
+    17→interface DeckVisualizationProps {
+    18→  result: PackingResult
+    19→  unit: 'm' | 'cm' | 'ft'
+    20→  gap: number
+    21→  boardOffset: number
+    22→  showFreeSpace: boolean
+    23→  showGrid: boolean
+    24→  showLabels: boolean
+    25→  hoveredItemId: string | null
+    26→  onHover: (id: string | null) => void
+    27→  mode: 'auto' | 'manual'
+    28→  activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number } | null
+    29→  stampRotated: boolean
+    30→  onPlace?: (p: ManualPlacement) => void
+    31→  onMoveManual?: (id: string, x: number, y: number) => void
+    32→  onRemoveManual?: (id: string) => void
+    33→  manualPlacements: ManualPlacement[]
+    34→  // Interactive auto mode
+    35→  pinnedPlacements: PinnedPlacement[]
+    36→  selectedPinIds: string[]
+    37→  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string | undefined
+    38→  onUpdatePinned?: (id: string, x: number, y: number) => void
+    39→  onRemovePinned?: (id: string) => void
+    40→  onRotatePinned?: (id: string) => void
+    41→  onTogglePinSelection?: (id: string, additive: boolean) => void
+    42→  onClearSelection?: () => void
+    43→  // Manual mode rotate
+    44→  onRotateManual?: (id: string) => void
+    45→  // Layer change (per-placement)
+    46→  onLayerChangePinned?: (id: string, delta: number) => void
+    47→  onLayerChangeManual?: (id: string, delta: number) => void
+    48→  // Layer validation info for single-selected placement
+    49→  getLayerInfo?: (itemId: string, currentLayers: number, excludeId?: string) => { maxPhys: number; canIncrease: boolean; canDecrease: boolean; blockReason?: string }
+    50→  // Manual multi-selection
+    51→  selectedManualIds?: string[]
+    52→  onToggleManualSelection?: (id: string, additive: boolean) => void
+    53→  onClearManualSelection?: () => void
+    54→}
+    55→
+    56→export function DeckVisualization({
+    57→  result,
+    58→  unit,
+    59→  gap,
+    60→  boardOffset,
+    61→  showFreeSpace,
+    62→  showGrid,
+    63→  showLabels,
+    64→  hoveredItemId,
+    65→  onHover,
+    66→  mode,
+    67→  activeStamp,
+    68→  stampRotated,
+    69→  onPlace,
+    70→  onMoveManual,
+    71→  onRemoveManual,
+    72→  manualPlacements,
+    73→  pinnedPlacements,
+    74→  selectedPinIds,
+    75→  onPinPlaced,
+    76→  onUpdatePinned,
+    77→  onRemovePinned,
+    78→  onRotatePinned,
+    79→  onTogglePinSelection,
+    80→  onClearSelection,
+    81→  onRotateManual,
+    82→  onLayerChangePinned,
+    83→  onLayerChangeManual,
+    84→  getLayerInfo,
+    85→  selectedManualIds,
+    86→  onToggleManualSelection,
+    87→  onClearManualSelection,
+    88→}: DeckVisualizationProps) {
+    89→  const { deckWidth, deckLength } = result
+    90→  const svgRef = useRef<SVGSVGElement>(null)
+    91→  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
+    92→  const [dragState, setDragState] = useState<{
+    93→    id: string
+    94→    startMouse: { x: number; y: number }
+    95→    startPlace: { x: number; y: number }
+    96→  } | null>(null)
+    97→  const [pinDrag, setPinDrag] = useState<{
+    98→    id: string
+    99→    startDeck: { x: number; y: number }
+   100→    startPlace: { x: number; y: number }
+   101→    moved: boolean
+   102→  } | null>(null)
+   103→  const [selectedManual, setSelectedManual] = useState<string | null>(null)
+   104→
+   105→  const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
+   106→
+   107→  const edgePad = boardOffset
+   108→
+   109→  const freeRects = useMemo(
+   110→    () => computeFreeRects(deckWidth, deckLength, result.placed, gap, boardOffset),
+   111→    [deckWidth, deckLength, result.placed, gap, boardOffset]
+   112→  )
+   113→
+   114→  // Layout geometry
+   115→  const maxW = 900
+   116→  const maxH = 560
+   117→  const pad = 32
+   118→  const scale = Math.min(
+   119→    (maxW - pad * 2) / Math.max(deckWidth, 1),
+   120→    (maxH - pad * 2) / Math.max(deckLength, 1)
+   121→  )
+   122→  const w = deckWidth * scale
+   123→  const h = deckLength * scale
+   124→  const offX = (maxW - w) / 2
+   125→  const offY = (maxH - h) / 2
+   126→
+   127→  const gridStep = (() => {
+   128→    const dim = Math.max(deckWidth, deckLength)
+   129→    if (dim <= 6) return 0.5
+   130→    if (dim <= 20) return 1
+   131→    if (dim <= 60) return 5
+   132→    return 10
+   133→  })()
+   134→
+   135→  // Convert screen px (inside deck) -> deck coords
+   136→  const screenToDeck = useCallback(
+   137→    (clientX: number, clientY: number) => {
+   138→      const svg = svgRef.current
+   139→      if (!svg) return null
+   140→      const pt = svg.createSVGPoint()
+   141→      pt.x = clientX
+   142→      pt.y = clientY
+   143→      const ctm = svg.getScreenCTM()
+   144→      if (!ctm) return null
+   145→      const p = pt.matrixTransform(ctm.inverse())
+   146→      const dx = (p.x - offX) / scale
+   147→      const dy = (p.y - offY) / scale
+   148→      return { x: dx, y: dy }
+   149→    },
+   150→    [offX, offY, scale]
+   151→  )
+   152→
+   153→  const toX = (v: number) => offX + v * scale
+   154→  const toY = (v: number) => offY + v * scale
+   155→  const fmt = (v: number) => {
+   156→    const r = Math.round(v * 100) / 100
+   157→    return Number.isInteger(r) ? `${r}` : r.toFixed(2)
+   158→  }
+   159→
+   160→  const stampDims = activeStamp
+   161→    ? stampRotated
+   162→      ? { w: activeStamp.length, l: activeStamp.width }
+   163→      : { w: activeStamp.width, l: activeStamp.length }
+   164→    : null
+   165→
+   166→  const handleDeckClick = (e: React.MouseEvent) => {
+   167→    if (mode !== 'manual' || !activeStamp || !stampDims || !onPlace) return
+   168→    const pos = screenToDeck(e.clientX, e.clientY)
+   169→    if (!pos) return
+   170→    // Snap so the item's top-left is at the cursor, then clamp inside deck
+   171→    const clamped = clampToDeck(
+   172→      { x: pos.x, y: pos.y, width: stampDims.w, length: stampDims.l },
+   173→      deckWidth,
+   174→      deckLength,
+   175→      edgePad
+   176→    )
+   177→    // Check collision with existing manual placements
+   178→    const others = manualPlacements
+   179→      .filter((m) => m.id !== 'preview')
+   180→      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+   181→    if (collidesWith({ ...clamped, width: stampDims.w, length: stampDims.l }, others, gap)) {
+   182→      return // ignore overlapping placement
+   183→    }
+   184→    onPlace({
+   185→      id: uuid(),
+   186→      itemId: activeStamp.id,
+   187→      name: activeStamp.name,
+   188→      x: clamped.x,
+   189→      y: clamped.y,
+   190→      width: stampDims.w,
+   191→      length: stampDims.l,
+   192→      layers: 1,
+   193→      rotated: stampRotated,
+   194→      color: activeStamp.color,
+   195→      weight: activeStamp.weight,
+   196→    })
+   197→  }
+   198→
+   199→  const handleManualPointerDown = (
+   200→    e: React.PointerEvent,
+   201→    mp: ManualPlacement
+   202→  ) => {
+   203→    if (mode !== 'manual') return
+   204→    e.stopPropagation()
+   205→    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+   206→    if (additive) {
+   207→      // Toggle selection without starting a drag
+   208→      onToggleManualSelection?.(mp.id, true)
+   209→      return
+   210→    }
+   211→    setSelectedManual(mp.id)
+   212→    setDragState({
+   213→      id: mp.id,
+   214→      startMouse: { x: e.clientX, y: e.clientY },
+   215→      startPlace: { x: mp.x, y: mp.y },
+   216→    })
+   217→    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+   218→  }
+   219→
+   220→  // Pin a placed auto-mode item so it becomes user-controlled
+   221→  const handlePinPointerDown = (
+   222→    e: React.PointerEvent,
+   223→    placed: PlacedItem,
+   224→    existingPinId?: string
+   225→  ) => {
+   226→    if (!isInteractiveAuto) return
+   227→    e.stopPropagation()
+   228→    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+   229→    // If clicking an already-pinned item, keep it; otherwise create a pin
+   230→    let pinId = existingPinId
+   231→    if (!pinId) {
+   232→      pinId = onPinPlaced({
+   233→        itemId: placed.itemId,
+   234→        name: placed.name,
+   235→        x: placed.x,
+   236→        y: placed.y,
+   237→        width: placed.width,
+   238→        length: placed.length,
+   239→        layers: placed.layers,
+   240→        rotated: placed.rotated,
+   241→        color: placed.color,
+   242→        weight: placed.weight,
+   243→      })
+   244→    } else if (!additive) {
+   245→      onTogglePinSelection?.(pinId, false)
+   246→    }
+   247→    if (additive && pinId) {
+   248→      onTogglePinSelection?.(pinId, true)
+   249→    }
+   250→    const startDeck = screenToDeck(e.clientX, e.clientY)
+   251→    if (!startDeck || !pinId) return
+   252→    setPinDrag({
+   253→      id: pinId,
+   254→      startDeck,
+   255→      startPlace: { x: placed.x, y: placed.y },
+   256→      moved: false,
+   257→    })
+   258→    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+   259→  }
+   260→
+   261→  // Gap-aware collision resolution with "sliding" along obstacles.
+   262→  // Tries full delta, then X-only, then Y-only; if all collide, performs a
+   263→  // binary search along the movement vector to slide as close to the target as
+   264→  // possible without overlapping neighbours (instead of snapping back to start).
+   265→  const resolveDragPosition = (
+   266→    targetX: number,
+   267→    targetY: number,
+   268→    width: number,
+   269→    length: number,
+   270→    currentX: number,
+   271→    currentY: number,
+   272→    others: { x: number; y: number; width: number; length: number }[]
+   273→  ): { x: number; y: number } => {
+   274→    const tryPos = (x: number, y: number): { x: number; y: number } | null => {
+   275→      const clamped = clampToDeck(
+   276→        { x, y, width, length },
+   277→        deckWidth,
+   278→        deckLength,
+   279→        edgePad
+   280→      )
+   281→      if (!collidesWith({ ...clamped, width, length }, others, gap)) {
+   282→        return { x: clamped.x, y: clamped.y }
+   283→      }
+   284→      return null
+   285→    }
+   286→
+   287→    // 1) full delta, 2) X-only, 3) Y-only
+   288→    const candidates: { x: number; y: number }[] = [
+   289→      { x: targetX, y: targetY },
+   290→      { x: targetX, y: currentY },
+   291→      { x: currentX, y: targetY },
+   292→    ]
+   293→    for (const c of candidates) {
+   294→      const res = tryPos(c.x, c.y)
+   295→      if (res) return res
+   296→    }
+   297→
+   298→    // 4) Binary search along the movement vector to slide as close as possible
+   299→    let lo = 0
+   300→    let hi = 1
+   301→    let best: { x: number; y: number } | null = null
+   302→    for (let i = 0; i < 10; i++) {
+   303→      const mid = (lo + hi) / 2
+   304→      const x = currentX + (targetX - currentX) * mid
+   305→      const y = currentY + (targetY - currentY) * mid
+   306→      const res = tryPos(x, y)
+   307→      if (res) {
+   308→        best = res
+   309→        lo = mid
+   310→      } else {
+   311→        hi = mid
+   312→      }
+   313→    }
+   314→    return best ?? { x: currentX, y: currentY }
+   315→  }
+   316→
+   317→  const handlePointerMove = (e: React.PointerEvent) => {
+   318→    if (mode === 'manual' && activeStamp && !dragState) {
+   319→      const pos = screenToDeck(e.clientX, e.clientY)
+   320→      if (pos) setHoverPos(pos)
+   321→    }
+   322→    if (dragState && onMoveManual) {
+   323→      const pos = screenToDeck(e.clientX, e.clientY)
+   324→      if (!pos) return
+   325→      const startDeck = screenToDeck(dragState.startMouse.x, dragState.startMouse.y)
+   326→      if (!startDeck) return
+   327→      const deltaX = pos.x - startDeck.x
+   328→      const deltaY = pos.y - startDeck.y
+   329→      const nx = dragState.startPlace.x + deltaX
+   330→      const ny = dragState.startPlace.y + deltaY
+   331→      const mp = manualPlacements.find((m) => m.id === dragState.id)
+   332→      if (mp) {
+   333→        const others = manualPlacements
+   334→          .filter((m) => m.id !== dragState.id)
+   335→          .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+   336→        const resolved = resolveDragPosition(
+   337→          nx, ny, mp.width, mp.length, mp.x, mp.y, others
+   338→        )
+   339→        onMoveManual(dragState.id, resolved.x, resolved.y)
+   340→      }
+   341→    }
+   342→    if (pinDrag && onUpdatePinned) {
+   343→      const pos = screenToDeck(e.clientX, e.clientY)
+   344→      if (!pos) return
+   345→      const deltaX = pos.x - pinDrag.startDeck.x
+   346→      const deltaY = pos.y - pinDrag.startDeck.y
+   347→      if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
+   348→        setPinDrag((d) => (d ? { ...d, moved: true } : d))
+   349→      }
+   350→      const pin = pinnedPlacements.find((p) => p.id === pinDrag.id)
+   351→      if (!pin) return
+   352→      const nx = pinDrag.startPlace.x + deltaX
+   353→      const ny = pinDrag.startPlace.y + deltaY
+   354→      // Prevent overlap with OTHER pinned items (auto-packed items reflow)
+   355→      const others = pinnedPlacements
+   356→        .filter((p) => p.id !== pinDrag.id)
+   357→        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+   358→      const resolved = resolveDragPosition(
+   359→        nx, ny, pin.width, pin.length, pin.x, pin.y, others
+   360→      )
+   361→      onUpdatePinned(pinDrag.id, resolved.x, resolved.y)
+   362→    }
+   363→  }
+   364→
+   365→  const handlePointerUp = (e: React.PointerEvent) => {
+   366→    // Click on empty deck area in interactive auto mode clears selection
+   367→    if (isInteractiveAuto && !pinDrag && !dragState) {
+   368→      const target = e.target as Element
+   369→      // Only clear if clicked directly on the SVG background or deck rect
+   370→      if (target.tagName === 'rect' || target.tagName === 'svg' || target.tagName === 'SVG') {
+   371→        const fill = target.getAttribute('fill')
+   372→        if (fill === '#ffffff' || fill === 'url(#deck-grid)' || target.tagName === 'svg') {
+   373→          onClearSelection?.()
+   374→        }
+   375→      }
+   376→    }
+   377→    setDragState(null)
+   378→    setPinDrag(null)
+   379→  }
+   380→
+   381→  const handleManualLeave = () => {
+   382→    setHoverPos(null)
+   383→  }
+   384→
+   385→  const hasContent = result.placed.length > 0 || deckWidth > 0
+   386→
+   387→  // Manual mode: rendered items come from manualPlacements; auto: from result.placed
+   388→  const renderedItems: (PlacedItem & { manualId?: string })[] =
+   389→    mode === 'manual'
+   390→      ? manualPlacements.map((m, i) => ({
+   391→          itemId: m.itemId,
+   392→          name: m.name,
+   393→          x: m.x,
+   394→          y: m.y,
+   395→          width: m.width,
+   396→          length: m.length,
+   397→          height: 0,
+   398→          layers: Math.max(1, m.layers),
+   399→          stackedCount: Math.max(1, m.layers),
+   400→          rotated: m.rotated,
+   401→          color: m.color,
+   402→          weight: m.weight,
+   403→          index: i,
+   404→          manualId: m.id,
+   405→        }))
+   406→      : result.placed
+   407→
+   408→  return (
+   409→    <div className="w-full overflow-x-auto" onMouseLeave={handleManualLeave}>
+   410→      <svg
+   411→        ref={svgRef}
+   412→        viewBox={`0 0 ${maxW} ${maxH}`}
+   413→        className="w-full h-auto"
+   414→        style={{ maxHeight: 560, cursor: mode === 'manual' && activeStamp ? 'crosshair' : 'default' }}
+   415→        onClick={mode === 'manual' ? handleDeckClick : undefined}
+   416→        onPointerMove={handlePointerMove}
+   417→        onPointerUp={handlePointerUp}
+   418→      >
+   419→        <defs>
+   420→          <pattern
+   421→            id="deck-grid"
+   422→            width={gridStep * scale}
+   423→            height={gridStep * scale}
+   424→            patternUnits="userSpaceOnUse"
+   425→          >
+   426→            <path
+   427→              d={`M ${gridStep * scale} 0 L 0 0 0 ${gridStep * scale}`}
+   428→              fill="none"
+   429→              stroke="#cbd5e1"
+   430→              strokeWidth={0.5}
+   431→            />
+   432→          </pattern>
+   433→          <pattern id="free-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+   434→            <rect width="8" height="8" fill="transparent" />
+   435→            <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(16,185,129,0.28)" strokeWidth="3" />
+   436→          </pattern>
+   437→        </defs>
+   438→
+   439→        {/* Deck background */}
+   440→        <rect
+   441→          x={offX}
+   442→          y={offY}
+   443→          width={w}
+   444→          height={h}
+   445→          rx={6}
+   446→          fill="#ffffff"
+   447→          stroke="#1e293b"
+   448→          strokeWidth={2}
+   449→        />
+   450→        {showGrid && hasContent && (
+   451→          <rect x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
+   452→        )}
+   453→
+   454→        {/* Edge padding border (usable region) */}
+   455→        {edgePad > 0 && (
+   456→          <rect
+   457→            x={toX(edgePad)}
+   458→            y={toY(edgePad)}
+   459→            width={(deckWidth - edgePad * 2) * scale}
+   460→            height={(deckLength - edgePad * 2) * scale}
+   461→            fill="none"
+   462→            stroke="#94a3b8"
+   463→            strokeWidth={0.75}
+   464→            strokeDasharray="3 3"
+   465→            opacity={0.6}
+   466→          />
+   467→        )}
+   468→
+   469→        {/* Free space */}
+   470→        {showFreeSpace &&
+   471→          freeRects.map((fr, i) => {
+   472→            const fw = fr.width * scale
+   473→            const fh = fr.height * scale
+   474→            if (fw < 2 || fh < 2) return null
+   475→            return (
+   476→              <g key={`free-${i}`}>
+   477→                <rect
+   478→                  x={toX(fr.x)}
+   479→                  y={toY(fr.y)}
+   480→                  width={fw}
+   481→                  height={fh}
+   482→                  fill="url(#free-hatch)"
+   483→                  stroke="rgba(16,185,129,0.45)"
+   484→                  strokeWidth={0.75}
+   485→                  strokeDasharray="4 3"
+   486→                />
+   487→                {fw > 40 && fh > 24 && (
+   488→                  <text
+   489→                    x={toX(fr.x) + fw / 2}
+   490→                    y={toY(fr.y) + fh / 2}
+   491→                    textAnchor="middle"
+   492→                    dominantBaseline="middle"
+   493→                    className="select-none"
+   494→                    fontSize={11}
+   495→                    fill="rgba(5,150,105,0.9)"
+   496→                  >
+   497→                    {fmt(fr.width)}×{fmt(fr.height)}
+   498→                  </text>
+   499→                )}
+   500→              </g>
+   501→            )
+   502→          })}
+   503→
+   504→        {/* Placed items */}
+   505→        {renderedItems.map((p, idx) => {
+   506→          const pw = p.width * scale
+   507→          const ph = p.length * scale
+   508→          const isHover = hoveredItemId === p.itemId
+   509→          const isSelected =
+   510→            mode === 'manual' &&
+   511→            (selectedManual === p.manualId ||
+   512→              (selectedManualIds?.includes(p.manualId ?? '') ?? false))
+   513→          // Find pinned placement matching this placed item (same position + itemId)
+   514→          const matchingPin = isInteractiveAuto
+   515→            ? pinnedPlacements.find(
+   516→                (pin) =>
+   517→                  pin.itemId === p.itemId &&
+   518→                  Math.abs(pin.x - p.x) < 0.01 &&
+   519→                  Math.abs(pin.y - p.y) < 0.01
+   520→              )
+   521→            : undefined
+   522→          const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
+   523→          return (
+   524→            <PlacedRect
+   525→              key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
+   526→              item={p}
+   527→              x={toX(p.x)}
+   528→              y={toY(p.y)}
+   529→              w={pw}
+   530→              h={ph}
+   531→              hovered={isHover || isSelected || isPinnedSelected}
+   532→              showLabels={showLabels}
+   533→              fmt={fmt}
+   534→              onHover={onHover}
+   535→              manualMode={mode === 'manual'}
+   536→              pinned={!!matchingPin}
+   537→              pinnedSelected={isPinnedSelected}
+   538→              onPointerDown={
+   539→                mode === 'manual' && p.manualId
+   540→                  ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
+   541→                  : isInteractiveAuto
+   542→                    ? (e) => handlePinPointerDown(e, p, matchingPin?.id)
+   543→                    : undefined
+   544→              }
+   545→            />
+   546→          )
+   547→        })}
+   548→
+   549→        {/* Auto mode: rotate + delete + layer buttons on a selected pinned item (single selection) */}
+   550→        {isInteractiveAuto &&
+   551→          selectedPinIds.length === 1 &&
+   552→          (() => {
+   553→            const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
+   554→            if (!pin) return null
+   555→            const rcx = toX(pin.x)
+   556→            const rcy = toY(pin.y)
+   557→            const dcx = toX(pin.x + pin.width)
+   558→            const dcy = toY(pin.y)
+   559→            // Layer buttons positioned at top-right and bottom-right
+   560→            const lcx = toX(pin.x + pin.width)
+   561→            const lcy = toY(pin.y + pin.length)
+   562→            const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
+   563→            const maxPhys = layerInfo?.maxPhys ?? 1
+   564→            const canInc = layerInfo?.canIncrease ?? true
+   565→            const blockReason = layerInfo?.blockReason
+   566→            return (
+   567→              <>
+   568→                {onRotatePinned && (
+   569→                  <g
+   570→                    style={{ cursor: 'pointer' }}
+   571→                    onClick={(e) => {
+   572→                      e.stopPropagation()
+   573→                      onRotatePinned(pin.id)
+   574→                    }}
+   575→                  >
+   576→                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
+   577→                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+   578→                  </g>
+   579→                )}
+   580→                {onLayerChangePinned && (
+   581→                  <g
+   582→                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+   583→                    onClick={(e) => {
+   584→                      e.stopPropagation()
+   585→                      if (canInc) {
+   586→                        onLayerChangePinned(pin.id, 1)
+   587→                      } else {
+   588→                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+   589→                      }
+   590→                    }}
+   591→                  >
+   592→                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+   593→                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+   594→                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
+   595→                  </g>
+   596→                )}
+   597→                {onLayerChangePinned && (
+   598→                  <g
+   599→                    style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
+   600→                    onClick={(e) => {
+   601→                      e.stopPropagation()
+   602→                      if (pin.layers > 1) {
+   603→                        onLayerChangePinned(pin.id, -1)
+   604→                      } else {
+   605→                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+   606→                      }
+   607→                    }}
+   608→                  >
+   609→                    <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+   610→                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+   611→                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
+   612→                  </g>
+   613→                )}
+   614→                {onRemovePinned && (
+   615→                  <g
+   616→                    style={{ cursor: 'pointer' }}
+   617→                    onClick={(e) => {
+   618→                      e.stopPropagation()
+   619→                      onRemovePinned(pin.id)
+   620→                    }}
+   621→                  >
+   622→                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+   623→                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+   624→                  </g>
+   625→                )}
+   626→                {/* Layer count badge */}
+   627→                <g className="pointer-events-none">
+   628→                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+   629→                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+   630→                    {pin.layers} / {maxPhys} яр.
+   631→                  </text>
+   632→                </g>
+   633→              </>
+   634→            )
+   635→          })()}
+   636→
+   637→        {/* Manual mode: rotate + delete + layer buttons on selected */}
+   638→        {mode === 'manual' &&
+   639→          selectedManual &&
+   640→          (() => {
+   641→            const mp = manualPlacements.find((m) => m.id === selectedManual)
+   642→            if (!mp) return null
+   643→            const rcx = toX(mp.x)
+   644→            const rcy = toY(mp.y)
+   645→            const dcx = toX(mp.x + mp.width)
+   646→            const dcy = toY(mp.y)
+   647→            const lcx = toX(mp.x + mp.width)
+   648→            const lcy = toY(mp.y + mp.length)
+   649→            const currentLayers = Math.max(1, mp.layers)
+   650→            const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
+   651→            const maxPhys = layerInfo?.maxPhys ?? 1
+   652→            const canInc = layerInfo?.canIncrease ?? true
+   653→            const blockReason = layerInfo?.blockReason
+   654→            return (
+   655→              <>
+   656→                {onRotateManual && (
+   657→                  <g
+   658→                    style={{ cursor: 'pointer' }}
+   659→                    onClick={(e) => {
+   660→                      e.stopPropagation()
+   661→                      onRotateManual(mp.id)
+   662→                    }}
+   663→                  >
+   664→                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
+   665→                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+   666→                  </g>
+   667→                )}
+   668→                {onLayerChangeManual && (
+   669→                  <g
+   670→                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+   671→                    onClick={(e) => {
+   672→                      e.stopPropagation()
+   673→                      if (canInc) {
+   674→                        onLayerChangeManual(mp.id, 1)
+   675→                      } else {
+   676→                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+   677→                      }
+   678→                    }}
+   679→                  >
+   680→                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+   681→                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+   682→                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
+   683→                  </g>
+   684→                )}
+   685→                {onLayerChangeManual && (
+   686→                  <g
+   687→                    style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
+   688→                    onClick={(e) => {
+   689→                      e.stopPropagation()
+   690→                      if (currentLayers > 1) {
+   691→                        onLayerChangeManual(mp.id, -1)
+   692→                      } else {
+   693→                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+   694→                      }
+   695→                    }}
+   696→                  >
+   697→                    <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+   698→                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+   699→                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
+   700→                  </g>
+   701→                )}
+   702→                {onRemoveManual && (
+   703→                  <g
+   704→                    style={{ cursor: 'pointer' }}
+   705→                    onClick={(e) => {
+   706→                      e.stopPropagation()
+   707→                      onRemoveManual(mp.id)
+   708→                      setSelectedManual(null)
+   709→                    }}
+   710→                  >
+   711→                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+   712→                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+   713→                  </g>
+   714→                )}
+   715→                {/* Layer count badge */}
+   716→                <g className="pointer-events-none">
+   717→                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+   718→                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+   719→                    {currentLayers} / {maxPhys} яр.
+   720→                  </text>
+   721→                </g>
+   722→              </>
+   723→            )
+   724→          })()}
+   725→
+   726→        {/* Manual mode: preview stamp at cursor */}
+   727→        {mode === 'manual' && activeStamp && stampDims && hoverPos && !dragState && (
+   728→          <rect
+   729→            x={toX(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).x)}
+   730→            y={toY(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).y)}
+   731→            width={stampDims.w * scale}
+   732→            height={stampDims.l * scale}
+   733→            rx={2}
+   734→            fill={activeStamp.color}
+   735→            fillOpacity={0.35}
+   736→            stroke={activeStamp.color}
+   737→            strokeWidth={1.5}
+   738→            strokeDasharray="4 2"
+   739→            pointerEvents="none"
+   740→          />
+   741→        )}
+   742→
+   743→        {/* Dimension labels */}
+   744→        <text x={offX + w / 2} y={offY - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#0f172a">
+   745→          {fmt(deckWidth)} {UNIT_LABEL[unit]}
+   746→        </text>
+   747→        <text
+   748→          x={offX - 16}
+   749→          y={offY + h / 2}
+   750→          textAnchor="middle"
+   751→          fontSize={13}
+   752→          fontWeight={600}
+   753→          fill="#0f172a"
+   754→          transform={`rotate(-90 ${offX - 16} ${offY + h / 2})`}
+   755→        >
+   756→          {fmt(deckLength)} {UNIT_LABEL[unit]}
+   757→        </text>
+   758→        <circle cx={offX} cy={offY} r={3} fill="#0f172a" />
+   759→      </svg>
+   760→    </div>
+   761→  )
+   762→}
+   763→
+   764→function PlacedRect({
+   765→  item,
+   766→  x,
+   767→  y,
+   768→  w,
+   769→  h,
+   770→  hovered,
+   771→  showLabels,
+   772→  fmt,
+   773→  onHover,
+   774→  manualMode,
+   775→  onPointerDown,
+   776→  pinned,
+   777→  pinnedSelected,
+   778→}: {
+   779→  item: PlacedItem
+   780→  x: number
+   781→  y: number
+   782→  w: number
+   783→  h: number
+   784→  hovered: boolean
+   785→  showLabels: boolean
+   786→  fmt: (v: number) => string
+   787→  onHover: (id: string | null) => void
+   788→  manualMode: boolean
+   789→  onPointerDown?: (e: React.PointerEvent) => void
+   790→  pinned?: boolean
+   791→  pinnedSelected?: boolean
+   792→}) {
+   793→  const strokeColor = pinnedSelected
+   794→    ? '#7c3aed'
+   795→    : pinned
+   796→      ? '#0f172a'
+   797→      : hovered
+   798→        ? '#0f172a'
+   799→        : 'rgba(15,23,42,0.55)'
+   800→  const strokeWidth = pinnedSelected ? 3 : pinned || hovered ? 2 : 1
+   801→  const cursor = manualMode
+   802→    ? onPointerDown ? 'move' : 'default'
+   803→    : onPointerDown
+   804→      ? 'grab'
+   805→      : 'pointer'
+   806→  return (
+   807→    <g
+   808→      onMouseEnter={() => onHover(item.itemId)}
+   809→      onMouseLeave={() => onHover(null)}
+   810→      onPointerDown={onPointerDown}
+   811→      style={{ cursor, transition: 'opacity 0.15s' }}
+   812→    >
+   813→      <rect
+   814→        x={x}
+   815→        y={y}
+   816→        width={w}
+   817→        height={h}
+   818→        rx={2}
+   819→        fill={item.color}
+   820→        fillOpacity={hovered ? 0.95 : 0.78}
+   821→        stroke={strokeColor}
+   822→        strokeWidth={strokeWidth}
+   823→        strokeDasharray={pinned ? '4 2' : undefined}
+   824→      />
+   825→      {pinned && (
+   826→        <g className="pointer-events-none">
+   827→          <rect x={x + w - 16} y={y + h - 14} width={14} height={11} rx={2} fill="rgba(124,58,237,0.9)" />
+   828→          <text x={x + w - 9} y={y + h - 5} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">PIN</text>
+   829→        </g>
+   830→      )}
+   831→      {showLabels && w > 30 && h > 18 && (
+   832→        <>
+   833→          <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill="#fff" className="select-none pointer-events-none">
+   834→            {clip(item.name, w)}
+   835→          </text>
+   836→          <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill="rgba(255,255,255,0.92)" className="select-none pointer-events-none">
+   837→            {fmt(item.width)}×{fmt(item.length)}
+   838→            {item.rotated ? ' ↻' : ''}
+   839→          </text>
+   840→        </>
+   841→      )}
+   842→      {item.layers > 1 && w >= 16 && h >= 16 && (
+   843→        <g className="pointer-events-none">
+   844→          <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
+   845→          <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+   846→            ×{item.layers}
+   847→          </text>
+   848→        </g>
+   849→      )}
+   850→      {item.rotated && item.layers <= 1 && w >= 16 && h >= 16 && (
+   851→        <text x={x + w - 6} y={y + 12} fontSize={10} textAnchor="end" fill="rgba(255,255,255,0.9)" className="select-none pointer-events-none">
+   852→          ↻
+   853→        </text>
+   854→      )}
+   855→    </g>
+   856→  )
+   857→}
+   858→
+   859→function clip(s: string, w: number): string {
+   860→  const max = Math.max(4, Math.floor(w / 7))
+   861→  return s.length > max ? s.slice(0, max - 1) + '…' : s
+   862→}
+   863→
