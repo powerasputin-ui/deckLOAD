@@ -36,6 +36,7 @@ interface PlacementPanelProps {
   onSelectVariant?: (v: PackVariant) => void
   onGroupLayerChange?: (delta: number) => void
   onGroupLayerChangeManual?: (delta: number) => void
+  onRemovePinned?: (id: string) => void
 }
 
 export function PlacementPanel({
@@ -45,6 +46,7 @@ export function PlacementPanel({
   onSelectVariant,
   onGroupLayerChange,
   onGroupLayerChangeManual,
+  onRemovePinned,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
   const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
@@ -89,8 +91,14 @@ export function PlacementPanel({
 
   const handleDeleteSelected = () => {
     if (isAuto) {
-      for (const id of selectedPinIds) removePinned(id)
-      toast.info(`Откреплено: ${selectedPinIds.length} груз(ов)`)
+      for (const id of selectedPinIds) {
+        if (onRemovePinned) {
+          onRemovePinned(id)
+        } else {
+          removePinned(id)
+        }
+      }
+      toast.info(`Удалено: ${selectedPinIds.length} груз(ов)`)
     }
   }
 

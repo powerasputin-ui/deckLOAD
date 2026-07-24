@@ -369,6 +369,22 @@ export default function Home() {
     updatePinned(id, { layers: pin.layers + delta })
   }
 
+  // Remove a pinned placement AND decrease the item's quantity by the number of
+  // layers that were in this pin — otherwise the auto-packer immediately
+  // re-places the freed units, making ✕ look like it "doesn't work".
+  const handleRemovePinned = (id: string) => {
+    const pin = pinnedPlacements.find((p) => p.id === id)
+    if (!pin) return
+    const layersToRemove = pin.layers
+    removePinned(id)
+    const item = items.find((it) => it.id === pin.itemId)
+    if (item) {
+      const newQty = Math.max(0, item.quantity - layersToRemove)
+      useCalculator.getState().updateItem(item.id, { quantity: newQty })
+      toast.info(`Удалено: ${pin.name} (${layersToRemove} ед.)`)
+    }
+  }
+
   const handleLayerChangeManual = (id: string, delta: number) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
@@ -663,7 +679,7 @@ export default function Home() {
                     selectedPinIds={selectedPinIds}
                     onPinPlaced={(p) => pinFromPlaced(p)}
                     onUpdatePinned={(id, x, y) => updatePinned(id, { x, y })}
-                    onRemovePinned={removePinned}
+                    onRemovePinned={handleRemovePinned}
                     onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
                     onClearSelection={clearSelection}
@@ -709,6 +725,7 @@ export default function Home() {
                 onSelectVariant={handleSelectVariant}
                 onGroupLayerChange={handleGroupLayerChange}
                 onGroupLayerChangeManual={handleGroupLayerChangeManual}
+                onRemovePinned={handleRemovePinned}
               />
               <StatsPanel result={result} unit={deck.unit} />
               <ItemList
