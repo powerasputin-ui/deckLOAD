@@ -25,10 +25,12 @@ import { useCalculator, UNIT_LABEL } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import {
   packDeck,
+  packDeckVariants,
   packingResultFromManual,
   clampToDeck,
   collidesWith,
   type ManualPlacement,
+  type PackVariant,
 } from '@/lib/packing'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 import { ItemList } from '@/components/calculator/ItemList'
@@ -68,6 +70,7 @@ export default function Home() {
 
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [variants, setVariants] = useState<PackVariant[]>([])
   const loadedProjectId = useRef<string | null>(null)
 
   // Hydrate projects from localStorage on mount (synchronous)
@@ -203,6 +206,8 @@ export default function Home() {
     } else {
       useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
     }
+    // Clear stale variants when deck params change (deferred to avoid setState-in-effect)
+    queueMicrotask(() => setVariants([]))
     if (packed.unplaced.length > 0) {
       toast.warning(`Параметры изменены: ${packed.unplaced.length} груз(ов) не вместилось`)
     }
@@ -363,22 +368,38 @@ export default function Home() {
     }
   }
 
-  // Force re-pack: clear all pins/manual placements so the auto-packer redistributes
-  // everything from scratch using the current deck settings.
-  // In manual mode, repack and store the result back as manual placements so the
-  // user keeps working manually with the new gap/offset applied.
+  // Generate several packing variants so the user can choose the best one.
+  // Each click produces a fresh set (new seed) — repeated clicks give different options.
   const handleAutoRedistribute = () => {
-    if (mode === 'manual') {
-      const effectiveItems = globalRotation
-        ? items
-        : items.map((it) => ({ ...it, allowRotation: false }))
-      const packed = packDeck(deck.width, deck.length, effectiveItems, {
+    const effectiveItems = globalRotation
+      ? items
+      : items.map((it) => ({ ...it, allowRotation: false }))
+    const newVariants = packDeckVariants(
+      deck.width,
+      deck.length,
+      effectiveItems,
+      {
         sortStrategy,
         gap: deck.gap,
         boardOffset: deck.boardOffset,
         clearance: deck.clearance,
-      })
-      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
+      },
+      3
+    )
+    setVariants(newVariants)
+    // Apply the best variant immediately
+    if (newVariants.length > 0) {
+      applyVariant(newVariants[0])
+    }
+    toast.success(`Сгенерировано вариантов: ${newVariants.length}`)
+  }
+
+  // Apply a chosen variant: in manual mode store as manual placements,
+  // in auto mode clear pins so the packer result shows through.
+  const applyVariant = (variant: PackVariant) => {
+    const s = useCalculator.getState()
+    if (s.mode === 'manual') {
+      const newManual: ManualPlacement[] = variant.result.placed.map((p) => ({
         id: crypto.randomUUID(),
         itemId: p.itemId,
         name: p.name,
@@ -403,7 +424,11 @@ export default function Home() {
         selectedPinIds: [],
       })
     }
-    toast.success('Автораспределение выполнено')
+  }
+
+  const handleSelectVariant = (variant: PackVariant) => {
+    applyVariant(variant)
+    toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
   }
 
   return (
@@ -546,7 +571,12 @@ export default function Home() {
 
             {/* Right panel: placement + stats + items */}
             <div className="xl:col-span-4 space-y-4">
-              <PlacementPanel mode={mode} onAutoRedistribute={handleAutoRedistribute} />
+              <PlacementPanel
+                mode={mode}
+                onAutoRedistribute={handleAutoRedistribute}
+                variants={variants}
+                onSelectVariant={handleSelectVariant}
+              />
               <StatsPanel result={result} unit={deck.unit} />
               <ItemList
                 result={result}

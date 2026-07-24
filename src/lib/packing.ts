@@ -357,8 +357,14 @@ export function packDeck(
       continue
     }
     acceptedPins.push(pin)
+    // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap)
     placeRect(
-      { x: pin.x, y: pin.y, width: pin.width + gap, height: pin.length + gap },
+      {
+        x: pin.x - gap / 2,
+        y: pin.y - gap / 2,
+        width: pin.width + gap,
+        height: pin.length + gap,
+      },
       freeRects
     )
     result.placed.push({
@@ -430,6 +436,10 @@ export function packDeck(
   for (const { item, unitsInStack } of stacks) {
     if (perItemRemaining.get(item.id)! <= 0) continue
 
+    // Symmetric gap model: each item is surrounded by gap/2 on every side, so the
+    // distance between any two neighbouring items is exactly `gap` regardless of
+    // which side they touch. The reserved cell is (w+gap) x (l+gap); the item is
+    // drawn at cell origin + gap/2.
     const cellW = item.width + gap
     const cellL = item.length + gap
     const cellWRot = item.length + gap
@@ -469,12 +479,15 @@ export function packDeck(
     placeRect(pos.node, freeRects)
     const visW = pos.rotated ? item.length : item.width
     const visL = pos.rotated ? item.width : item.length
+    // Item position = cell origin + gap/2 (so the gap/2 buffer stays around it)
+    const itemX = pos.node.x + gap / 2
+    const itemY = pos.node.y + gap / 2
     const stackHeight = item.height > 0 ? item.height * unitsInStack : 0
     result.placed.push({
       itemId: item.id,
       name: item.name,
-      x: pos.node.x,
-      y: pos.node.y,
+      x: itemX,
+      y: itemY,
       width: visW,
       length: visL,
       height: item.height,
@@ -533,6 +546,104 @@ export function packDeck(
   return result
 }
 
+// ---- Variant generation for "Автораспределение" ----
+
+// Mulberry32 — small deterministic PRNG so variants are reproducible from a seed.
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Seeded shuffle (Fisher–Yates) — used to break ties within equal-priority groups.
+function seededShuffle<T>(arr: T[], rng: () => number): T[] {
+  const out = [...arr]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
+// Signature for deduplication of variants.
+function variantSignature(result: PackingResult): string {
+  return result.placed
+    .map((p) => `${p.itemId}:${Math.round(p.x * 100)}:${Math.round(p.y * 100)}:${p.rotated ? 1 : 0}`)
+    .sort()
+    .join('|')
+}
+
+export interface PackVariant {
+  result: PackingResult
+  label: string
+  utilizationPct: number
+  placedCount: number
+  unplacedCount: number
+}
+
+// Generate up to `count` distinct packing variants. Uses several strategies:
+//  1. Different sort strategies (area-desc, width-desc, length-desc)
+//  2. Seeded shuffle of equal-priority items to break ties differently
+export function packDeckVariants(
+  deckWidth: number,
+  deckLength: number,
+  items: CargoItem[],
+  options: PackOptions,
+  count = 3,
+  seed?: number
+): PackVariant[] {
+  const baseSeed = seed ?? Date.now()
+  const strategies: SortStrategy[] = ['area-desc', 'width-desc', 'length-desc', 'area-asc']
+  const variants: PackVariant[] = []
+  const seen = new Set<string>()
+
+  // For each strategy, run a few seeded tie-breaks.
+  let variantIdx = 0
+  for (let s = 0; s < strategies.length && variants.length < count; s++) {
+    const strategy = strategies[s]
+    for (let t = 0; t < 2 && variants.length < count; t++) {
+      const rng = mulberry32(baseSeed + variantIdx * 1013)
+      // Shuffle items with a tiny perturbation so equal-priority ones change order
+      const shuffled = seededShuffle(items, rng)
+      const res = packDeck(deckWidth, deckLength, shuffled, {
+        ...options,
+        sortStrategy: strategy,
+      })
+      const sig = variantSignature(res)
+      if (seen.has(sig)) {
+        variantIdx++
+        continue
+      }
+      seen.add(sig)
+      const label =
+        s === 0
+          ? `Вариант ${variants.length + 1} — по площади`
+          : s === 1
+            ? `Вариант ${variants.length + 1} — по ширине`
+            : s === 2
+              ? `Вариант ${variants.length + 1} — по длине`
+              : `Вариант ${variants.length + 1} — мелкие сначала`
+      variants.push({
+        result: res,
+        label,
+        utilizationPct: Math.round(res.utilization * 100),
+        placedCount: res.placedCount,
+        unplacedCount: res.unplaced.length,
+      })
+      variantIdx++
+    }
+  }
+
+  // Sort by utilization desc (best first)
+  variants.sort((a, b) => b.utilizationPct - a.utilizationPct)
+  return variants.slice(0, count)
+}
+
 // Compute remaining free rectangles for visualization. Uses cells that include
 // the inter-item gap so the hatched region matches what the packer sees.
 export function computeFreeRects(
@@ -548,8 +659,14 @@ export function computeFreeRects(
   const ul = Math.max(0, deckLength - boardOffset * 2)
   const free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
   for (const p of placed) {
+    // Symmetric gap model: cell = (x - gap/2, y - gap/2, w+gap, l+gap)
     placeRect(
-      { x: p.x, y: p.y, width: p.width + gap, height: p.length + gap },
+      {
+        x: p.x - gap / 2,
+        y: p.y - gap / 2,
+        width: p.width + gap,
+        height: p.length + gap,
+      },
       free
     )
   }

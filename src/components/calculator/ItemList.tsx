@@ -5,8 +5,8 @@ import {
   Plus,
   Copy,
   Trash2,
-  RotateCw,
   Lock,
+  Unlock,
   Package,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -249,19 +249,19 @@ function ItemRow({
                       )}
                     >
                       {item.allowRotation ? (
-                        <RotateCw className="h-3.5 w-3.5" />
+                        <Unlock className="h-3.5 w-3.5" />
                       ) : (
                         <Lock className="h-3.5 w-3.5" />
                       )}
-                      {rotationEnabled ? 'Поворот' : 'Фикс.'}
+                      {item.allowRotation ? 'Авто-поворот' : 'Фиксация'}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>
                     {globalRotation
                       ? item.allowRotation
-                        ? 'Вращение разрешено — нажмите для фиксации'
-                        : 'Вращение запрещено — нажмите для разрешения'
-                      : 'Включите глобальное вращение в настройках'}
+                        ? 'Авто-поворот разрешён — алгоритм может вращать этот груз'
+                        : 'Авто-поворот запрещён — нажмите для разрешения'
+                      : 'Включите вращение в «Отображение»'}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

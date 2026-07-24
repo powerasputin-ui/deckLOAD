@@ -10,6 +10,7 @@ import {
   Wand2,
   MousePointerClick,
   Package,
+  Layers,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -22,16 +23,23 @@ import {
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
-import type { CargoItem } from '@/lib/packing'
+import type { CargoItem, PackVariant } from '@/lib/packing'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface PlacementPanelProps {
   mode: 'auto' | 'manual'
   onAutoRedistribute: () => void
+  variants?: PackVariant[]
+  onSelectVariant?: (v: PackVariant) => void
 }
 
-export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps) {
+export function PlacementPanel({
+  mode,
+  onAutoRedistribute,
+  variants,
+  onSelectVariant,
+}: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
   const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
@@ -55,7 +63,7 @@ export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
   const totalPlaced = isAuto
     ? pinnedPlacements.reduce((s, p) => s + p.layers, 0)
-    : manualPlacements.length
+    : manualPlacements.reduce((s, m) => s + Math.max(1, m.layers), 0)
 
   const handleRotateSelected = () => {
     if (isAuto) {
@@ -114,11 +122,39 @@ export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps
           size="sm"
           onClick={onAutoRedistribute}
           className="w-full"
-          title="Автоматически распределить все грузы максимально плотно"
+          title="Сгенерировать несколько вариантов раскладки"
         >
           <Wand2 className="h-3.5 w-3.5 mr-1.5" />
-          Автораспределение
+          Автораспределение (варианты)
         </Button>
+
+        {/* Variants selector — shown after redistribute */}
+        {variants && variants.length > 0 && onSelectVariant && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Layers className="h-3.5 w-3.5" />
+              Варианты раскладки ({variants.length})
+            </div>
+            <div className="space-y-1">
+              {variants.map((v, i) => (
+                <button
+                  key={i}
+                  onClick={() => onSelectVariant(v)}
+                  className="w-full flex items-center justify-between gap-2 rounded-md border border-border hover:bg-accent px-2.5 py-1.5 text-left transition-colors"
+                >
+                  <span className="text-xs font-medium truncate">{v.label}</span>
+                  <span className="flex items-center gap-1.5 shrink-0">
+                    <Badge variant="secondary" className="text-[10px]">{v.utilizationPct}%</Badge>
+                    <span className="text-[10px] text-muted-foreground">{v.placedCount} ед.</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Клик по варианту — применить. Кнопка «Автораспределение» — новый набор.
+            </p>
+          </div>
+        )}
 
         {/* Manual mode: stamp selector */}
         {!isAuto && (
@@ -132,13 +168,16 @@ export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps
               size="sm"
               onClick={() => {
                 toggleStampRotation()
-                toast.info(stampRotated ? 'Обычная ориентация' : 'Поворот на 90°')
               }}
               className="w-full"
+              title="Влияет только на груз, который вы поставите следующим кликом. Уже размещённые грузы поворачиваются иконкой ↻ прямо на палубе."
             >
               <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-              {stampRotated ? 'Повернут ↻' : 'Без поворота'}
+              Ориентация нового груза: {stampRotated ? '90°' : '0°'}
             </Button>
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
+            </p>
             {items.length === 0 ? (
               <p className="text-xs text-muted-foreground text-center py-2">
                 Сначала добавьте грузы

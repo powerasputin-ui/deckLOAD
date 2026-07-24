@@ -236,8 +236,10 @@ export function DeckVisualization({
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Gap-aware collision resolution: try full delta, then X-only, then Y-only.
-  // Returns the best non-colliding position, or the current position if all collide.
+  // Gap-aware collision resolution with "sliding" along obstacles.
+  // Tries full delta, then X-only, then Y-only; if all collide, performs a
+  // binary search along the movement vector to slide as close to the target as
+  // possible without overlapping neighbours (instead of snapping back to start).
   const resolveDragPosition = (
     targetX: number,
     targetY: number,
@@ -247,14 +249,9 @@ export function DeckVisualization({
     currentY: number,
     others: { x: number; y: number; width: number; length: number }[]
   ): { x: number; y: number } => {
-    const candidates: { x: number; y: number }[] = [
-      { x: targetX, y: targetY },
-      { x: targetX, y: currentY },
-      { x: currentX, y: targetY },
-    ]
-    for (const c of candidates) {
+    const tryPos = (x: number, y: number): { x: number; y: number } | null => {
       const clamped = clampToDeck(
-        { x: c.x, y: c.y, width, length },
+        { x, y, width, length },
         deckWidth,
         deckLength,
         edgePad
@@ -262,8 +259,37 @@ export function DeckVisualization({
       if (!collidesWith({ ...clamped, width, length }, others, gap)) {
         return { x: clamped.x, y: clamped.y }
       }
+      return null
     }
-    return { x: currentX, y: currentY }
+
+    // 1) full delta, 2) X-only, 3) Y-only
+    const candidates: { x: number; y: number }[] = [
+      { x: targetX, y: targetY },
+      { x: targetX, y: currentY },
+      { x: currentX, y: targetY },
+    ]
+    for (const c of candidates) {
+      const res = tryPos(c.x, c.y)
+      if (res) return res
+    }
+
+    // 4) Binary search along the movement vector to slide as close as possible
+    let lo = 0
+    let hi = 1
+    let best: { x: number; y: number } | null = null
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2
+      const x = currentX + (targetX - currentX) * mid
+      const y = currentY + (targetY - currentY) * mid
+      const res = tryPos(x, y)
+      if (res) {
+        best = res
+        lo = mid
+      } else {
+        hi = mid
+      }
+    }
+    return best ?? { x: currentX, y: currentY }
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
