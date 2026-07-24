@@ -201,6 +201,70 @@ export default function Home() {
     })
   }
 
+  // Switch mode while preserving placements:
+  //  - auto -> manual: all placed items (pinned + auto-packed) become manual placements
+  //  - manual -> auto: all manual placements become pinned, auto-packer keeps their positions
+  const handleModeChange = (newMode: 'auto' | 'manual') => {
+    if (newMode === mode) return
+    if (newMode === 'manual') {
+      // Convert current auto-mode result (pinned + auto-packed) into manual placements
+      const newManual: ManualPlacement[] = result.placed.map((p) => ({
+        id: crypto.randomUUID(),
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+      }))
+      useCalculator.setState({
+        mode: 'manual',
+        manualPlacements: newManual,
+        pinnedPlacements: [],
+        selectedPinIds: [],
+        activeStampId: items[0]?.id ?? null,
+      })
+      toast.info('Ручной режим — размещения сохранены')
+    } else {
+      // Convert manual placements into pinned placements; auto-packer will fill the rest
+      const newPinned = manualPlacements.map((m) => ({
+        id: crypto.randomUUID(),
+        itemId: m.itemId,
+        name: m.name,
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        length: m.length,
+        layers: 1,
+        rotated: m.rotated,
+        color: m.color,
+        weight: m.weight,
+      }))
+      useCalculator.setState({
+        mode: 'auto',
+        pinnedPlacements: newPinned,
+        manualPlacements: [],
+        selectedPinIds: [],
+        activeStampId: null,
+      })
+      toast.info('Авто-режим — размещения сохранены как закреплённые')
+    }
+  }
+
+  // Force re-pack: clear all pins/manual placements so the auto-packer redistributes
+  // everything from scratch using the current deck settings.
+  const handleAutoRedistribute = () => {
+    useCalculator.setState({
+      pinnedPlacements: [],
+      manualPlacements: [],
+      selectedPinIds: [],
+    })
+    toast.success('Автораспределение выполнено')
+  }
+
   return (
     <div className="h-screen flex flex-col bg-muted/30 overflow-hidden">
       {/* Top bar */}
@@ -228,10 +292,7 @@ export default function Home() {
               type="single"
               value={mode}
               onValueChange={(v) => {
-                if (v) {
-                  setMode(v as 'auto' | 'manual')
-                  toast.info(v === 'auto' ? 'Автоматический режим' : 'Ручной режим')
-                }
+                if (v) handleModeChange(v as 'auto' | 'manual')
               }}
               className="rounded-lg border bg-card"
             >
@@ -244,6 +305,18 @@ export default function Home() {
                 <span className="text-xs font-medium hidden sm:inline">Ручной</span>
               </ToggleGroupItem>
             </ToggleGroup>
+
+            {/* Auto redistribute button */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleAutoRedistribute}
+              className="h-9"
+              title="Автоматически распределить все грузы максимально плотно"
+            >
+              <Wand2 className="h-3.5 w-3.5 mr-1" />
+              <span className="text-xs font-medium hidden md:inline">Автораспределение</span>
+            </Button>
 
             {/* Rotation toggle */}
             <div className={'flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 transition-opacity ' + (mode === 'auto' ? '' : 'opacity-40 pointer-events-none')}>
