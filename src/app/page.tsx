@@ -29,6 +29,7 @@ import {
   packingResultFromManual,
   clampToDeck,
   collidesWith,
+  maxLayersFor,
   type ManualPlacement,
   type PackVariant,
 } from '@/lib/packing'
@@ -55,11 +56,14 @@ export default function Home() {
   const stampRotated = useCalculator((s) => s.stampRotated)
   const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
+  const selectedManualIds = useCalculator((s) => s.selectedManualIds)
   const pinFromPlaced = useCalculator((s) => s.pinFromPlaced)
   const updatePinned = useCalculator((s) => s.updatePinned)
   const removePinned = useCalculator((s) => s.removePinned)
   const togglePinSelection = useCalculator((s) => s.togglePinSelection)
   const clearSelection = useCalculator((s) => s.clearSelection)
+  const toggleManualSelection = useCalculator((s) => s.toggleManualSelection)
+  const clearManualSelection = useCalculator((s) => s.clearManualSelection)
 
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -313,6 +317,117 @@ export default function Home() {
     })
   }
 
+  // Check whether a layer change is allowed for a placement.
+  // - maxPhys: physical ceiling from clearance / item.height
+  // - totalPlacedForItem: current sum of layers across all placements of this item
+  // - item.quantity: total units requested
+  // Returns { ok: boolean, reason?: string }
+  const checkLayerChange = (
+    itemId: string,
+    currentLayers: number,
+    delta: number,
+    excludeId?: string
+  ): { ok: boolean; reason?: string; maxPhys: number } => {
+    const item = items.find((it) => it.id === itemId)
+    if (!item) return { ok: false, reason: 'Груз не найден', maxPhys: 1 }
+    const maxPhys = maxLayersFor(item, deck.clearance)
+    const newLayers = currentLayers + delta
+    if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
+    if (newLayers > maxPhys) {
+      return {
+        ok: false,
+        reason: `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`,
+        maxPhys,
+      }
+    }
+    // Sum of layers across all placements of this item (excluding the one being changed)
+    const sumPlaced =
+      pinnedPlacements
+        .filter((p) => p.itemId === itemId && p.id !== excludeId)
+        .reduce((s, p) => s + p.layers, 0) +
+      manualPlacements
+        .filter((m) => m.itemId === itemId && m.id !== excludeId)
+        .reduce((s, m) => s + Math.max(1, m.layers), 0)
+    if (sumPlaced + newLayers > item.quantity) {
+      return {
+        ok: false,
+        reason: `Все ${item.quantity} ед. этого груза уже размещены — увеличьте количество в списке грузов`,
+        maxPhys,
+      }
+    }
+    return { ok: true, maxPhys }
+  }
+
+  const handleLayerChangePinned = (id: string, delta: number) => {
+    const pin = pinnedPlacements.find((p) => p.id === id)
+    if (!pin) return
+    const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
+    if (!check.ok) {
+      toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+      return
+    }
+    updatePinned(id, { layers: pin.layers + delta })
+  }
+
+  const handleLayerChangeManual = (id: string, delta: number) => {
+    const mp = manualPlacements.find((m) => m.id === id)
+    if (!mp) return
+    const current = Math.max(1, mp.layers)
+    const check = checkLayerChange(mp.itemId, current, delta, id)
+    if (!check.ok) {
+      toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+      return
+    }
+    updateManualPlacement(id, { layers: current + delta })
+  }
+
+  // Group layer change for multiple selected pins
+  const handleGroupLayerChange = (delta: number) => {
+    const selected = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
+    let applied = 0
+    let blocked = 0
+    for (const pin of selected) {
+      const check = checkLayerChange(pin.itemId, pin.layers, delta, pin.id)
+      if (check.ok) {
+        updatePinned(pin.id, { layers: pin.layers + delta })
+        applied++
+      } else {
+        blocked++
+      }
+    }
+    if (applied > 0 && blocked === 0) {
+      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
+    } else if (blocked > 0 && applied === 0) {
+      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
+    } else if (blocked > 0) {
+      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
+    }
+  }
+
+  // Group layer change for multiple selected manual placements
+  const handleGroupLayerChangeManual = (delta: number) => {
+    const selected = manualPlacements.filter((m) => selectedManualIds.includes(m.id))
+    let applied = 0
+    let blocked = 0
+    for (const mp of selected) {
+      const current = Math.max(1, mp.layers)
+      const check = checkLayerChange(mp.itemId, current, delta, mp.id)
+      if (check.ok) {
+        updateManualPlacement(mp.id, { layers: current + delta })
+        applied++
+      } else {
+        blocked++
+      }
+    }
+    if (applied > 0 && blocked === 0) {
+      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
+    } else if (blocked > 0 && applied === 0) {
+      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
+    } else if (blocked > 0) {
+      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
+    }
+  }
+
   // Switch mode while preserving placements:
   //  - auto -> manual: all placed items (pinned + auto-packed) become manual placements
   //  - manual -> auto: all manual placements become pinned, auto-packer keeps their positions
@@ -553,6 +668,21 @@ export default function Home() {
                     onTogglePinSelection={togglePinSelection}
                     onClearSelection={clearSelection}
                     onRotateManual={handleRotateManual}
+                    onLayerChangePinned={handleLayerChangePinned}
+                    onLayerChangeManual={handleLayerChangeManual}
+                    getLayerInfo={(itemId, currentLayers, excludeId) => {
+                      const item = items.find((it) => it.id === itemId)
+                      const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
+                      const incCheck = checkLayerChange(itemId, currentLayers, 1, excludeId)
+                      return {
+                        maxPhys,
+                        canIncrease: incCheck.ok,
+                        canDecrease: currentLayers > 1,
+                      }
+                    }}
+                    selectedManualIds={selectedManualIds}
+                    onToggleManualSelection={toggleManualSelection}
+                    onClearManualSelection={clearManualSelection}
                   />
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
@@ -576,6 +706,8 @@ export default function Home() {
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}
+                onGroupLayerChange={handleGroupLayerChange}
+                onGroupLayerChangeManual={handleGroupLayerChangeManual}
               />
               <StatsPanel result={result} unit={deck.unit} />
               <ItemList

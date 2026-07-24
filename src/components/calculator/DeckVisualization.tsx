@@ -41,6 +41,15 @@ interface DeckVisualizationProps {
   onClearSelection?: () => void
   // Manual mode rotate
   onRotateManual?: (id: string) => void
+  // Layer change (per-placement)
+  onLayerChangePinned?: (id: string, delta: number) => void
+  onLayerChangeManual?: (id: string, delta: number) => void
+  // Layer validation info for single-selected placement
+  getLayerInfo?: (itemId: string, currentLayers: number, excludeId?: string) => { maxPhys: number; canIncrease: boolean; canDecrease: boolean }
+  // Manual multi-selection
+  selectedManualIds?: string[]
+  onToggleManualSelection?: (id: string, additive: boolean) => void
+  onClearManualSelection?: () => void
 }
 
 export function DeckVisualization({
@@ -69,6 +78,12 @@ export function DeckVisualization({
   onTogglePinSelection,
   onClearSelection,
   onRotateManual,
+  onLayerChangePinned,
+  onLayerChangeManual,
+  getLayerInfo,
+  selectedManualIds,
+  onToggleManualSelection,
+  onClearManualSelection,
 }: DeckVisualizationProps) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -186,6 +201,12 @@ export function DeckVisualization({
   ) => {
     if (mode !== 'manual') return
     e.stopPropagation()
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    if (additive) {
+      // Toggle selection without starting a drag
+      onToggleManualSelection?.(mp.id, true)
+      return
+    }
     setSelectedManual(mp.id)
     setDragState({
       id: mp.id,
@@ -372,6 +393,9 @@ export function DeckVisualization({
           y: m.y,
           width: m.width,
           length: m.length,
+          height: 0,
+          layers: Math.max(1, m.layers),
+          stackedCount: Math.max(1, m.layers),
           rotated: m.rotated,
           color: m.color,
           weight: m.weight,
@@ -481,7 +505,10 @@ export function DeckVisualization({
           const pw = p.width * scale
           const ph = p.length * scale
           const isHover = hoveredItemId === p.itemId
-          const isSelected = mode === 'manual' && selectedManual === p.manualId
+          const isSelected =
+            mode === 'manual' &&
+            (selectedManual === p.manualId ||
+              (selectedManualIds?.includes(p.manualId ?? '') ?? false))
           // Find pinned placement matching this placed item (same position + itemId)
           const matchingPin = isInteractiveAuto
             ? pinnedPlacements.find(
@@ -518,7 +545,7 @@ export function DeckVisualization({
           )
         })}
 
-        {/* Auto mode: rotate + delete buttons on a selected pinned item (single selection) */}
+        {/* Auto mode: rotate + delete + layer buttons on a selected pinned item (single selection) */}
         {isInteractiveAuto &&
           selectedPinIds.length === 1 &&
           (() => {
@@ -528,6 +555,12 @@ export function DeckVisualization({
             const rcy = toY(pin.y)
             const dcx = toX(pin.x + pin.width)
             const dcy = toY(pin.y)
+            // Layer buttons positioned at top-right and bottom-right
+            const lcx = toX(pin.x + pin.width)
+            const lcy = toY(pin.y + pin.length)
+            const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
+            const maxPhys = layerInfo?.maxPhys ?? 1
+            const canInc = layerInfo?.canIncrease ?? true
             return (
               <>
                 {onRotatePinned && (
@@ -542,6 +575,32 @@ export function DeckVisualization({
                     <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
                   </g>
                 )}
+                {onLayerChangePinned && (
+                  <g
+                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (canInc) onLayerChangePinned(pin.id, 1)
+                    }}
+                  >
+                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : `Потолок: ${maxPhys} ярус(ов)`}</title>
+                    <circle cx={lcx} cy={lcy - 11} r={9} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy - 10} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">+</text>
+                  </g>
+                )}
+                {onLayerChangePinned && (
+                  <g
+                    style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (pin.layers > 1) onLayerChangePinned(pin.id, -1)
+                    }}
+                  >
+                    <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+                    <circle cx={lcx} cy={lcy + 11} r={9} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy + 12} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">−</text>
+                  </g>
+                )}
                 {onRemovePinned && (
                   <g
                     style={{ cursor: 'pointer' }}
@@ -554,11 +613,18 @@ export function DeckVisualization({
                     <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
                   </g>
                 )}
+                {/* Layer count badge */}
+                <g className="pointer-events-none">
+                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+                    {pin.layers} / {maxPhys} яр.
+                  </text>
+                </g>
               </>
             )
           })()}
 
-        {/* Manual mode: rotate + delete buttons on selected */}
+        {/* Manual mode: rotate + delete + layer buttons on selected */}
         {mode === 'manual' &&
           selectedManual &&
           (() => {
@@ -568,6 +634,12 @@ export function DeckVisualization({
             const rcy = toY(mp.y)
             const dcx = toX(mp.x + mp.width)
             const dcy = toY(mp.y)
+            const lcx = toX(mp.x + mp.width)
+            const lcy = toY(mp.y + mp.length)
+            const currentLayers = Math.max(1, mp.layers)
+            const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
+            const maxPhys = layerInfo?.maxPhys ?? 1
+            const canInc = layerInfo?.canIncrease ?? true
             return (
               <>
                 {onRotateManual && (
@@ -580,6 +652,32 @@ export function DeckVisualization({
                   >
                     <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
                     <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+                  </g>
+                )}
+                {onLayerChangeManual && (
+                  <g
+                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (canInc) onLayerChangeManual(mp.id, 1)
+                    }}
+                  >
+                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : `Потолок: ${maxPhys} ярус(ов)`}</title>
+                    <circle cx={lcx} cy={lcy - 11} r={9} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy - 10} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">+</text>
+                  </g>
+                )}
+                {onLayerChangeManual && (
+                  <g
+                    style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (currentLayers > 1) onLayerChangeManual(mp.id, -1)
+                    }}
+                  >
+                    <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+                    <circle cx={lcx} cy={lcy + 11} r={9} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
+                    <text x={lcx} y={lcy + 12} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight={700} fill="#fff">−</text>
                   </g>
                 )}
                 {onRemoveManual && (
@@ -595,6 +693,13 @@ export function DeckVisualization({
                     <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
                   </g>
                 )}
+                {/* Layer count badge */}
+                <g className="pointer-events-none">
+                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+                    {currentLayers} / {maxPhys} яр.
+                  </text>
+                </g>
               </>
             )
           })()}

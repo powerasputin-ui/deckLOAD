@@ -11,6 +11,8 @@ import {
   MousePointerClick,
   Package,
   Layers,
+  Plus,
+  Minus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +34,8 @@ interface PlacementPanelProps {
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
+  onGroupLayerChange?: (delta: number) => void
+  onGroupLayerChangeManual?: (delta: number) => void
 }
 
 export function PlacementPanel({
@@ -39,15 +43,19 @@ export function PlacementPanel({
   onAutoRedistribute,
   variants,
   onSelectVariant,
+  onGroupLayerChange,
+  onGroupLayerChangeManual,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
   const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
+  const selectedManualIds = useCalculator((s) => s.selectedManualIds)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
   const updatePinned = useCalculator((s) => s.updatePinned)
   const removePinned = useCalculator((s) => s.removePinned)
   const clearPinned = useCalculator((s) => s.clearPinned)
   const clearSelection = useCalculator((s) => s.clearSelection)
+  const clearManualSelection = useCalculator((s) => s.clearManualSelection)
   const clearManualPlacements = useCalculator((s) => s.clearManualPlacements)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
@@ -57,8 +65,9 @@ export function PlacementPanel({
   // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
   const placements = isAuto ? pinnedPlacements : manualPlacements
-  const selectedCount = isAuto ? selectedPinIds.length : 0
+  const selectedCount = isAuto ? selectedPinIds.length : selectedManualIds.length
   const hasPlacements = placements.length > 0
+  const showGroupActions = selectedCount > 0
 
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
   const totalPlaced = isAuto
@@ -199,16 +208,18 @@ export function PlacementPanel({
           </div>
         )}
 
-        {/* Selected items (auto mode) */}
-        {isAuto && selectedCount > 0 && (
+        {/* Selected items (both modes) */}
+        {showGroupActions && (
           <div className="rounded-lg border bg-violet-50/50 dark:bg-violet-950/20 p-2.5 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-400">
               <Move className="h-3.5 w-3.5" />
               Выбрано {selectedCount} {selectedCount === 1 ? 'груз' : 'грузов'}
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {pinnedPlacements
-                .filter((p) => selectedPinIds.includes(p.id))
+              {(isAuto
+                ? pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
+                : manualPlacements.filter((m) => selectedManualIds.includes(m.id))
+              )
                 .slice(0, 6)
                 .map((p) => (
                   <span
@@ -217,29 +228,57 @@ export function PlacementPanel({
                   >
                     <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: p.color }} />
                     {p.name}
-                    {p.layers > 1 && <span className="text-muted-foreground">×{p.layers}</span>}
+                    {(p.layers ?? 1) > 1 && <span className="text-muted-foreground">×{p.layers}</span>}
                   </span>
                 ))}
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button size="sm" variant="outline" onClick={handleRotateSelected}>
-                <RotateCw className="h-3.5 w-3.5 mr-1" />
-                Повернуть
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleDeleteSelected}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5 mr-1" />
-                Открепить
-              </Button>
-            </div>
+            {/* Group layer change buttons — available in both modes */}
+            {(isAuto ? onGroupLayerChange : onGroupLayerChangeManual) && (
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    isAuto ? onGroupLayerChange?.(1) : onGroupLayerChangeManual?.(1)
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  + Ярус всем
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    isAuto ? onGroupLayerChange?.(-1) : onGroupLayerChangeManual?.(-1)
+                  }
+                >
+                  <Minus className="h-3.5 w-3.5 mr-1" />
+                  − Ярус всем
+                </Button>
+              </div>
+            )}
+            {/* Rotate + delete (auto mode only for pinned) */}
+            {isAuto && (
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" onClick={handleRotateSelected}>
+                  <RotateCw className="h-3.5 w-3.5 mr-1" />
+                  Повернуть
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDeleteSelected}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Открепить
+                </Button>
+              </div>
+            )}
             <Button
               size="sm"
               variant="ghost"
-              onClick={clearSelection}
+              onClick={() => (isAuto ? clearSelection() : clearManualSelection())}
               className="w-full h-7 text-xs"
             >
               <X className="h-3.5 w-3.5 mr-1" />

@@ -64,6 +64,7 @@ interface CalculatorState {
   manualPlacements: ManualPlacement[]
   pinnedPlacements: PinnedPlacement[]
   selectedPinIds: string[]
+  selectedManualIds: string[]
   activeStampId: string | null
   stampRotated: boolean
 
@@ -95,6 +96,9 @@ interface CalculatorState {
   togglePinSelection: (id: string, additive: boolean) => void
   selectPins: (ids: string[]) => void
   clearSelection: () => void
+  // Manual multi-selection
+  toggleManualSelection: (id: string, additive: boolean) => void
+  clearManualSelection: () => void
 }
 
 function nextColor(items: CargoItem[]): string {
@@ -169,6 +173,7 @@ export const useCalculator = create<CalculatorState>((set) => ({
   manualPlacements: [],
   pinnedPlacements: [],
   selectedPinIds: [],
+  selectedManualIds: [],
   activeStampId: null,
   stampRotated: false,
 
@@ -315,6 +320,19 @@ export const useCalculator = create<CalculatorState>((set) => ({
     }),
   selectPins: (ids) => set({ selectedPinIds: ids }),
   clearSelection: () => set({ selectedPinIds: [] }),
+
+  toggleManualSelection: (id, additive) =>
+    set((s) => {
+      if (additive) {
+        return {
+          selectedManualIds: s.selectedManualIds.includes(id)
+            ? s.selectedManualIds.filter((sid) => sid !== id)
+            : [...s.selectedManualIds, id],
+        }
+      }
+      return { selectedManualIds: s.selectedManualIds.includes(id) ? [] : [id] }
+    }),
+  clearManualSelection: () => set({ selectedManualIds: [] }),
 }))
 
 export { UNIT_LABEL, PALETTE }
