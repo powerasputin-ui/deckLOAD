@@ -225,34 +225,6 @@ function placeRect(used: Rect, freeRects: FreeRect[]): void {
   freeRects.push(...next)
 }
 
-function sortItems(items: CargoItem[], strategy: SortStrategy): CargoItem[] {
-  const expanded = items.flatMap((it) => {
-    const copies: CargoItem[] = []
-    for (let i = 0; i < it.quantity; i++) {
-      copies.push({ ...it, quantity: 1 })
-    }
-    return copies
-  })
-
-  const cmp = (a: CargoItem, b: CargoItem): number => {
-    switch (strategy) {
-      case 'area-desc':
-        return b.width * b.length - a.width * a.length
-      case 'area-asc':
-        return a.width * a.length - b.width * b.length
-      case 'width-desc':
-        return b.width - a.width
-      case 'height-desc':
-        return b.length - a.length
-      case 'quantity-desc':
-        return 0
-      case 'none':
-        return 0
-    }
-  }
-  expanded.sort(cmp)
-  return expanded
-}
 
 export interface PackOptions {
   sortStrategy?: SortStrategy
@@ -406,7 +378,7 @@ export function packDeck(
 
   let stackIdx = 0
 
-  for (const { item, layers, unitsInStack } of stacks) {
+  for (const { item, unitsInStack } of stacks) {
     if (perItemRemaining.get(item.id)! <= 0) continue
 
     const cellW = item.width + gap
@@ -525,7 +497,7 @@ export function computeFreeRects(
   const uy = boardOffset
   const uw = Math.max(0, deckWidth - boardOffset * 2)
   const ul = Math.max(0, deckLength - boardOffset * 2)
-  let free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
+  const free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
   for (const p of placed) {
     placeRect(
       { x: p.x, y: p.y, width: p.width + gap, height: p.length + gap },

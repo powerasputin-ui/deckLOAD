@@ -193,15 +193,30 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     const src = get().projects.find((p) => p.id === id)
     if (!src) return null
     const now = Date.now()
+    // Build a mapping oldItemId -> newItemId so placements stay linked
+    const itemIdMap = new Map<string, string>()
+    const newItems = src.items.map((it) => {
+      const newId = uuid()
+      itemIdMap.set(it.id, newId)
+      return { ...it, id: newId }
+    })
     const copy: Project = {
       ...src,
       id: uuid(),
       name: `${src.name} (копия)`,
       createdAt: now,
       updatedAt: now,
-      items: src.items.map((it) => ({ ...it, id: uuid() })),
-      manualPlacements: src.manualPlacements.map((m) => ({ ...m, id: uuid() })),
-      pinnedPlacements: src.pinnedPlacements.map((p) => ({ ...p, id: uuid() })),
+      items: newItems,
+      manualPlacements: src.manualPlacements.map((m) => ({
+        ...m,
+        id: uuid(),
+        itemId: itemIdMap.get(m.itemId) ?? m.itemId,
+      })),
+      pinnedPlacements: src.pinnedPlacements.map((p) => ({
+        ...p,
+        id: uuid(),
+        itemId: itemIdMap.get(p.itemId) ?? p.itemId,
+      })),
     }
     set((s) => {
       const next = { projects: [...s.projects, copy], activeId: copy.id }

@@ -43,8 +43,6 @@ interface DeckVisualizationProps {
   onRotateManual?: (id: string) => void
 }
 
-const EDGE_PAD_PX = 6 // visual inset so items never touch the deck border
-
 export function DeckVisualization({
   result,
   unit,

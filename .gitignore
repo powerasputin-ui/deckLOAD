@@ -52,3 +52,13 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Database (generated, not tracked)
+db/*.db
+db/*.db-journal
+
+# Runtime PID files
+*.pid
+
+# Platform deploy scripts (not part of the app)
+/.zscripts/

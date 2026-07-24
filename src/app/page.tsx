@@ -40,12 +40,10 @@ export default function Home() {
   const items = useCalculator((s) => s.items)
   const sortStrategy = useCalculator((s) => s.sortStrategy)
   const globalRotation = useCalculator((s) => s.globalRotation)
-  const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
   const mode = useCalculator((s) => s.mode)
-  const setMode = useCalculator((s) => s.setMode)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
   const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
   const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
@@ -56,7 +54,6 @@ export default function Home() {
   const pinFromPlaced = useCalculator((s) => s.pinFromPlaced)
   const updatePinned = useCalculator((s) => s.updatePinned)
   const removePinned = useCalculator((s) => s.removePinned)
-  const clearPinned = useCalculator((s) => s.clearPinned)
   const togglePinSelection = useCalculator((s) => s.togglePinSelection)
   const clearSelection = useCalculator((s) => s.clearSelection)
 
@@ -66,8 +63,6 @@ export default function Home() {
   const hydrate = useProjects((s) => s.hydrate)
   const activeProject = projects.find((p) => p.id === activeId)
   const saveSnapshot = useProjects((s) => s.saveSnapshot)
-  const createProject = useProjects((s) => s.createProject)
-  const switchTo = useProjects((s) => s.switchTo)
 
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -147,46 +142,49 @@ export default function Home() {
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
   }, [mode, activeStampId, items])
 
-  // When boardOffset changes, only clamp existing placements into the new
-  // usable area — we do NOT re-pack, so the user's manual arrangement is
-  // preserved. The gap value affects future collision checks and auto-packing
-  // but does not move already-placed items.
-  const prevBoardOffset = useRef(deck.boardOffset)
+  // When gap or boardOffset changes, re-apply the new spacing to all existing
+  // placements so the user sees the gaps update. In manual mode we re-pack and
+  // store the result back as manual placements (preserving the manual workflow).
+  // In auto mode we clear pinned so the packer redistributes with the new gap.
+  const prevSpacing = useRef({ gap: deck.gap, boardOffset: deck.boardOffset })
   useEffect(() => {
-    if (prevBoardOffset.current === deck.boardOffset) return
-    prevBoardOffset.current = deck.boardOffset
+    const prev = prevSpacing.current
+    if (prev.gap === deck.gap && prev.boardOffset === deck.boardOffset) return
+    prevSpacing.current = { gap: deck.gap, boardOffset: deck.boardOffset }
 
     const s = useCalculator.getState()
-    const off = deck.boardOffset
-    const clampXY = (x: number, y: number, w: number, l: number) => ({
-      x: Math.max(off, Math.min(deck.width - off - w, x)),
-      y: Math.max(off, Math.min(deck.length - off - l, y)),
+    const hasManual = s.manualPlacements.length > 0
+    const hasPinned = s.pinnedPlacements.length > 0
+    if (!hasManual && !hasPinned) return
+
+    const effectiveItems = s.globalRotation
+      ? s.items
+      : s.items.map((it) => ({ ...it, allowRotation: false }))
+    const packed = packDeck(deck.width, deck.length, effectiveItems, {
+      sortStrategy: s.sortStrategy,
+      gap: deck.gap,
+      boardOffset: deck.boardOffset,
+      clearance: deck.clearance,
     })
 
-    let changed = false
-    if (s.manualPlacements.length > 0) {
-      const next = s.manualPlacements.map((m) => {
-        const c = clampXY(m.x, m.y, m.width, m.length)
-        if (c.x !== m.x || c.y !== m.y) {
-          changed = true
-          return { ...m, x: c.x, y: c.y }
-        }
-        return m
-      })
-      if (changed) useCalculator.setState({ manualPlacements: next })
+    if (s.mode === 'manual') {
+      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
+        id: crypto.randomUUID(),
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+      }))
+      useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
+    } else {
+      useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
     }
-    if (s.pinnedPlacements.length > 0) {
-      const next = s.pinnedPlacements.map((p) => {
-        const c = clampXY(p.x, p.y, p.width, p.length)
-        if (c.x !== p.x || c.y !== p.y) {
-          changed = true
-          return { ...p, x: c.x, y: c.y }
-        }
-        return p
-      })
-      if (changed) useCalculator.setState({ pinnedPlacements: next })
-    }
-  }, [deck.boardOffset, deck.width, deck.length])
+  }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
 
   const handleNewCalculation = () => {
     useCalculator.setState({

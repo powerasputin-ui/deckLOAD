@@ -16,8 +16,6 @@ import {
   Check,
   Copy,
   Trash2,
-  Hand,
-  Wand2,
   PanelLeftClose,
   PanelLeft,
   Anchor,

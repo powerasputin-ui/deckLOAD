@@ -16,6 +16,20 @@ const UNIT_LABEL: Record<Unit, string> = {
   ft: 'фт',
 }
 
+// Conversion factors: how many units per meter
+const UNIT_PER_METER: Record<Unit, number> = {
+  m: 1,
+  cm: 100,
+  ft: 3.28084,
+}
+
+function convertLength(value: number, from: Unit, to: Unit): number {
+  if (from === to) return value
+  // value is in `from` units; convert to meters then to `to` units
+  const meters = value / UNIT_PER_METER[from]
+  return meters * UNIT_PER_METER[to]
+}
+
 export interface DeckConfig {
   width: number
   length: number
@@ -160,7 +174,29 @@ export const useCalculator = create<CalculatorState>((set, get) => ({
 
   setDeck: (patch) =>
     set((s) => ({ deck: { ...s.deck, ...patch } })),
-  setUnit: (u) => set((s) => ({ deck: { ...s.deck, unit: u } })),
+  setUnit: (u) =>
+    set((s) => {
+      const from = s.deck.unit
+      if (from === u) return s
+      const conv = (v: number) => convertLength(v, from, u)
+      return {
+        deck: {
+          ...s.deck,
+          unit: u,
+          width: conv(s.deck.width),
+          length: conv(s.deck.length),
+          gap: conv(s.deck.gap),
+          boardOffset: conv(s.deck.boardOffset),
+          clearance: conv(s.deck.clearance),
+        },
+        items: s.items.map((it) => ({
+          ...it,
+          width: conv(it.width),
+          length: conv(it.length),
+          height: conv(it.height),
+        })),
+      }
+    }),
   addItem: (partial) =>
     set((s) => ({ items: [...s.items, makeItem(s.items, partial)] })),
   updateItem: (id, patch) =>

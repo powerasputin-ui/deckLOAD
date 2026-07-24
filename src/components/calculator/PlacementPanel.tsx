@@ -1,12 +1,10 @@
 'use client'
 
-import { useState } from 'react'
 import {
   Pin,
   RotateCw,
   Trash2,
   X,
-  Layers,
   Unlock,
   Move,
   Wand2,
@@ -42,8 +40,6 @@ export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps
   const removePinned = useCalculator((s) => s.removePinned)
   const clearPinned = useCalculator((s) => s.clearPinned)
   const clearSelection = useCalculator((s) => s.clearSelection)
-  const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
-  const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
   const clearManualPlacements = useCalculator((s) => s.clearManualPlacements)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
@@ -53,7 +49,6 @@ export function PlacementPanel({ mode, onAutoRedistribute }: PlacementPanelProps
   // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
   const placements = isAuto ? pinnedPlacements : manualPlacements
-  const selectedIds = isAuto ? selectedPinIds : [] // manual uses its own internal selection in DeckViz
   const selectedCount = isAuto ? selectedPinIds.length : 0
   const hasPlacements = placements.length > 0
 

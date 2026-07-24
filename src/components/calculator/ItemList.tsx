@@ -50,7 +50,6 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
   const removeItem = useCalculator((s) => s.removeItem)
   const duplicateItem = useCalculator((s) => s.duplicateItem)
   const globalRotation = useCalculator((s) => s.globalRotation)
-  const mode = useCalculator((s) => s.mode)
 
   // count placed per item id
   const placedCount = new Map<string, number>()
