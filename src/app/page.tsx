@@ -181,6 +181,26 @@ export default function Home() {
     toast.info('Восстановлен демонстрационный пример')
   }
 
+  const handleRotatePinned = (id: string) => {
+    const pin = pinnedPlacements.find((p) => p.id === id)
+    if (!pin) return
+    updatePinned(id, {
+      width: pin.length,
+      length: pin.width,
+      rotated: !pin.rotated,
+    })
+  }
+
+  const handleRotateManual = (id: string) => {
+    const mp = manualPlacements.find((m) => m.id === id)
+    if (!mp) return
+    updateManualPlacement(id, {
+      width: mp.length,
+      length: mp.width,
+      rotated: !mp.rotated,
+    })
+  }
+
   return (
     <div className="h-screen flex flex-col bg-muted/30 overflow-hidden">
       {/* Top bar */}
@@ -310,8 +330,10 @@ export default function Home() {
                     onPinPlaced={(p) => pinFromPlaced(p)}
                     onUpdatePinned={(id, x, y) => updatePinned(id, { x, y })}
                     onRemovePinned={removePinned}
+                    onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
                     onClearSelection={clearSelection}
+                    onRotateManual={handleRotateManual}
                   />
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>

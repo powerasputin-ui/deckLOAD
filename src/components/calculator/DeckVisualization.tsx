@@ -36,8 +36,11 @@ interface DeckVisualizationProps {
   onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => void
   onUpdatePinned?: (id: string, x: number, y: number) => void
   onRemovePinned?: (id: string) => void
+  onRotatePinned?: (id: string) => void
   onTogglePinSelection?: (id: string, additive: boolean) => void
   onClearSelection?: () => void
+  // Manual mode rotate
+  onRotateManual?: (id: string) => void
 }
 
 const EDGE_PAD_PX = 6 // visual inset so items never touch the deck border
@@ -64,8 +67,10 @@ export function DeckVisualization({
   onPinPlaced,
   onUpdatePinned,
   onRemovePinned,
+  onRotatePinned,
   onTogglePinSelection,
   onClearSelection,
+  onRotateManual,
 }: DeckVisualizationProps) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -232,6 +237,36 @@ export function DeckVisualization({
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
+  // Gap-aware collision resolution: try full delta, then X-only, then Y-only.
+  // Returns the best non-colliding position, or the current position if all collide.
+  const resolveDragPosition = (
+    targetX: number,
+    targetY: number,
+    width: number,
+    length: number,
+    currentX: number,
+    currentY: number,
+    others: { x: number; y: number; width: number; length: number }[]
+  ): { x: number; y: number } => {
+    const candidates: { x: number; y: number }[] = [
+      { x: targetX, y: targetY },
+      { x: targetX, y: currentY },
+      { x: currentX, y: targetY },
+    ]
+    for (const c of candidates) {
+      const clamped = clampToDeck(
+        { x: c.x, y: c.y, width, length },
+        deckWidth,
+        deckLength,
+        edgePad
+      )
+      if (!collidesWith({ ...clamped, width, length }, others, gap)) {
+        return { x: clamped.x, y: clamped.y }
+      }
+    }
+    return { x: currentX, y: currentY }
+  }
+
   const handlePointerMove = (e: React.PointerEvent) => {
     if (mode === 'manual' && activeStamp && !dragState) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -248,13 +283,13 @@ export function DeckVisualization({
       const ny = dragState.startPlace.y + deltaY
       const mp = manualPlacements.find((m) => m.id === dragState.id)
       if (mp) {
-        const clamped = clampToDeck(
-          { x: nx, y: ny, width: mp.width, length: mp.length },
-          deckWidth,
-          deckLength,
-          edgePad
+        const others = manualPlacements
+          .filter((m) => m.id !== dragState.id)
+          .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+        const resolved = resolveDragPosition(
+          nx, ny, mp.width, mp.length, mp.x, mp.y, others
         )
-        onMoveManual(dragState.id, clamped.x, clamped.y)
+        onMoveManual(dragState.id, resolved.x, resolved.y)
       }
     }
     if (pinDrag && onUpdatePinned) {
@@ -262,7 +297,6 @@ export function DeckVisualization({
       if (!pos) return
       const deltaX = pos.x - pinDrag.startDeck.x
       const deltaY = pos.y - pinDrag.startDeck.y
-      // Only mark moved if delta is significant (>0.1 unit)
       if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
         setPinDrag((d) => (d ? { ...d, moved: true } : d))
       }
@@ -270,13 +304,14 @@ export function DeckVisualization({
       if (!pin) return
       const nx = pinDrag.startPlace.x + deltaX
       const ny = pinDrag.startPlace.y + deltaY
-      const clamped = clampToDeck(
-        { x: nx, y: ny, width: pin.width, length: pin.length },
-        deckWidth,
-        deckLength,
-        edgePad
+      // Prevent overlap with OTHER pinned items (auto-packed items reflow)
+      const others = pinnedPlacements
+        .filter((p) => p.id !== pinDrag.id)
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+      const resolved = resolveDragPosition(
+        nx, ny, pin.width, pin.length, pin.x, pin.y, others
       )
-      onUpdatePinned(pinDrag.id, clamped.x, clamped.y)
+      onUpdatePinned(pinDrag.id, resolved.x, resolved.y)
     }
   }
 
@@ -458,50 +493,84 @@ export function DeckVisualization({
           )
         })}
 
-        {/* Auto mode: delete button on a selected pinned item (single selection) */}
+        {/* Auto mode: rotate + delete buttons on a selected pinned item (single selection) */}
         {isInteractiveAuto &&
           selectedPinIds.length === 1 &&
-          onRemovePinned &&
           (() => {
             const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
             if (!pin) return null
-            const cx = toX(pin.x + pin.width)
-            const cy = toY(pin.y)
+            const rcx = toX(pin.x)
+            const rcy = toY(pin.y)
+            const dcx = toX(pin.x + pin.width)
+            const dcy = toY(pin.y)
             return (
-              <g
-                style={{ cursor: 'pointer' }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRemovePinned(pin.id)
-                }}
-              >
-                <circle cx={cx} cy={cy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
-                <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
-              </g>
+              <>
+                {onRotatePinned && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRotatePinned(pin.id)
+                    }}
+                  >
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+                  </g>
+                )}
+                {onRemovePinned && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemovePinned(pin.id)
+                    }}
+                  >
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+                  </g>
+                )}
+              </>
             )
           })()}
 
-        {/* Manual mode: delete button on selected */}
+        {/* Manual mode: rotate + delete buttons on selected */}
         {mode === 'manual' &&
           selectedManual &&
-          onRemoveManual &&
           (() => {
             const mp = manualPlacements.find((m) => m.id === selectedManual)
             if (!mp) return null
-            const cx = toX(mp.x + mp.width)
-            const cy = toY(mp.y)
+            const rcx = toX(mp.x)
+            const rcy = toY(mp.y)
+            const dcx = toX(mp.x + mp.width)
+            const dcy = toY(mp.y)
             return (
-              <g
-                style={{ cursor: 'pointer' }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRemoveManual(mp.id)
-                  setSelectedManual(null)
-                }}
-              >
-                <circle cx={cx} cy={cy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
-                <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
-              </g>
+              <>
+                {onRotateManual && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRotateManual(mp.id)
+                    }}
+                  >
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+                  </g>
+                )}
+                {onRemoveManual && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveManual(mp.id)
+                      setSelectedManual(null)
+                    }}
+                  >
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+                  </g>
+                )}
+              </>
             )
           })()}
 
