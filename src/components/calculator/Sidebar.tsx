@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import {
-  Ship,
   FolderOpen,
   Plus,
   RotateCcw,
@@ -133,9 +132,6 @@ export function Sidebar({
         </TooltipProvider>
         <div className="mt-auto flex flex-col items-center gap-1">
           <Separator className="my-1" />
-          <span className="text-[10px] text-muted-foreground rotate-180 [writing-mode:vertical-rl]">
-            DeckLoad
-          </span>
         </div>
       </aside>
     )
@@ -143,17 +139,8 @@ export function Sidebar({
 
   return (
     <aside className="w-72 shrink-0 border-r bg-card flex flex-col h-full overflow-hidden">
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 px-3 py-3 border-b">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shrink-0">
-          <Ship className="h-4 w-4" />
-        </div>
-        <div className="leading-tight min-w-0 flex-1">
-          <div className="text-sm font-bold truncate">DeckLoad</div>
-          <div className="text-[11px] text-muted-foreground truncate">
-            Загрузка палубы
-          </div>
-        </div>
+      {/* Collapse button */}
+      <div className="flex items-center justify-end px-3 py-2 border-b">
         <Button variant="ghost" size="icon" onClick={onToggle} className="h-7 w-7 shrink-0">
           <PanelLeftClose className="h-4 w-4" />
         </Button>

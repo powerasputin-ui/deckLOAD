@@ -11,8 +11,6 @@ import {
   MousePointerClick,
   Package,
   Layers,
-  Plus,
-  Minus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -34,8 +32,6 @@ interface PlacementPanelProps {
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
-  onGroupLayerChange?: (delta: number) => void
-  onGroupLayerChangeManual?: (delta: number) => void
   onRemovePinned?: (id: string) => void
 }
 
@@ -44,8 +40,6 @@ export function PlacementPanel({
   onAutoRedistribute,
   variants,
   onSelectVariant,
-  onGroupLayerChange,
-  onGroupLayerChangeManual,
   onRemovePinned,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
@@ -240,31 +234,6 @@ export function PlacementPanel({
                   </span>
                 ))}
             </div>
-            {/* Group layer change buttons — available in both modes */}
-            {(isAuto ? onGroupLayerChange : onGroupLayerChangeManual) && (
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    isAuto ? onGroupLayerChange?.(1) : onGroupLayerChangeManual?.(1)
-                  }
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" />
-                  + Ярус всем
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    isAuto ? onGroupLayerChange?.(-1) : onGroupLayerChangeManual?.(-1)
-                  }
-                >
-                  <Minus className="h-3.5 w-3.5 mr-1" />
-                  − Ярус всем
-                </Button>
-              </div>
-            )}
             {/* Rotate + delete (auto mode only for pinned) */}
             {isAuto && (
               <div className="grid grid-cols-2 gap-2">

@@ -69,7 +69,6 @@ export default function Home() {
   const activeId = useProjects((s) => s.activeId)
   const hydrated = useProjects((s) => s.hydrated)
   const hydrate = useProjects((s) => s.hydrate)
-  const activeProject = projects.find((p) => p.id === activeId)
   const saveSnapshot = useProjects((s) => s.saveSnapshot)
 
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
@@ -469,53 +468,6 @@ export default function Home() {
     updateManualPlacement(id, { layers: current + delta })
   }
 
-  // Group layer change for multiple selected pins
-  const handleGroupLayerChange = (delta: number) => {
-    const selected = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
-    let applied = 0
-    let blocked = 0
-    for (const pin of selected) {
-      const check = checkLayerChange(pin.itemId, pin.layers, delta, pin.id)
-      if (check.ok) {
-        updatePinned(pin.id, { layers: pin.layers + delta })
-        applied++
-      } else {
-        blocked++
-      }
-    }
-    if (applied > 0 && blocked === 0) {
-      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
-    } else if (blocked > 0 && applied === 0) {
-      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
-    } else if (blocked > 0) {
-      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
-    }
-  }
-
-  // Group layer change for multiple selected manual placements
-  const handleGroupLayerChangeManual = (delta: number) => {
-    const selected = manualPlacements.filter((m) => selectedManualIds.includes(m.id))
-    let applied = 0
-    let blocked = 0
-    for (const mp of selected) {
-      const current = Math.max(1, mp.layers)
-      const check = checkLayerChange(mp.itemId, current, delta, mp.id)
-      if (check.ok) {
-        updateManualPlacement(mp.id, { layers: current + delta })
-        applied++
-      } else {
-        blocked++
-      }
-    }
-    if (applied > 0 && blocked === 0) {
-      toast.success(`Ярусов изменено: ${applied} стоп(ок)`)
-    } else if (blocked > 0 && applied === 0) {
-      toast.warning(`Невозможно изменить: потолок достигнут (${blocked} стоп.)`)
-    } else if (blocked > 0) {
-      toast.info(`Изменено ${applied}, блокировано ${blocked} (потолок)`)
-    }
-  }
-
   // Switch mode while preserving placements:
   //  - auto -> manual: all placed items (pinned + auto-packed) become manual placements
   //  - manual -> auto: all manual placements become pinned, auto-packer keeps their positions
@@ -639,15 +591,16 @@ export default function Home() {
       {/* Top bar */}
       <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
         <div className="flex items-center gap-3 px-4 py-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-sm font-semibold truncate">
-              {activeProject?.name ?? 'DeckLoad'}
-            </h1>
-            {activeProject && (
-              <span className="text-xs text-muted-foreground hidden md:inline">
-                · {activeProject.deck.width}×{activeProject.deck.length} {activeProject.deck.unit}
-              </span>
-            )}
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shrink-0">
+              <Ship className="h-4 w-4" />
+            </div>
+            <div className="leading-tight">
+              <div className="text-sm font-bold">DeckLoad</div>
+              <div className="text-[11px] text-muted-foreground hidden sm:block">
+                Загрузка палубы
+              </div>
+            </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -795,8 +748,6 @@ export default function Home() {
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}
-                onGroupLayerChange={handleGroupLayerChange}
-                onGroupLayerChangeManual={handleGroupLayerChangeManual}
                 onRemovePinned={handleRemovePinned}
               />
               <StatsPanel result={result} unit={deck.unit} />
