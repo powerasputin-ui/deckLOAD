@@ -241,6 +241,7 @@ export default function Home() {
       manualPlacements: [],
       pinnedPlacements: [],
       selectedPinIds: [],
+      selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
       stampRotated: false,
@@ -259,6 +260,7 @@ export default function Home() {
       manualPlacements: [],
       pinnedPlacements: [],
       selectedPinIds: [],
+      selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
     })
@@ -415,20 +417,13 @@ export default function Home() {
     updatePinned(id, { layers: pin.layers + delta })
   }
 
-  // Remove a pinned placement AND decrease the item's quantity by the number of
-  // layers that were in this pin — otherwise the auto-packer immediately
-  // re-places the freed units, making ✕ look like it "doesn't work".
+  // Remove a pinned placement. Does NOT decrease item.quantity — quantity is
+  // managed only in the cargo list. The auto-packer will re-place freed units.
   const handleRemovePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
-    const layersToRemove = pin.layers
     removePinned(id)
-    const item = items.find((it) => it.id === pin.itemId)
-    if (item) {
-      const newQty = Math.max(0, item.quantity - layersToRemove)
-      useCalculator.getState().updateItem(item.id, { quantity: newQty })
-      toast.info(`Удалено: ${pin.name} (${layersToRemove} ед.)`)
-    }
+    toast.info(`Закрепление снято: ${pin.name}`)
   }
 
   const handleLayerChangeManual = (id: string, delta: number) => {
@@ -529,6 +524,10 @@ export default function Home() {
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
+    // Warn user if pinned placements will be cleared
+    if (pinnedPlacements.length > 0) {
+      toast.warning(`Закрепления (${pinnedPlacements.length}) будут сброшены`)
+    }
     const newVariants = packDeckVariants(
       deck.width,
       deck.length,
@@ -608,7 +607,7 @@ export default function Home() {
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             <Badge variant="outline" className="hidden lg:inline-flex">
               <Anchor className="h-3 w-3 mr-1" />
-              {result.placed.length}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
+              {result.placedCount}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
             </Badge>
 
             {/* Mode toggle */}
@@ -730,7 +729,7 @@ export default function Home() {
                   />
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
-                      Размещено {result.placed.length} из {result.requestedCount} ед.
+                      Размещено {result.placedCount} из {result.requestedCount} ед.
                     </span>
                     <span>
                       Загрузка:{' '}

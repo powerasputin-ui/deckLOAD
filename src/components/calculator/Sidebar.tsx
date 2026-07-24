@@ -356,7 +356,7 @@ function DeckSettings() {
               min={0.1}
               step={0.1}
               value={deck.width}
-              onChange={(e) => setDeck({ width: Number(e.target.value) || 0 })}
+              onChange={(e) => { const v = Number(e.target.value); setDeck({ width: !isNaN(v) && v > 0 ? v : 0.1 }) }}
               className="h-8 text-xs"
             />
           </div>
@@ -367,7 +367,7 @@ function DeckSettings() {
               min={0.1}
               step={0.1}
               value={deck.length}
-              onChange={(e) => setDeck({ length: Number(e.target.value) || 0 })}
+              onChange={(e) => { const v = Number(e.target.value); setDeck({ length: !isNaN(v) && v > 0 ? v : 0.1 }) }}
               className="h-8 text-xs"
             />
           </div>
@@ -382,7 +382,7 @@ function DeckSettings() {
               min={0}
               step={0.05}
               value={deck.gap}
-              onChange={(e) => setDeck({ gap: Math.max(0, Number(e.target.value) || 0) })}
+              onChange={(e) => { const v = Number(e.target.value); setDeck({ gap: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
@@ -398,7 +398,7 @@ function DeckSettings() {
               min={0}
               step={0.05}
               value={deck.boardOffset}
-              onChange={(e) => setDeck({ boardOffset: Math.max(0, Number(e.target.value) || 0) })}
+              onChange={(e) => { const v = Number(e.target.value); setDeck({ boardOffset: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
@@ -414,7 +414,7 @@ function DeckSettings() {
               min={0}
               step={0.1}
               value={deck.clearance}
-              onChange={(e) => setDeck({ clearance: Math.max(0, Number(e.target.value) || 0) })}
+              onChange={(e) => { const v = Number(e.target.value); setDeck({ clearance: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>

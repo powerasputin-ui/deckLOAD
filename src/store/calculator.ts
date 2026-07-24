@@ -259,15 +259,14 @@ export const useCalculator = create<CalculatorState>((set) => ({
     const items = p.items.map((partial) =>
       makeItem([], partial)
     )
-    // Use the preset's deck config as-is (including its unit/gap) so values stay
-    // consistent. The caller shows a toast if the unit changes.
-    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], activeStampId: items[0]?.id ?? null })
+    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], selectedManualIds: [], activeStampId: items[0]?.id ?? null })
   },
   setMode: (m) =>
     set((s) => ({
       mode: m,
       activeStampId: m === 'manual' && !s.activeStampId ? s.items[0]?.id ?? null : s.activeStampId,
       selectedPinIds: [],
+      selectedManualIds: [],
     })),
   setActiveStamp: (id) => set({ activeStampId: id }),
   toggleStampRotation: () => set((s) => ({ stampRotated: !s.stampRotated })),

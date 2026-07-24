@@ -201,6 +201,7 @@ export function PlacementPanel({
                       key={it.id}
                       item={it}
                       active={activeStampId === it.id}
+                      rotated={activeStampId === it.id && stampRotated}
                       onSelect={() => setActiveStamp(it.id)}
                     />
                   ))}
@@ -298,10 +299,12 @@ export function PlacementPanel({
 function StampRow({
   item,
   active,
+  rotated,
   onSelect,
 }: {
   item: CargoItem
   active: boolean
+  rotated?: boolean
   onSelect: () => void
 }) {
   return (
@@ -321,7 +324,7 @@ function StampRow({
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium truncate">{item.name}</div>
         <div className="text-[10px] text-muted-foreground">
-          {item.width}×{item.length}
+          {rotated ? `${item.length}×${item.width} ↻` : `${item.width}×${item.length}`}
         </div>
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}

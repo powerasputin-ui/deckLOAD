@@ -301,10 +301,15 @@ function NumField({
       </Label>
       <Input
         type="number"
-        min={0}
+        min={integer ? 1 : 0.1}
         step={integer ? 1 : 0.1}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value) || 0)}
+        onChange={(e) => {
+          const v = Number(e.target.value)
+          if (isNaN(v)) return
+          const min = integer ? 1 : 0.1
+          onChange(v < min ? min : v)
+        }}
         className="h-7 text-xs px-1.5"
       />
     </div>

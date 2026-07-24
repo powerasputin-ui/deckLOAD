@@ -100,7 +100,8 @@ export function DeckVisualization({
     startPlace: { x: number; y: number }
     moved: boolean
   } | null>(null)
-  const [selectedManual, setSelectedManual] = useState<string | null>(null)
+  // Single-selection for manual mode uses selectedManualIds[0] from store (single source of truth)
+  const selectedManual = selectedManualIds?.[0] ?? null
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
 
@@ -206,11 +207,11 @@ export function DeckVisualization({
     e.stopPropagation()
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (additive) {
-      // Toggle selection without starting a drag
       onToggleManualSelection?.(mp.id, true)
       return
     }
-    setSelectedManual(mp.id)
+    // Single selection via store
+    onToggleManualSelection?.(mp.id, false)
     setDragState({
       id: mp.id,
       startMouse: { x: e.clientX, y: e.clientY },
@@ -384,7 +385,7 @@ export function DeckVisualization({
       // Only clear if clicked directly on the SVG background or deck rect
       if (target.tagName === 'rect' || target.tagName === 'svg' || target.tagName === 'SVG') {
         const fill = target.getAttribute('fill')
-        if (fill === '#ffffff' || fill === 'url(#deck-grid)' || target.tagName === 'svg') {
+        if (fill === '#ffffff' || fill === 'url(#deck-grid)' || fill === 'url(#free-hatch)' || target.tagName === 'svg') {
           onClearSelection?.()
         }
       }
@@ -426,7 +427,7 @@ export function DeckVisualization({
         ref={svgRef}
         viewBox={`0 0 ${maxW} ${maxH}`}
         className="w-full h-auto"
-        style={{ maxHeight: 560, cursor: mode === 'manual' && activeStamp ? 'crosshair' : 'default' }}
+        style={{ maxHeight: 560, cursor: mode === 'manual' && activeStamp ? 'crosshair' : 'default', touchAction: 'none' }}
         onClick={mode === 'manual' ? handleDeckClick : undefined}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -721,7 +722,7 @@ export function DeckVisualization({
                     onClick={(e) => {
                       e.stopPropagation()
                       onRemoveManual(mp.id)
-                      setSelectedManual(null)
+                      onClearManualSelection?.()
                     }}
                   >
                     <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
