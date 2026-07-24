@@ -475,13 +475,16 @@ function DisplaySettings() {
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
+  const globalRotation = useCalculator((s) => s.globalRotation)
   const toggleFreeSpace = useCalculator((s) => s.toggleFreeSpace)
   const toggleGrid = useCalculator((s) => s.toggleGrid)
   const toggleLabels = useCalculator((s) => s.toggleLabels)
+  const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
 
   return (
     <Section icon={<Eye className="h-4 w-4" />} title="Отображение" defaultOpen={false}>
       <div className="space-y-2">
+        <Toggle label="Разрешить вращение" checked={globalRotation} onToggle={toggleGlobalRotation} />
         <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
         <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />
         <Toggle label="Метки грузов" checked={showLabels} onToggle={toggleLabels} />

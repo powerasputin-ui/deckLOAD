@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Ship,
-  RotateCw,
   Wand2,
   MousePointerClick,
   Anchor,
@@ -11,7 +10,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
 import {
   Card,
   CardContent,
@@ -33,9 +31,8 @@ import {
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
-import { ManualToolbar } from '@/components/calculator/ManualToolbar'
+import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
-import { SelectionToolbar } from '@/components/calculator/SelectionToolbar'
 import { toast } from 'sonner'
 
 export default function Home() {
@@ -150,6 +147,54 @@ export default function Home() {
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
   }, [mode, activeStampId, items])
 
+  // When gap or boardOffset changes, re-apply the new spacing to existing
+  // placements so they don't overlap or violate the new margin.
+  const prevSpacing = useRef({ gap: deck.gap, boardOffset: deck.boardOffset })
+  useEffect(() => {
+    const prev = prevSpacing.current
+    if (prev.gap === deck.gap && prev.boardOffset === deck.boardOffset) return
+    prevSpacing.current = { gap: deck.gap, boardOffset: deck.boardOffset }
+
+    const hasManual = useCalculator.getState().manualPlacements.length > 0
+    const hasPinned = useCalculator.getState().pinnedPlacements.length > 0
+    if (!hasManual && !hasPinned) return // nothing to repack
+
+    // Repack using the new spacing. In auto mode clear pins so the packer
+    // redistributes freely; in manual mode store the packed result back as
+    // manual placements (preserving the user's manual workflow).
+    const s = useCalculator.getState()
+    const effectiveItems = s.globalRotation
+      ? s.items
+      : s.items.map((it) => ({ ...it, allowRotation: false }))
+    const packed = packDeck(deck.width, deck.length, effectiveItems, {
+      sortStrategy: s.sortStrategy,
+      gap: deck.gap,
+      boardOffset: deck.boardOffset,
+      clearance: deck.clearance,
+    })
+
+    if (s.mode === 'manual') {
+      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
+        id: crypto.randomUUID(),
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+      }))
+      useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
+    } else {
+      // In auto mode, just clear pins so the packer (which already uses the new
+      // gap via useMemo) redistributes everything.
+      useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
+    }
+    toast.info('Отступы применены к расстановке')
+  }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
+
   const handleNewCalculation = () => {
     useCalculator.setState({
       deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
@@ -256,12 +301,43 @@ export default function Home() {
 
   // Force re-pack: clear all pins/manual placements so the auto-packer redistributes
   // everything from scratch using the current deck settings.
+  // In manual mode, repack and store the result back as manual placements so the
+  // user keeps working manually with the new gap/offset applied.
   const handleAutoRedistribute = () => {
-    useCalculator.setState({
-      pinnedPlacements: [],
-      manualPlacements: [],
-      selectedPinIds: [],
-    })
+    if (mode === 'manual') {
+      const effectiveItems = globalRotation
+        ? items
+        : items.map((it) => ({ ...it, allowRotation: false }))
+      const packed = packDeck(deck.width, deck.length, effectiveItems, {
+        sortStrategy,
+        gap: deck.gap,
+        boardOffset: deck.boardOffset,
+        clearance: deck.clearance,
+      })
+      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
+        id: crypto.randomUUID(),
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+      }))
+      useCalculator.setState({
+        manualPlacements: newManual,
+        pinnedPlacements: [],
+        selectedPinIds: [],
+      })
+    } else {
+      useCalculator.setState({
+        pinnedPlacements: [],
+        manualPlacements: [],
+        selectedPinIds: [],
+      })
+    }
     toast.success('Автораспределение выполнено')
   }
 
@@ -305,30 +381,6 @@ export default function Home() {
                 <span className="text-xs font-medium hidden sm:inline">Ручной</span>
               </ToggleGroupItem>
             </ToggleGroup>
-
-            {/* Auto redistribute button */}
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleAutoRedistribute}
-              className="h-9"
-              title="Автоматически распределить все грузы максимально плотно"
-            >
-              <Wand2 className="h-3.5 w-3.5 mr-1" />
-              <span className="text-xs font-medium hidden md:inline">Автораспределение</span>
-            </Button>
-
-            {/* Rotation toggle */}
-            <div className={'flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 transition-opacity ' + (mode === 'auto' ? '' : 'opacity-40 pointer-events-none')}>
-              <RotateCw className={`h-4 w-4 transition-colors ${globalRotation ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className="text-xs font-medium hidden sm:inline">Вращение</span>
-              <Switch
-                checked={globalRotation}
-                onCheckedChange={toggleGlobalRotation}
-                aria-label="Переключить вращение"
-                disabled={mode === 'manual'}
-              />
-            </div>
           </div>
         </div>
       </header>
@@ -423,15 +475,9 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Right panel: items + stats */}
+            {/* Right panel: placement + stats + items */}
             <div className="xl:col-span-4 space-y-4">
-              {mode === 'manual' && <ManualToolbar placedCount={new Map()} />}
-              {mode === 'auto' && (
-                <SelectionToolbar
-                  pinnedPlacements={pinnedPlacements}
-                  selectedPinIds={selectedPinIds}
-                />
-              )}
+              <PlacementPanel mode={mode} onAutoRedistribute={handleAutoRedistribute} />
               <StatsPanel result={result} unit={deck.unit} />
               <ItemList
                 result={result}
