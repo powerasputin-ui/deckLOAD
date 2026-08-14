@@ -24,11 +24,13 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
 import type { CargoItem, PackVariant } from '@/lib/packing'
+import { rotatePlacement } from '@/lib/packing'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface PlacementPanelProps {
   mode: 'auto' | 'manual'
+  tripIndex: number
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
@@ -37,13 +39,15 @@ interface PlacementPanelProps {
 
 export function PlacementPanel({
   mode,
+  tripIndex,
   onAutoRedistribute,
   variants,
   onSelectVariant,
   onRemovePinned,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
-  const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
+  const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
+  const pinnedPlacements = pinnedPlacementsByTrip[tripIndex] ?? []
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
   const selectedManualIds = useCalculator((s) => s.selectedManualIds)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
@@ -57,6 +61,7 @@ export function PlacementPanel({
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
+  const deck = useCalculator((s) => s.deck)
 
   // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
@@ -67,19 +72,39 @@ export function PlacementPanel({
 
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
   const totalPlaced = isAuto
-    ? pinnedPlacements.reduce((s, p) => s + p.layers, 0)
-    : manualPlacements.reduce((s, m) => s + Math.max(1, m.layers), 0)
+    ? pinnedPlacements.reduce((s, p) => s + (Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1), 0)
+    : manualPlacements.reduce((s, m) => s + (Number.isFinite(m.layers) && m.layers > 0 ? m.layers : 1), 0)
 
   const handleRotateSelected = () => {
     if (isAuto) {
-      for (const pin of pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))) {
-        updatePinned(pin.id, {
-          width: pin.length,
-          length: pin.width,
+      let rotatedCount = 0
+      const toRotate = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
+      for (const pin of toRotate) {
+        const item = items.find((it) => it.id === pin.itemId)
+        if (!item?.allowRotation) {
+          toast.warning(`Груз «${pin.name}» не разрешает поворот`)
+          continue
+        }
+        // Rotate around the centre, clamp inside the usable deck and check collision
+        // with all other pinned placements (using current state).
+        const others = pinnedPlacements
+          .filter((p) => p.id !== pin.id)
+          .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+        const result = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
+        if (!result) {
+          toast.warning(`Груз «${pin.name}» невозможно повернуть: нет места`)
+          continue
+        }
+        updatePinned(tripIndex, pin.id, {
+          x: result.x,
+          y: result.y,
+          width: result.width,
+          length: result.length,
           rotated: !pin.rotated,
         })
+        rotatedCount++
       }
-      toast.info(`Повернуто: ${selectedPinIds.length} груз(ов)`)
+      toast.info(`Повернуто: ${rotatedCount} груз(ов)`)
     }
   }
 
@@ -89,7 +114,7 @@ export function PlacementPanel({
         if (onRemovePinned) {
           onRemovePinned(id)
         } else {
-          removePinned(id)
+          removePinned(tripIndex, id)
         }
       }
       toast.info(`Удалено: ${selectedPinIds.length} груз(ов)`)
@@ -98,7 +123,7 @@ export function PlacementPanel({
 
   const handleClearAll = () => {
     if (isAuto) {
-      clearPinned()
+      clearPinned(tripIndex)
       toast.info('Все закрепления сняты')
     } else {
       clearManualPlacements()
@@ -107,7 +132,7 @@ export function PlacementPanel({
   }
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -194,7 +219,7 @@ export function PlacementPanel({
                 Сначала добавьте грузы
               </p>
             ) : (
-              <ScrollArea className="max-h-[200px] pr-1">
+              <ScrollArea className="h-[200px] pr-1">
                 <div className="space-y-1">
                   {items.map((it) => (
                     <StampRow
@@ -202,7 +227,7 @@ export function PlacementPanel({
                       item={it}
                       active={activeStampId === it.id}
                       rotated={activeStampId === it.id && stampRotated}
-                      onSelect={() => setActiveStamp(it.id)}
+                      onSelect={() => setActiveStamp(activeStampId === it.id ? null : it.id)}
                     />
                   ))}
                 </div>

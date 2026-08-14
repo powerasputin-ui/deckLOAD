@@ -10,15 +10,17 @@ import {
   CardDescription,
 } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import type { PackingResult } from '@/lib/packing'
+import { checkLoadDensity, type PackingResult, type LoadZone } from '@/lib/packing'
+import { fmtNumber } from '@/lib/utils'
 import { UNIT_LABEL, type Unit } from '@/store/calculator'
 
 interface StatsPanelProps {
   result: PackingResult
   unit: Unit
+  loadZones?: LoadZone[]
 }
 
-export function StatsPanel({ result, unit }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -36,6 +38,15 @@ export function StatsPanel({ result, unit }: StatsPanelProps) {
   const utilPct = Math.round(utilization * 100)
   const unitSym = UNIT_LABEL[unit]
   const unplacedCount = Math.max(0, requestedCount - placedCount)
+  const overLoadCount = loadZones && loadZones.length > 0
+    ? placed.filter((p) =>
+        checkLoadDensity(
+          { x: p.x, y: p.y, width: p.width, length: p.length },
+          (p.weight ?? 0) * p.stackedCount,
+          loadZones
+        )
+      ).length
+    : 0
 
   return (
     <Card>
@@ -136,6 +147,17 @@ export function StatsPanel({ result, unit }: StatsPanelProps) {
           </div>
         </div>
 
+        {/* Load capacity warnings */}
+        {overLoadCount > 0 && (
+          <div className="rounded-lg border border-red-300 bg-red-50/50 dark:bg-red-950/20 p-2.5 text-xs flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Превышена нагрузка на зону
+            </span>
+            <span className="font-bold tabular-nums">{overLoadCount} груз(ов)</span>
+          </div>
+        )}
+
         {/* Stack height indicator */}
         {maxStackHeight > 0 && (
           <div className="rounded-lg border bg-violet-50/50 dark:bg-violet-950/20 p-2.5 text-xs flex items-center justify-between">
@@ -215,7 +237,7 @@ export function StatsPanel({ result, unit }: StatsPanelProps) {
               <PackageX className="h-4 w-4 text-destructive" />
               Не размещённые грузы
             </div>
-            <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+            <div className="space-y-1">
               {unplaced.map((u, i) => (
                 <div
                   key={`${u.itemId}-${i}`}
@@ -266,6 +288,5 @@ function StatTile({
 }
 
 function fmt(v: number): string {
-  const r = Math.round(v * 100) / 100
-  return Number.isInteger(r) ? `${r}` : r.toFixed(2)
+  return fmtNumber(v)
 }

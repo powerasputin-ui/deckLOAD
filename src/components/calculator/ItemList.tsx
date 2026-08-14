@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import {
   Plus,
   Copy,
@@ -8,6 +8,7 @@ import {
   Lock,
   Unlock,
   Package,
+  ArrowUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,7 +34,7 @@ import {
   type Unit,
 } from '@/store/calculator'
 import type { CargoItem, PackingResult } from '@/lib/packing'
-import { cn } from '@/lib/utils'
+import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface ItemListProps {
@@ -41,9 +42,12 @@ interface ItemListProps {
   unit: Unit
   hoveredItemId: string | null
   onHover: (id: string | null) => void
+  onScrollPageToTop?: () => void
 }
 
-export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps) {
+export const DEFAULT_CATEGORIES = ['Обычный', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
+
+export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToTop }: ItemListProps) {
   const items = useCalculator((s) => s.items)
   const addItem = useCalculator((s) => s.addItem)
   const updateItem = useCalculator((s) => s.updateItem)
@@ -51,14 +55,48 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
   const duplicateItem = useCalculator((s) => s.duplicateItem)
   const globalRotation = useCalculator((s) => s.globalRotation)
 
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkCategory, setBulkCategory] = useState('')
+  const bulkCategoryListId = useId()
+  const listViewportRef = useRef<HTMLDivElement>(null)
+  const [showBackToTop, setShowBackToTop] = useState(false)
+  // Also resets the internal list scroll, so re-opening from the top button
+  // doesn't leave the (now off-screen) list scrolled halfway down.
+  const scrollToTop = () => {
+    listViewportRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    onScrollPageToTop?.()
+  }
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const clearSelection = () => setSelectedIds(new Set())
+  const applyBulkCategory = () => {
+    for (const id of selectedIds) updateItem(id, { category: bulkCategory || undefined })
+    toast.success(`Категория «${bulkCategory || '—'}» присвоена: ${selectedIds.size} груз(ов)`)
+    clearSelection()
+    setBulkCategory('')
+  }
+
+  const categoryOptions = Array.from(
+    new Set([...DEFAULT_CATEGORIES, ...items.map((it) => it.category).filter((c): c is string => !!c)])
+  )
+
   // count placed UNITS per item id (stackedCount, not footprints)
   const placedCount = new Map<string, number>()
   for (const p of result.placed) {
-    placedCount.set(p.itemId, (placedCount.get(p.itemId) ?? 0) + (p.stackedCount ?? 1))
+    const count = Number.isFinite(p.stackedCount) && p.stackedCount > 0 ? p.stackedCount : 1
+    placedCount.set(p.itemId, (placedCount.get(p.itemId) ?? 0) + count)
   }
 
   return (
-    <Card className="flex flex-col h-full">
+    <div className="space-y-2">
+    <Card className="flex flex-col">
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -77,9 +115,36 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="flex-1 min-h-0 p-3">
+      <CardContent className="p-3">
+        {selectedIds.size > 0 && (
+          <div className="mb-2.5 rounded-lg border border-primary/40 bg-primary/5 p-2.5 space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span>Выбрано грузов: {selectedIds.size}</span>
+              <button onClick={clearSelection} className="text-muted-foreground hover:text-foreground underline">
+                Снять выделение
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Input
+                list={bulkCategoryListId}
+                value={bulkCategory}
+                onChange={(e) => setBulkCategory(e.target.value)}
+                placeholder="Категория (напр. Опасный груз)"
+                className="h-7 text-xs flex-1"
+              />
+              <datalist id={bulkCategoryListId}>
+                {categoryOptions.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              <Button size="sm" className="h-7 text-xs shrink-0" onClick={applyBulkCategory}>
+                Присвоить
+              </Button>
+            </div>
+          </div>
+        )}
         {items.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground py-10 gap-3">
+          <div className="h-[460px] flex flex-col items-center justify-center text-center text-muted-foreground py-10 gap-3">
             <Package className="h-10 w-10 opacity-40" />
             <div>
               <p className="font-medium">Список грузов пуст</p>
@@ -91,7 +156,11 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
             </Button>
           </div>
         ) : (
-          <ScrollArea className="h-full max-h-[460px] pr-3">
+          <ScrollArea
+            className="h-[460px] pr-3"
+            viewportRef={listViewportRef}
+            onViewportScroll={(e) => setShowBackToTop(e.currentTarget.scrollTop > 150)}
+          >
             <div className="space-y-2.5">
               {items.map((item) => (
                 <ItemRow
@@ -100,6 +169,9 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
                   unit={unit}
                   placed={placedCount.get(item.id) ?? 0}
                   globalRotation={globalRotation}
+                  categoryOptions={categoryOptions}
+                  selected={selectedIds.has(item.id)}
+                  onToggleSelect={() => toggleSelected(item.id)}
                   hovered={hoveredItemId === item.id}
                   onHover={onHover}
                   onUpdate={(patch) => updateItem(item.id, patch)}
@@ -112,6 +184,17 @@ export function ItemList({ result, unit, hoveredItemId, onHover }: ItemListProps
         )}
       </CardContent>
     </Card>
+    {showBackToTop && (
+      <button
+        onClick={scrollToTop}
+        title="Наверх"
+        className="flex w-full items-center justify-center gap-1.5 rounded-md border py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      >
+        <ArrowUp className="h-3.5 w-3.5" />
+        Наверх
+      </button>
+    )}
+    </div>
   )
 }
 
@@ -120,6 +203,9 @@ interface ItemRowProps {
   unit: Unit
   placed: number
   globalRotation: boolean
+  categoryOptions: string[]
+  selected: boolean
+  onToggleSelect: () => void
   hovered: boolean
   onHover: (id: string | null) => void
   onUpdate: (patch: Partial<CargoItem>) => void
@@ -132,6 +218,9 @@ function ItemRow({
   unit,
   placed,
   globalRotation,
+  categoryOptions,
+  selected,
+  onToggleSelect,
   hovered,
   onHover,
   onUpdate,
@@ -139,6 +228,11 @@ function ItemRow({
   onDuplicate,
 }: ItemRowProps) {
   const [editName, setEditName] = useState(false)
+  // A stable, SSR/client-consistent id for the datalist — item.id itself is
+  // generated at module-eval time (uuid()), so it differs between the
+  // server-rendered HTML and the client's fresh module evaluation, which
+  // would otherwise cause a hydration mismatch on this attribute.
+  const categoryListId = useId()
   const area = item.width * item.length * item.quantity
   const allPlaced = placed >= item.quantity
   const nonePlaced = placed === 0
@@ -148,12 +242,23 @@ function ItemRow({
     <div
       className={cn(
         'rounded-lg border bg-card p-3 transition-all',
-        hovered ? 'border-primary ring-2 ring-primary/20 shadow-sm' : 'border-border'
+        selected
+          ? 'border-primary ring-2 ring-primary/30 bg-primary/5'
+          : hovered
+            ? 'border-primary ring-2 ring-primary/20 shadow-sm'
+            : 'border-border'
       )}
       onMouseEnter={() => onHover(item.id)}
       onMouseLeave={() => onHover(null)}
     >
       <div className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          className="mt-1.5 h-3.5 w-3.5 shrink-0 accent-primary"
+          title="Выбрать для групповых действий"
+        />
         <span
           className="mt-0.5 h-8 w-8 shrink-0 rounded-md border border-black/10"
           style={{ backgroundColor: item.color }}
@@ -219,6 +324,22 @@ function ItemRow({
               onChange={(v) => onUpdate({ weight: v || undefined })}
               unit=""
             />
+          </div>
+
+          <div className="mt-2 space-y-0.5">
+            <Label className="text-[10px] text-muted-foreground leading-none">Категория</Label>
+            <Input
+              list={categoryListId}
+              value={item.category ?? ''}
+              onChange={(e) => onUpdate({ category: e.target.value || undefined })}
+              placeholder="Обычный"
+              className="h-7 text-xs px-1.5"
+            />
+            <datalist id={categoryListId}>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </div>
 
           <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
@@ -342,6 +463,5 @@ function IconBtn({
 }
 
 function formatNum(v: number): string {
-  const r = Math.round(v * 100) / 100
-  return Number.isInteger(r) ? `${r}` : r.toFixed(2)
+  return fmtNumber(v)
 }

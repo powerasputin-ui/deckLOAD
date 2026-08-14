@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Ship,
   Wand2,
   MousePointerClick,
   Anchor,
-  Github,
+  Download,
+  Upload,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -21,26 +22,29 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import {
-  packDeck,
   packDeckVariants,
+  packMultiTrip,
   packingResultFromManual,
-  clampToDeck,
-  collidesWith,
+  rotatePlacement,
   maxLayersFor,
   type ManualPlacement,
   type PackVariant,
+  type PackingResult,
 } from '@/lib/packing'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
 import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
+import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { toast } from 'sonner'
 
 export default function Home() {
+  const deckSvgRef = useRef<SVGSVGElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const deck = useCalculator((s) => s.deck)
   const items = useCalculator((s) => s.items)
   const sortStrategy = useCalculator((s) => s.sortStrategy)
@@ -53,8 +57,9 @@ export default function Home() {
   const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
   const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
   const activeStampId = useCalculator((s) => s.activeStampId)
+  const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const stampRotated = useCalculator((s) => s.stampRotated)
-  const pinnedPlacements = useCalculator((s) => s.pinnedPlacements)
+  const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
   const selectedManualIds = useCalculator((s) => s.selectedManualIds)
   const pinFromPlaced = useCalculator((s) => s.pinFromPlaced)
@@ -64,18 +69,113 @@ export default function Home() {
   const clearSelection = useCalculator((s) => s.clearSelection)
   const toggleManualSelection = useCalculator((s) => s.toggleManualSelection)
   const clearManualSelection = useCalculator((s) => s.clearManualSelection)
+  const separationRules = useCalculator((s) => s.separationRules)
+  // separationRules.minDistance is always stored in meters (unit-independent);
+  // convert to the deck's active display unit before comparing against
+  // geometry (item/deck coordinates), which are always in that active unit.
+  const separationRulesInUnit = useMemo(
+    () => separationRules.map((r) => ({ ...r, minDistance: convertLength(r.minDistance, 'm', deck.unit) })),
+    [separationRules, deck.unit]
+  )
+  const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
+  const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
+  const addLashingPoint = useCalculator((s) => s.addLashingPoint)
+  const updateLoadZone = useCalculator((s) => s.updateLoadZone)
 
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
   const hydrated = useProjects((s) => s.hydrated)
   const hydrate = useProjects((s) => s.hydrate)
   const saveSnapshot = useProjects((s) => s.saveSnapshot)
+  const getActiveProject = useProjects((s) => s.getActive)
+  const importProject = useProjects((s) => s.importProject)
+  const importInputRef = useRef<HTMLInputElement>(null)
+
+  const handleExportJson = () => {
+    const active = getActiveProject()
+    if (!active) {
+      toast.error('Нет активного расчёта для экспорта')
+      return
+    }
+    const json = JSON.stringify(active, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const slug = active.name.trim().toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'project'
+    const date = new Date().toISOString().slice(0, 10)
+    a.href = url
+    a.download = `deckload-${slug}-${date}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast.success('Проект скачан')
+  }
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(String(reader.result))
+      } catch {
+        toast.error('Файл повреждён или это не JSON')
+        return
+      }
+      const id = importProject(parsed)
+      if (!id) {
+        toast.error('Файл не похож на проект DeckLoad')
+        return
+      }
+      toast.success('Проект импортирован')
+    }
+    reader.onerror = () => toast.error('Не удалось прочитать файл')
+    reader.readAsText(file)
+  }
 
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null)
+  // Hovering the cargo list scrolls rows under a stationary cursor, which
+  // fires mouseenter/mouseleave (and thus setHoveredItemId) many times per
+  // scroll gesture — each one re-renders the whole tree (deck SVG included),
+  // which made the list scroll feel laggy. Coalescing to at most one state
+  // update per animation frame keeps hover-highlight working but caps the
+  // re-render rate to the screen's actual refresh cadence.
+  const pendingHoverRef = useRef<string | null>(null)
+  const hoverRafRef = useRef<number | null>(null)
+  const handleHover = useCallback((id: string | null) => {
+    pendingHoverRef.current = id
+    if (hoverRafRef.current !== null) return
+    hoverRafRef.current = requestAnimationFrame(() => {
+      hoverRafRef.current = null
+      setHoveredItemId(pendingHoverRef.current)
+    })
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current)
+    }
+  }, [])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [variants, setVariants] = useState<PackVariant[]>([])
+  const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
-  const skipNextDeckEffect = useRef(false)
+
+  // Escape cancels lashing-point placement mode and/or an active manual-mode
+  // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
+  // was switching to auto mode and back.
+  useEffect(() => {
+    if (!placingLashingPoint && !activeStampId) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (placingLashingPoint) setPlacingLashingPoint(false)
+      if (activeStampId) setActiveStamp(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -88,14 +188,14 @@ export default function Home() {
     if (loadedProjectId.current === activeId) return
     const proj = projects.find((p) => p.id === activeId)
     if (!proj) return
-    // Skip the deck-change effect on the next render so it doesn't destroy
-    // the loaded manual/pinned placements by re-packing.
-    skipNextDeckEffect.current = true
     useCalculator.setState({
       deck: { ...proj.deck },
       items: proj.items.map((it) => ({ ...it })),
       manualPlacements: proj.manualPlacements.map((m) => ({ ...m })),
-      pinnedPlacements: (proj.pinnedPlacements ?? []).map((p) => ({ ...p })),
+      pinnedPlacementsByTrip: Object.fromEntries(
+        Object.entries(proj.pinnedPlacementsByTrip ?? {}).map(([trip, list]) => [trip, list.map((p) => ({ ...p }))])
+      ),
+      separationRules: (proj.separationRules ?? []).map((r) => ({ ...r })),
       selectedPinIds: [],
       selectedManualIds: [],
       mode: proj.mode,
@@ -104,7 +204,7 @@ export default function Home() {
       showFreeSpace: proj.showFreeSpace,
       showGrid: proj.showGrid,
       showLabels: proj.showLabels,
-      activeStampId: proj.mode === 'manual' ? proj.items[0]?.id ?? null : null,
+      activeStampId: null,
       stampRotated: false,
     })
     loadedProjectId.current = activeId
@@ -119,7 +219,10 @@ export default function Home() {
         deck,
         items: items.map((it) => ({ ...it })),
         manualPlacements: manualPlacements.map((m) => ({ ...m })),
-        pinnedPlacements: pinnedPlacements.map((p) => ({ ...p })),
+        pinnedPlacementsByTrip: Object.fromEntries(
+          Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map((p) => ({ ...p }))])
+        ),
+        separationRules: separationRules.map((r) => ({ ...r })),
         mode,
         sortStrategy,
         globalRotation,
@@ -129,24 +232,50 @@ export default function Home() {
       })
     }, 400)
     return () => clearTimeout(t)
-  }, [activeId, deck, items, manualPlacements, pinnedPlacements, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
+  }, [activeId, deck, items, manualPlacements, pinnedPlacementsByTrip, separationRules, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
 
-  const result = useMemo(() => {
+  // In auto mode, cargo that doesn't fit in one voyage automatically spills
+  // into additional trips (same deck, repeated) via packMultiTrip. Manual mode
+  // stays single-trip — the user places cargo by hand on one deck at a time.
+  const trips: PackingResult[] = useMemo(() => {
     if (mode === 'manual') {
       const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-      return packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance)
+      return [packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance)]
     }
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
-    return packDeck(deck.width, deck.length, effectiveItems, {
-      sortStrategy,
-      gap: deck.gap,
-      boardOffset: deck.boardOffset,
-      clearance: deck.clearance,
-      pinned: pinnedPlacements,
-    })
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacements])
+    // Each trip is a separate deck instance — packMultiTrip applies the
+    // matching trip's own pins (pinnedByTrip[tripIndex]) at every iteration,
+    // so pinning/dragging cargo works identically on any trip, not just the first.
+    return packMultiTrip(
+      deck.width,
+      deck.length,
+      effectiveItems,
+      {
+        sortStrategy,
+        gap: deck.gap,
+        boardOffset: deck.boardOffset,
+        clearance: deck.clearance,
+        separationRules: separationRulesInUnit,
+      },
+      10,
+      pinnedPlacementsByTrip
+    )
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+
+  // Clamp (rather than store) the selected trip in range as the trip count
+  // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
+  // setState-in-effect render cascade for something purely derived.
+  const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, trips.length - 1))
+  const result = trips[clampedTripIndex] ?? trips[0]
+  // Pins for the currently-open trip only — each trip is its own deck instance.
+  const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
+
+  const categoryByItemId = useMemo(
+    () => new Map(items.map((it) => [it.id, it.category])),
+    [items]
+  )
 
   const activeStamp = useMemo(() => {
     if (mode !== 'manual' || !activeStampId) return null
@@ -155,91 +284,35 @@ export default function Home() {
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
   }, [mode, activeStampId, items])
 
-  // Re-apply layout when deck geometry or spacing changes. Covers gap, boardOffset,
-  // width, length and clearance — any of these can invalidate existing placements.
-  // IMPORTANT: skip the first run after a project load, otherwise loading a project
-  // with saved manual placements would destroy them (the effect re-packs and overwrites).
-  const prevDeck = useRef({
-    gap: deck.gap,
-    boardOffset: deck.boardOffset,
-    width: deck.width,
-    length: deck.length,
-    clearance: deck.clearance,
-  })
-  useEffect(() => {
-    if (skipNextDeckEffect.current) {
-      skipNextDeckEffect.current = false
-      prevDeck.current = {
-        gap: deck.gap,
-        boardOffset: deck.boardOffset,
-        width: deck.width,
-        length: deck.length,
-        clearance: deck.clearance,
-      }
+  // NOTE: deck-geometry changes (gap/boardOffset/width/length/clearance) no
+  // longer trigger a repack here — that used to duplicate and silently
+  // override the store's own reflow (useCalculator's `setDeck`), which
+  // carefully keeps existing manual/pinned placements as close to their
+  // user-chosen position as possible instead of discarding them. `setDeck`
+  // is now the single source of truth for this; see calculator.ts.
+
+  const handleExportPdf = async () => {
+    const svgEl = deckSvgRef.current
+    if (!svgEl) {
+      toast.error('Схема палубы ещё не готова')
       return
     }
-    const prev = prevDeck.current
-    const same =
-      prev.gap === deck.gap &&
-      prev.boardOffset === deck.boardOffset &&
-      prev.width === deck.width &&
-      prev.length === deck.length &&
-      prev.clearance === deck.clearance
-    if (same) return
-    prevDeck.current = {
-      gap: deck.gap,
-      boardOffset: deck.boardOffset,
-      width: deck.width,
-      length: deck.length,
-      clearance: deck.clearance,
+    const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
+    try {
+      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName })
+      toast.success('PDF скачан')
+    } catch {
+      toast.error('Не удалось собрать PDF')
     }
-
-    const s = useCalculator.getState()
-    const hasManual = s.manualPlacements.length > 0
-    const hasPinned = s.pinnedPlacements.length > 0
-    if (!hasManual && !hasPinned) return
-
-    const effectiveItems = s.globalRotation
-      ? s.items
-      : s.items.map((it) => ({ ...it, allowRotation: false }))
-    const packed = packDeck(deck.width, deck.length, effectiveItems, {
-      sortStrategy: s.sortStrategy,
-      gap: deck.gap,
-      boardOffset: deck.boardOffset,
-      clearance: deck.clearance,
-    })
-
-    if (s.mode === 'manual') {
-      const newManual: ManualPlacement[] = packed.placed.map((p) => ({
-        id: crypto.randomUUID(),
-        itemId: p.itemId,
-        name: p.name,
-        x: p.x,
-        y: p.y,
-        width: p.width,
-        length: p.length,
-        layers: Math.max(1, p.stackedCount),
-        rotated: p.rotated,
-        color: p.color,
-        weight: p.weight,
-      }))
-      useCalculator.setState({ manualPlacements: newManual, pinnedPlacements: [], selectedPinIds: [] })
-    } else {
-      useCalculator.setState({ pinnedPlacements: [], selectedPinIds: [] })
-    }
-    // Clear stale variants when deck params change (deferred to avoid setState-in-effect)
-    queueMicrotask(() => setVariants([]))
-    if (packed.unplaced.length > 0) {
-      toast.warning(`Параметры изменены: ${packed.unplaced.length} груз(ов) не вместилось`)
-    }
-  }, [deck.gap, deck.boardOffset, deck.width, deck.length, deck.clearance])
+  }
 
   const handleNewCalculation = () => {
     useCalculator.setState({
       deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
       items: [],
       manualPlacements: [],
-      pinnedPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
       selectedPinIds: [],
       selectedManualIds: [],
       mode: 'auto',
@@ -258,7 +331,8 @@ export default function Home() {
         { id: crypto.randomUUID(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
       ],
       manualPlacements: [],
-      pinnedPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
       selectedPinIds: [],
       selectedManualIds: [],
       mode: 'auto',
@@ -267,47 +341,23 @@ export default function Home() {
     toast.info('Восстановлен демонстрационный пример')
   }
 
-  // Rotate a placement around its center, then validate: clamp inside the deck
-  // (with boardOffset) and reject if it collides with other pinned/manual items.
-  const tryRotatePlacement = (
-    current: { x: number; y: number; width: number; length: number },
-    others: { x: number; y: number; width: number; length: number }[]
-  ): { x: number; y: number; width: number; length: number } | null => {
-    // Keep the center fixed so the rotation visually stays in place
-    const cx = current.x + current.width / 2
-    const cy = current.y + current.length / 2
-    const newW = current.length
-    const newL = current.width
-    let nx = cx - newW / 2
-    let ny = cy - newL / 2
-    // Clamp inside the usable area (boardOffset)
-    const off = deck.boardOffset
-    nx = Math.max(off, Math.min(deck.width - off - newW, nx))
-    ny = Math.max(off, Math.min(deck.length - off - newL, ny))
-    const clamped = clampToDeck(
-      { x: nx, y: ny, width: newW, length: newL },
-      deck.width,
-      deck.length,
-      off
-    )
-    if (collidesWith({ ...clamped, width: newW, length: newL }, others, deck.gap)) {
-      return null
-    }
-    return { x: clamped.x, y: clamped.y, width: newW, length: newL }
-  }
-
   const handleRotatePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
+    const item = items.find((it) => it.id === pin.itemId)
+    if (!item?.allowRotation) {
+      toast.warning(`Груз «${pin.name}» не разрешает поворот`)
+      return
+    }
     const others = pinnedPlacements
       .filter((p) => p.id !== id)
       .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
-    const rotated = tryRotatePlacement(pin, others)
+    const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
-    updatePinned(id, {
+    updatePinned(clampedTripIndex, id, {
       x: rotated.x,
       y: rotated.y,
       width: rotated.width,
@@ -319,10 +369,15 @@ export default function Home() {
   const handleRotateManual = (id: string) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
+    const item = items.find((it) => it.id === mp.itemId)
+    if (!item?.allowRotation) {
+      toast.warning(`Груз «${mp.name}» не разрешает поворот`)
+      return
+    }
     const others = manualPlacements
       .filter((m) => m.id !== id)
       .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
-    const rotated = tryRotatePlacement(mp, others)
+    const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
       return
@@ -359,9 +414,12 @@ export default function Home() {
         maxPhys,
       }
     }
-    // Sum of layers across all placements of this item (excluding the one being changed)
+    // Sum of layers across all placements of this item (excluding the one being
+    // changed) — across ALL trips, since the item's quantity is a single
+    // shipment-wide budget, not per-trip.
     const sumPlaced =
-      pinnedPlacements
+      Object.values(pinnedPlacementsByTrip)
+        .flat()
         .filter((p) => p.itemId === itemId && p.id !== excludeId)
         .reduce((s, p) => s + p.layers, 0) +
       manualPlacements
@@ -388,13 +446,12 @@ export default function Home() {
       const neededLayers = pin.layers + delta
       const neededClearance = neededLayers * item.height
       if (neededClearance > deck.clearance) {
-        // Skip the deck-change effect so it doesn't clear pinned placements
-        skipNextDeckEffect.current = true
         useCalculator.getState().setDeck({ clearance: neededClearance })
       }
-      // Also auto-increase quantity if needed
+      // Also auto-increase quantity if needed (budget is shipment-wide, all trips)
       const sumPlaced =
-        pinnedPlacements
+        Object.values(pinnedPlacementsByTrip)
+          .flat()
           .filter((p) => p.itemId === pin.itemId && p.id !== id)
           .reduce((s, p) => s + p.layers, 0) +
         manualPlacements
@@ -407,23 +464,29 @@ export default function Home() {
       } else {
         toast.info(`Высота над палубой увеличена до ${neededClearance} ${UNIT_LABEL[deck.unit]} для ${neededLayers} ярусов`)
       }
-      updatePinned(id, { layers: pin.layers + delta })
+      updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
       return
     }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
     }
-    updatePinned(id, { layers: pin.layers + delta })
+    updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
   }
 
-  // Remove a pinned placement. Does NOT decrease item.quantity — quantity is
-  // managed only in the cargo list. The auto-packer will re-place freed units.
+  // Delete a pinned placement from the deck. Unlike unpinning, this also
+  // decreases item.quantity by the placement's layer count — otherwise the
+  // auto-packer would immediately re-place the freed unit elsewhere, making
+  // the ✕ button look like it does nothing.
   const handleRemovePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
-    removePinned(id)
-    toast.info(`Закрепление снято: ${pin.name}`)
+    const item = items.find((it) => it.id === pin.itemId)
+    removePinned(clampedTripIndex, id)
+    if (item) {
+      useCalculator.getState().updateItem(item.id, { quantity: Math.max(0, item.quantity - pin.layers) })
+    }
+    toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }
 
   const handleLayerChangeManual = (id: string, delta: number) => {
@@ -437,11 +500,11 @@ export default function Home() {
       const neededLayers = current + delta
       const neededClearance = neededLayers * item.height
       if (neededClearance > deck.clearance) {
-        skipNextDeckEffect.current = true
         useCalculator.getState().setDeck({ clearance: neededClearance })
       }
       const sumPlaced =
-        pinnedPlacements
+        Object.values(pinnedPlacementsByTrip)
+          .flat()
           .filter((p) => p.itemId === mp.itemId && p.id !== id)
           .reduce((s, p) => s + p.layers, 0) +
         manualPlacements
@@ -487,9 +550,9 @@ export default function Home() {
       useCalculator.setState({
         mode: 'manual',
         manualPlacements: newManual,
-        pinnedPlacements: [],
+        pinnedPlacementsByTrip: {},
         selectedPinIds: [],
-        activeStampId: items[0]?.id ?? null,
+        activeStampId: null,
       })
       toast.info('Ручной режим — размещения сохранены')
     } else {
@@ -509,7 +572,8 @@ export default function Home() {
       }))
       useCalculator.setState({
         mode: 'auto',
-        pinnedPlacements: newPinned,
+        // Manual mode has no trip concept — everything becomes trip 0's pins.
+        pinnedPlacementsByTrip: { 0: newPinned },
         manualPlacements: [],
         selectedPinIds: [],
         activeStampId: null,
@@ -524,9 +588,10 @@ export default function Home() {
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
-    // Warn user if pinned placements will be cleared
-    if (pinnedPlacements.length > 0) {
-      toast.warning(`Закрепления (${pinnedPlacements.length}) будут сброшены`)
+    // Warn user if pinned placements (across all trips) will be cleared
+    const totalPinned = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
+    if (totalPinned > 0) {
+      toast.warning(`Закрепления (${totalPinned}) будут сброшены`)
     }
     const newVariants = packDeckVariants(
       deck.width,
@@ -537,6 +602,7 @@ export default function Home() {
         gap: deck.gap,
         boardOffset: deck.boardOffset,
         clearance: deck.clearance,
+        separationRules: separationRulesInUnit,
       },
       3
     )
@@ -568,12 +634,12 @@ export default function Home() {
       }))
       useCalculator.setState({
         manualPlacements: newManual,
-        pinnedPlacements: [],
+        pinnedPlacementsByTrip: {},
         selectedPinIds: [],
       })
     } else {
       useCalculator.setState({
-        pinnedPlacements: [],
+        pinnedPlacementsByTrip: {},
         manualPlacements: [],
         selectedPinIds: [],
       })
@@ -591,11 +657,6 @@ export default function Home() {
       <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
         <div className="flex items-center gap-3 px-4 py-2.5">
           <div className="flex items-center gap-2.5">
-            <img
-              src="/logo.png"
-              alt="DeckLoad"
-              className="h-8 w-8 rounded-lg object-cover shrink-0"
-            />
             <div className="leading-tight">
               <div className="text-sm font-bold">DeckLoad</div>
               <div className="text-[11px] text-muted-foreground hidden sm:block">
@@ -609,6 +670,28 @@ export default function Home() {
               <Anchor className="h-3 w-3 mr-1" />
               {result.placedCount}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
             </Badge>
+
+            <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
+              <Download className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Скачать JSON</span>
+            </Button>
+
+            <Button variant="outline" size="sm" className="h-8" onClick={() => importInputRef.current?.click()}>
+              <Upload className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Импортировать</span>
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={handleImportFile}
+            />
+
+            <Button variant="outline" size="sm" className="h-8" onClick={handleExportPdf}>
+              <Download className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Скачать PDF</span>
+            </Button>
 
             {/* Mode toggle */}
             <ToggleGroup
@@ -642,7 +725,7 @@ export default function Home() {
         />
 
         {/* Main content */}
-        <main className="flex-1 min-w-0 overflow-auto">
+        <main ref={mainRef} className="flex-1 min-w-0 overflow-auto">
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
             {/* Visualization */}
             <div className="xl:col-span-8">
@@ -673,7 +756,23 @@ export default function Home() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {trips.length > 1 && (
+                    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                      {trips.map((t, i) => (
+                        <Button
+                          key={i}
+                          size="sm"
+                          variant={i === clampedTripIndex ? 'default' : 'outline'}
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => { setActiveTripIndex(i); clearSelection() }}
+                        >
+                          Рейс {i + 1} ({t.placedCount}/{t.requestedCount})
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                   <DeckVisualization
+                    ref={deckSvgRef}
                     result={result}
                     unit={deck.unit}
                     gap={deck.gap}
@@ -682,7 +781,7 @@ export default function Home() {
                     showGrid={showGrid}
                     showLabels={showLabels}
                     hoveredItemId={hoveredItemId}
-                    onHover={setHoveredItemId}
+                    onHover={handleHover}
                     mode={mode}
                     activeStamp={activeStamp}
                     stampRotated={stampRotated}
@@ -703,8 +802,8 @@ export default function Home() {
                     manualPlacements={manualPlacements}
                     pinnedPlacements={pinnedPlacements}
                     selectedPinIds={selectedPinIds}
-                    onPinPlaced={(p) => pinFromPlaced(p)}
-                    onUpdatePinned={(id, x, y) => updatePinned(id, { x, y })}
+                    onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
+                    onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
                     onRemovePinned={handleRemovePinned}
                     onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
@@ -726,6 +825,16 @@ export default function Home() {
                     selectedManualIds={selectedManualIds}
                     onToggleManualSelection={toggleManualSelection}
                     onClearManualSelection={clearManualSelection}
+                    loadZones={deck.loadZones}
+                    lashingPoints={deck.lashingPoints}
+                    categoryByItemId={categoryByItemId}
+                    separationRules={separationRulesInUnit}
+                    placingLashingPoint={placingLashingPoint}
+                    onPlaceLashingPoint={(x, y) => {
+                      const count = (deck.lashingPoints?.length ?? 0) + 1
+                      addLashingPoint(x, y, `Точка ${count}`)
+                    }}
+                    onUpdateLoadZone={updateLoadZone}
                   />
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
@@ -742,41 +851,37 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Right panel: placement + stats + items */}
-            <div className="xl:col-span-4 space-y-4">
+            {/* Right panel row 1: placement */}
+            <div className="xl:col-span-4">
               <PlacementPanel
                 mode={mode}
+                tripIndex={clampedTripIndex}
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}
                 onRemovePinned={handleRemovePinned}
               />
-              <StatsPanel result={result} unit={deck.unit} />
+            </div>
+
+            {/* Row 2: stats + items, mirrors row 1's 8/4 split. Natural
+                height on both — Статистика grows with its content (no
+                internal scroll), Грузы keeps its own fixed-height scroll
+                list as before. Not height-matched to each other. */}
+            <div className="xl:col-span-8 self-start">
+              <StatsPanel result={result} unit={deck.unit} loadZones={deck.loadZones} />
+            </div>
+            <div className="xl:col-span-4 self-start">
               <ItemList
                 result={result}
                 unit={deck.unit}
                 hoveredItemId={hoveredItemId}
-                onHover={setHoveredItemId}
+                onHover={handleHover}
+                onScrollPageToTop={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
               />
             </div>
           </div>
         </main>
       </div>
-
-      {/* Footer */}
-      <footer className="shrink-0 border-t bg-background py-2 px-4">
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span className="truncate">
-            DeckLoad · Maximal Rectangles (BSSF) · вращение, отступы, мульти-проекты
-          </span>
-          <Button variant="ghost" size="sm" asChild className="h-6 hidden sm:inline-flex">
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="text-xs">
-              <Github className="h-3 w-3 mr-1" />
-              Исходники
-            </a>
-          </Button>
-        </div>
-      </footer>
     </div>
   )
 }

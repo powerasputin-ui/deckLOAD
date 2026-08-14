@@ -1,6 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+// Stable empty-array references for zustand selectors — `s.deck.x ?? []`
+// would allocate a new array every call, which useSyncExternalStore treats
+// as "the snapshot changed" and re-renders forever.
+const EMPTY_ZONES: never[] = []
+const EMPTY_POINTS: never[] = []
 import {
   FolderOpen,
   Plus,
@@ -18,6 +23,9 @@ import {
   PanelLeftClose,
   PanelLeft,
   Anchor,
+  Scale,
+  ShieldAlert,
+  MapPin,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +52,7 @@ import {
 import { useProjects } from '@/store/projects'
 import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import type { SortStrategy } from '@/lib/packing'
+import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
@@ -158,7 +167,6 @@ export function Sidebar({
             Очистить
           </Button>
         </div>
-
         {/* Projects list */}
         <Section icon={<FolderOpen className="h-4 w-4" />} title="Расчёты" badge={projects.length}>
           <div className="space-y-1">
@@ -257,6 +265,15 @@ export function Sidebar({
 
         {/* Deck settings */}
         <DeckSettings />
+
+        {/* Load zones (per-area capacity) */}
+        <LoadZonesSection />
+
+        {/* Cargo category separation rules */}
+        <SeparationRulesSection />
+
+        {/* Lashing/securing points (visual markers) */}
+        <LashingPointsSection />
 
         {/* Display settings */}
         <DisplaySettings />
@@ -492,6 +509,199 @@ function Toggle({
     <div className="flex items-center justify-between">
       <span className="text-xs">{label}</span>
       <Switch checked={checked} onCheckedChange={onToggle} />
+    </div>
+  )
+}
+
+function LoadZonesSection() {
+  const zones = useCalculator((s) => s.deck.loadZones ?? EMPTY_ZONES)
+  const unit = useCalculator((s) => s.deck.unit)
+  const addLoadZone = useCalculator((s) => s.addLoadZone)
+  const updateLoadZone = useCalculator((s) => s.updateLoadZone)
+  const removeLoadZone = useCalculator((s) => s.removeLoadZone)
+
+  return (
+    <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false}>
+      <div className="space-y-2">
+        <p className="text-[10px] text-muted-foreground">
+          Допустимая нагрузка (т/м²) по прямоугольным зонам палубы. Превышение — мягкое предупреждение, груз не блокируется.
+        </p>
+        {zones.map((z) => (
+          <div key={z.id} className="rounded-md border p-2 space-y-1.5">
+            <div className="grid grid-cols-4 gap-1">
+              <MiniNumField label="X" value={z.x} unit={unit} onChange={(v) => updateLoadZone(z.id, { x: v })} />
+              <MiniNumField label="Y" value={z.y} unit={unit} onChange={(v) => updateLoadZone(z.id, { y: v })} />
+              <MiniNumField label="Шир." value={z.width} unit={unit} onChange={(v) => updateLoadZone(z.id, { width: v })} />
+              <MiniNumField label="Длин." value={z.length} unit={unit} onChange={(v) => updateLoadZone(z.id, { length: v })} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <MiniNumField label="Лимит, т/м²" value={z.maxLoadPerArea} unit="" onChange={(v) => updateLoadZone(z.id, { maxLoadPerArea: v })} />
+              <button
+                onClick={() => removeLoadZone(z.id)}
+                className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                title="Удалить зону"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addLoadZone()}>
+          <Plus className="h-3.5 w-3.5 mr-1" /> Добавить зону
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
+function SeparationRulesSection() {
+  const rules = useCalculator((s) => s.separationRules)
+  const addSeparationRule = useCalculator((s) => s.addSeparationRule)
+  const removeSeparationRule = useCalculator((s) => s.removeSeparationRule)
+  const items = useCalculator((s) => s.items)
+  const [categoryA, setCategoryA] = useState('')
+  const [categoryB, setCategoryB] = useState('')
+  const [minDistance, setMinDistance] = useState(3)
+
+  const categoryOptions = Array.from(
+    new Set([...DEFAULT_CATEGORIES, ...items.map((it) => it.category).filter((c): c is string => !!c)])
+  )
+
+  return (
+    <Section icon={<ShieldAlert className="h-4 w-4" />} title="Сепарация груза" badge={rules.length} defaultOpen={false}>
+      <div className="space-y-2">
+        <p className="text-[10px] text-muted-foreground">
+          Минимальное расстояние (в метрах) между грузами двух категорий. Нарушение блокирует размещение.
+        </p>
+        {rules.map((r) => (
+          <div key={r.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs">
+            <span className="truncate flex-1">
+              «{r.categoryA}» ↔ «{r.categoryB}»: ≥{r.minDistance} м
+            </span>
+            <button
+              onClick={() => removeSeparationRule(r.id)}
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+              title="Удалить правило"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        <div className="rounded-md border p-2 space-y-1.5">
+          <Select value={categoryA} onValueChange={setCategoryA}>
+            <SelectTrigger className="h-7 w-full text-xs">
+              <SelectValue placeholder="Категория A" />
+            </SelectTrigger>
+            <SelectContent>
+              {categoryOptions.map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={categoryB} onValueChange={setCategoryB}>
+            <SelectTrigger className="h-7 w-full text-xs">
+              <SelectValue placeholder="Категория B" />
+            </SelectTrigger>
+            <SelectContent>
+              {categoryOptions.map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              min={0}
+              step={0.5}
+              value={minDistance}
+              onChange={(e) => { const v = Number(e.target.value); setMinDistance(!isNaN(v) && v >= 0 ? v : 0) }}
+              className="h-7 text-xs flex-1"
+            />
+            <span className="text-[10px] text-muted-foreground">м</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs w-full"
+            disabled={!categoryA || !categoryB}
+            onClick={() => {
+              addSeparationRule({ categoryA, categoryB, minDistance })
+              setCategoryA('')
+              setCategoryB('')
+              toast.success('Правило добавлено')
+            }}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" /> Добавить правило
+          </Button>
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+function LashingPointsSection() {
+  const points = useCalculator((s) => s.deck.lashingPoints ?? EMPTY_POINTS)
+  const removeLashingPoint = useCalculator((s) => s.removeLashingPoint)
+  const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
+  const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
+
+  return (
+    <Section icon={<MapPin className="h-4 w-4" />} title="Точки крепления" badge={points.length} defaultOpen={false}>
+      <div className="space-y-2">
+        <p className="text-[10px] text-muted-foreground">
+          Визуальные метки на схеме для ориентира — не влияют на расстановку груза.
+        </p>
+        {points.map((p, i) => (
+          <div key={p.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs">
+            <span className="truncate flex-1">
+              {p.label || `Точка ${i + 1}`} · ({p.x.toFixed(1)}, {p.y.toFixed(1)})
+            </span>
+            <button
+              onClick={() => removeLashingPoint(p.id)}
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+              title="Удалить точку"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        <Button
+          size="sm"
+          variant={placingLashingPoint ? 'default' : 'outline'}
+          className="h-7 text-xs w-full"
+          onClick={() => setPlacingLashingPoint(!placingLashingPoint)}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          {placingLashingPoint ? 'Кликните по палубе… (Готово)' : 'Добавить точку'}
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
+function MiniNumField({
+  label,
+  value,
+  unit,
+  onChange,
+}: {
+  label: string
+  value: number
+  unit: string
+  onChange: (v: number) => void
+}) {
+  return (
+    <div className="space-y-0.5">
+      <label className="text-[9px] text-muted-foreground leading-none block">
+        {label}{unit ? ` (${unit})` : ''}
+      </label>
+      <Input
+        type="number"
+        step={0.1}
+        value={value}
+        onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v)) onChange(v) }}
+        className="h-6 text-[11px] px-1"
+      />
     </div>
   )
 }

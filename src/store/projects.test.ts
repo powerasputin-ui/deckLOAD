@@ -1,0 +1,240 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { useProjects } from './projects'
+
+describe('projects store', () => {
+  let storage: Record<string, string> = {}
+
+  beforeEach(() => {
+    storage = {}
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage[key] ?? null,
+      setItem: (key: string, value: string) => { storage[key] = value },
+      removeItem: (key: string) => { delete storage[key] },
+    } as Storage)
+  })
+
+  it('hydrates with a demo project when storage is empty', () => {
+    useProjects.getState().hydrate()
+    const state = useProjects.getState()
+    expect(state.projects).toHaveLength(1)
+    expect(state.activeId).toBe(state.projects[0].id)
+    expect(state.hydrated).toBe(true)
+  })
+
+  it('creates a new project', () => {
+    useProjects.getState().hydrate()
+    const id = useProjects.getState().createProject('Test Project')
+    const state = useProjects.getState()
+    expect(state.projects.some((p) => p.name === 'Test Project')).toBe(true)
+    expect(state.activeId).toBe(id)
+  })
+
+  it('renames a project', () => {
+    useProjects.getState().hydrate()
+    const id = useProjects.getState().projects[0].id
+    useProjects.getState().renameProject(id, 'Renamed')
+    expect(useProjects.getState().projects[0].name).toBe('Renamed')
+  })
+
+  it('switches active project', () => {
+    useProjects.getState().hydrate()
+    const first = useProjects.getState().projects[0].id
+    const second = useProjects.getState().createProject('Second')
+    useProjects.getState().switchTo(first)
+    expect(useProjects.getState().activeId).toBe(first)
+    useProjects.getState().switchTo(second)
+    expect(useProjects.getState().activeId).toBe(second)
+  })
+
+  it('deletes a project and switches active to another', () => {
+    useProjects.getState().hydrate()
+    const first = useProjects.getState().projects[0].id
+    const second = useProjects.getState().createProject('Second')
+    useProjects.getState().switchTo(second)
+    useProjects.getState().deleteProject(second)
+    const state = useProjects.getState()
+    expect(state.projects).toHaveLength(1)
+    expect(state.activeId).toBe(first)
+  })
+
+  it('duplicates a project and remaps item ids', () => {
+    useProjects.getState().hydrate()
+    const original = useProjects.getState().projects[0]
+    const copyId = useProjects.getState().duplicateProject(original.id)
+    expect(copyId).not.toBeNull()
+    const copy = useProjects.getState().projects.find((p) => p.id === copyId)
+    expect(copy).toBeDefined()
+    expect(copy!.name).toContain('копия')
+    expect(copy!.items[0].id).not.toBe(original.items[0].id)
+  })
+
+  it('normalizes corrupted data on hydrate', () => {
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        {
+          id: 'p1',
+          name: 'Corrupt',
+          items: [{ id: 'i1', name: 'Item', quantity: NaN, width: NaN, height: NaN }],
+          manualPlacements: [{ layers: NaN }],
+        },
+      ],
+      activeId: 'p1',
+    })
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    expect(project.items[0].quantity).toBe(1)
+    expect(project.items[0].width).toBe(1)
+    expect(project.manualPlacements[0].layers).toBe(1)
+  })
+
+  it('normalizes invalid enum values on hydrate', () => {
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        {
+          id: 'p2',
+          name: 'Invalid enums',
+          deck: { width: -5, length: 0, unit: 'yards', gap: NaN, boardOffset: Infinity, clearance: -1 },
+          items: [{ id: 'i2', name: 'Item', quantity: -3, width: -1, length: 0, height: NaN, color: 123, allowRotation: 'maybe' }],
+          pinnedPlacementsByTrip: { 0: [{ x: NaN, y: -1, width: 0, length: -2, layers: Infinity }] },
+          mode: 'magic',
+          sortStrategy: 'unknown',
+          globalRotation: 'yes',
+        },
+      ],
+      activeId: 'p2',
+    })
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    expect(project.deck.unit).toBe('m')
+    expect(project.deck.width).toBe(20)
+    expect(project.deck.length).toBe(8)
+    expect(project.deck.gap).toBe(0.1)
+    expect(project.deck.boardOffset).toBe(0.2)
+    expect(project.deck.clearance).toBe(0)
+    expect(project.mode).toBe('auto')
+    expect(project.sortStrategy).toBe('area-desc')
+    expect(project.items[0].quantity).toBe(1)
+    expect(project.items[0].width).toBe(1)
+    expect(project.items[0].height).toBe(0)
+    expect(project.items[0].color).toBe('#0ea5e9')
+    expect(project.items[0].allowRotation).toBe(true)
+    expect(project.pinnedPlacementsByTrip[0][0].x).toBe(0)
+    expect(project.pinnedPlacementsByTrip[0][0].width).toBe(1)
+    expect(project.pinnedPlacementsByTrip[0][0].layers).toBe(1)
+  })
+
+  it('persists snapshot', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 99, length: 99, unit: 'm', gap: 0, boardOffset: 0, clearance: 0 },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+    })
+    expect(useProjects.getState().projects[0].deck.width).toBe(99)
+    expect(storage['deckload-projects']).toContain('99')
+  })
+
+  // Regression: loadZones/lashingPoints/category/separationRules were being
+  // silently dropped by normalizeProject on every reload (and then the next
+  // autosave would permanently erase them from storage too).
+  it('round-trips loadZones, lashingPoints, item category, and separationRules through a reload', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        loadZones: [{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }],
+        lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
+      },
+      items: [
+        { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, category: 'hazard' },
+      ],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+    })
+
+    // Simulate a page reload: reset the in-memory store and re-hydrate from
+    // the same (persisted) storage stub.
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.loadZones).toEqual([{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }])
+    expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
+    expect(reloaded.items[0].category).toBe('hazard')
+    expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
+  })
+
+  it('migrates legacy flat pinnedPlacements to pinnedPlacementsByTrip on hydrate', () => {
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        {
+          id: 'p3',
+          name: 'Legacy',
+          items: [{ id: 'i1', name: 'Груз', quantity: 1, width: 1, length: 1 }],
+          pinnedPlacements: [
+            { id: 'pin1', itemId: 'i1', name: 'Груз', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9' },
+          ],
+        },
+      ],
+      activeId: 'p3',
+    })
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    expect(project.pinnedPlacementsByTrip[0]).toHaveLength(1)
+    expect(project.pinnedPlacementsByTrip[0][0].id).toBe('pin1')
+  })
+
+  it('imports a valid exported project as a new project, ignoring its original id', () => {
+    useProjects.getState().hydrate()
+    const original = useProjects.getState().projects[0]
+    const exported = JSON.parse(JSON.stringify(original))
+
+    const newId = useProjects.getState().importProject(exported)
+    expect(newId).not.toBeNull()
+    expect(newId).not.toBe(original.id)
+
+    const state = useProjects.getState()
+    expect(state.projects).toHaveLength(2)
+    expect(state.activeId).toBe(newId)
+    const imported = state.projects.find((p) => p.id === newId)!
+    expect(imported.items).toHaveLength(original.items.length)
+    expect(imported.deck.width).toBe(original.deck.width)
+  })
+
+  it('rejects garbage input on import without creating a project', () => {
+    useProjects.getState().hydrate()
+    const before = useProjects.getState().projects.length
+
+    expect(useProjects.getState().importProject(null)).toBeNull()
+    expect(useProjects.getState().importProject('not an object')).toBeNull()
+    expect(useProjects.getState().importProject({ foo: 'bar' })).toBeNull()
+    expect(useProjects.getState().importProject({ items: [] })).toBeNull() // no `deck`
+
+    expect(useProjects.getState().projects).toHaveLength(before)
+  })
+})

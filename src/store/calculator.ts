@@ -1,10 +1,18 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type {
-  CargoItem,
-  SortStrategy,
-  ManualPlacement,
-  PinnedPlacement,
+import { toast } from 'sonner'
+import {
+  clampToDeck,
+  collidesWith,
+  resolveSnappedDragPosition,
+  maxLayersFor,
+  violatesSeparation,
+  type CargoItem,
+  type SortStrategy,
+  type ManualPlacement,
+  type PinnedPlacement,
+  type LoadZone,
+  type SeparationRule,
 } from '@/lib/packing'
 
 export type Unit = 'm' | 'cm' | 'ft'
@@ -16,18 +24,29 @@ const UNIT_LABEL: Record<Unit, string> = {
   ft: 'фт',
 }
 
-// Conversion factors: how many units per meter
+// Conversion factors: how many units per meter. ft uses the exact reciprocal
+// of the international foot definition (1 ft = 0.3048 m) to avoid drift on
+// repeated unit switches.
 const UNIT_PER_METER: Record<Unit, number> = {
   m: 1,
   cm: 100,
-  ft: 3.28084,
+  ft: 1 / 0.3048,
 }
 
 function convertLength(value: number, from: Unit, to: Unit): number {
   if (from === to) return value
   // value is in `from` units; convert to meters then to `to` units
   const meters = value / UNIT_PER_METER[from]
-  return meters * UNIT_PER_METER[to]
+  // Round to a reasonable precision so repeated unit switches don't accumulate
+  // floating-point noise (e.g. 20 m becoming 19.99999999999 ft and back).
+  return Math.round(meters * UNIT_PER_METER[to] * 1e9) / 1e9
+}
+
+export interface LashingPoint {
+  id: string
+  x: number
+  y: number
+  label?: string
 }
 
 export interface DeckConfig {
@@ -36,7 +55,9 @@ export interface DeckConfig {
   unit: Unit
   gap: number // spacing between items
   boardOffset: number // margin from the ship's board (deck edge)
-  clearance: number // max stack height above deck (0 = single tier / unlimited)
+  clearance: number // max stack height above deck; 0 or item without height = single tier (no stacking)
+  loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
+  lashingPoints?: LashingPoint[] // visual markers only, do not constrain placement
 }
 
 const PALETTE = [
@@ -55,6 +76,7 @@ const PALETTE = [
 interface CalculatorState {
   deck: DeckConfig
   items: CargoItem[]
+  separationRules: SeparationRule[]
   sortStrategy: SortStrategy
   globalRotation: boolean
   showFreeSpace: boolean
@@ -62,11 +84,14 @@ interface CalculatorState {
   showLabels: boolean
   mode: Mode
   manualPlacements: ManualPlacement[]
-  pinnedPlacements: PinnedPlacement[]
+  // Pinned placements keyed by trip index — each multi-trip voyage is a
+  // separate deck instance, so a pin only applies to the trip it was made on.
+  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
   selectedPinIds: string[]
   selectedManualIds: string[]
   activeStampId: string | null
   stampRotated: boolean
+  placingLashingPoint: boolean
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -88,17 +113,31 @@ interface CalculatorState {
   updateManualPlacement: (id: string, patch: Partial<ManualPlacement>) => void
   removeManualPlacement: (id: string) => void
   clearManualPlacements: () => void
-  // Pinned (interactive auto mode)
-  pinFromPlaced: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string
-  updatePinned: (id: string, patch: Partial<PinnedPlacement>) => void
-  removePinned: (id: string) => void
-  clearPinned: () => void
+  // Pinned (interactive auto mode) — all keyed by trip index
+  pinFromPlaced: (tripIndex: number, placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string
+  updatePinned: (tripIndex: number, id: string, patch: Partial<PinnedPlacement>) => void
+  removePinned: (tripIndex: number, id: string) => void
+  clearPinned: (tripIndex?: number) => void
   togglePinSelection: (id: string, additive: boolean) => void
   selectPins: (ids: string[]) => void
   clearSelection: () => void
   // Manual multi-selection
   toggleManualSelection: (id: string, additive: boolean) => void
   clearManualSelection: () => void
+
+  // Load zones (deck load capacity per m², soft warning only)
+  addLoadZone: (zone?: Partial<LoadZone>) => void
+  updateLoadZone: (id: string, patch: Partial<LoadZone>) => void
+  removeLoadZone: (id: string) => void
+
+  // Lashing/securing points (visual markers only)
+  addLashingPoint: (x: number, y: number, label?: string) => void
+  removeLashingPoint: (id: string) => void
+  setPlacingLashingPoint: (v: boolean) => void
+
+  // Cargo category separation rules
+  addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
+  removeSeparationRule: (id: string) => void
 }
 
 function nextColor(items: CargoItem[]): string {
@@ -116,7 +155,69 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     color: partial?.color ?? nextColor(items),
     allowRotation: partial?.allowRotation ?? true,
     weight: partial?.weight,
+    category: partial?.category,
   }
+}
+
+// Re-position and re-size just the placements of one resized item, keeping
+// every other placement untouched. Used when an item's width/length changes
+// after it's already been placed — without this, existing placements keep
+// their stale footprint (wrong drawn size, wrong weight in totals) and can
+// silently overlap their neighbours.
+function reflowResizedItem<T extends { x: number; y: number; width: number; length: number; itemId: string }>(
+  list: T[],
+  itemId: string,
+  newWidth: number,
+  newLength: number,
+  deck: { width: number; length: number; boardOffset: number; gap: number }
+): { list: T[]; moved: boolean; stillColliding: boolean } {
+  let moved = false
+  let stillColliding = false
+  const fixed = list
+    .filter((p) => p.itemId !== itemId)
+    .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+  const resizedRects: { x: number; y: number; width: number; length: number }[] = []
+  const result: T[] = []
+  for (const p of list) {
+    if (p.itemId !== itemId) {
+      result.push(p)
+      continue
+    }
+    const others = [...fixed, ...resizedRects]
+    // Keep the placement centred where it was, just at the new size.
+    const centerX = p.x + p.width / 2
+    const centerY = p.y + p.length / 2
+    const clamped = clampToDeck(
+      { x: centerX - newWidth / 2, y: centerY - newLength / 2, width: newWidth, length: newLength },
+      deck.width,
+      deck.length,
+      deck.boardOffset
+    )
+    const needsResolve = collidesWith({ ...clamped, width: newWidth, length: newLength }, others, deck.gap)
+    const resolved = needsResolve
+      ? resolveSnappedDragPosition(
+          clamped.x,
+          clamped.y,
+          newWidth,
+          newLength,
+          p.x,
+          p.y,
+          others,
+          deck.width,
+          deck.length,
+          deck.boardOffset,
+          deck.gap,
+          0,
+          Infinity
+        )
+      : clamped
+    if (resolved.x !== p.x || resolved.y !== p.y || newWidth !== p.width || newLength !== p.length) moved = true
+    if (collidesWith({ ...resolved, width: newWidth, length: newLength }, others, deck.gap)) stillColliding = true
+    const nextRect = { x: resolved.x, y: resolved.y, width: newWidth, length: newLength }
+    resizedRects.push(nextRect)
+    result.push({ ...p, ...nextRect })
+  }
+  return { list: result, moved, stillColliding }
 }
 
 const PRESETS: Record<
@@ -164,6 +265,7 @@ export const useCalculator = create<CalculatorState>((set) => ({
     makeItem([], { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 }),
     makeItem([], { name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 }),
   ],
+  separationRules: [],
   sortStrategy: 'area-desc',
   globalRotation: true,
   showFreeSpace: true,
@@ -171,14 +273,133 @@ export const useCalculator = create<CalculatorState>((set) => ({
   showLabels: true,
   mode: 'auto',
   manualPlacements: [],
-  pinnedPlacements: [],
+  pinnedPlacementsByTrip: {},
   selectedPinIds: [],
   selectedManualIds: [],
   activeStampId: null,
   stampRotated: false,
+  placingLashingPoint: false,
 
   setDeck: (patch) =>
-    set((s) => ({ deck: { ...s.deck, ...patch } })),
+    set((s) => {
+      const nextDeck = { ...s.deck, ...patch }
+      // Reflow when board offset, gap, deck size, or clearance actually
+      // change — these are the settings that can invalidate existing
+      // manual/pinned placements by moving the usable-area boundary or the
+      // max stack height they must respect. This is the ONLY place that
+      // reacts to deck-geometry changes — there must be no duplicate
+      // reflow/repack elsewhere, or the two would fight and whichever runs
+      // last silently overwrites the other's (better) result.
+      const boundsChanged =
+        (patch.boardOffset !== undefined && patch.boardOffset !== s.deck.boardOffset) ||
+        (patch.gap !== undefined && patch.gap !== s.deck.gap) ||
+        (patch.width !== undefined && patch.width !== s.deck.width) ||
+        (patch.length !== undefined && patch.length !== s.deck.length) ||
+        (patch.clearance !== undefined && patch.clearance !== s.deck.clearance)
+      if (!boundsChanged) return { deck: nextDeck }
+
+      const itemById = new Map(s.items.map((it) => [it.id, it]))
+      let moved = false
+      let layersClamped = false
+      let stillColliding = false
+
+      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string }>(
+        list: T[]
+      ): T[] => {
+        const placed: T[] = []
+        for (const item of list) {
+          let layers = item.layers
+          const cargo = itemById.get(item.itemId)
+          if (cargo) {
+            const maxLayers = maxLayersFor(cargo, nextDeck.clearance)
+            if (layers > maxLayers) {
+              layers = maxLayers
+              layersClamped = true
+            }
+          }
+          const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
+          const others = placed.map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+          const needsResolve = collidesWith(
+            { ...clamped, width: item.width, length: item.length },
+            others,
+            nextDeck.gap
+          )
+          const resolved = needsResolve
+            ? resolveSnappedDragPosition(
+                clamped.x,
+                clamped.y,
+                item.width,
+                item.length,
+                item.x,
+                item.y,
+                others,
+                nextDeck.width,
+                nextDeck.length,
+                nextDeck.boardOffset,
+                nextDeck.gap,
+                0,
+                // No drag vector here — pick the nearest collision-free spot,
+                // however far, rather than staying within a tight magnet radius.
+                Infinity
+              )
+            : clamped
+          if (resolved.x !== item.x || resolved.y !== item.y) moved = true
+          if (
+            collidesWith({ ...resolved, width: item.width, length: item.length }, others, nextDeck.gap)
+          ) {
+            // resolveSnappedDragPosition always returns SOME position (last
+            // resort: clamped to the usable margin) even if none are
+            // collision-free — surface that instead of silently overlapping.
+            stillColliding = true
+          }
+          placed.push({ ...item, x: resolved.x, y: resolved.y, layers })
+        }
+        return placed
+      }
+
+      const manualPlacements = reflow(s.manualPlacements)
+      const pinnedPlacementsByTrip = Object.fromEntries(
+        Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [trip, reflow(list)])
+      )
+
+      // Soft warning if the reflow put two categorized cargoes closer than a
+      // configured separation rule allows. Not auto-resolved/blocked here —
+      // reverting the deck-setting change the user just made would be worse
+      // UX than flagging it, same reasoning as load-zone density warnings.
+      let separationViolated = false
+      if (s.separationRules.length > 0) {
+        const rulesInUnit = s.separationRules.map((r) => ({
+          ...r,
+          minDistance: convertLength(r.minDistance, 'm', nextDeck.unit),
+        }))
+        const withCategory = (
+          list: { x: number; y: number; width: number; length: number; itemId: string }[]
+        ) => list.map((p) => ({ ...p, category: itemById.get(p.itemId)?.category }))
+        const allPlacements = [
+          ...withCategory(manualPlacements),
+          ...withCategory(Object.values(pinnedPlacementsByTrip).flat()),
+        ]
+        for (let i = 0; i < allPlacements.length && !separationViolated; i++) {
+          const rest = allPlacements.filter((_, idx) => idx !== i)
+          if (violatesSeparation(allPlacements[i], rest, rulesInUnit)) separationViolated = true
+        }
+      }
+
+      if (moved) {
+        toast.info('Раскладка скорректирована под новые параметры палубы')
+      }
+      if (layersClamped) {
+        toast.warning('Часть ярусов уменьшена — новая высота над палубой ниже прежней')
+      }
+      if (stillColliding) {
+        toast.warning('Не все грузы поместились после изменения палубы — возможны перекрытия')
+      }
+      if (separationViolated) {
+        toast.warning('После изменения палубы нарушено правило сепарации между некоторыми грузами')
+      }
+
+      return { deck: nextDeck, manualPlacements, pinnedPlacementsByTrip }
+    }),
   setUnit: (u) =>
     set((s) => {
       const from = s.deck.unit
@@ -193,6 +414,14 @@ export const useCalculator = create<CalculatorState>((set) => ({
           gap: conv(s.deck.gap),
           boardOffset: conv(s.deck.boardOffset),
           clearance: conv(s.deck.clearance),
+          loadZones: s.deck.loadZones?.map((z) => ({
+            ...z,
+            x: conv(z.x),
+            y: conv(z.y),
+            width: conv(z.width),
+            length: conv(z.length),
+          })),
+          lashingPoints: s.deck.lashingPoints?.map((p) => ({ ...p, x: conv(p.x), y: conv(p.y) })),
         },
         items: s.items.map((it) => ({
           ...it,
@@ -208,31 +437,95 @@ export const useCalculator = create<CalculatorState>((set) => ({
           width: conv(m.width),
           length: conv(m.length),
         })),
-        pinnedPlacements: s.pinnedPlacements.map((p) => ({
-          ...p,
-          x: conv(p.x),
-          y: conv(p.y),
-          width: conv(p.width),
-          length: conv(p.length),
-        })),
+        pinnedPlacementsByTrip: Object.fromEntries(
+          Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
+            trip,
+            list.map((p) => ({
+              ...p,
+              x: conv(p.x),
+              y: conv(p.y),
+              width: conv(p.width),
+              length: conv(p.length),
+            })),
+          ])
+        ),
       }
     }),
   addItem: (partial) =>
     set((s) => ({ items: [...s.items, makeItem(s.items, partial)] })),
   updateItem: (id, patch) =>
-    set((s) => ({
-      items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
-    })),
+    set((s) => {
+      const prevItem = s.items.find((it) => it.id === id)
+      const items = s.items.map((it) => (it.id === id ? { ...it, ...patch } : it))
+      if (!prevItem) return { items }
+
+      const weightChanged = patch.weight !== undefined && patch.weight !== prevItem.weight
+      const widthChanged = patch.width !== undefined && patch.width !== prevItem.width
+      const lengthChanged = patch.length !== undefined && patch.length !== prevItem.length
+      if (!weightChanged && !widthChanged && !lengthChanged) return { items }
+
+      // Existing placements snapshot their own width/length/weight at the
+      // time they were placed — without this, editing an item after it's
+      // already on the deck leaves stale placements (wrong drawn size,
+      // wrong weight in totals, collision checks against outdated geometry).
+      const newWidth = patch.width ?? prevItem.width
+      const newLength = patch.length ?? prevItem.length
+      const applyWeight = <T extends { itemId: string; weight?: number }>(p: T): T =>
+        p.itemId === id && weightChanged ? { ...p, weight: patch.weight } : p
+
+      let manualPlacements = s.manualPlacements.map(applyWeight)
+      let pinnedPlacementsByTrip: typeof s.pinnedPlacementsByTrip = Object.fromEntries(
+        Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(applyWeight)])
+      )
+
+      let moved = false
+      let stillColliding = false
+      if (widthChanged || lengthChanged) {
+        const manualResult = reflowResizedItem(manualPlacements, id, newWidth, newLength, s.deck)
+        manualPlacements = manualResult.list
+        moved = moved || manualResult.moved
+        stillColliding = stillColliding || manualResult.stillColliding
+
+        const pinnedResults = Object.entries(pinnedPlacementsByTrip).map(
+          ([trip, list]) => [trip, reflowResizedItem(list, id, newWidth, newLength, s.deck)] as const
+        )
+        pinnedPlacementsByTrip = Object.fromEntries(pinnedResults.map(([trip, r]) => [trip, r.list]))
+        moved = moved || pinnedResults.some(([, r]) => r.moved)
+        stillColliding = stillColliding || pinnedResults.some(([, r]) => r.stillColliding)
+      }
+
+      if (moved) {
+        toast.info('Существующие размещения этого груза обновлены под новый размер')
+      }
+      if (stillColliding) {
+        toast.warning('Новый размер груза не помещается без пересечений — проверьте раскладку')
+      }
+
+      return { items, manualPlacements, pinnedPlacementsByTrip }
+    }),
   removeItem: (id) =>
-    set((s) => ({
-      items: s.items.filter((it) => it.id !== id),
-      // Also remove orphaned placements referencing the deleted item
-      manualPlacements: s.manualPlacements.filter((m) => m.itemId !== id),
-      pinnedPlacements: s.pinnedPlacements.filter((p) => p.itemId !== id),
-      selectedPinIds: s.selectedPinIds.filter((sid) =>
-        s.pinnedPlacements.some((p) => p.id === sid && p.itemId !== id)
-      ),
-    })),
+    set((s) => {
+      const pinnedPlacementsByTrip = Object.fromEntries(
+        Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
+          trip,
+          list.filter((p) => p.itemId !== id),
+        ])
+      )
+      const allPins = Object.values(s.pinnedPlacementsByTrip).flat()
+      const manualPlacements = s.manualPlacements.filter((m) => m.itemId !== id)
+      return {
+        items: s.items.filter((it) => it.id !== id),
+        // Also remove orphaned placements referencing the deleted item
+        manualPlacements,
+        pinnedPlacementsByTrip,
+        selectedPinIds: s.selectedPinIds.filter((sid) =>
+          allPins.some((p) => p.id === sid && p.itemId !== id)
+        ),
+        selectedManualIds: s.selectedManualIds.filter((mid) =>
+          manualPlacements.some((m) => m.id === mid)
+        ),
+      }
+    }),
   duplicateItem: (id) =>
     set((s) => {
       const it = s.items.find((x) => x.id === id)
@@ -243,7 +536,7 @@ export const useCalculator = create<CalculatorState>((set) => ({
     set({
       items: [],
       manualPlacements: [],
-      pinnedPlacements: [],
+      pinnedPlacementsByTrip: {},
       selectedPinIds: [],
       selectedManualIds: [],
     }),
@@ -259,12 +552,12 @@ export const useCalculator = create<CalculatorState>((set) => ({
     const items = p.items.map((partial) =>
       makeItem([], partial)
     )
-    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacements: [], selectedPinIds: [], selectedManualIds: [], activeStampId: items[0]?.id ?? null })
+    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacementsByTrip: {}, separationRules: [], selectedPinIds: [], selectedManualIds: [], activeStampId: null })
   },
   setMode: (m) =>
-    set((s) => ({
+    set(() => ({
       mode: m,
-      activeStampId: m === 'manual' && !s.activeStampId ? s.items[0]?.id ?? null : s.activeStampId,
+      activeStampId: null,
       selectedPinIds: [],
       selectedManualIds: [],
     })),
@@ -286,41 +579,61 @@ export const useCalculator = create<CalculatorState>((set) => ({
     })),
   clearManualPlacements: () => set({ manualPlacements: [] }),
 
-  pinFromPlaced: (placed) => {
+  pinFromPlaced: (tripIndex, placed) => {
     const id = uuid()
     set((s) => ({
-      pinnedPlacements: [
-        ...s.pinnedPlacements,
-        {
-          id,
-          itemId: placed.itemId,
-          name: placed.name,
-          x: placed.x,
-          y: placed.y,
-          width: placed.width,
-          length: placed.length,
-          layers: placed.layers,
-          rotated: placed.rotated,
-          color: placed.color,
-          weight: placed.weight,
-        },
-      ],
+      pinnedPlacementsByTrip: {
+        ...s.pinnedPlacementsByTrip,
+        [tripIndex]: [
+          ...(s.pinnedPlacementsByTrip[tripIndex] ?? []),
+          {
+            id,
+            itemId: placed.itemId,
+            name: placed.name,
+            x: placed.x,
+            y: placed.y,
+            width: placed.width,
+            length: placed.length,
+            layers: placed.layers,
+            rotated: placed.rotated,
+            color: placed.color,
+            weight: placed.weight,
+          },
+        ],
+      },
       selectedPinIds: [id],
     }))
     return id
   },
-  updatePinned: (id, patch) =>
+  updatePinned: (tripIndex, id, patch) =>
     set((s) => ({
-      pinnedPlacements: s.pinnedPlacements.map((p) =>
-        p.id === id ? { ...p, ...patch } : p
-      ),
+      pinnedPlacementsByTrip: {
+        ...s.pinnedPlacementsByTrip,
+        [tripIndex]: (s.pinnedPlacementsByTrip[tripIndex] ?? []).map((p) =>
+          p.id === id ? { ...p, ...patch } : p
+        ),
+      },
     })),
-  removePinned: (id) =>
+  removePinned: (tripIndex, id) =>
     set((s) => ({
-      pinnedPlacements: s.pinnedPlacements.filter((p) => p.id !== id),
+      pinnedPlacementsByTrip: {
+        ...s.pinnedPlacementsByTrip,
+        [tripIndex]: (s.pinnedPlacementsByTrip[tripIndex] ?? []).filter((p) => p.id !== id),
+      },
       selectedPinIds: s.selectedPinIds.filter((sid) => sid !== id),
     })),
-  clearPinned: () => set({ pinnedPlacements: [], selectedPinIds: [] }),
+  clearPinned: (tripIndex) =>
+    set((s) => {
+      if (tripIndex === undefined) return { pinnedPlacementsByTrip: {}, selectedPinIds: [] }
+      const { [tripIndex]: removedTrip, ...rest } = s.pinnedPlacementsByTrip
+      // Only drop selection ids that belonged to the cleared trip — a live
+      // selection on a different (currently unrelated) trip shouldn't vanish.
+      const removedIds = new Set((removedTrip ?? []).map((p) => p.id))
+      return {
+        pinnedPlacementsByTrip: rest,
+        selectedPinIds: s.selectedPinIds.filter((sid) => !removedIds.has(sid)),
+      }
+    }),
   togglePinSelection: (id, additive) =>
     set((s) => {
       if (additive) {
@@ -347,6 +660,56 @@ export const useCalculator = create<CalculatorState>((set) => ({
       return { selectedManualIds: s.selectedManualIds.includes(id) ? [] : [id] }
     }),
   clearManualSelection: () => set({ selectedManualIds: [] }),
+
+  addLoadZone: (zone) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        loadZones: [
+          ...(s.deck.loadZones ?? []),
+          {
+            id: uuid(),
+            x: zone?.x ?? 0,
+            y: zone?.y ?? 0,
+            width: zone?.width ?? Math.max(1, s.deck.width / 4),
+            length: zone?.length ?? Math.max(1, s.deck.length / 2),
+            maxLoadPerArea: zone?.maxLoadPerArea ?? 5,
+          },
+        ],
+      },
+    })),
+  updateLoadZone: (id, patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        loadZones: (s.deck.loadZones ?? []).map((z) => (z.id === id ? { ...z, ...patch } : z)),
+      },
+    })),
+  removeLoadZone: (id) =>
+    set((s) => ({
+      deck: { ...s.deck, loadZones: (s.deck.loadZones ?? []).filter((z) => z.id !== id) },
+    })),
+
+  addLashingPoint: (x, y, label) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        lashingPoints: [...(s.deck.lashingPoints ?? []), { id: uuid(), x, y, label }],
+      },
+    })),
+  removeLashingPoint: (id) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        lashingPoints: (s.deck.lashingPoints ?? []).filter((p) => p.id !== id),
+      },
+    })),
+  setPlacingLashingPoint: (v) => set({ placingLashingPoint: v }),
+
+  addSeparationRule: (rule) =>
+    set((s) => ({ separationRules: [...s.separationRules, { ...rule, id: uuid() }] })),
+  removeSeparationRule: (id) =>
+    set((s) => ({ separationRules: s.separationRules.filter((r) => r.id !== id) })),
 }))
 
-export { UNIT_LABEL, PALETTE }
+export { UNIT_LABEL, PALETTE, convertLength }

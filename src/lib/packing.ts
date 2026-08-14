@@ -20,6 +20,101 @@ export interface CargoItem {
   color: string
   allowRotation: boolean
   weight?: number
+  category?: string // free-text cargo category (e.g. "Опасный груз") used by separation rules
+}
+
+// A rectangular deck zone with its own permitted load density (t/m²).
+export interface LoadZone {
+  id: string
+  x: number
+  y: number
+  width: number
+  length: number
+  maxLoadPerArea: number // t/m²
+}
+
+export interface LoadCheck {
+  densityKgPerM2: number
+  limitTPerM2: number
+  zoneId: string
+}
+
+// Checks a footprint's LOCAL load density (its own weight over its own area —
+// not a deck-wide sum) against every load zone it overlaps. If it straddles
+// several zones, it's checked against the most restrictive (lowest) limit,
+// since the whole footprint bears on every zone it touches. Returns null when
+// there's no violation (no zone overlap, or density within every overlapping
+// zone's limit) — callers treat this as informational/non-blocking.
+export function checkLoadDensity(
+  footprint: { x: number; y: number; width: number; length: number },
+  totalWeightKg: number,
+  zones: LoadZone[] | undefined
+): LoadCheck | null {
+  if (!zones || zones.length === 0) return null
+  const area = footprint.width * footprint.length
+  if (area <= 0) return null
+  let minLimit: number | null = null
+  let minZoneId = ''
+  for (const z of zones) {
+    const overlaps =
+      footprint.x < z.x + z.width &&
+      footprint.x + footprint.width > z.x &&
+      footprint.y < z.y + z.length &&
+      footprint.y + footprint.length > z.y
+    if (!overlaps) continue
+    if (minLimit === null || z.maxLoadPerArea < minLimit) {
+      minLimit = z.maxLoadPerArea
+      minZoneId = z.id
+    }
+  }
+  if (minLimit === null) return null
+  const densityKgPerM2 = totalWeightKg / area
+  const densityTPerM2 = densityKgPerM2 / 1000
+  const eps = 1e-9
+  if (densityTPerM2 <= minLimit + eps) return null
+  return { densityKgPerM2, limitTPerM2: minLimit, zoneId: minZoneId }
+}
+
+// A rule requiring at least `minDistance` (edge-to-edge, meters) between any
+// cargo of `categoryA` and any cargo of `categoryB`. Symmetric: a rule for
+// (A, B) also matches candidates in the order (B, A).
+export interface SeparationRule {
+  id: string
+  categoryA: string
+  categoryB: string
+  minDistance: number
+}
+
+// Edge-to-edge distance between two axis-aligned rects (0 if overlapping/touching).
+function edgeDistance(
+  a: { x: number; y: number; width: number; length: number },
+  b: { x: number; y: number; width: number; length: number }
+): number {
+  const dx = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width), 0)
+  const dy = Math.max(a.y - (b.y + b.length), b.y - (a.y + a.length), 0)
+  return Math.hypot(dx, dy)
+}
+
+// Checks whether placing `candidate` too close to any already-`placed` item
+// would violate a configured separation rule between their categories.
+export function violatesSeparation(
+  candidate: { x: number; y: number; width: number; length: number; category?: string },
+  placed: { x: number; y: number; width: number; length: number; category?: string }[],
+  rules: SeparationRule[] | undefined
+): boolean {
+  if (!rules || rules.length === 0 || !candidate.category) return false
+  const eps = 1e-9
+  for (const other of placed) {
+    if (!other.category) continue
+    const rule = rules.find(
+      (r) =>
+        (r.categoryA === candidate.category && r.categoryB === other.category) ||
+        (r.categoryB === candidate.category && r.categoryA === other.category)
+    )
+    if (!rule) continue
+    if (edgeDistance(candidate, other) < rule.minDistance - eps) return true
+  }
+  return false
 }
 
 export interface PlacedItem {
@@ -77,6 +172,22 @@ export interface PackingResult {
 
 export type SortStrategy = 'area-desc' | 'area-asc' | 'width-desc' | 'length-desc' | 'quantity-desc' | 'none'
 
+// ---- numeric guards ----
+
+function toFinite(value: number, fallback = 0): number {
+  return Number.isFinite(value) ? value : fallback
+}
+
+function toPositiveInt(value: number, fallback = 1): number {
+  const v = Math.round(toFinite(value, fallback))
+  return v > 0 ? v : fallback
+}
+
+/** Coerce a layer/stack count to a positive integer (NaN/Infinity/≤0 safe). */
+export function toLayers(value: number, fallback = 1): number {
+  return toPositiveInt(value, fallback)
+}
+
 type FreeRect = Rect
 
 function intersects(a: Rect, b: Rect): boolean {
@@ -85,19 +196,6 @@ function intersects(a: Rect, b: Rect): boolean {
     b.x + b.width <= a.x ||
     b.y >= a.y + a.height ||
     b.y + b.height <= a.y
-  )
-}
-
-// Simple overlap check for placement validation (uses w/l naming).
-function rectsOverlap(
-  a: { x: number; y: number; w: number; l: number },
-  b: { x: number; y: number; w: number; l: number }
-): boolean {
-  return !(
-    a.x + a.w <= b.x ||
-    b.x + b.w <= a.x ||
-    a.y + a.l <= b.y ||
-    b.y + b.l <= a.y
   )
 }
 
@@ -245,6 +343,7 @@ export interface PackOptions {
   boardOffset?: number // margin from the ship's board (deck edge)
   clearance?: number // max stack height above deck (0 = single tier)
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
+  separationRules?: SeparationRule[] // category-pair minimum-distance rules
 }
 
 export interface PinnedPlacement {
@@ -263,27 +362,56 @@ export interface PinnedPlacement {
 
 // Compute how many tiers (layers) can be stacked for an item.
 export function maxLayersFor(item: { height: number }, clearance: number): number {
-  if (clearance <= 0 || item.height <= 0) return 1
-  return Math.max(1, Math.floor(clearance / item.height + 1e-9))
+  const h = toFinite(item.height, 0)
+  const c = toFinite(clearance, 0)
+  if (c <= 0 || h <= 0) return 1
+  const raw = c / h
+  if (!Number.isFinite(raw)) return 1
+  // A tiny epsilon prevents values like 1.9999999999999998 from losing a layer.
+  return Math.max(1, Math.floor(raw + 1e-9))
 }
 
 export function packDeck(
   deckWidth: number,
   deckLength: number,
-  items: CargoItem[],
+  itemsArg: CargoItem[],
   options: PackOptions | SortStrategy = 'area-desc'
 ): PackingResult {
   const sortStrategy =
     typeof options === 'string' ? options : options.sortStrategy ?? 'area-desc'
-  const gap = Math.max(0, typeof options === 'string' ? 0 : options.gap ?? 0)
-  const boardOffset =
-    typeof options === 'string' ? 0 : Math.max(0, options.boardOffset ?? 0)
-  const clearance =
-    typeof options === 'string' ? 0 : Math.max(0, options.clearance ?? 0)
-  const pinned =
-    typeof options === 'string' ? [] : options.pinned ?? []
+  const gap = toFinite(typeof options === 'string' ? 0 : options.gap ?? 0, 0)
+  const boardOffset = toFinite(
+    typeof options === 'string' ? 0 : options.boardOffset ?? 0,
+    0
+  )
+  const clearance = toFinite(
+    typeof options === 'string' ? 0 : options.clearance ?? 0,
+    0
+  )
+  const pinned = typeof options === 'string' ? [] : options.pinned ?? []
+  const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
 
-  const totalArea = deckWidth * deckLength
+  // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
+  const safeDeckWidth = toFinite(deckWidth, 0)
+  const safeDeckLength = toFinite(deckLength, 0)
+  const totalArea = safeDeckWidth * safeDeckLength
+
+  // Sanitize cargo items: coerce numeric fields to finite values so corrupted
+  // storage or programmatic input can't propagate NaN into aggregations.
+  const items = (Array.isArray(itemsArg) ? itemsArg : []).map((it) => ({
+    ...it,
+    width: toFinite(it.width, 1),
+    length: toFinite(it.length, 1),
+    height: toFinite(it.height, 0),
+    // NOT toPositiveInt: quantity 0 is a legitimate "none of this cargo left"
+    // (e.g. after deleting the last placed unit), not a corrupted value —
+    // toPositiveInt treats 0 the same as NaN and would silently re-pack 1
+    // unit anyway. Only genuinely invalid input (NaN/undefined/negative)
+    // falls back to 1.
+    quantity: Math.max(0, Math.round(toFinite(it.quantity, 1))),
+    weight: it.weight === undefined ? undefined : toFinite(it.weight, 0),
+  }))
+  const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -297,17 +425,23 @@ export function packDeck(
     utilization: 0,
     totalWeight: 0,
     maxStackHeight: 0,
-    deckWidth,
-    deckLength,
+    deckWidth: safeDeckWidth,
+    deckLength: safeDeckLength,
   }
 
-  if (deckWidth <= 0 || deckLength <= 0) return result
+  if (safeDeckWidth <= 0 || safeDeckLength <= 0) return result
 
-  // Usable region after board offset (margin from the ship's board)
-  const ux = boardOffset
-  const uy = boardOffset
-  const uw = Math.max(0, deckWidth - boardOffset * 2)
-  const ul = Math.max(0, deckLength - boardOffset * 2)
+  // Usable region after board offset (margin from the ship's board).
+  // The packer draws each item at `cell origin + gap/2` (symmetric gap model),
+  // so the free-rect origin is pulled in by gap/2 to compensate — otherwise the
+  // first item at the boundary would sit at `boardOffset + gap/2` instead of
+  // exactly `boardOffset`, which would disagree with manual/pinned placements
+  // (validated and clamped to exactly `boardOffset`, see below and clampToDeck).
+  const halfGap = gap / 2
+  const ux = Math.max(0, boardOffset - halfGap)
+  const uy = Math.max(0, boardOffset - halfGap)
+  const uw = Math.max(0, safeDeckWidth - boardOffset * 2 + gap)
+  const ul = Math.max(0, safeDeckLength - boardOffset * 2 + gap)
 
   const freeRects: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
 
@@ -323,12 +457,12 @@ export function packDeck(
   let index = 0
   const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
-    const layers = Math.max(1, pin.layers ?? 1)
+    const layers = toLayers(pin.layers, 1)
     const inside =
-      pin.x >= ux - 1e-6 &&
-      pin.y >= uy - 1e-6 &&
-      pin.x + pin.width <= ux + uw + 1e-6 &&
-      pin.y + pin.length <= uy + ul + 1e-6
+      pin.x >= boardOffset - 1e-6 &&
+      pin.y >= boardOffset - 1e-6 &&
+      pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
+      pin.y + pin.length <= safeDeckLength - boardOffset + 1e-6
     if (!inside) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -340,9 +474,10 @@ export function packDeck(
       continue
     }
     const overlapsAccepted = acceptedPins.some((ap) =>
-      rectsOverlap(
-        { x: pin.x, y: pin.y, w: pin.width, l: pin.length },
-        { x: ap.x, y: ap.y, w: ap.width, l: ap.length }
+      collidesWith(
+        { x: pin.x, y: pin.y, width: pin.width, length: pin.length },
+        [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }],
+        gap
       )
     )
     if (overlapsAccepted) {
@@ -352,6 +487,28 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция пересекается с другим грузом',
+      })
+      continue
+    }
+    const pinCategory = categoryByItemId.get(pin.itemId)
+    const violatesSep = violatesSeparation(
+      { x: pin.x, y: pin.y, width: pin.width, length: pin.length, category: pinCategory },
+      acceptedPins.map((ap) => ({
+        x: ap.x,
+        y: ap.y,
+        width: ap.width,
+        length: ap.length,
+        category: categoryByItemId.get(ap.itemId),
+      })),
+      separationRules
+    )
+    if (violatesSep) {
+      result.unplaced.push({
+        itemId: pin.itemId,
+        name: pin.name,
+        width: pin.width,
+        length: pin.length,
+        reason: 'Закреплённая позиция нарушает сепарацию груза',
       })
       continue
     }
@@ -425,8 +582,11 @@ export function packDeck(
         return b.item.width - a.item.width
       case 'length-desc':
         return b.item.length - a.item.length
-      case 'quantity-desc':
-        return b.item.quantity - a.item.quantity
+      case 'quantity-desc': {
+        const ra = remainingByItem.get(a.item.id) ?? a.item.quantity
+        const rb = remainingByItem.get(b.item.id) ?? b.item.quantity
+        return rb - ra
+      }
       default:
         return 0
     }
@@ -434,6 +594,22 @@ export function packDeck(
   stacks.sort(stackCmp)
 
   let stackIdx = 0
+
+  // Track per-item unplaced reasons so we can report multiple causes (e.g. some units
+  // are oversized while others run out of space) instead of hiding them behind dedup.
+  const unplacedStats = new Map<
+    string,
+    {
+      id: string
+      name: string
+      width: number
+      length: number
+      oversized: number
+      noSpace: number
+      leftover: number
+      separation: number
+    }
+  >()
 
   for (const { item, unitsInStack } of stacks) {
     if (perItemRemaining.get(item.id)! <= 0) continue
@@ -451,39 +627,83 @@ export function packDeck(
     const fitsRotated =
       item.allowRotation && cellWRot <= uw && cellLRot <= ul
     if (!fitsNormal && !fitsRotated) {
-      // Record unplaced only once per item type (avoid flooding)
-      if (!result.unplaced.some((u) => u.itemId === item.id)) {
-        result.unplaced.push({
-          itemId: item.id,
-          name: item.name,
-          width: item.width,
-          length: item.length,
-          reason: 'Превышает размеры палубы',
-        })
+      const r = perItemRemaining.get(item.id)!
+      const stat = unplacedStats.get(item.id) ?? {
+        id: item.id,
+        name: item.name,
+        width: item.width,
+        length: item.length,
+        oversized: 0,
+        noSpace: 0,
+        leftover: 0,
+        separation: 0,
       }
+      stat.oversized += r
+      unplacedStats.set(item.id, stat)
+      perItemRemaining.set(item.id, 0)
       continue
     }
 
     const pos = findPosition(freeRects, cellW, cellL, item.allowRotation)
     if (!pos) {
-      if (!result.unplaced.some((u) => u.itemId === item.id)) {
-        result.unplaced.push({
-          itemId: item.id,
-          name: item.name,
-          width: item.width,
-          length: item.length,
-          reason: 'Недостаточно свободного места',
-        })
+      const r = perItemRemaining.get(item.id)!
+      const stat = unplacedStats.get(item.id) ?? {
+        id: item.id,
+        name: item.name,
+        width: item.width,
+        length: item.length,
+        oversized: 0,
+        noSpace: 0,
+        leftover: 0,
+        separation: 0,
       }
+      stat.noSpace += r
+      unplacedStats.set(item.id, stat)
+      perItemRemaining.set(item.id, 0)
       continue
     }
 
-    placeRect(pos.node, freeRects)
     const visW = pos.rotated ? item.length : item.width
     const visL = pos.rotated ? item.width : item.length
     // Item position = cell origin + gap/2 (so the gap/2 buffer stays around it)
     const itemX = pos.node.x + gap / 2
     const itemY = pos.node.y + gap / 2
+
+    // Separation is a hard constraint (unlike load density, which is only a
+    // soft warning computed at render time): reject this stack's placement
+    // rather than let it violate a configured category separation rule. This
+    // does not retry an alternate free rectangle for this stack — a v1
+    // simplification matching how "no space" also doesn't retry.
+    if (
+      violatesSeparation(
+        { x: itemX, y: itemY, width: visW, length: visL, category: item.category },
+        result.placed.map((p) => ({
+          x: p.x,
+          y: p.y,
+          width: p.width,
+          length: p.length,
+          category: categoryByItemId.get(p.itemId),
+        })),
+        separationRules
+      )
+    ) {
+      const stat = unplacedStats.get(item.id) ?? {
+        id: item.id,
+        name: item.name,
+        width: item.width,
+        length: item.length,
+        oversized: 0,
+        noSpace: 0,
+        leftover: 0,
+        separation: 0,
+      }
+      stat.separation += unitsInStack
+      unplacedStats.set(item.id, stat)
+      perItemRemaining.set(item.id, perItemRemaining.get(item.id)! - unitsInStack)
+      continue
+    }
+
+    placeRect(pos.node, freeRects)
     const stackHeight = item.height > 0 ? item.height * unitsInStack : 0
     result.placed.push({
       itemId: item.id,
@@ -507,18 +727,39 @@ export function packDeck(
     perItemRemaining.set(item.id, perItemRemaining.get(item.id)! - unitsInStack)
   }
 
-  // Any remaining unplaced units
+  // Any remaining unplaced units (e.g. loop ended before stacks were exhausted)
   for (const item of items) {
     const remaining = perItemRemaining.get(item.id) ?? 0
-    if (remaining > 0 && !result.unplaced.some((u) => u.itemId === item.id)) {
-      result.unplaced.push({
-        itemId: item.id,
+    if (remaining > 0) {
+      const stat = unplacedStats.get(item.id) ?? {
+        id: item.id,
         name: item.name,
         width: item.width,
         length: item.length,
-        reason: `Не вместилось ${remaining} ед.`,
-      })
+        oversized: 0,
+        noSpace: 0,
+        leftover: 0,
+        separation: 0,
+      }
+      stat.leftover += remaining
+      unplacedStats.set(item.id, stat)
     }
+  }
+
+  // Build unified unplaced list with all reasons per item
+  for (const stat of unplacedStats.values()) {
+    const reasons: string[] = []
+    if (stat.oversized > 0) reasons.push(`Превышает размеры палубы (${stat.oversized} ед.)`)
+    if (stat.noSpace > 0) reasons.push(`Недостаточно свободного места (${stat.noSpace} ед.)`)
+    if (stat.separation > 0) reasons.push(`Нарушает сепарацию груза (${stat.separation} ед.)`)
+    if (stat.leftover > 0) reasons.push(`Не вместилось (${stat.leftover} ед.)`)
+    result.unplaced.push({
+      itemId: stat.id,
+      name: stat.name,
+      width: stat.width,
+      length: stat.length,
+      reason: reasons.length > 0 ? reasons.join('; ') : 'Не вместилось',
+    })
   }
 
   // Build per-item breakdown
@@ -529,6 +770,14 @@ export function packDeck(
     const layers = maxLayersFor(item, clearance)
     const area = placedForItem.reduce((s, p) => s + p.width * p.length, 0)
     const unitWeight = item.weight ?? 0
+    // Sum each placement's actual weight (not always item.weight): a pinned
+    // stack's weight can be overridden independently of its source item, and
+    // this must stay consistent with result.totalWeight, which already sums
+    // real per-placement weight.
+    const weight = placedForItem.reduce(
+      (s, p) => s + (p.weight ?? unitWeight) * p.stackedCount,
+      0
+    )
     result.breakdown.push({
       itemId: item.id,
       name: item.name,
@@ -538,7 +787,7 @@ export function packDeck(
       footprints,
       layers,
       area,
-      weight: unitWeight * placedUnits,
+      weight,
       unitWeight,
     })
   }
@@ -575,7 +824,7 @@ function seededShuffle<T>(arr: T[], rng: () => number): T[] {
 // Signature for deduplication of variants.
 function variantSignature(result: PackingResult): string {
   return result.placed
-    .map((p) => `${p.itemId}:${Math.round(p.x * 100)}:${Math.round(p.y * 100)}:${p.rotated ? 1 : 0}`)
+    .map((p) => `${p.itemId}:${p.x.toFixed(4)}:${p.y.toFixed(4)}:${p.width.toFixed(4)}:${p.length.toFixed(4)}:${p.rotated ? 1 : 0}`)
     .sort()
     .join('|')
 }
@@ -586,6 +835,8 @@ export interface PackVariant {
   utilizationPct: number
   placedCount: number
   unplacedCount: number
+  /** Internal fine-grained sort key. Do not rely on this in UI. */
+  _utilization?: number
 }
 
 // Generate up to `count` distinct packing variants. Uses several strategies:
@@ -636,14 +887,73 @@ export function packDeckVariants(
         utilizationPct: Math.round(res.utilization * 100),
         placedCount: res.placedCount,
         unplacedCount: res.unplaced.length,
+        _utilization: res.utilization, // fine-grained sort key (not exposed)
       })
       variantIdx++
     }
   }
 
-  // Sort by utilization desc (best first)
-  variants.sort((a, b) => b.utilizationPct - a.utilizationPct)
+  // Sort by raw utilization desc (best first). `utilizationPct` is rounded for display
+  // only; using the raw value avoids arbitrary ordering within the same integer bucket.
+  variants.sort((a, b) => (b._utilization ?? b.utilizationPct) - (a._utilization ?? a.utilizationPct))
   return variants.slice(0, count)
+}
+
+// Repeatedly packs a deck, feeding each trip's leftover (`result.unplaced`)
+// back in as the next trip's cargo, so an order that doesn't fit in one
+// voyage automatically splits across several voyages of the same deck.
+// Stops when nothing is left unplaced, `maxTrips` is reached, or a trip
+// makes no progress at all (e.g. an item is oversized for this deck and
+// would otherwise loop forever re-appearing as "unplaced" every trip).
+export function packMultiTrip(
+  deckWidth: number,
+  deckLength: number,
+  items: CargoItem[],
+  options: PackOptions | SortStrategy = 'area-desc',
+  maxTrips = 10,
+  // Per-trip pinned placements (trip index -> pins for that trip). Each trip
+  // is a separate deck instance, so a pin only makes sense on the trip it was
+  // created on. `options.pinned` (applied to every trip) is only used when
+  // `pinnedByTrip` itself is omitted entirely, matching the previous
+  // behaviour for callers that don't need per-trip pins — once `pinnedByTrip`
+  // IS provided, a trip missing from it means "no pins for this trip" ([]),
+  // never a silent fallback to `options.pinned` (which would leak pins meant
+  // for one trip onto every other trip).
+  pinnedByTrip?: Record<number, PinnedPlacement[]>
+): PackingResult[] {
+  const trips: PackingResult[] = []
+  let remaining = items
+  const baseOptions = typeof options === 'string' ? { sortStrategy: options } : options
+  for (let trip = 0; trip < maxTrips; trip++) {
+    if (remaining.length === 0) break
+    const pinned = pinnedByTrip ? (pinnedByTrip[trip] ?? []) : (baseOptions.pinned ?? [])
+    const result = packDeck(deckWidth, deckLength, remaining, { ...baseOptions, pinned })
+    trips.push(result)
+    if (result.unplaced.length === 0) break
+    if (result.placedCount === 0) break // no progress — avoid an infinite loop
+    // Carry the unplaced remainder into the next trip as fresh CargoItems,
+    // preserving each source item's dimensions/category/etc via a lookup,
+    // and using the unplaced count as the next trip's quantity.
+    const byId = new Map(remaining.map((it) => [it.id, it]))
+    remaining = result.unplaced
+      .map((u) => {
+        const src = byId.get(u.itemId)
+        if (!src) return null
+        const placedForItem = result.placed
+          .filter((p) => p.itemId === u.itemId)
+          .reduce((s, p) => s + p.stackedCount, 0)
+        const stillNeeded = src.quantity - placedForItem
+        if (stillNeeded <= 0) return null
+        return { ...src, quantity: stillNeeded }
+      })
+      .filter((it): it is CargoItem => it !== null)
+  }
+  // No cargo at all (e.g. every item removed/zeroed) — still return one
+  // empty trip so callers can always safely index trips[0].
+  if (trips.length === 0) {
+    trips.push(packDeck(deckWidth, deckLength, [], baseOptions))
+  }
+  return trips
 }
 
 // Compute remaining free rectangles for visualization. Uses cells that include
@@ -655,19 +965,29 @@ export function computeFreeRects(
   gap = 0,
   boardOffset = 0
 ): Rect[] {
-  const ux = boardOffset
-  const uy = boardOffset
-  const uw = Math.max(0, deckWidth - boardOffset * 2)
-  const ul = Math.max(0, deckLength - boardOffset * 2)
+  const dw = toFinite(deckWidth, 0)
+  const dl = toFinite(deckLength, 0)
+  const off = toFinite(boardOffset, 0)
+  const g = toFinite(gap, 0)
+  // Same gap/2 compensation as packDeck, so the free-space overlay matches the
+  // actual edge clearance (exactly `boardOffset`) rather than `boardOffset + gap/2`.
+  const halfGap = g / 2
+  const ux = Math.max(0, off - halfGap)
+  const uy = Math.max(0, off - halfGap)
+  const uw = Math.max(0, dw - off * 2 + g)
+  const ul = Math.max(0, dl - off * 2 + g)
   const free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
   for (const p of placed) {
     // Symmetric gap model: cell = (x - gap/2, y - gap/2, w+gap, l+gap)
+    const pw = toFinite(p.width, 0)
+    const pl = toFinite(p.length, 0)
+    if (pw <= 0 || pl <= 0) continue
     placeRect(
       {
-        x: p.x - gap / 2,
-        y: p.y - gap / 2,
-        width: p.width + gap,
-        height: p.length + gap,
+        x: p.x - g / 2,
+        y: p.y - g / 2,
+        width: pw + g,
+        height: pl + g,
       },
       free
     )
@@ -703,6 +1023,11 @@ export function collidesWith(
     w: placement.width + gap,
     h: placement.length + gap,
   }
+  // A tiny epsilon on the boundary comparisons prevents an exact flush-contact
+  // position (distance == gap precisely) from being spuriously flagged as a
+  // collision due to floating-point noise in the `gap / 2` arithmetic (e.g.
+  // gap=0.1 is not exactly representable in binary).
+  const eps = 1e-9
   return others.some((o) => {
     const b = {
       x: o.x - gap / 2,
@@ -711,10 +1036,10 @@ export function collidesWith(
       h: o.length + gap,
     }
     return !(
-      a.x + a.w <= b.x ||
-      b.x + b.w <= a.x ||
-      a.y + a.h <= b.y ||
-      b.y + b.h <= a.y
+      a.x + a.w <= b.x + eps ||
+      b.x + b.w <= a.x + eps ||
+      a.y + a.h <= b.y + eps ||
+      b.y + b.h <= a.y + eps
     )
   })
 }
@@ -726,16 +1051,171 @@ export function clampToDeck(
   deckLength: number,
   edgePadding = 0
 ): { x: number; y: number; width: number; length: number } {
-  const minX = edgePadding
-  const minY = edgePadding
-  const maxX = deckWidth - edgePadding - placement.width
-  const maxY = deckLength - edgePadding - placement.length
+  const dw = toFinite(deckWidth, 0)
+  const dl = toFinite(deckLength, 0)
+  const pad = toFinite(edgePadding, 0)
+  const minX = pad
+  const minY = pad
+  const maxX = dw - pad - placement.width
+  const maxY = dl - pad - placement.length
   return {
     x: Math.max(minX, Math.min(maxX, placement.x)),
     y: Math.max(minY, Math.min(maxY, placement.y)),
     width: placement.width,
     length: placement.length,
   }
+}
+
+// Rotate a placement 90deg around its own center, clamp inside the deck, and
+// reject it (return null) if it would collide with any other placement. This
+// is the single shared rotate+clamp+collision path — used by manual mode,
+// pinned single-select rotate, and pinned multi-select rotate — so a margin or
+// gap fix only has to be made once.
+export function rotatePlacement(
+  current: { x: number; y: number; width: number; length: number },
+  deckWidth: number,
+  deckLength: number,
+  edgePadding: number,
+  gap: number,
+  others: { x: number; y: number; width: number; length: number }[]
+): { x: number; y: number; width: number; length: number } | null {
+  const newWidth = current.length
+  const newLength = current.width
+  const cx = current.x + current.width / 2
+  const cy = current.y + current.length / 2
+  const clamped = clampToDeck(
+    { x: cx - newWidth / 2, y: cy - newLength / 2, width: newWidth, length: newLength },
+    deckWidth,
+    deckLength,
+    edgePadding
+  )
+  if (collidesWith({ ...clamped, width: newWidth, length: newLength }, others, gap)) {
+    return null
+  }
+  return clamped
+}
+
+// Tetris-style drag resolution: snaps the dragged rect to the grid, then tries
+// to lock it flush (respecting `gap`) against nearby neighbours or the deck
+// margin when the raw drag target is close enough ("magnetic" threshold).
+// Falls back to a vector-slide + binary search (same as before) when nothing
+// is close enough to lock onto, so free positioning in open space still works.
+export function resolveSnappedDragPosition(
+  targetX: number,
+  targetY: number,
+  width: number,
+  length: number,
+  currentX: number,
+  currentY: number,
+  others: { x: number; y: number; width: number; length: number }[],
+  deckWidth: number,
+  deckLength: number,
+  edgePadding: number,
+  gap: number,
+  gridStep: number,
+  // How far (in deck units) a lock candidate may be from the raw target and
+  // still "win" the magnetic phase. Interactive dragging wants this tight, so
+  // the item doesn't teleport to a distant valid spot; non-interactive
+  // reflows (e.g. re-validating placements after a margin change) should pass
+  // Infinity, since there is no drag vector to stay close to — the nearest
+  // collision-free spot is always the right answer.
+  maxMagnetDistance = Math.max(gridStep, gap + 0.05, 0.3)
+): { x: number; y: number } {
+  const tryPos = (x: number, y: number): { x: number; y: number } | null => {
+    const clamped = clampToDeck({ x, y, width, length }, deckWidth, deckLength, edgePadding)
+    if (!collidesWith({ ...clamped, width, length }, others, gap)) {
+      return { x: clamped.x, y: clamped.y }
+    }
+    return null
+  }
+
+  const snap = (v: number) => (gridStep > 0 ? Math.round(v / gridStep) * gridStep : v)
+  const snappedX = snap(targetX)
+  const snappedY = snap(targetY)
+
+  const minX = edgePadding
+  const minY = edgePadding
+  const maxX = deckWidth - edgePadding - width
+  const maxY = deckLength - edgePadding - length
+
+  // Only the fully-open-space candidate snaps to the grid — that's what gives
+  // the tetris-like grid lock when nothing is nearby. Edge/neighbour "flush"
+  // candidates below use the raw (unsnapped) cursor position: gridStep is
+  // typically much coarser than gap (e.g. a 1m grid vs a 0.1m gap), so
+  // rounding to it here would either miss a legitimate gap-adjacent spot
+  // entirely or land the free axis several grid-steps away from the cursor.
+  const candidates: { x: number; y: number }[] = [
+    { x: snappedX, y: snappedY },
+    { x: minX, y: targetY },
+    { x: maxX, y: targetY },
+    { x: targetX, y: minY },
+    { x: targetX, y: maxY },
+  ]
+
+  for (const o of others) {
+    // Only snap horizontally to a neighbour if the rects would actually be
+    // vertically adjacent (span overlap) — otherwise you'd get a nonsensical
+    // snap to a neighbour clear across the deck. Uses the raw target so a
+    // small item dragged near a large neighbour is correctly detected as
+    // adjacent even when the grid-rounded position would fall outside the
+    // neighbour's span.
+    const vOverlap = targetY < o.y + o.length && targetY + length > o.y
+    if (vOverlap) {
+      candidates.push({ x: o.x - gap - width, y: targetY })
+      candidates.push({ x: o.x + o.width + gap, y: targetY })
+    }
+    const hOverlap = targetX < o.x + o.width && targetX + width > o.x
+    if (hOverlap) {
+      candidates.push({ x: targetX, y: o.y - gap - length })
+      candidates.push({ x: targetX, y: o.y + o.length + gap })
+    }
+  }
+
+  let best: { x: number; y: number } | null = null
+  let bestDist = Infinity
+  for (const c of candidates) {
+    const res = tryPos(c.x, c.y)
+    if (!res) continue
+    const dist = Math.hypot(res.x - targetX, res.y - targetY)
+    if (dist <= maxMagnetDistance && dist < bestDist) {
+      best = res
+      bestDist = dist
+    }
+  }
+  if (best) return best
+
+  // Fallback: vector-slide (full delta -> X-only -> Y-only) then binary search
+  // along the movement vector, same behaviour as before snapping existed.
+  const fallbackCandidates: { x: number; y: number }[] = [
+    { x: snappedX, y: snappedY },
+    { x: snappedX, y: currentY },
+    { x: currentX, y: snappedY },
+  ]
+  for (const c of fallbackCandidates) {
+    const res = tryPos(c.x, c.y)
+    if (res) return res
+  }
+
+  let lo = 0
+  let hi = 1
+  let bestSlide: { x: number; y: number } | null = null
+  for (let i = 0; i < 10; i++) {
+    const mid = (lo + hi) / 2
+    const x = currentX + (snappedX - currentX) * mid
+    const y = currentY + (snappedY - currentY) * mid
+    const res = tryPos(x, y)
+    if (res) {
+      bestSlide = res
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  if (bestSlide) return bestSlide
+  // Last resort: never return a position outside the usable margin, even if
+  // it still collides — clampToDeck guarantees at least that much validity.
+  const clampedCurrent = clampToDeck({ x: currentX, y: currentY, width, length }, deckWidth, deckLength, edgePadding)
+  return { x: clampedCurrent.x, y: clampedCurrent.y }
 }
 
 export function packingResultFromManual(
@@ -746,13 +1226,17 @@ export function packingResultFromManual(
   items?: CargoItem[],
   clearance?: number
 ): PackingResult {
-  const totalArea = deckWidth * deckLength
-  const usedArea = placements.reduce((s, p) => s + p.width * p.length, 0)
+  const dw = toFinite(deckWidth, 0)
+  const dl = toFinite(deckLength, 0)
+  const totalArea = dw * dl
+  const totalRequestedSafe = toPositiveInt(totalRequested, 0)
+  const layersFor = (p: ManualPlacement) => toLayers(p.layers, 1)
+  const usedArea = placements.reduce((s, p) => s + toFinite(p.width, 0) * toFinite(p.length, 0), 0)
   const totalWeight = placements.reduce(
-    (s, p) => s + (p.weight ?? 0) * Math.max(1, p.layers),
+    (s, p) => s + toFinite(p.weight ?? 0, 0) * layersFor(p),
     0
   )
-  const placedCount = placements.reduce((s, p) => s + Math.max(1, p.layers), 0)
+  const placedCount = placements.reduce((s, p) => s + layersFor(p), 0)
 
   const placed = placements.map((p, i) => ({
     itemId: p.itemId,
@@ -762,8 +1246,8 @@ export function packingResultFromManual(
     width: p.width,
     length: p.length,
     height: 0,
-    layers: Math.max(1, p.layers),
-    stackedCount: Math.max(1, p.layers),
+    layers: layersFor(p),
+    stackedCount: layersFor(p),
     rotated: p.rotated,
     color: p.color,
     weight: p.weight,
@@ -809,7 +1293,7 @@ export function packingResultFromManual(
     placed,
     unplaced: [],
     breakdown: [...map.values()],
-    requestedCount: totalRequested,
+    requestedCount: totalRequestedSafe,
     placedCount,
     totalArea,
     usedArea,
@@ -817,7 +1301,7 @@ export function packingResultFromManual(
     utilization: totalArea > 0 ? Math.min(1, usedArea / totalArea) : 0,
     totalWeight,
     maxStackHeight,
-    deckWidth,
-    deckLength,
+    deckWidth: dw,
+    deckLength: dl,
   }
 }

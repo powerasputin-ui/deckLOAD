@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, ManualPlacement, SortStrategy, PinnedPlacement } from '@/lib/packing'
-import type { DeckConfig, Mode } from './calculator'
+import type { CargoItem, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule } from '@/lib/packing'
+import type { DeckConfig, Mode, Unit } from './calculator'
 
 export interface Project {
   id: string
@@ -11,7 +11,9 @@ export interface Project {
   deck: DeckConfig
   items: CargoItem[]
   manualPlacements: ManualPlacement[]
-  pinnedPlacements: PinnedPlacement[]
+  // Pinned placements keyed by trip index (multi-trip: each trip is its own deck).
+  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+  separationRules: SeparationRule[]
   mode: Mode
   sortStrategy: SortStrategy
   globalRotation: boolean
@@ -35,7 +37,8 @@ interface ProjectsState {
     deck: DeckConfig
     items: CargoItem[]
     manualPlacements: ManualPlacement[]
-    pinnedPlacements: PinnedPlacement[]
+    pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+    separationRules: SeparationRule[]
     mode: Mode
     sortStrategy: SortStrategy
     globalRotation: boolean
@@ -44,10 +47,125 @@ interface ProjectsState {
     showLabels: boolean
   }) => void
   duplicateProject: (id: string) => string | null
+  importProject: (raw: unknown) => string | null
   getActive: () => Project | null
 }
 
 const STORAGE_KEY = 'deckload-projects'
+const VALID_UNITS: Unit[] = ['m', 'cm', 'ft']
+const VALID_MODES: Mode[] = ['auto', 'manual']
+const VALID_SORTS: SortStrategy[] = ['area-desc', 'area-asc', 'width-desc', 'length-desc', 'quantity-desc', 'none']
+
+function toFiniteNonNegative(value: unknown, fallback: number): number {
+  const v = typeof value === 'number' ? value : fallback
+  return Number.isFinite(v) && v >= 0 ? v : fallback
+}
+
+function toFinitePositive(value: unknown, fallback: number): number {
+  const v = typeof value === 'number' ? value : fallback
+  return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
+function toPositiveInt(value: unknown, fallback: number): number {
+  const v = typeof value === 'number' ? value : fallback
+  if (!Number.isFinite(v) || v <= 0) return fallback
+  return Math.max(1, Math.round(v))
+}
+
+function toBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+// Coerce persisted load zones — dropped entirely before this fix, so old
+// saved projects simply won't have this field (Array.isArray guards that).
+function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
+  if (!Array.isArray(value)) return undefined
+  const zones = value
+    .map((z) => {
+      const zone = z as Record<string, unknown>
+      return {
+        id: typeof zone.id === 'string' && zone.id ? zone.id : uuid(),
+        x: toFiniteNonNegative(zone.x, 0),
+        y: toFiniteNonNegative(zone.y, 0),
+        width: toFinitePositive(zone.width, 1),
+        length: toFinitePositive(zone.length, 1),
+        maxLoadPerArea: toFinitePositive(zone.maxLoadPerArea, 5),
+      }
+    })
+  return zones.length > 0 ? zones : undefined
+}
+
+function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
+  if (!Array.isArray(value)) return undefined
+  const points = value.map((p) => {
+    const point = p as Record<string, unknown>
+    return {
+      id: typeof point.id === 'string' && point.id ? point.id : uuid(),
+      x: toFiniteNonNegative(point.x, 0),
+      y: toFiniteNonNegative(point.y, 0),
+      label: toOptionalString(point.label),
+    }
+  })
+  return points.length > 0 ? points : undefined
+}
+
+function normalizePinnedList(value: unknown): PinnedPlacement[] {
+  if (!Array.isArray(value)) return []
+  return value.map((pp) => {
+    const pin = pp as Record<string, unknown>
+    return {
+      ...(pin as object),
+      id: typeof pin.id === 'string' && pin.id ? pin.id : uuid(),
+      itemId: typeof pin.itemId === 'string' ? pin.itemId : '',
+      name: typeof pin.name === 'string' ? pin.name : 'Груз',
+      x: toFiniteNonNegative(pin.x, 0),
+      y: toFiniteNonNegative(pin.y, 0),
+      width: toFinitePositive(pin.width, 1),
+      length: toFinitePositive(pin.length, 1),
+      layers: toPositiveInt(pin.layers, 1),
+      rotated: typeof pin.rotated === 'boolean' ? pin.rotated : false,
+      color: typeof pin.color === 'string' ? pin.color : '#0ea5e9',
+    } as PinnedPlacement
+  })
+}
+
+// Accepts either the current per-trip shape (`{ 0: [...], 1: [...] }`) or the
+// pre-multi-trip flat array (`pinnedPlacements: [...]`) for backward
+// compatibility with projects saved before trips existed — migrated to `{0: [...]}`.
+function normalizePinnedPlacementsByTrip(
+  byTrip: unknown,
+  legacyFlat: unknown
+): Record<number, PinnedPlacement[]> {
+  if (byTrip && typeof byTrip === 'object' && !Array.isArray(byTrip)) {
+    const out: Record<number, PinnedPlacement[]> = {}
+    for (const [key, value] of Object.entries(byTrip as Record<string, unknown>)) {
+      const trip = Number(key)
+      if (!Number.isFinite(trip)) continue
+      const list = normalizePinnedList(value)
+      if (list.length > 0) out[trip] = list
+    }
+    return out
+  }
+  const legacy = normalizePinnedList(legacyFlat)
+  return legacy.length > 0 ? { 0: legacy } : {}
+}
+
+function normalizeSeparationRules(value: unknown): SeparationRule[] {
+  if (!Array.isArray(value)) return []
+  return value.map((r) => {
+    const rule = r as Record<string, unknown>
+    return {
+      id: typeof rule.id === 'string' && rule.id ? rule.id : uuid(),
+      categoryA: typeof rule.categoryA === 'string' ? rule.categoryA : '',
+      categoryB: typeof rule.categoryB === 'string' ? rule.categoryB : '',
+      minDistance: toFiniteNonNegative(rule.minDistance, 0),
+    }
+  })
+}
 
 function freshProject(name: string, withDemo = false): Project {
   const now = Date.now()
@@ -65,7 +183,8 @@ function freshProject(name: string, withDemo = false): Project {
         ]
       : [],
     manualPlacements: [],
-    pinnedPlacements: [],
+    pinnedPlacementsByTrip: {},
+    separationRules: [],
     mode: 'auto',
     sortStrategy: 'area-desc',
     globalRotation: true,
@@ -79,52 +198,66 @@ function freshProject(name: string, withDemo = false): Project {
 // coerce layers to a valid number, etc. Prevents NaN propagation in packDeck.
 function normalizeProject(p: Partial<Project>): Project {
   const now = Date.now()
+  const rawUnit = p.deck?.unit ?? 'm'
+  const unit = VALID_UNITS.includes(rawUnit as Unit) ? (rawUnit as Unit) : 'm'
+  const rawMode = p.mode ?? 'auto'
+  const mode = VALID_MODES.includes(rawMode as Mode) ? (rawMode as Mode) : 'auto'
+  const rawSort = p.sortStrategy ?? 'area-desc'
+  const sortStrategy = VALID_SORTS.includes(rawSort as SortStrategy)
+    ? (rawSort as SortStrategy)
+    : 'area-desc'
   return {
-    id: p.id ?? uuid(),
-    name: p.name ?? 'Без названия',
-    createdAt: p.createdAt ?? now,
-    updatedAt: p.updatedAt ?? now,
+    id: typeof p.id === 'string' && p.id ? p.id : uuid(),
+    name: typeof p.name === 'string' ? p.name : 'Без названия',
+    createdAt: typeof p.createdAt === 'number' ? p.createdAt : now,
+    updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : now,
     deck: {
-      width: p.deck?.width ?? 20,
-      length: p.deck?.length ?? 8,
-      unit: p.deck?.unit ?? 'm',
-      gap: p.deck?.gap ?? 0.1,
-      boardOffset: p.deck?.boardOffset ?? 0.2,
-      clearance: p.deck?.clearance ?? 0,
+      width: toFinitePositive(p.deck?.width, 20),
+      length: toFinitePositive(p.deck?.length, 8),
+      unit,
+      gap: toFiniteNonNegative(p.deck?.gap, 0.1),
+      boardOffset: toFiniteNonNegative(p.deck?.boardOffset, 0.2),
+      clearance: toFiniteNonNegative(p.deck?.clearance, 0),
+      loadZones: normalizeLoadZones(p.deck?.loadZones),
+      lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
     },
     items: Array.isArray(p.items)
       ? p.items.map((it) => ({
-          id: it.id ?? uuid(),
-          name: it.name ?? 'Груз',
-          width: it.width ?? 1,
-          length: it.length ?? 1,
-          height: it.height ?? 0,
-          quantity: it.quantity ?? 1,
-          color: it.color ?? '#0ea5e9',
-          allowRotation: it.allowRotation ?? true,
-          weight: it.weight,
+          id: typeof it.id === 'string' && it.id ? it.id : uuid(),
+          name: typeof it.name === 'string' ? it.name : 'Груз',
+          width: toFinitePositive(it.width, 1),
+          length: toFinitePositive(it.length, 1),
+          height: toFiniteNonNegative(it.height, 0),
+          quantity: toPositiveInt(it.quantity, 1),
+          color: typeof it.color === 'string' ? it.color : '#0ea5e9',
+          allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
+          weight: typeof it.weight === 'number' && Number.isFinite(it.weight) ? it.weight : undefined,
+          category: toOptionalString(it.category),
         }))
       : [],
     manualPlacements: Array.isArray(p.manualPlacements)
       ? p.manualPlacements.map((m) => ({
           ...m,
-          id: m.id ?? uuid(),
-          layers: Math.max(1, m.layers ?? 1),
+          id: typeof m.id === 'string' && m.id ? m.id : uuid(),
+          x: toFiniteNonNegative(m.x, 0),
+          y: toFiniteNonNegative(m.y, 0),
+          width: toFinitePositive(m.width, 1),
+          length: toFinitePositive(m.length, 1),
+          layers: toPositiveInt(m.layers, 1),
+          rotated: typeof m.rotated === 'boolean' ? m.rotated : false,
         }))
       : [],
-    pinnedPlacements: Array.isArray(p.pinnedPlacements)
-      ? p.pinnedPlacements.map((pp) => ({
-          ...pp,
-          id: pp.id ?? uuid(),
-          layers: Math.max(1, pp.layers ?? 1),
-        }))
-      : [],
-    mode: p.mode ?? 'auto',
-    sortStrategy: p.sortStrategy ?? 'area-desc',
-    globalRotation: p.globalRotation ?? true,
-    showFreeSpace: p.showFreeSpace ?? true,
-    showGrid: p.showGrid ?? true,
-    showLabels: p.showLabels ?? true,
+    pinnedPlacementsByTrip: normalizePinnedPlacementsByTrip(
+      (p as { pinnedPlacementsByTrip?: unknown }).pinnedPlacementsByTrip,
+      (p as { pinnedPlacements?: unknown }).pinnedPlacements
+    ),
+    separationRules: normalizeSeparationRules(p.separationRules),
+    mode,
+    sortStrategy,
+    globalRotation: toBool(p.globalRotation, true),
+    showFreeSpace: toBool(p.showFreeSpace, true),
+    showGrid: toBool(p.showGrid, true),
+    showLabels: toBool(p.showLabels, true),
   }
 }
 
@@ -229,7 +362,8 @@ export const useProjects = create<ProjectsState>((set, get) => ({
                 deck: data.deck,
                 items: data.items,
                 manualPlacements: data.manualPlacements,
-                pinnedPlacements: data.pinnedPlacements,
+                pinnedPlacementsByTrip: data.pinnedPlacementsByTrip,
+                separationRules: data.separationRules,
                 mode: data.mode,
                 sortStrategy: data.sortStrategy,
                 globalRotation: data.globalRotation,
@@ -268,11 +402,16 @@ export const useProjects = create<ProjectsState>((set, get) => ({
         id: uuid(),
         itemId: itemIdMap.get(m.itemId) ?? m.itemId,
       })),
-      pinnedPlacements: src.pinnedPlacements.map((p) => ({
-        ...p,
-        id: uuid(),
-        itemId: itemIdMap.get(p.itemId) ?? p.itemId,
-      })),
+      pinnedPlacementsByTrip: Object.fromEntries(
+        Object.entries(src.pinnedPlacementsByTrip).map(([trip, list]) => [
+          trip,
+          list.map((p) => ({
+            ...p,
+            id: uuid(),
+            itemId: itemIdMap.get(p.itemId) ?? p.itemId,
+          })),
+        ])
+      ),
     }
     set((s) => {
       const next = { projects: [...s.projects, copy], activeId: copy.id }
@@ -280,6 +419,35 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       return next
     })
     return copy.id
+  },
+
+  importProject: (raw) => {
+    // Reject anything that doesn't at least structurally look like a
+    // Project — otherwise normalizeProject would happily turn e.g. `{}`
+    // into a silently-empty "imported" project instead of failing loudly.
+    if (
+      typeof raw !== 'object' ||
+      raw === null ||
+      !Array.isArray((raw as Record<string, unknown>).items) ||
+      typeof (raw as Record<string, unknown>).deck !== 'object'
+    ) {
+      return null
+    }
+    // Always treat an imported file as a brand-new project: ignore its
+    // id/timestamps so it can never collide with (or silently overwrite)
+    // a project already saved locally, even if it came from this same app.
+    const project = normalizeProject({
+      ...(raw as Partial<Project>),
+      id: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+    })
+    set((s) => {
+      const next = { projects: [...s.projects, project], activeId: project.id }
+      saveToStorage(next.projects, next.activeId)
+      return next
+    })
+    return project.id
   },
 
   getActive: () => {

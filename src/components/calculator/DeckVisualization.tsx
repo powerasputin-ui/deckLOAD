@@ -1,16 +1,22 @@
 'use client'
 
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
 import {
   computeFreeRects,
   clampToDeck,
   collidesWith,
+  resolveSnappedDragPosition,
+  checkLoadDensity,
+  violatesSeparation,
   type PackingResult,
   type PlacedItem,
   type ManualPlacement,
   type PinnedPlacement,
+  type LoadZone,
+  type SeparationRule,
 } from '@/lib/packing'
-import { UNIT_LABEL } from '@/store/calculator'
+import { UNIT_LABEL, type LashingPoint } from '@/store/calculator'
+import { fmtNumber } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 
@@ -51,9 +57,17 @@ interface DeckVisualizationProps {
   selectedManualIds?: string[]
   onToggleManualSelection?: (id: string, additive: boolean) => void
   onClearManualSelection?: () => void
+  // Maritime/offshore extras
+  loadZones?: LoadZone[]
+  lashingPoints?: LashingPoint[]
+  categoryByItemId?: Map<string, string | undefined>
+  separationRules?: SeparationRule[]
+  placingLashingPoint?: boolean
+  onPlaceLashingPoint?: (x: number, y: number) => void
+  onUpdateLoadZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number }) => void
 }
 
-export function DeckVisualization({
+export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
   result,
   unit,
   gap,
@@ -85,10 +99,35 @@ export function DeckVisualization({
   selectedManualIds,
   onToggleManualSelection,
   onClearManualSelection,
-}: DeckVisualizationProps) {
+  loadZones,
+  lashingPoints,
+  categoryByItemId,
+  separationRules,
+  placingLashingPoint,
+  onPlaceLashingPoint,
+  onUpdateLoadZone,
+}: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
+  const setSvgRef = useCallback(
+    (node: SVGSVGElement | null) => {
+      svgRef.current = node
+      if (typeof forwardedRef === 'function') forwardedRef(node)
+      else if (forwardedRef) forwardedRef.current = node
+    },
+    [forwardedRef]
+  )
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [lashingHoverPos, setLashingHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  type ZoneDrag = {
+    id: string
+    kind: 'move' | 'resize'
+    corner?: 'nw' | 'ne' | 'sw' | 'se'
+    startMouse: { x: number; y: number }
+    startRect: { x: number; y: number; width: number; length: number }
+  }
+  const [zoneDrag, setZoneDrag] = useState<ZoneDrag | null>(null)
   const [dragState, setDragState] = useState<{
     id: string
     startMouse: { x: number; y: number }
@@ -102,6 +141,62 @@ export function DeckVisualization({
   } | null>(null)
   // Single-selection for manual mode uses selectedManualIds[0] from store (single source of truth)
   const selectedManual = selectedManualIds?.[0] ?? null
+
+  // Throttle drag commits so the store (and the expensive auto-packer) is not
+  // updated on every pointermove event. We keep the latest position in a ref and
+  // flush it at most every 50 ms, plus always on pointerup.
+  const lastDragCommit = useRef(0)
+  const pendingDrag = useRef<{
+    id: string
+    x: number
+    y: number
+    kind: 'manual' | 'pin'
+  } | null>(null)
+  const dragTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (dragTimeout.current) {
+        clearTimeout(dragTimeout.current)
+        dragTimeout.current = null
+      }
+    }
+  }, [])
+
+  const flushPendingDrag = useCallback(() => {
+    if (!pendingDrag.current) return
+    const { id, x, y, kind } = pendingDrag.current
+    pendingDrag.current = null
+    if (dragTimeout.current) {
+      clearTimeout(dragTimeout.current)
+      dragTimeout.current = null
+    }
+    if (kind === 'manual') {
+      onMoveManual?.(id, x, y)
+    } else {
+      onUpdatePinned?.(id, x, y)
+    }
+  }, [onMoveManual, onUpdatePinned])
+
+  const scheduleDragCommit = useCallback(
+    (id: string, x: number, y: number, kind: 'manual' | 'pin') => {
+      pendingDrag.current = { id, x, y, kind }
+      const now = performance.now()
+      if (now - lastDragCommit.current >= 50) {
+        if (dragTimeout.current) clearTimeout(dragTimeout.current)
+        dragTimeout.current = null
+        lastDragCommit.current = now
+        flushPendingDrag()
+      } else if (!dragTimeout.current) {
+        dragTimeout.current = setTimeout(() => {
+          dragTimeout.current = null
+          lastDragCommit.current = performance.now()
+          flushPendingDrag()
+        }, 50 - (now - lastDragCommit.current))
+      }
+    },
+    [flushPendingDrag]
+  )
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
 
@@ -153,10 +248,7 @@ export function DeckVisualization({
 
   const toX = (v: number) => offX + v * scale
   const toY = (v: number) => offY + v * scale
-  const fmt = (v: number) => {
-    const r = Math.round(v * 100) / 100
-    return Number.isInteger(r) ? `${r}` : r.toFixed(2)
-  }
+  const fmt = fmtNumber
 
   const stampDims = activeStamp
     ? stampRotated
@@ -164,7 +256,21 @@ export function DeckVisualization({
       : { w: activeStamp.width, l: activeStamp.length }
     : null
 
+  // Lashing-point placement is independent of auto/manual mode — clicking the
+  // deck while armed places a point exactly where clicked (no edge margin: real
+  // lashing points are often right at the rail).
+  const handleLashingClick = (e: React.MouseEvent): boolean => {
+    if (!placingLashingPoint || !onPlaceLashingPoint) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    onPlaceLashingPoint(x, y)
+    return true
+  }
+
   const handleDeckClick = (e: React.MouseEvent) => {
+    if (handleLashingClick(e)) return
     if (mode !== 'manual' || !activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return
@@ -181,6 +287,26 @@ export function DeckVisualization({
       .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
     if (collidesWith({ ...clamped, width: stampDims.w, length: stampDims.l }, others, gap)) {
       return // ignore overlapping placement
+    }
+    const category = categoryByItemId?.get(activeStamp.id)
+    if (category && separationRules && separationRules.length > 0) {
+      const othersWithCategory = manualPlacements.map((m) => ({
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        length: m.length,
+        category: categoryByItemId?.get(m.itemId),
+      }))
+      if (
+        violatesSeparation(
+          { ...clamped, width: stampDims.w, length: stampDims.l, category },
+          othersWithCategory,
+          separationRules
+        )
+      ) {
+        toast.warning(`Груз «${activeStamp.name}» нельзя разместить здесь — нарушена сепарация груза`)
+        return
+      }
     }
     onPlace({
       id: uuid(),
@@ -261,10 +387,9 @@ export function DeckVisualization({
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Gap-aware collision resolution with "sliding" along obstacles.
-  // Tries full delta, then X-only, then Y-only; if all collide, performs a
-  // binary search along the movement vector to slide as close to the target as
-  // possible without overlapping neighbours (instead of snapping back to start).
+  // Tetris-style snap/lock drag resolution: snaps to the grid and magnetically
+  // locks flush against neighbours/margins when close enough, falling back to
+  // gap-aware vector-sliding when nothing is nearby to lock onto.
   const resolveDragPosition = (
     targetX: number,
     targetY: number,
@@ -273,51 +398,27 @@ export function DeckVisualization({
     currentX: number,
     currentY: number,
     others: { x: number; y: number; width: number; length: number }[]
-  ): { x: number; y: number } => {
-    const tryPos = (x: number, y: number): { x: number; y: number } | null => {
-      const clamped = clampToDeck(
-        { x, y, width, length },
-        deckWidth,
-        deckLength,
-        edgePad
-      )
-      if (!collidesWith({ ...clamped, width, length }, others, gap)) {
-        return { x: clamped.x, y: clamped.y }
-      }
-      return null
-    }
-
-    // 1) full delta, 2) X-only, 3) Y-only
-    const candidates: { x: number; y: number }[] = [
-      { x: targetX, y: targetY },
-      { x: targetX, y: currentY },
-      { x: currentX, y: targetY },
-    ]
-    for (const c of candidates) {
-      const res = tryPos(c.x, c.y)
-      if (res) return res
-    }
-
-    // 4) Binary search along the movement vector to slide as close as possible
-    let lo = 0
-    let hi = 1
-    let best: { x: number; y: number } | null = null
-    for (let i = 0; i < 10; i++) {
-      const mid = (lo + hi) / 2
-      const x = currentX + (targetX - currentX) * mid
-      const y = currentY + (targetY - currentY) * mid
-      const res = tryPos(x, y)
-      if (res) {
-        best = res
-        lo = mid
-      } else {
-        hi = mid
-      }
-    }
-    return best ?? { x: currentX, y: currentY }
-  }
+  ): { x: number; y: number } =>
+    resolveSnappedDragPosition(
+      targetX,
+      targetY,
+      width,
+      length,
+      currentX,
+      currentY,
+      others,
+      deckWidth,
+      deckLength,
+      edgePad,
+      gap,
+      gridStep
+    )
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (placingLashingPoint) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      setLashingHoverPos(pos)
+    }
     if (mode === 'manual' && activeStamp && !dragState && !pinDrag) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (pos) {
@@ -352,7 +453,43 @@ export function DeckVisualization({
         const resolved = resolveDragPosition(
           nx, ny, mp.width, mp.length, mp.x, mp.y, others
         )
-        onMoveManual(dragState.id, resolved.x, resolved.y)
+        scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
+      }
+    }
+    if (zoneDrag && onUpdateLoadZone) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const minSize = 0.3
+      if (zoneDrag.kind === 'move') {
+        const startDeck = screenToDeck(zoneDrag.startMouse.x, zoneDrag.startMouse.y)
+        if (!startDeck) return
+        const deltaX = pos.x - startDeck.x
+        const deltaY = pos.y - startDeck.y
+        const nx = Math.max(0, Math.min(deckWidth - zoneDrag.startRect.width, zoneDrag.startRect.x + deltaX))
+        const ny = Math.max(0, Math.min(deckLength - zoneDrag.startRect.length, zoneDrag.startRect.y + deltaY))
+        onUpdateLoadZone(zoneDrag.id, { x: nx, y: ny })
+      } else if (zoneDrag.corner) {
+        const r = zoneDrag.startRect
+        const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
+        const clampedY = Math.max(0, Math.min(deckLength, pos.y))
+        let opp: { x: number; y: number }
+        switch (zoneDrag.corner) {
+          case 'nw': opp = { x: r.x + r.width, y: r.y + r.length }; break
+          case 'ne': opp = { x: r.x, y: r.y + r.length }; break
+          case 'sw': opp = { x: r.x + r.width, y: r.y }; break
+          case 'se': opp = { x: r.x, y: r.y }; break
+        }
+        const newX = Math.min(clampedX, opp.x - minSize)
+        const newY = Math.min(clampedY, opp.y - minSize)
+        const patch =
+          zoneDrag.corner === 'nw'
+            ? { x: Math.max(0, newX), y: Math.max(0, newY), width: opp.x - Math.max(0, newX), length: opp.y - Math.max(0, newY) }
+            : zoneDrag.corner === 'ne'
+              ? { x: opp.x, y: Math.max(0, newY), width: Math.max(minSize, clampedX - opp.x), length: opp.y - Math.max(0, newY) }
+              : zoneDrag.corner === 'sw'
+                ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
+                : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
+        onUpdateLoadZone(zoneDrag.id, patch)
       }
     }
     if (pinDrag && onUpdatePinned) {
@@ -374,28 +511,77 @@ export function DeckVisualization({
       const resolved = resolveDragPosition(
         nx, ny, pin.width, pin.length, pin.x, pin.y, others
       )
-      onUpdatePinned(pinDrag.id, resolved.x, resolved.y)
+      scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
     }
   }
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    // Click on empty deck area in interactive auto mode clears selection
-    if (isInteractiveAuto && !pinDrag && !dragState) {
+    // Always flush any pending drag position before releasing the pointer
+    flushPendingDrag()
+    // Click on empty deck area clears selection (pins in auto mode, load zones always)
+    if (!pinDrag && !dragState && !zoneDrag) {
       const target = e.target as Element
-      // Only clear if clicked directly on the SVG background or deck rect
-      if (target.tagName === 'rect' || target.tagName === 'svg' || target.tagName === 'SVG') {
-        const fill = target.getAttribute('fill')
-        if (fill === '#ffffff' || fill === 'url(#deck-grid)' || fill === 'url(#free-hatch)' || target.tagName === 'svg') {
-          onClearSelection?.()
-        }
+      // Only clear if clicked directly on the deck background (marked via a
+      // data attribute) or the SVG root itself — not coupled to fill colors,
+      // which can change with theming.
+      if (target === svgRef.current || target.hasAttribute('data-deck-background')) {
+        if (isInteractiveAuto) onClearSelection?.()
+        setSelectedZoneId(null)
       }
     }
     setDragState(null)
     setPinDrag(null)
+    setZoneDrag(null)
+  }
+
+  // A cancelled gesture (browser gesture, tab switch, context menu) never fires
+  // pointerup, so without this the drag state machine could get stuck and a
+  // pending throttled commit could fire later on stale data.
+  const handlePointerCancel = (e: React.PointerEvent) => {
+    ;(e.target as Element).releasePointerCapture?.(e.pointerId)
+    pendingDrag.current = null
+    if (dragTimeout.current) {
+      clearTimeout(dragTimeout.current)
+      dragTimeout.current = null
+    }
+    setDragState(null)
+    setPinDrag(null)
+    setZoneDrag(null)
   }
 
   const handleManualLeave = () => {
     setHoverPos(null)
+  }
+
+  const handleZonePointerDown = (e: React.PointerEvent, zone: LoadZone) => {
+    if (!onUpdateLoadZone) return
+    e.stopPropagation()
+    setSelectedZoneId(zone.id)
+    setZoneDrag({
+      id: zone.id,
+      kind: 'move',
+      startMouse: { x: e.clientX, y: e.clientY },
+      startRect: { x: zone.x, y: zone.y, width: zone.width, length: zone.length },
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  const handleZoneCornerPointerDown = (
+    e: React.PointerEvent,
+    zone: LoadZone,
+    corner: 'nw' | 'ne' | 'sw' | 'se'
+  ) => {
+    if (!onUpdateLoadZone) return
+    e.stopPropagation()
+    setSelectedZoneId(zone.id)
+    setZoneDrag({
+      id: zone.id,
+      kind: 'resize',
+      corner,
+      startMouse: { x: e.clientX, y: e.clientY },
+      startRect: { x: zone.x, y: zone.y, width: zone.width, length: zone.length },
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
   const hasContent = result.placed.length > 0 || deckWidth > 0
@@ -424,14 +610,15 @@ export function DeckVisualization({
   return (
     <div className="w-full overflow-x-auto" onMouseLeave={handleManualLeave}>
       <svg
-        ref={svgRef}
+        ref={setSvgRef}
         viewBox={`0 0 ${maxW} ${maxH}`}
         className="w-full h-auto"
-        style={{ maxHeight: 560, cursor: mode === 'manual' && activeStamp ? 'crosshair' : 'default', touchAction: 'none' }}
-        onClick={mode === 'manual' ? handleDeckClick : undefined}
+        style={{ maxHeight: 560, cursor: placingLashingPoint || (mode === 'manual' && activeStamp) ? 'crosshair' : 'default', touchAction: 'none' }}
+        onClick={mode === 'manual' || placingLashingPoint ? handleDeckClick : undefined}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={() => setHoverPos(null)}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={() => { setHoverPos(null); setLashingHoverPos(null) }}
       >
         <defs>
           <pattern
@@ -455,6 +642,7 @@ export function DeckVisualization({
 
         {/* Deck background */}
         <rect
+          data-deck-background="true"
           x={offX}
           y={offY}
           width={w}
@@ -465,7 +653,7 @@ export function DeckVisualization({
           strokeWidth={2}
         />
         {showGrid && hasContent && (
-          <rect x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
+          <rect data-deck-background="true" x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
         )}
 
         {/* Edge padding border (usable region) */}
@@ -518,6 +706,91 @@ export function DeckVisualization({
             )
           })}
 
+        {/* Load zones (deck load capacity per m²) */}
+        {loadZones?.map((z) => {
+          const zw = z.width * scale
+          const zh = z.length * scale
+          const zx = toX(z.x)
+          const zy = toY(z.y)
+          const isSelected = selectedZoneId === z.id
+          const interactive = !!onUpdateLoadZone
+          const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
+            { key: 'nw', cx: zx, cy: zy },
+            { key: 'ne', cx: zx + zw, cy: zy },
+            { key: 'sw', cx: zx, cy: zy + zh },
+            { key: 'se', cx: zx + zw, cy: zy + zh },
+          ]
+          return (
+            <g key={`zone-${z.id}`}>
+              <rect
+                x={zx}
+                y={zy}
+                width={zw}
+                height={zh}
+                fill="rgba(59,130,246,0.06)"
+                stroke={isSelected ? '#2563eb' : 'rgba(59,130,246,0.55)'}
+                strokeWidth={isSelected ? 2 : 1}
+                strokeDasharray="6 3"
+                style={{ cursor: interactive ? 'move' : 'default' }}
+                onPointerDown={interactive ? (e) => handleZonePointerDown(e, z) : undefined}
+              />
+              {zw > 30 && zh > 16 && (
+                <text
+                  x={zx + 4}
+                  y={zy + 13}
+                  fontSize={10}
+                  fontWeight={600}
+                  fill="rgba(37,99,235,0.9)"
+                  className="select-none pointer-events-none"
+                >
+                  {z.maxLoadPerArea} т/м²
+                </text>
+              )}
+              {interactive && isSelected &&
+                corners.map((c) => (
+                  <circle
+                    key={c.key}
+                    cx={c.cx}
+                    cy={c.cy}
+                    r={5}
+                    fill="#2563eb"
+                    stroke="#fff"
+                    strokeWidth={1.2}
+                    style={{ cursor: (c.key === 'nw' || c.key === 'se') ? 'nwse-resize' : 'nesw-resize' }}
+                    onPointerDown={(e) => handleZoneCornerPointerDown(e, z, c.key)}
+                  />
+                ))}
+            </g>
+          )
+        })}
+
+        {/* Lashing/securing points (visual markers only) */}
+        {lashingPoints?.map((pt) => {
+          const px = toX(pt.x)
+          const py = toY(pt.y)
+          return (
+            <g key={`lash-${pt.id}`} className="pointer-events-none">
+              <circle cx={px} cy={py} r={6} fill="rgba(15,23,42,0.85)" stroke="#fff" strokeWidth={1.5} />
+              <line x1={px - 3} y1={py} x2={px + 3} y2={py} stroke="#fff" strokeWidth={1.2} />
+              <line x1={px} y1={py - 3} x2={px} y2={py + 3} stroke="#fff" strokeWidth={1.2} />
+              {pt.label && (
+                <text x={px + 8} y={py + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none">
+                  {pt.label}
+                </text>
+              )}
+            </g>
+          )
+        })}
+
+        {/* Lashing-point placement preview (follows cursor while armed) */}
+        {placingLashingPoint && lashingHoverPos && (
+          <g className="pointer-events-none" opacity={0.55}>
+            <circle cx={toX(lashingHoverPos.x)} cy={toY(lashingHoverPos.y)} r={6} fill="rgba(220,38,38,0.9)" stroke="#fff" strokeWidth={1.5} />
+            <line x1={toX(lashingHoverPos.x) - 3} y1={toY(lashingHoverPos.y)} x2={toX(lashingHoverPos.x) + 3} y2={toY(lashingHoverPos.y)} stroke="#fff" strokeWidth={1.2} />
+            <line x1={toX(lashingHoverPos.x)} y1={toY(lashingHoverPos.y) - 3} x2={toX(lashingHoverPos.x)} y2={toY(lashingHoverPos.y) + 3} stroke="#fff" strokeWidth={1.2} />
+          </g>
+        )}
+
         {/* Placed items */}
         {renderedItems.map((p, idx) => {
           const pw = p.width * scale
@@ -537,6 +810,11 @@ export function DeckVisualization({
               )
             : undefined
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
+          const category = categoryByItemId?.get(p.itemId)
+          const totalWeight = (p.weight ?? 0) * p.stackedCount
+          const overLoad = loadZones && loadZones.length > 0
+            ? checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, loadZones)
+            : null
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
@@ -552,6 +830,9 @@ export function DeckVisualization({
               manualMode={mode === 'manual'}
               pinned={!!matchingPin}
               pinnedSelected={isPinnedSelected}
+              category={category}
+              overLoad={!!overLoad}
+              overLoadTitle={overLoad ? `Нагрузка ${(overLoad.densityKgPerM2 / 1000).toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
               onPointerDown={
                 mode === 'manual' && p.manualId
                   ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
@@ -776,7 +1057,7 @@ export function DeckVisualization({
       </svg>
     </div>
   )
-}
+})
 
 function PlacedRect({
   item,
@@ -792,6 +1073,9 @@ function PlacedRect({
   onPointerDown,
   pinned,
   pinnedSelected,
+  category,
+  overLoad,
+  overLoadTitle,
 }: {
   item: PlacedItem
   x: number
@@ -806,15 +1090,20 @@ function PlacedRect({
   onPointerDown?: (e: React.PointerEvent) => void
   pinned?: boolean
   pinnedSelected?: boolean
+  category?: string
+  overLoad?: boolean
+  overLoadTitle?: string
 }) {
-  const strokeColor = pinnedSelected
-    ? '#7c3aed'
-    : pinned
-      ? '#0f172a'
-      : hovered
+  const strokeColor = overLoad
+    ? '#dc2626'
+    : pinnedSelected
+      ? '#7c3aed'
+      : pinned
         ? '#0f172a'
-        : 'rgba(15,23,42,0.55)'
-  const strokeWidth = pinnedSelected ? 3 : pinned || hovered ? 2 : 1
+        : hovered
+          ? '#0f172a'
+          : 'rgba(15,23,42,0.55)'
+  const strokeWidth = overLoad ? 3 : pinnedSelected ? 3 : pinned || hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -839,6 +1128,20 @@ function PlacedRect({
         strokeWidth={strokeWidth}
         strokeDasharray={pinned ? '4 2' : undefined}
       />
+      {overLoadTitle && <title>{overLoadTitle}</title>}
+      {overLoad && w >= 14 && h >= 14 && (
+        <g className="pointer-events-none">
+          <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />
+          <text x={x + 8} y={y + 11} fontSize={10} fontWeight={800} textAnchor="middle" fill="#fff" className="select-none">!</text>
+        </g>
+      )}
+      {category && showLabels && w > 30 && h > 30 && (
+        <g className="pointer-events-none">
+          <text x={x + 4} y={y + h - 5} fontSize={8} fill="rgba(255,255,255,0.85)" className="select-none">
+            {category}
+          </text>
+        </g>
+      )}
       {pinned && (
         <g className="pointer-events-none">
           <rect x={x + w - 16} y={y + h - 14} width={14} height={11} rx={2} fill="rgba(124,58,237,0.9)" />
