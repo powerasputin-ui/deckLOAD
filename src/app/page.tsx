@@ -9,7 +9,6 @@ import {
   Anchor,
   Download,
   Upload,
-  Box,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -693,22 +692,6 @@ export default function Home() {
               <span className="hidden sm:inline">Скачать PDF</span>
             </Button>
 
-            {/* 2D/3D view toggle */}
-            <ToggleGroup
-              type="single"
-              value={viewMode}
-              onValueChange={(v) => { if (v) setViewMode(v as '2d' | '3d') }}
-              className="rounded-lg border bg-card"
-            >
-              <ToggleGroupItem value="2d" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                <span className="text-xs font-medium">2D</span>
-              </ToggleGroupItem>
-              <ToggleGroupItem value="3d" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                <Box className="h-3.5 w-3.5 sm:mr-1" />
-                <span className="text-xs font-medium hidden sm:inline">3D</span>
-              </ToggleGroupItem>
-            </ToggleGroup>
-
             {/* Mode toggle */}
             <ToggleGroup
               type="single"
@@ -738,6 +721,8 @@ export default function Home() {
           onToggle={() => setSidebarCollapsed((v) => !v)}
           onNewCalculation={handleNewCalculation}
           onResetCurrent={handleResetCurrent}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
         />
 
         {/* Main content */}

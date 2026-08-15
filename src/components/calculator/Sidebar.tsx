@@ -26,6 +26,7 @@ import {
   Scale,
   ShieldAlert,
   MapPin,
+  Box,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -72,6 +73,8 @@ interface SidebarProps {
   onToggle: () => void
   onNewCalculation: () => void
   onResetCurrent: () => void
+  viewMode: '2d' | '3d'
+  onViewModeChange: (mode: '2d' | '3d') => void
 }
 
 export function Sidebar({
@@ -79,6 +82,8 @@ export function Sidebar({
   onToggle,
   onNewCalculation,
   onResetCurrent,
+  viewMode,
+  onViewModeChange,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -148,9 +153,29 @@ export function Sidebar({
 
   return (
     <aside className="w-72 shrink-0 border-r bg-card flex flex-col h-full overflow-hidden">
-      {/* Collapse button */}
-      <div className="flex items-center justify-end px-3 py-2 border-b">
-        <Button variant="ghost" size="icon" onClick={onToggle} className="h-7 w-7 shrink-0">
+      {/* Collapse button + 2D/3D view toggle */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b">
+        <ToggleGroup
+          type="single"
+          value={viewMode}
+          onValueChange={(v) => { if (v) onViewModeChange(v as '2d' | '3d') }}
+          className="flex-1 grid grid-cols-2 gap-2"
+        >
+          <ToggleGroupItem
+            value="2d"
+            className="h-8 rounded-md border data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background"
+          >
+            <span className="text-xs font-medium">2D</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="3d"
+            className="h-8 rounded-md border data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background"
+          >
+            <Box className="h-3.5 w-3.5 mr-1" />
+            <span className="text-xs font-medium">3D</span>
+          </ToggleGroupItem>
+        </ToggleGroup>
+        <Button variant="ghost" size="icon" onClick={onToggle} className="h-8 w-8 shrink-0">
           <PanelLeftClose className="h-4 w-4" />
         </Button>
       </div>
