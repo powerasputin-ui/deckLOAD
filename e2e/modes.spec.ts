@@ -57,8 +57,8 @@ test.describe('Auto / manual modes', () => {
       await placedRect.click({ force: true })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    // Click rotate on the selected pin (purple circle around the ↻ icon)
-    await page.locator('svg circle[fill="#7c3aed"]').first().click({ force: true })
+    // Click rotate in the floating selected-item toolbar
+    await page.locator('.absolute.left-2.top-2 button[title="Повернуть"]').first().click({ force: true })
     await expect(page.getByText(/не разрешает поворот/)).toBeVisible()
   })
 })
