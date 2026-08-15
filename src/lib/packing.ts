@@ -1238,6 +1238,18 @@ export function packingResultFromManual(
   )
   const placedCount = placements.reduce((s, p) => s + layersFor(p), 0)
 
+  // Build per-item map for requested quantity and max layers — also feeds
+  // each placement's own height below (manual placements don't carry their
+  // own height, only the source item does; without this every manual
+  // placement reports height 0, which is invisible/flat in any 3D view even
+  // though the 2D top-down view never needed it).
+  const itemMap = new Map<string, { quantity: number; height: number }>()
+  if (items) {
+    for (const it of items) {
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0 })
+    }
+  }
+
   const placed = placements.map((p, i) => ({
     itemId: p.itemId,
     name: p.name,
@@ -1245,7 +1257,7 @@ export function packingResultFromManual(
     y: p.y,
     width: p.width,
     length: p.length,
-    height: 0,
+    height: itemMap.get(p.itemId)?.height ?? 0,
     layers: layersFor(p),
     stackedCount: layersFor(p),
     rotated: p.rotated,
@@ -1253,14 +1265,6 @@ export function packingResultFromManual(
     weight: p.weight,
     index: i,
   }))
-
-  // Build per-item map for requested quantity and max layers
-  const itemMap = new Map<string, { quantity: number; height: number }>()
-  if (items) {
-    for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0 })
-    }
-  }
 
   // Breakdown by itemId
   const map = new Map<string, ItemBreakdown>()
