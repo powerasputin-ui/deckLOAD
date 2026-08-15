@@ -31,6 +31,7 @@ import {
   packingResultFromManual,
   rotatePlacement,
   maxLayersFor,
+  computeFreeRects,
   type ManualPlacement,
   type PackVariant,
   type PackingResult,
@@ -448,6 +449,30 @@ export default function Home() {
     return { ok: true, maxPhys }
   }
 
+  // Find a collision-free spot on the open deck for one unpinned unit of an
+  // item — tries unrotated first, then rotated (if allowed), picking the
+  // first free rectangle it fits in.
+  const findFreeSpotForItem = (
+    item: { width: number; length: number; allowRotation?: boolean }
+  ): { x: number; y: number; rotated: boolean } | null => {
+    const freeRects = computeFreeRects(deck.width, deck.length, result.placed, deck.gap, deck.boardOffset)
+    for (const r of freeRects) {
+      const cellW = item.width + deck.gap
+      const cellL = item.length + deck.gap
+      if (cellW <= r.width && cellL <= r.height) {
+        return { x: r.x + deck.gap / 2, y: r.y + deck.gap / 2, rotated: false }
+      }
+      if (item.allowRotation) {
+        const cellWRot = item.length + deck.gap
+        const cellLRot = item.width + deck.gap
+        if (cellWRot <= r.width && cellLRot <= r.height) {
+          return { x: r.x + deck.gap / 2, y: r.y + deck.gap / 2, rotated: true }
+        }
+      }
+    }
+    return null
+  }
+
   const handleLayerChangePinned = (id: string, delta: number) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
@@ -457,6 +482,37 @@ export default function Home() {
       return
     }
     updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
+    // Popping a layer off just frees one unit of quantity for the
+    // auto-packer's generic remaining-quantity pool — and that pool's
+    // default heuristic re-stacks same-item leftovers up to their physical
+    // layer limit. So a second "-" click elsewhere would silently restack
+    // its freed unit onto this one instead of standing apart. Lock the
+    // freed unit down immediately as its own single-layer pin on open deck
+    // space, so it always lands as an independent container.
+    if (delta < 0) {
+      const item = items.find((it) => it.id === pin.itemId)
+      if (item) {
+        const spot = findFreeSpotForItem(item)
+        if (spot) {
+          pinFromPlaced(clampedTripIndex, {
+            itemId: item.id,
+            name: item.name,
+            x: spot.x,
+            y: spot.y,
+            width: spot.rotated ? item.length : item.width,
+            length: spot.rotated ? item.width : item.length,
+            layers: 1,
+            rotated: spot.rotated,
+            color: item.color,
+            weight: item.weight,
+          })
+          // pinFromPlaced selects the newly freed unit — keep the selection
+          // on the stack the user is actually clicking "-" on instead, so
+          // repeated clicks keep acting on it.
+          useCalculator.setState({ selectedPinIds: [id] })
+        }
+      }
+    }
   }
 
   // Delete a pinned placement from the deck. Unlike unpinning, this also

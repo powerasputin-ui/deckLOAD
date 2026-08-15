@@ -75,7 +75,48 @@ describe('Home (page.tsx)', () => {
     expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('удалён'))
   })
 
-it('handleRotatePinned respects allowRotation (regression: canvas rotate used to bypass the lock)', () => {
+it('handleLayerChangePinned("-") pins the freed unit as its own placement (regression: freed units re-stacked onto each other)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 4, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    let pinAId = ''
+    let pinBId = ''
+    act(() => {
+      pinAId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: item.color,
+      })
+      pinBId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 4, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: item.color,
+      })
+    })
+
+    // Reduce pin A by one layer, then pin B by one layer - same sequence as
+    // the reported bug (two "-" clicks on two separate stacks of the same
+    // item).
+    act(() => {
+      useCalculator.setState({ selectedPinIds: [pinAId] })
+    })
+    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    act(() => {
+      useCalculator.setState({ selectedPinIds: [pinBId] })
+    })
+    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+
+    // The old bug: both freed units landed in the auto-packer's shared
+    // "remaining quantity" pool, which stacks same-item leftovers up to their
+    // physical limit by default - so the second freed unit silently restacked
+    // onto the first instead of standing on its own. Expect 4 independent
+    // single-layer pins (2 originals + 2 freed), none of them stacked.
+    const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    expect(pins).toHaveLength(4)
+    expect(pins.every((p) => p.layers === 1)).toBe(true)
+    expect(useCalculator.getState().items[0].quantity).toBe(4)
+  })
+
+  it('handleRotatePinned respects allowRotation (regression: canvas rotate used to bypass the lock)', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
