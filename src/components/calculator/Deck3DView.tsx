@@ -15,29 +15,42 @@ interface Deck3DViewProps {
 // drag/pin/zone editing (that stays in the 2D DeckVisualization). Reuses the
 // same PackingResult the 2D view gets; no new placement math.
 export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DViewProps) {
-  // Deck plane sits in XZ; height (Y) is item.height * stacked layers. Items
-  // without a set height still render as a thin slab, matching the 2D
-  // fallback so an empty "height" field doesn't make cargo invisible.
-  const boxes = useMemo(
-    () =>
-      result.placed.map((p, i) => {
-        const h = p.height > 0 ? p.height * Math.max(1, p.stackedCount) : 0.3
-        return {
-          key: `${p.itemId}-${i}`,
+  // Deck plane sits in XZ; height (Y) is item.height per tier. Each stacked
+  // layer is rendered as its own box (with a thin gap between them) instead
+  // of one tall solid block, so the layer count is visible at a glance —
+  // not just implied by a number. Items without a set height still render
+  // as a single thin slab, matching the 2D fallback so an empty "height"
+  // field doesn't make cargo invisible.
+  const boxes = useMemo(() => {
+    const out: { key: string; w: number; d: number; h: number; x: number; y: number; z: number; color: string }[] = []
+    for (const p of result.placed) {
+      const x = p.x + p.width / 2 - deckWidth / 2
+      const z = p.y + p.length / 2 - deckLength / 2
+      const layers = Math.max(1, p.stackedCount)
+      if (p.height <= 0) {
+        out.push({ key: `${p.itemId}-${p.index}`, w: p.width, d: p.length, h: 0.3, x, y: 0.15, z, color: p.color })
+        continue
+      }
+      // A small gap between tiers (proportional to tier height, capped so it
+      // stays subtle even for very tall cargo) makes the seam readable
+      // without visually inflating the stack's true height much.
+      const gap = Math.min(0.05, p.height * 0.08)
+      const tierPitch = p.height + gap
+      for (let layer = 0; layer < layers; layer++) {
+        out.push({
+          key: `${p.itemId}-${p.index}-${layer}`,
           w: p.width,
           d: p.length,
-          h,
-          // Center of the footprint, deck-space (0,0) at one corner -> centre
-          // the whole scene on the deck's own centre so OrbitControls orbits
-          // around the middle of the layout, not a far corner.
-          x: p.x + p.width / 2 - deckWidth / 2,
-          z: p.y + p.length / 2 - deckLength / 2,
-          y: h / 2,
+          h: p.height,
+          x,
+          z,
+          y: layer * tierPitch + p.height / 2,
           color: p.color,
-        }
-      }),
-    [result.placed, deckWidth, deckLength]
-  )
+        })
+      }
+    }
+    return out
+  }, [result.placed, deckWidth, deckLength])
 
   const maxDim = Math.max(deckWidth, deckLength, 1)
 
