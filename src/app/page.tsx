@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   Ship,
   Wand2,
@@ -8,6 +9,7 @@ import {
   Anchor,
   Download,
   Upload,
+  Box,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +37,14 @@ import {
   type PackingResult,
 } from '@/lib/packing'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
+const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full rounded-lg border flex items-center justify-center text-sm text-muted-foreground" style={{ height: 480 }}>
+      Загрузка 3D...
+    </div>
+  ),
+})
 import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
 import { PlacementPanel } from '@/components/calculator/PlacementPanel'
@@ -159,6 +169,9 @@ export default function Home() {
     }
   }, [])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // 3D is a read-only camera-orbit snapshot of the same layout — no
+  // drag/pin/zone editing there, that stays exclusively in the 2D view.
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
   const [variants, setVariants] = useState<PackVariant[]>([])
   const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
@@ -733,11 +746,29 @@ export default function Home() {
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2 text-xs flex-wrap">
-                      <LegendDot color="#0ea5e9" label="Груз" />
-                      <LegendDot hatch label="Свободно" />
-                      <LegendDot icon="↻" label="Повернут" />
-                      {mode === 'auto' && (
-                        <LegendDot color="#7c3aed" label="Закреплён" />
+                      <ToggleGroup
+                        type="single"
+                        value={viewMode}
+                        onValueChange={(v) => { if (v) setViewMode(v as '2d' | '3d') }}
+                        className="rounded-lg border bg-card"
+                      >
+                        <ToggleGroupItem value="2d" className="px-2.5 h-7 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                          <span className="text-xs font-medium">2D</span>
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="3d" className="px-2.5 h-7 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                          <Box className="h-3.5 w-3.5 mr-1" />
+                          <span className="text-xs font-medium">3D</span>
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      {viewMode === '2d' && (
+                        <>
+                          <LegendDot color="#0ea5e9" label="Груз" />
+                          <LegendDot hatch label="Свободно" />
+                          <LegendDot icon="↻" label="Повернут" />
+                          {mode === 'auto' && (
+                            <LegendDot color="#7c3aed" label="Закреплён" />
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -758,6 +789,9 @@ export default function Home() {
                       ))}
                     </div>
                   )}
+                  {viewMode === '3d' ? (
+                    <Deck3DView result={result} deckWidth={result.deckWidth} deckLength={result.deckLength} />
+                  ) : (
                   <DeckVisualization
                     ref={deckSvgRef}
                     result={result}
@@ -828,6 +862,7 @@ export default function Home() {
                     }}
                     onUpdateLoadZone={updateLoadZone}
                   />
+                  )}
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
                       Размещено {result.placedCount} из {result.requestedCount} ед.
