@@ -800,18 +800,18 @@ export default function Home() {
                     onRotateManual={handleRotateManual}
                     onLayerChangePinned={handleLayerChangePinned}
                     onLayerChangeManual={handleLayerChangeManual}
-                    getLayerInfo={(itemId, currentLayers, excludeId) => {
+                    getLayerInfo={(itemId, currentLayers) => {
                       const item = items.find((it) => it.id === itemId)
                       const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
-                      if (!item || item.height <= 0) {
-                        return { maxPhys, canIncrease: false, canDecrease: currentLayers > 1, blockReason: 'У груза не задана высота' }
-                      }
-                      const incCheck = checkLayerChange(itemId, currentLayers, 1, excludeId)
+                      // Stays clickable even when currently blocked by height/quantity —
+                      // clicking always explains why via a toast (handleLayerChangePinned/
+                      // Manual), rather than presenting a permanently greyed-out button.
+                      const canInc = !!item && item.height > 0
                       return {
                         maxPhys,
-                        canIncrease: incCheck.ok,
+                        canIncrease: canInc,
                         canDecrease: currentLayers > 1,
-                        blockReason: incCheck.ok ? undefined : incCheck.reason,
+                        blockReason: canInc ? undefined : 'У груза не задана высота',
                       }
                     }}
                     selectedManualIds={selectedManualIds}
