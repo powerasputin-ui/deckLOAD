@@ -457,18 +457,6 @@ export default function Home() {
       return
     }
     updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
-    // Removing a layer here only frees capacity, not demand: item.quantity is
-    // untouched, so on the next render the auto-packer sees one more unit
-    // "still needed" and immediately places it elsewhere on the deck — making
-    // "−" look like it teleported the layer onto a different container
-    // instead of removing it. Same fix as handleRemovePinned: shrink quantity
-    // to match, so the freed slot doesn't get auto-refilled.
-    if (delta < 0) {
-      const item = items.find((it) => it.id === pin.itemId)
-      if (item) {
-        useCalculator.getState().updateItem(item.id, { quantity: Math.max(0, item.quantity + delta) })
-      }
-    }
   }
 
   // Delete a pinned placement from the deck. Unlike unpinning, this also
