@@ -38,12 +38,16 @@ interface DeckVisualizationProps {
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
   onRemoveManual?: (id: string) => void
+  // Dragging one placement onto another of the same item merges them into a
+  // single stacked footprint (layers add up, the dragged one is removed).
+  onMergeManual?: (draggedId: string, targetId: string) => void
   manualPlacements: ManualPlacement[]
   // Interactive auto mode
   pinnedPlacements: PinnedPlacement[]
   selectedPinIds: string[]
   onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string | undefined
   onUpdatePinned?: (id: string, x: number, y: number) => void
+  onMergePinned?: (draggedId: string, targetId: string) => void
   onRemovePinned?: (id: string) => void
   onRotatePinned?: (id: string) => void
   onTogglePinSelection?: (id: string, additive: boolean) => void
@@ -85,11 +89,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onPlace,
   onMoveManual,
   onRemoveManual,
+  onMergeManual,
   manualPlacements,
   pinnedPlacements,
   selectedPinIds,
   onPinPlaced,
   onUpdatePinned,
+  onMergePinned,
   onRemovePinned,
   onRotatePinned,
   onTogglePinSelection,
@@ -137,6 +143,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startRect: { x: number; y: number; width: number; length: number }
   }
   const [zoneDrag, setZoneDrag] = useState<ZoneDrag | null>(null)
+  // While dragging a placement over another same-item placement, this holds
+  // the id of the potential merge target (see handlePointerMove).
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
   const [dragState, setDragState] = useState<{
     id: string
     startMouse: { x: number; y: number }
@@ -511,6 +520,35 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
+  // Finds another placement of the SAME item substantially overlapped by the
+  // dragged rect's raw (pre-collision-resolution) target position — used to
+  // arm a drag-to-stack merge instead of the usual collision-avoided move.
+  const findMergeTarget = <T extends { id: string; itemId: string; x: number; y: number; width: number; length: number }>(
+    draggedItemId: string,
+    draggedId: string,
+    x: number,
+    y: number,
+    width: number,
+    length: number,
+    placements: T[]
+  ): string | null => {
+    const draggedArea = width * length
+    if (draggedArea <= 0) return null
+    let best: { id: string; overlap: number } | null = null
+    for (const p of placements) {
+      if (p.id === draggedId || p.itemId !== draggedItemId) continue
+      const ox = Math.max(0, Math.min(x + width, p.x + p.width) - Math.max(x, p.x))
+      const oy = Math.max(0, Math.min(y + length, p.y + p.length) - Math.max(y, p.y))
+      const overlapArea = ox * oy
+      if (overlapArea <= 0) continue
+      const frac = overlapArea / draggedArea
+      if (frac > 0.35 && (!best || overlapArea > best.overlap)) {
+        best = { id: p.id, overlap: overlapArea }
+      }
+    }
+    return best?.id ?? null
+  }
+
   // Tetris-style snap/lock drag resolution: snaps to the grid and magnetically
   // locks flush against neighbours/margins when close enough, falling back to
   // gap-aware vector-sliding when nothing is nearby to lock onto.
@@ -584,13 +622,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const ny = dragState.startPlace.y + deltaY
       const mp = manualPlacements.find((m) => m.id === dragState.id)
       if (mp) {
-        const others = manualPlacements
-          .filter((m) => m.id !== dragState.id)
-          .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
-        const resolved = resolveDragPosition(
-          nx, ny, mp.width, mp.length, mp.x, mp.y, others
-        )
-        scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
+        const target = onMergeManual
+          ? findMergeTarget(mp.itemId, mp.id, nx, ny, mp.width, mp.length, manualPlacements)
+          : null
+        setMergeTargetId(target)
+        if (!target) {
+          const others = manualPlacements
+            .filter((m) => m.id !== dragState.id)
+            .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+          const resolved = resolveDragPosition(
+            nx, ny, mp.width, mp.length, mp.x, mp.y, others
+          )
+          scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
+        }
       }
     }
     if (zoneDrag && onUpdateLoadZone) {
@@ -641,18 +685,38 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (!pin) return
       const nx = pinDrag.startPlace.x + deltaX
       const ny = pinDrag.startPlace.y + deltaY
-      // Prevent overlap with OTHER pinned items (auto-packed items reflow)
-      const others = pinnedPlacements
-        .filter((p) => p.id !== pinDrag.id)
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
-      const resolved = resolveDragPosition(
-        nx, ny, pin.width, pin.length, pin.x, pin.y, others
-      )
-      scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
+      const target = onMergePinned
+        ? findMergeTarget(pin.itemId, pin.id, nx, ny, pin.width, pin.length, pinnedPlacements)
+        : null
+      setMergeTargetId(target)
+      if (!target) {
+        // Prevent overlap with OTHER pinned items (auto-packed items reflow)
+        const others = pinnedPlacements
+          .filter((p) => p.id !== pinDrag.id)
+          .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+        const resolved = resolveDragPosition(
+          nx, ny, pin.width, pin.length, pin.x, pin.y, others
+        )
+        scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
+      }
     }
   }
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    // A merge target was armed while dragging — merge instead of the usual
+    // position commit (skip flushPendingDrag: no move was scheduled for this
+    // drag while a merge target was active, see handlePointerMove).
+    if (mergeTargetId) {
+      if (dragState && onMergeManual) onMergeManual(dragState.id, mergeTargetId)
+      else if (pinDrag && onMergePinned) onMergePinned(pinDrag.id, mergeTargetId)
+      pendingDrag.current = null
+      setMergeTargetId(null)
+      setDragState(null)
+      setPinDrag(null)
+      setZoneDrag(null)
+      setPanDrag(null)
+      return
+    }
     // Always flush any pending drag position before releasing the pointer
     flushPendingDrag()
     // Click on empty deck area clears selection (pins in auto mode, load zones always)
@@ -686,6 +750,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPinDrag(null)
     setZoneDrag(null)
     setPanDrag(null)
+    setMergeTargetId(null)
   }
 
   const handleManualLeave = () => {
@@ -998,6 +1063,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const overLoad = loadZones && loadZones.length > 0
             ? checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, loadZones)
             : null
+          const placementId = mode === 'manual' ? p.manualId : matchingPin?.id
+          const isMergeTarget = !!mergeTargetId && placementId === mergeTargetId
+          const isBeingDragged =
+            (mode === 'manual' && !!dragState && p.manualId === dragState.id) ||
+            (isInteractiveAuto && !!pinDrag && matchingPin?.id === pinDrag.id)
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
@@ -1016,6 +1086,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               category={category}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Нагрузка ${(overLoad.densityKgPerM2 / 1000).toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              mergeTarget={isMergeTarget}
+              dimmed={isBeingDragged && !!mergeTargetId}
               onPointerDown={
                 mode === 'manual' && p.manualId
                   ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
@@ -1070,7 +1142,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                       }
                     }}
                   >
-                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
                     <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
                     <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
                   </g>
@@ -1158,7 +1230,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                       }
                     }}
                   >
-                    <title>{canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? `Заблокировано`)}</title>
+                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
                     <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
                     <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
                   </g>
@@ -1259,6 +1331,8 @@ function PlacedRect({
   category,
   overLoad,
   overLoadTitle,
+  mergeTarget,
+  dimmed,
 }: {
   item: PlacedItem
   x: number
@@ -1276,17 +1350,24 @@ function PlacedRect({
   category?: string
   overLoad?: boolean
   overLoadTitle?: string
+  // Drag-to-stack: this placement is the potential landing spot for the item
+  // currently being dragged (mergeTarget), or is itself being dragged toward
+  // one (dimmed) — see findMergeTarget/handlePointerMove.
+  mergeTarget?: boolean
+  dimmed?: boolean
 }) {
-  const strokeColor = overLoad
-    ? '#dc2626'
-    : pinnedSelected
-      ? '#7c3aed'
-      : pinned
-        ? '#0f172a'
-        : hovered
-          ? '#94a3b8'
-          : 'rgba(15,23,42,0.55)'
-  const strokeWidth = overLoad ? 3 : pinnedSelected ? 3 : pinned || hovered ? 2 : 1
+  const strokeColor = mergeTarget
+    ? '#16a34a'
+    : overLoad
+      ? '#dc2626'
+      : pinnedSelected
+        ? '#7c3aed'
+        : pinned
+          ? '#0f172a'
+          : hovered
+            ? '#94a3b8'
+            : 'rgba(15,23,42,0.55)'
+  const strokeWidth = mergeTarget ? 4 : overLoad ? 3 : pinnedSelected ? 3 : pinned || hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -1297,8 +1378,19 @@ function PlacedRect({
       onMouseEnter={() => onHover(item.itemId)}
       onMouseLeave={() => onHover(null)}
       onPointerDown={onPointerDown}
-      style={{ cursor, transition: 'opacity 0.15s' }}
+      style={{ cursor, opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s' }}
     >
+      {/* Stacked-layers cue: faint offset "ghost" outlines behind the main
+          box, so a multi-layer footprint visually reads as a physical pile
+          rather than just the small "×N" badge. */}
+      {item.layers > 1 && w >= 16 && h >= 16 && (
+        <g className="pointer-events-none" opacity={0.5}>
+          <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
+          {item.layers > 2 && (
+            <rect x={x - 6} y={y - 6} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
+          )}
+        </g>
+      )}
       <rect
         x={x}
         y={y}
@@ -1309,13 +1401,19 @@ function PlacedRect({
         fillOpacity={hovered ? 0.95 : 0.78}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
-        strokeDasharray={pinned ? '4 2' : undefined}
+        strokeDasharray={mergeTarget ? '6 3' : pinned ? '4 2' : undefined}
       />
       {overLoadTitle && <title>{overLoadTitle}</title>}
       {overLoad && w >= 14 && h >= 14 && (
         <g className="pointer-events-none">
           <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />
           <text x={x + 8} y={y + 11} fontSize={10} fontWeight={800} textAnchor="middle" fill="#fff" className="select-none">!</text>
+        </g>
+      )}
+      {mergeTarget && (
+        <g className="pointer-events-none">
+          <rect x={x + w / 2 - 14} y={y + h / 2 - 12} width={28} height={24} rx={4} fill="rgba(22,163,74,0.95)" stroke="#fff" strokeWidth={1.5} />
+          <text x={x + w / 2} y={y + h / 2 + 5} textAnchor="middle" fontSize={16} fontWeight={800} fill="#fff" className="select-none">+</text>
         </g>
       )}
       {category && showLabels && w > 30 && h > 30 && (

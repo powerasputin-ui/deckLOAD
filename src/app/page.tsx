@@ -400,8 +400,9 @@ export default function Home() {
     itemId: string,
     currentLayers: number,
     delta: number,
-    excludeId?: string
+    excludeIds?: string | string[]
   ): { ok: boolean; reason?: string; maxPhys: number } => {
+    const excluded = new Set(excludeIds ? (Array.isArray(excludeIds) ? excludeIds : [excludeIds]) : [])
     const item = items.find((it) => it.id === itemId)
     if (!item) return { ok: false, reason: 'Груз не найден', maxPhys: 1 }
     const maxPhys = maxLayersFor(item, deck.clearance)
@@ -414,16 +415,16 @@ export default function Home() {
         maxPhys,
       }
     }
-    // Sum of layers across all placements of this item (excluding the one being
-    // changed) — across ALL trips, since the item's quantity is a single
+    // Sum of layers across all placements of this item (excluding the one(s)
+    // being changed) — across ALL trips, since the item's quantity is a single
     // shipment-wide budget, not per-trip.
     const sumPlaced =
       Object.values(pinnedPlacementsByTrip)
         .flat()
-        .filter((p) => p.itemId === itemId && p.id !== excludeId)
+        .filter((p) => p.itemId === itemId && !excluded.has(p.id))
         .reduce((s, p) => s + p.layers, 0) +
       manualPlacements
-        .filter((m) => m.itemId === itemId && m.id !== excludeId)
+        .filter((m) => m.itemId === itemId && !excluded.has(m.id))
         .reduce((s, m) => s + Math.max(1, m.layers), 0)
     if (sumPlaced + newLayers > item.quantity) {
       return {
@@ -438,35 +439,7 @@ export default function Home() {
   const handleLayerChangePinned = (id: string, delta: number) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
-    const item = items.find((it) => it.id === pin.itemId)
     const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
-    // If blocked by clearance (physical ceiling), auto-increase clearance
-    // so the + button always works — the user wants to add a tier, not fight settings.
-    if (!check.ok && delta > 0 && item && item.height > 0) {
-      const neededLayers = pin.layers + delta
-      const neededClearance = neededLayers * item.height
-      if (neededClearance > deck.clearance) {
-        useCalculator.getState().setDeck({ clearance: neededClearance })
-      }
-      // Also auto-increase quantity if needed (budget is shipment-wide, all trips)
-      const sumPlaced =
-        Object.values(pinnedPlacementsByTrip)
-          .flat()
-          .filter((p) => p.itemId === pin.itemId && p.id !== id)
-          .reduce((s, p) => s + p.layers, 0) +
-        manualPlacements
-          .filter((m) => m.itemId === pin.itemId && m.id !== id)
-          .reduce((s, m) => s + Math.max(1, m.layers), 0)
-      if (sumPlaced + neededLayers > (item?.quantity ?? 0)) {
-        // Auto-increase quantity
-        useCalculator.getState().updateItem(item.id, { quantity: sumPlaced + neededLayers })
-        toast.info(`Количество увеличено до ${sumPlaced + neededLayers} ед., высота — до ${neededClearance} ${UNIT_LABEL[deck.unit]}`)
-      } else {
-        toast.info(`Высота над палубой увеличена до ${neededClearance} ${UNIT_LABEL[deck.unit]} для ${neededLayers} ярусов`)
-      }
-      updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
-      return
-    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
@@ -493,37 +466,51 @@ export default function Home() {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
     const current = Math.max(1, mp.layers)
-    const item = items.find((it) => it.id === mp.itemId)
     const check = checkLayerChange(mp.itemId, current, delta, id)
-    // If blocked by clearance, auto-increase clearance so + always works
-    if (!check.ok && delta > 0 && item && item.height > 0) {
-      const neededLayers = current + delta
-      const neededClearance = neededLayers * item.height
-      if (neededClearance > deck.clearance) {
-        useCalculator.getState().setDeck({ clearance: neededClearance })
-      }
-      const sumPlaced =
-        Object.values(pinnedPlacementsByTrip)
-          .flat()
-          .filter((p) => p.itemId === mp.itemId && p.id !== id)
-          .reduce((s, p) => s + p.layers, 0) +
-        manualPlacements
-          .filter((m) => m.itemId === mp.itemId && m.id !== id)
-          .reduce((s, m) => s + Math.max(1, m.layers), 0)
-      if (sumPlaced + neededLayers > (item?.quantity ?? 0)) {
-        useCalculator.getState().updateItem(item.id, { quantity: sumPlaced + neededLayers })
-        toast.info(`Количество увеличено до ${sumPlaced + neededLayers} ед., высота — до ${neededClearance} ${UNIT_LABEL[deck.unit]}`)
-      } else {
-        toast.info(`Высота над палубой увеличена до ${neededClearance} ${UNIT_LABEL[deck.unit]} для ${neededLayers} ярусов`)
-      }
-      updateManualPlacement(id, { layers: current + delta })
-      return
-    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
     }
     updateManualPlacement(id, { layers: current + delta })
+  }
+
+  // Drag one pinned placement onto another of the same item — merges them
+  // into a single stacked footprint (target absorbs the dragged one's
+  // layers) instead of leaving two separate places side by side. Reuses the
+  // same clearance/quantity escalation as the "+" button, since merging is
+  // conceptually "add N layers to the target", just sourced from an existing
+  // placement instead of the unplaced pool.
+  const handleMergePinned = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return
+    const dragged = pinnedPlacements.find((p) => p.id === draggedId)
+    const target = pinnedPlacements.find((p) => p.id === targetId)
+    if (!dragged || !target || dragged.itemId !== target.itemId) return
+    const delta = dragged.layers
+    const check = checkLayerChange(target.itemId, target.layers, delta, [target.id, dragged.id])
+    if (!check.ok) {
+      toast.warning(check.reason ?? 'Невозможно объединить')
+      return
+    }
+    updatePinned(clampedTripIndex, target.id, { layers: target.layers + delta })
+    removePinned(clampedTripIndex, dragged.id)
+    toast.success(`Объединено: ${target.layers + delta} яр. груза «${target.name}»`)
+  }
+
+  const handleMergeManual = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return
+    const dragged = manualPlacements.find((m) => m.id === draggedId)
+    const target = manualPlacements.find((m) => m.id === targetId)
+    if (!dragged || !target || dragged.itemId !== target.itemId) return
+    const targetLayers = Math.max(1, target.layers)
+    const delta = Math.max(1, dragged.layers)
+    const check = checkLayerChange(target.itemId, targetLayers, delta, [target.id, dragged.id])
+    if (!check.ok) {
+      toast.warning(check.reason ?? 'Невозможно объединить')
+      return
+    }
+    updateManualPlacement(target.id, { layers: targetLayers + delta })
+    removeManualPlacement(dragged.id)
+    toast.success(`Объединено: ${targetLayers + delta} яр. груза «${target.name}»`)
   }
 
   // Switch mode while preserving placements:
@@ -799,11 +786,13 @@ export default function Home() {
                     }}
                     onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                     onRemoveManual={removeManualPlacement}
+                    onMergeManual={handleMergeManual}
                     manualPlacements={manualPlacements}
                     pinnedPlacements={pinnedPlacements}
                     selectedPinIds={selectedPinIds}
                     onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
                     onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
+                    onMergePinned={handleMergePinned}
                     onRemovePinned={handleRemovePinned}
                     onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
@@ -811,15 +800,18 @@ export default function Home() {
                     onRotateManual={handleRotateManual}
                     onLayerChangePinned={handleLayerChangePinned}
                     onLayerChangeManual={handleLayerChangeManual}
-                    getLayerInfo={(itemId, currentLayers) => {
+                    getLayerInfo={(itemId, currentLayers, excludeId) => {
                       const item = items.find((it) => it.id === itemId)
                       const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
-                      const canInc = !!item && item.height > 0
+                      if (!item || item.height <= 0) {
+                        return { maxPhys, canIncrease: false, canDecrease: currentLayers > 1, blockReason: 'У груза не задана высота' }
+                      }
+                      const incCheck = checkLayerChange(itemId, currentLayers, 1, excludeId)
                       return {
                         maxPhys,
-                        canIncrease: canInc,
+                        canIncrease: incCheck.ok,
                         canDecrease: currentLayers > 1,
-                        blockReason: canInc ? undefined : 'У груза не задана высота',
+                        blockReason: incCheck.ok ? undefined : incCheck.reason,
                       }
                     }}
                     selectedManualIds={selectedManualIds}
