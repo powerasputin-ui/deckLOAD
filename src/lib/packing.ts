@@ -412,6 +412,7 @@ export function packDeck(
     weight: it.weight === undefined ? undefined : toFinite(it.weight, 0),
   }))
   const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
+  const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -533,7 +534,7 @@ export function packDeck(
       y: pin.y,
       width: pin.width,
       length: pin.length,
-      height: 0,
+      height: heightByItemId.get(pin.itemId) ?? 0,
       layers,
       stackedCount: layers,
       rotated: pin.rotated,
