@@ -19,8 +19,8 @@ test.describe('Deleting a pinned cargo item', () => {
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
-    // Click delete in the floating selected-item toolbar (only rendered for a single selection).
-    await page.locator('.absolute.left-2.top-2 button[title="Удалить"]').first().click({ force: true })
+    // Click the red X on the selected pin (only rendered for a single selection).
+    await page.locator('svg circle[fill="#ef4444"]').first().click({ force: true })
 
     await expect(page.getByText(/удалён/)).toBeVisible()
     const after = await headerBadge(page).textContent()

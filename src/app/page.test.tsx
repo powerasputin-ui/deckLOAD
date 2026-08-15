@@ -66,9 +66,9 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const deleteButton = document.querySelector('.absolute.left-2.top-2 button[title="Удалить"]')
-    expect(deleteButton).toBeTruthy()
-    fireEvent.click(deleteButton!)
+    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    expect(xCircle).toBeTruthy()
+    fireEvent.click(xCircle!)
 
     expect(useCalculator.getState().items[0].quantity).toBe(1)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0] ?? []).toHaveLength(0)
@@ -89,9 +89,9 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const minusButton = document.querySelector('.absolute.left-2.top-2 button[title^="Убрать"]')
-    expect(minusButton).toBeTruthy()
-    fireEvent.click(minusButton!)
+    const minusCircle = document.querySelector('svg circle[fill="#f59e0b"]')
+    expect(minusCircle).toBeTruthy()
+    fireEvent.click(minusCircle!)
 
     // The old bug: quantity stayed at 3, so the auto-packer immediately
     // placed the freed unit somewhere else on the deck - making "-" look
@@ -118,9 +118,9 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateButton = document.querySelector('.absolute.left-2.top-2 button[title="Повернуть"]')
-    expect(rotateButton).toBeTruthy()
-    fireEvent.click(rotateButton!)
+    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    expect(rotateCircle).toBeTruthy()
+    fireEvent.click(rotateCircle!)
 
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
     const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]

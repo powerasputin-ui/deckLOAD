@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
-import { ZoomIn, ZoomOut, Maximize, RotateCw, Plus, Minus, X } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   computeFreeRects,
@@ -821,118 +821,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   return (
     <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
-      {/* Selected-item toolbar (rotate/layers/delete). Deliberately a floating
-          HTML control, not buttons drawn at the item's corner on the SVG canvas:
-          at typical deck zoom, tightly packed items leave no room for corner
-          buttons without overlapping the neighbour, which made clicks land on
-          (and drag/merge into) the wrong item. */}
-      {(() => {
-        if (isInteractiveAuto && selectedPinIds.length === 1) {
-          const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
-          if (!pin) return null
-          const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
-          const maxPhys = layerInfo?.maxPhys ?? 1
-          const canInc = layerInfo?.canIncrease ?? true
-          const blockReason = layerInfo?.blockReason
-          return (
-            <div className="absolute left-2 top-2 z-10 flex items-center gap-1 rounded-lg border bg-card/95 px-2 py-1 shadow-sm backdrop-blur-sm">
-              <span className="max-w-[120px] truncate text-xs font-medium" title={pin.name}>{pin.name}</span>
-              {onRotatePinned && (
-                <Button type="button" size="icon" variant="ghost" className="h-7 w-7" title="Повернуть" onClick={() => onRotatePinned(pin.id)}>
-                  <RotateCw className="h-4 w-4" />
-                </Button>
-              )}
-              {onLayerChangePinned && (
-                <>
-                  <Button
-                    type="button" size="icon" variant="ghost" className="h-7 w-7"
-                    title={pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}
-                    disabled={pin.layers <= 1}
-                    onClick={() => {
-                      if (pin.layers > 1) onLayerChangePinned(pin.id, -1)
-                      else toast.info('Минимум 1 ярус. Для удаления используйте ✕')
-                    }}
-                  >
-                    <Minus className="h-4 w-4" />
-                  </Button>
-                  <span className="min-w-9 text-center text-xs font-semibold tabular-nums">{pin.layers}/{maxPhys}</span>
-                  <Button
-                    type="button" size="icon" variant="ghost" className="h-7 w-7"
-                    title={canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? 'Заблокировано')}
-                    disabled={!canInc}
-                    onClick={() => {
-                      if (canInc) onLayerChangePinned(pin.id, 1)
-                      else toast.warning(blockReason ?? 'Невозможно добавить ярус')
-                    }}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </>
-              )}
-              {onRemovePinned && (
-                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-destructive" title="Удалить" onClick={() => onRemovePinned(pin.id)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          )
-        }
-        if (mode === 'manual' && selectedManual) {
-          const mp = manualPlacements.find((m) => m.id === selectedManual)
-          if (!mp) return null
-          const currentLayers = Math.max(1, mp.layers)
-          const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
-          const maxPhys = layerInfo?.maxPhys ?? 1
-          const canInc = layerInfo?.canIncrease ?? true
-          const blockReason = layerInfo?.blockReason
-          return (
-            <div className="absolute left-2 top-2 z-10 flex items-center gap-1 rounded-lg border bg-card/95 px-2 py-1 shadow-sm backdrop-blur-sm">
-              <span className="max-w-[120px] truncate text-xs font-medium" title={mp.name}>{mp.name}</span>
-              {onRotateManual && (
-                <Button type="button" size="icon" variant="ghost" className="h-7 w-7" title="Повернуть" onClick={() => onRotateManual(mp.id)}>
-                  <RotateCw className="h-4 w-4" />
-                </Button>
-              )}
-              {onLayerChangeManual && (
-                <>
-                  <Button
-                    type="button" size="icon" variant="ghost" className="h-7 w-7"
-                    title={currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}
-                    disabled={currentLayers <= 1}
-                    onClick={() => {
-                      if (currentLayers > 1) onLayerChangeManual(mp.id, -1)
-                      else toast.info('Минимум 1 ярус. Для удаления используйте ✕')
-                    }}
-                  >
-                    <Minus className="h-4 w-4" />
-                  </Button>
-                  <span className="min-w-9 text-center text-xs font-semibold tabular-nums">{currentLayers}/{maxPhys}</span>
-                  <Button
-                    type="button" size="icon" variant="ghost" className="h-7 w-7"
-                    title={canInc ? `Добавить ярус (макс. ${maxPhys})` : (blockReason ?? 'Заблокировано')}
-                    disabled={!canInc}
-                    onClick={() => {
-                      if (canInc) onLayerChangeManual(mp.id, 1)
-                      else toast.warning(blockReason ?? 'Невозможно добавить ярус')
-                    }}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </>
-              )}
-              {onRemoveManual && (
-                <Button
-                  type="button" size="icon" variant="ghost" className="h-7 w-7 text-destructive" title="Удалить"
-                  onClick={() => { onRemoveManual(mp.id); onClearManualSelection?.() }}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          )
-        }
-        return null
-      })()}
       <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm">
         <Button
           type="button"
@@ -1211,11 +1099,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {/* Auto mode: layer-count badge on a selected pinned item (single selection).
-            Rotate/layer/delete actions live in the floating toolbar instead of
-            inline canvas buttons — at typical deck zoom, tightly packed items
-            leave no room for corner buttons without overlapping the neighbour,
-            which made clicks land on (and drag/merge) the wrong item. */}
+        {/* Auto mode: rotate + delete + layer buttons on a selected pinned item (single selection) */}
         {isInteractiveAuto &&
           selectedPinIds.length === 1 &&
           (() => {
@@ -1223,21 +1107,95 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             if (!pin) return null
             const rcx = toX(pin.x)
             const rcy = toY(pin.y)
+            const dcx = toX(pin.x + pin.width)
+            const dcy = toY(pin.y)
+            // Layer buttons positioned at top-right and bottom-right
+            const lcx = toX(pin.x + pin.width)
+            const lcy = toY(pin.y + pin.length)
             const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
+            const canInc = layerInfo?.canIncrease ?? true
+            const blockReason = layerInfo?.blockReason
             return (
-              <g className="pointer-events-none">
-                <rect x={rcx} y={rcy - 18} width={54} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
-                <text x={rcx + 27} y={rcy - 8} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                  {pin.layers} / {maxPhys} яр.
-                </text>
-              </g>
+              <>
+                {onRotatePinned && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRotatePinned(pin.id)
+                    }}
+                  >
+                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
+                  </g>
+                )}
+                {onLayerChangePinned && (
+                  <g
+                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (canInc) {
+                        onLayerChangePinned(pin.id, 1)
+                      } else {
+                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+                      }
+                    }}
+                  >
+                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
+                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
+                  </g>
+                )}
+                {onLayerChangePinned && (
+                  <g
+                    style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (pin.layers > 1) {
+                        onLayerChangePinned(pin.id, -1)
+                      } else {
+                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+                      }
+                    }}
+                  >
+                    <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
+                  </g>
+                )}
+                {onRemovePinned && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemovePinned(pin.id)
+                    }}
+                  >
+                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
+                  </g>
+                )}
+                {/* Layer count badge */}
+                <g className="pointer-events-none">
+                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+                    {pin.layers} / {maxPhys} яр.
+                  </text>
+                </g>
+              </>
             )
           })()}
 
-        {/* Manual mode: layer-count badge on selected item — rotate/layer/delete
-            actions live in the floating toolbar (see the Auto-mode block above
-            for why inline canvas buttons were removed). */}
+        {/* Manual mode: rotate + delete + layer buttons on selected */}
         {mode === 'manual' &&
           selectedManual &&
           (() => {
@@ -1245,16 +1203,92 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             if (!mp) return null
             const rcx = toX(mp.x)
             const rcy = toY(mp.y)
+            const dcx = toX(mp.x + mp.width)
+            const dcy = toY(mp.y)
+            const lcx = toX(mp.x + mp.width)
+            const lcy = toY(mp.y + mp.length)
             const currentLayers = Math.max(1, mp.layers)
             const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
+            const canInc = layerInfo?.canIncrease ?? true
+            const blockReason = layerInfo?.blockReason
             return (
-              <g className="pointer-events-none">
-                <rect x={rcx} y={rcy - 18} width={54} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
-                <text x={rcx + 27} y={rcy - 8} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                  {currentLayers} / {maxPhys} яр.
-                </text>
-              </g>
+              <>
+                {onRotateManual && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRotateManual(mp.id)
+                    }}
+                  >
+                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
+                  </g>
+                )}
+                {onLayerChangeManual && (
+                  <g
+                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (canInc) {
+                        onLayerChangeManual(mp.id, 1)
+                      } else {
+                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
+                      }
+                    }}
+                  >
+                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
+                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
+                  </g>
+                )}
+                {onLayerChangeManual && (
+                  <g
+                    style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (currentLayers > 1) {
+                        onLayerChangeManual(mp.id, -1)
+                      } else {
+                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
+                      }
+                    }}
+                  >
+                    <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
+                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
+                  </g>
+                )}
+                {onRemoveManual && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveManual(mp.id)
+                      onClearManualSelection?.()
+                    }}
+                  >
+                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
+                  </g>
+                )}
+                {/* Layer count badge */}
+                <g className="pointer-events-none">
+                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
+                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+                    {currentLayers} / {maxPhys} яр.
+                  </text>
+                </g>
+              </>
             )
           })()}
 
