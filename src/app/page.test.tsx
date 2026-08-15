@@ -75,6 +75,35 @@ describe('Home (page.tsx)', () => {
     expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('удалён'))
   })
 
+  it('handleLayerChangePinned("-") decrements quantity (regression: freed layer used to get auto-placed elsewhere)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 3, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: item.color,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const minusButton = document.querySelector('.absolute.left-2.top-2 button[title^="Убрать"]')
+    expect(minusButton).toBeTruthy()
+    fireEvent.click(minusButton!)
+
+    // The old bug: quantity stayed at 3, so the auto-packer immediately
+    // placed the freed unit somewhere else on the deck - making "-" look
+    // like it moved the layer onto a different (often edge) container
+    // instead of removing it. The fix must shrink quantity by 1, same as
+    // the delete button does.
+    expect(useCalculator.getState().items[0].quantity).toBe(2)
+    const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    expect(pins).toHaveLength(1)
+    expect(pins[0].layers).toBe(1)
+  })
+
   it('handleRotatePinned respects allowRotation (regression: canvas rotate used to bypass the lock)', () => {
     render(<Home />)
     clearDemoCargo()
