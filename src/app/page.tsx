@@ -473,9 +473,51 @@ export default function Home() {
     return null
   }
 
+  // "+" mirrors "-": "-" takes the top layer off and stands it up as its own
+  // container elsewhere on the deck; "+" should take an existing container
+  // of the same item off the deck and stack it onto the selected one — the
+  // point-and-click equivalent of dragging one placement onto another,
+  // rather than conjuring a new unit out of unplaced quantity. Looks for
+  // another placement of this item already on the deck (a pin first, else a
+  // still-auto-placed instance, which gets pinned so it can be merged) and
+  // returns what handleMergePinned needs to absorb it.
+  const findMergeSourcePinned = (itemId: string, excludeId: string): { id: string } | null => {
+    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId)
+    if (otherPin) return { id: otherPin.id }
+    const freeInstance = result.placed.find((p) => {
+      if (p.itemId !== itemId) return false
+      return !pinnedPlacements.some(
+        (pp) => pp.itemId === itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
+      )
+    })
+    if (!freeInstance) return null
+    const newId = pinFromPlaced(clampedTripIndex, {
+      itemId: freeInstance.itemId,
+      name: freeInstance.name,
+      x: freeInstance.x,
+      y: freeInstance.y,
+      width: freeInstance.width,
+      length: freeInstance.length,
+      layers: freeInstance.stackedCount,
+      rotated: freeInstance.rotated,
+      color: freeInstance.color,
+      weight: freeInstance.weight,
+    })
+    return { id: newId }
+  }
+
   const handleLayerChangePinned = (id: string, delta: number) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
+
+    if (delta > 0) {
+      const source = findMergeSourcePinned(pin.itemId, id)
+      if (source) {
+        handleMergePinned(source.id, id)
+        return
+      }
+    }
+
     const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')

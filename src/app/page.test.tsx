@@ -116,6 +116,42 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items[0].quantity).toBe(4)
   })
 
+  it('handleLayerChangePinned("+") pulls an existing placement off the deck instead of only unplaced quantity', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    let pinAId = ''
+    let pinBId = ''
+    act(() => {
+      pinAId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      pinBId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 4, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      useCalculator.setState({ selectedPinIds: [pinAId] })
+    })
+
+    // Both units of this item's quantity are already placed (as two separate
+    // pins) - the old behavior only pulled from *unplaced* quantity, so "+"
+    // would be blocked here with "all N units already placed" even though a
+    // second container of the same item is sitting right there on the deck.
+    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    expect(plusCircle).toBeTruthy()
+    fireEvent.click(plusCircle!)
+
+    const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    expect(pins).toHaveLength(1)
+    expect(pins[0].id).toBe(pinAId)
+    expect(pins[0].layers).toBe(2)
+    expect(pins.some((p) => p.id === pinBId)).toBe(false)
+    expect(useCalculator.getState().items[0].quantity).toBe(2)
+  })
+
   it('handleRotatePinned respects allowRotation (regression: canvas rotate used to bypass the lock)', () => {
     render(<Home />)
     clearDemoCargo()
