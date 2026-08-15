@@ -183,7 +183,7 @@ export function Sidebar({
                   className={cn(
                     'group flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-all',
                     active
-                      ? 'border-primary bg-primary/10'
+                      ? 'border-slate-400 bg-slate-100 dark:bg-slate-800/40 dark:border-slate-600'
                       : 'border-transparent hover:bg-accent'
                   )}
                 >

@@ -338,7 +338,7 @@ function StampRow({
       className={cn(
         'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
         active
-          ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
           : 'border-border hover:bg-accent'
       )}
     >

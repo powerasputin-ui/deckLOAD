@@ -1101,7 +1101,7 @@ function PlacedRect({
       : pinned
         ? '#0f172a'
         : hovered
-          ? '#0f172a'
+          ? '#94a3b8'
           : 'rgba(15,23,42,0.55)'
   const strokeWidth = overLoad ? 3 : pinnedSelected ? 3 : pinned || hovered ? 2 : 1
   const cursor = manualMode
