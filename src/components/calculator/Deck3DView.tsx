@@ -21,6 +21,16 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
   // not just implied by a number. Items without a set height still render
   // as a single thin slab, matching the 2D fallback so an empty "height"
   // field doesn't make cargo invisible.
+  // Real gaps between neighbouring footprints can be tiny (the deck's own
+  // "gap" setting is often just a few cm against a many-metre deck) — at
+  // typical camera distance that seam all but disappears, so same-colour
+  // neighbours read as one fused blob instead of separate units. Shrinking
+  // each box slightly around its own centre (footprint AND height) leaves a
+  // visible sliver of deck between every placement, at every zoom level,
+  // regardless of how small the real gap is — same clarity the 2D view gets
+  // for free from each rect's own stroke outline.
+  const SHRINK = 0.94
+
   const boxes = useMemo(() => {
     const out: { key: string; w: number; d: number; h: number; x: number; y: number; z: number; color: string }[] = []
     for (const p of result.placed) {
@@ -28,7 +38,7 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
       const z = p.y + p.length / 2 - deckLength / 2
       const layers = Math.max(1, p.stackedCount)
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${p.index}`, w: p.width, d: p.length, h: 0.3, x, y: 0.15, z, color: p.color })
+        out.push({ key: `${p.itemId}-${p.index}`, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x, y: 0.15, z, color: p.color })
         continue
       }
       // A small gap between tiers (proportional to tier height, capped so it
@@ -39,8 +49,8 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
       for (let layer = 0; layer < layers; layer++) {
         out.push({
           key: `${p.itemId}-${p.index}-${layer}`,
-          w: p.width,
-          d: p.length,
+          w: p.width * SHRINK,
+          d: p.length * SHRINK,
           h: p.height,
           x,
           z,
