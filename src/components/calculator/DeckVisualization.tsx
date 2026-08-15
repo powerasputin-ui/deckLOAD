@@ -1121,18 +1121,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 {onRotatePinned && (
                   <g
                     style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       onRotatePinned(pin.id)
                     }}
                   >
-                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
-                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
                   </g>
                 )}
                 {onLayerChangePinned && (
                   <g
                     style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       if (canInc) {
@@ -1143,13 +1146,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     }}
                   >
                     <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
-                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
+                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
                   </g>
                 )}
                 {onLayerChangePinned && (
                   <g
                     style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       if (pin.layers > 1) {
@@ -1160,20 +1165,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     }}
                   >
                     <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
+                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
                   </g>
                 )}
                 {onRemovePinned && (
                   <g
                     style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       onRemovePinned(pin.id)
                     }}
                   >
-                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
-                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
                   </g>
                 )}
                 {/* Layer count badge */}
@@ -1209,18 +1217,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 {onRotateManual && (
                   <g
                     style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       onRotateManual(mp.id)
                     }}
                   >
-                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} />
-                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">↻</text>
+                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
+                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
                   </g>
                 )}
                 {onLayerChangeManual && (
                   <g
                     style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       if (canInc) {
@@ -1231,13 +1242,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     }}
                   >
                     <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
-                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">+</text>
+                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
                   </g>
                 )}
                 {onLayerChangeManual && (
                   <g
                     style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       if (currentLayers > 1) {
@@ -1248,21 +1261,24 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     }}
                   >
                     <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} />
-                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff">−</text>
+                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
+                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
                   </g>
                 )}
                 {onRemoveManual && (
                   <g
                     style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
                       onRemoveManual(mp.id)
                       onClearManualSelection?.()
                     }}
                   >
-                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />
-                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff">✕</text>
+                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
+                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
                   </g>
                 )}
                 {/* Layer count badge */}
