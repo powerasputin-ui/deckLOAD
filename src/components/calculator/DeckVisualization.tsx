@@ -1,6 +1,8 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
+import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   computeFreeRects,
   clampToDeck,
@@ -117,6 +119,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     },
     [forwardedRef]
   )
+  // Zoom/pan: viewBox stays at maxW×maxH (deck-unit conversion below is
+  // unaffected), but we can show a smaller/shifted window into it. Since
+  // screenToDeck reads getScreenCTM() (which already reflects the current
+  // viewBox), all existing click/drag placement math keeps working unchanged.
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [panDrag, setPanDrag] = useState<{ startMouse: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [lashingHoverPos, setLashingHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
@@ -228,6 +237,117 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return 10
   })()
 
+  // Zoom/pan window into the fixed maxW×maxH user-space coordinate system.
+  const MIN_ZOOM = 1
+  const MAX_ZOOM = 4
+  const viewBoxW = maxW / zoom
+  const viewBoxH = maxH / zoom
+  const clampPan = useCallback(
+    (p: { x: number; y: number }, vbW: number, vbH: number) => ({
+      x: Math.min(Math.max(p.x, 0), Math.max(0, maxW - vbW)),
+      y: Math.min(Math.max(p.y, 0), Math.max(0, maxH - vbH)),
+    }),
+    []
+  )
+
+  // Convert a screen point to the current viewBox's user-space coordinates
+  // (i.e. same units as pan.x/pan.y — NOT deck units like screenToDeck below).
+  const screenToViewBox = useCallback(
+    (clientX: number, clientY: number) => {
+      const svg = svgRef.current
+      if (!svg) return null
+      const pt = svg.createSVGPoint()
+      pt.x = clientX
+      pt.y = clientY
+      const ctm = svg.getScreenCTM()
+      if (!ctm) return null
+      const p = pt.matrixTransform(ctm.inverse())
+      return { x: p.x, y: p.y }
+    },
+    []
+  )
+
+  // Zooms so that the given point, expressed in the same user-space units as
+  // pan.x/pan.y (0..maxW / 0..maxH), stays visually fixed under itself.
+  const zoomAtPoint = useCallback(
+    (anchor: { x: number; y: number }, nextZoom: number) => {
+      const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom))
+      setZoom((prevZoom) => {
+        const nextW = maxW / clamped
+        const nextH = maxH / clamped
+        const fracX = (anchor.x - pan.x) / (maxW / prevZoom)
+        const fracY = (anchor.y - pan.y) / (maxH / prevZoom)
+        setPan(clampPan({ x: anchor.x - fracX * nextW, y: anchor.y - fracY * nextH }, nextW, nextH))
+        return clamped
+      })
+    },
+    [clampPan, pan]
+  )
+
+  const zoomAtScreenPoint = useCallback(
+    (clientX: number, clientY: number, nextZoom: number) => {
+      const anchor = screenToViewBox(clientX, clientY)
+      if (!anchor) {
+        setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom)))
+        return
+      }
+      zoomAtPoint(anchor, nextZoom)
+    },
+    [screenToViewBox, zoomAtPoint]
+  )
+
+  const zoomAtCenter = useCallback(
+    (nextZoom: number) => {
+      zoomAtPoint({ x: pan.x + viewBoxW / 2, y: pan.y + viewBoxH / 2 }, nextZoom)
+    },
+    [zoomAtPoint, pan, viewBoxW, viewBoxH]
+  )
+
+  const resetZoom = () => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
+
+  // zoomAtScreenPoint reads the latest zoom via a ref so the wheel listener
+  // below (which subscribes once per svg mount) doesn't need to be
+  // re-attached on every zoom/pan change.
+  const zoomRef = useRef(zoom)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+  const zoomAtScreenPointRef = useRef(zoomAtScreenPoint)
+  useEffect(() => {
+    zoomAtScreenPointRef.current = zoomAtScreenPoint
+  }, [zoomAtScreenPoint])
+
+  // Native (non-passive) wheel listener — React's onWheel prop is attached
+  // as a passive listener, so calling preventDefault() inside a JSX onWheel
+  // handler does NOT stop the page from scrolling.
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const step = e.deltaY > 0 ? -0.25 : 0.25
+      zoomAtScreenPointRef.current(e.clientX, e.clientY, zoomRef.current + step)
+    }
+    svg.addEventListener('wheel', handleWheel, { passive: false })
+    return () => svg.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  // Suppresses the click-through that would otherwise place a cargo stamp
+  // (manual mode) right after a pan-drag gesture releases over the deck.
+  const panMovedRef = useRef(false)
+
+  const handleBackgroundPointerDown = (e: React.PointerEvent) => {
+    if (zoom <= 1) return
+    const target = e.target as Element
+    if (!(target === svgRef.current || target.hasAttribute('data-deck-background'))) return
+    panMovedRef.current = false
+    setPanDrag({ startMouse: { x: e.clientX, y: e.clientY }, startPan: pan })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
   // Convert screen px (inside deck) -> deck coords
   const screenToDeck = useCallback(
     (clientX: number, clientY: number) => {
@@ -270,6 +390,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   }
 
   const handleDeckClick = (e: React.MouseEvent) => {
+    if (panMovedRef.current) {
+      panMovedRef.current = false
+      return
+    }
     if (handleLashingClick(e)) return
     if (mode !== 'manual' || !activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
@@ -415,6 +539,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     )
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (panDrag) {
+      const svg = svgRef.current
+      const rect = svg?.getBoundingClientRect()
+      if (rect && rect.width > 0) {
+        // Screen-px delta -> viewBox-unit delta, using the current render scale.
+        const unitsPerPx = viewBoxW / rect.width
+        const dx = (e.clientX - panDrag.startMouse.x) * unitsPerPx
+        const dy = (e.clientY - panDrag.startMouse.y) * unitsPerPx
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) panMovedRef.current = true
+        setPan(clampPan({ x: panDrag.startPan.x - dx, y: panDrag.startPan.y - dy }, viewBoxW, viewBoxH))
+      }
+      return
+    }
     if (placingLashingPoint) {
       const pos = screenToDeck(e.clientX, e.clientY)
       setLashingHoverPos(pos)
@@ -519,7 +656,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // Always flush any pending drag position before releasing the pointer
     flushPendingDrag()
     // Click on empty deck area clears selection (pins in auto mode, load zones always)
-    if (!pinDrag && !dragState && !zoneDrag) {
+    if (!pinDrag && !dragState && !zoneDrag && !panDrag) {
       const target = e.target as Element
       // Only clear if clicked directly on the deck background (marked via a
       // data attribute) or the SVG root itself — not coupled to fill colors,
@@ -532,6 +669,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setDragState(null)
     setPinDrag(null)
     setZoneDrag(null)
+    setPanDrag(null)
   }
 
   // A cancelled gesture (browser gesture, tab switch, context menu) never fires
@@ -547,6 +685,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setDragState(null)
     setPinDrag(null)
     setZoneDrag(null)
+    setPanDrag(null)
   }
 
   const handleManualLeave = () => {
@@ -607,14 +746,58 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         }))
       : result.placed
 
+  const backgroundCursor = panDrag
+    ? 'grabbing'
+    : zoom > 1
+      ? 'grab'
+      : placingLashingPoint || (mode === 'manual' && activeStamp)
+        ? 'crosshair'
+        : 'default'
+
   return (
-    <div className="w-full overflow-x-auto" onMouseLeave={handleManualLeave}>
+    <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
+      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          title="Увеличить"
+          disabled={zoom >= MAX_ZOOM}
+          onClick={() => zoomAtCenter(zoom + 0.5)}
+        >
+          <ZoomIn className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          title="Уменьшить"
+          disabled={zoom <= MIN_ZOOM}
+          onClick={() => zoomAtCenter(zoom - 0.5)}
+        >
+          <ZoomOut className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          title="Сбросить масштаб"
+          disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+          onClick={resetZoom}
+        >
+          <Maximize className="h-4 w-4" />
+        </Button>
+      </div>
       <svg
         ref={setSvgRef}
-        viewBox={`0 0 ${maxW} ${maxH}`}
+        viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
-        style={{ maxHeight: 560, cursor: placingLashingPoint || (mode === 'manual' && activeStamp) ? 'crosshair' : 'default', touchAction: 'none' }}
+        style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
         onClick={mode === 'manual' || placingLashingPoint ? handleDeckClick : undefined}
+        onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
