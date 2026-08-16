@@ -27,6 +27,8 @@ import {
   ShieldAlert,
   MapPin,
   Box,
+  Undo2,
+  Redo2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -75,6 +77,10 @@ interface SidebarProps {
   onResetCurrent: () => void
   viewMode: '2d' | '3d'
   onViewModeChange: (mode: '2d' | '3d') => void
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
 }
 
 export function Sidebar({
@@ -84,6 +90,10 @@ export function Sidebar({
   onResetCurrent,
   viewMode,
   onViewModeChange,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -153,8 +163,28 @@ export function Sidebar({
 
   return (
     <aside className="w-72 shrink-0 border-r bg-card flex flex-col h-full overflow-hidden">
-      {/* Collapse button + 2D/3D view toggle */}
+      {/* Collapse button + undo/redo + 2D/3D view toggle — all one line */}
       <div className="flex items-center gap-2 px-3 py-2 border-b">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Отменить (Ctrl+Z)"
+          disabled={!canUndo}
+          onClick={onUndo}
+        >
+          <Undo2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Повторить (Ctrl+Y)"
+          disabled={!canRedo}
+          onClick={onRedo}
+        >
+          <Redo2 className="h-4 w-4" />
+        </Button>
         <ToggleGroup
           type="single"
           value={viewMode}

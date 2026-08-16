@@ -9,8 +9,6 @@ import {
   Anchor,
   Download,
   Upload,
-  Undo2,
-  Redo2,
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
@@ -804,27 +802,6 @@ export default function Home() {
               {result.placedCount}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
             </Badge>
 
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              title="Отменить (Ctrl+Z)"
-              disabled={!canUndo}
-              onClick={() => useCalculator.temporal.getState().undo()}
-            >
-              <Undo2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              title="Повторить (Ctrl+Y)"
-              disabled={!canRedo}
-              onClick={() => useCalculator.temporal.getState().redo()}
-            >
-              <Redo2 className="h-3.5 w-3.5" />
-            </Button>
-
             <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
               <Download className="h-3.5 w-3.5 sm:mr-1" />
               <span className="hidden sm:inline">Скачать JSON</span>
@@ -878,6 +855,10 @@ export default function Home() {
           onResetCurrent={handleResetCurrent}
           viewMode={viewMode}
           onViewModeChange={setViewMode}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={() => useCalculator.temporal.getState().undo()}
+          onRedo={() => useCalculator.temporal.getState().redo()}
         />
 
         {/* Main content */}
