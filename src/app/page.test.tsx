@@ -152,6 +152,31 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items[0].quantity).toBe(2)
   })
 
+  it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {
+    render(<Home />)
+    // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants
+    // has enough to produce multiple genuinely distinct layouts.
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+
+    const variantButtons = screen.getAllByText(/^Вариант \d/)
+    expect(variantButtons.length).toBeGreaterThanOrEqual(2)
+
+    fireEvent.click(variantButtons[0])
+    const afterFirst = JSON.stringify(useCalculator.getState().pinnedPlacementsByTrip)
+
+    fireEvent.click(variantButtons[1])
+    const afterSecond = JSON.stringify(useCalculator.getState().pinnedPlacementsByTrip)
+
+    // The old bug: applyVariant's auto-mode branch just cleared pins and let
+    // the live recompute (using whatever sortStrategy the store already had)
+    // redraw, ignoring the variant's own strategy/seed entirely - so picking
+    // "Вариант 1" vs "Вариант 2" produced the identical layout every time.
+    expect(afterFirst).not.toBe(afterSecond)
+    // Both should actually be pinned (locked to that variant), not empty.
+    expect(Object.values(JSON.parse(afterFirst)).flat().length).toBeGreaterThan(0)
+    expect(Object.values(JSON.parse(afterSecond)).flat().length).toBeGreaterThan(0)
+  })
+
   it('handleRotatePinned respects allowRotation (regression: canvas rotate used to bypass the lock)', () => {
     render(<Home />)
     clearDemoCargo()

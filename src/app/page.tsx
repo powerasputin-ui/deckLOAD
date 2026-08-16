@@ -745,8 +745,21 @@ export default function Home() {
     toast.success(`Сгенерировано вариантов: ${newVariants.length}`)
   }
 
-  // Apply a chosen variant: in manual mode store as manual placements,
-  // in auto mode clear pins so the packer result shows through.
+  // Apply a chosen variant: in manual mode store as manual placements, in
+  // auto mode pin every placement from the variant's own result.
+  //
+  // The auto-mode branch used to just clear pinnedPlacementsByTrip and rely
+  // on the live `result` (packDeck re-run with whatever sortStrategy/globalRotation
+  // the store currently holds) to redraw - but packDeckVariants generates
+  // each variant with its OWN sort strategy plus a seeded shuffle
+  // (mulberry32(baseSeed + variantIdx*1013), see packing.ts) that the live
+  // recompute never reproduces. So picking a different variant just re-showed
+  // whatever the default live packing already was, regardless of which
+  // variant was clicked - "Вариант 2 — мелкие сначала" and "Вариант 1 — по
+  // площади" looked identical because neither ever actually got applied.
+  // Pinning the variant's own placements locks in exactly what was shown in
+  // the preview, the same way switching manual -> auto mode already converts
+  // placements into pins elsewhere in this file.
   const applyVariant = (variant: PackVariant) => {
     const s = useCalculator.getState()
     if (s.mode === 'manual') {
@@ -769,8 +782,21 @@ export default function Home() {
         selectedPinIds: [],
       })
     } else {
+      const newPinned = variant.result.placed.map((p) => ({
+        id: crypto.randomUUID(),
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        layers: Math.max(1, p.stackedCount),
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+      }))
       useCalculator.setState({
-        pinnedPlacementsByTrip: {},
+        pinnedPlacementsByTrip: { [clampedTripIndex]: newPinned },
         manualPlacements: [],
         selectedPinIds: [],
       })
