@@ -342,8 +342,8 @@ function ItemRow({
             </datalist>
           </div>
 
-          <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between mt-2 gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span>
                 S = {formatNum(area)} {UNIT_LABEL[unit]}²
               </span>
@@ -354,7 +354,7 @@ function ItemRow({
               ) : null}
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <TooltipProvider delayDuration={200}>
                 <Tooltip>
                   <TooltipTrigger asChild>
