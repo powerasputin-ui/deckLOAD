@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useCalculator } from './calculator'
+import { useCalculator, clearCalculatorHistory } from './calculator'
 
 describe('calculator store', () => {
   beforeEach(() => {
@@ -309,5 +309,56 @@ describe('calculator store', () => {
 
     s.clearPinned(1)
     expect(useCalculator.getState().selectedPinIds).toEqual([trip0PinId])
+  })
+})
+
+describe('calculator store undo/redo history', () => {
+  beforeEach(() => {
+    useCalculator.setState({
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [],
+      separationRules: [],
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      mode: 'auto',
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      selectedPinIds: [],
+      selectedManualIds: [],
+      activeStampId: null,
+      stampRotated: false,
+    })
+    clearCalculatorHistory()
+  })
+
+  // handleSet is debounced 400ms (see calculator.ts) so a drag's rapid
+  // updates collapse into one history step - tests need to wait past that
+  // window before checking pastStates.
+  const waitForHistoryFlush = () => new Promise((r) => setTimeout(r, 500))
+
+  it('undo/redo restores and re-applies an addItem', async () => {
+    useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    await waitForHistoryFlush()
+    expect(useCalculator.getState().items).toHaveLength(1)
+    expect(useCalculator.temporal.getState().pastStates.length).toBeGreaterThan(0)
+
+    useCalculator.temporal.getState().undo()
+    expect(useCalculator.getState().items).toHaveLength(0)
+
+    useCalculator.temporal.getState().redo()
+    expect(useCalculator.getState().items).toHaveLength(1)
+  })
+
+  it('clearCalculatorHistory cancels a pending debounced snapshot instead of letting it land later', async () => {
+    useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    // clear() immediately after a mutation, before the 400ms debounce fires -
+    // the old bug: the pending snapshot from the mutation above would still
+    // land in history ~400ms later despite the clear() call.
+    clearCalculatorHistory()
+    await waitForHistoryFlush()
+    expect(useCalculator.temporal.getState().pastStates).toHaveLength(0)
   })
 })

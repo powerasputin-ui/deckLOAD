@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { temporal } from 'zundo'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 import {
@@ -258,7 +259,21 @@ const PRESETS: Record<
   },
 }
 
-export const useCalculator = create<CalculatorState>((set) => ({
+// Undo/redo (Ctrl+Z / Ctrl+Y) history — scoped to cargo/deck "content" only.
+// UI-only fields (selection, active stamp, display toggles) are excluded via
+// `partialize` so they don't pollute the history or get reverted by undo.
+// `handleSet` debounces rapid-fire updates (drag commits are already
+// throttled to ~50ms in DeckVisualization, but a multi-second drag can still
+// fire dozens of them) into a single history entry, so Ctrl+Z undoes a whole
+// drag at once instead of one pixel at a time.
+type CalculatorHistoryState = Pick<
+  CalculatorState,
+  'deck' | 'items' | 'manualPlacements' | 'pinnedPlacementsByTrip' | 'separationRules' | 'mode'
+>
+
+export const useCalculator = create<CalculatorState>()(
+  temporal(
+    (set) => ({
   deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
   items: [
     makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 }),
@@ -710,6 +725,47 @@ export const useCalculator = create<CalculatorState>((set) => ({
     set((s) => ({ separationRules: [...s.separationRules, { ...rule, id: uuid() }] })),
   removeSeparationRule: (id) =>
     set((s) => ({ separationRules: s.separationRules.filter((r) => r.id !== id) })),
-}))
+    }),
+    {
+      partialize: (s): CalculatorHistoryState => ({
+        deck: s.deck,
+        items: s.items,
+        manualPlacements: s.manualPlacements,
+        pinnedPlacementsByTrip: s.pinnedPlacementsByTrip,
+        separationRules: s.separationRules,
+        mode: s.mode,
+      }),
+      limit: 50,
+      equality: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+      handleSet: (handleSet) => {
+        return (pastState, replace) => {
+          if (historyTimer) clearTimeout(historyTimer)
+          historyTimer = setTimeout(() => {
+            historyTimer = null
+            handleSet(pastState, replace)
+          }, 400)
+        }
+      },
+    }
+  )
+)
+
+// Bulk state replacements (switching/loading a project, "new calculation",
+// "reset to example") call this instead of `.temporal.getState().clear()`
+// directly. `handleSet` above is debounced 400ms so a drag's rapid updates
+// collapse into one history entry — but that means the *replacement*
+// `setState` call itself still has a snapshot pending when `clear()` runs
+// synchronously right after it, and 400ms later that stale snapshot would
+// land in history anyway, making Ctrl+Z jump back to data that no longer
+// belongs to the now-active project. Cancelling the pending timer first
+// closes that race.
+let historyTimer: ReturnType<typeof setTimeout> | null = null
+export function clearCalculatorHistory() {
+  if (historyTimer) {
+    clearTimeout(historyTimer)
+    historyTimer = null
+  }
+  useCalculator.temporal.getState().clear()
+}
 
 export { UNIT_LABEL, PALETTE, convertLength }

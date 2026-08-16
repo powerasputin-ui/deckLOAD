@@ -9,7 +9,10 @@ import {
   Anchor,
   Download,
   Upload,
+  Undo2,
+  Redo2,
 } from 'lucide-react'
+import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -23,7 +26,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import {
   packDeckVariants,
@@ -55,6 +58,8 @@ import { toast } from 'sonner'
 export default function Home() {
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const mainRef = useRef<HTMLElement>(null)
+  const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
+  const canRedo = useStore(useCalculator.temporal, (s) => s.futureStates.length > 0)
   const deck = useCalculator((s) => s.deck)
   const items = useCalculator((s) => s.items)
   const sortStrategy = useCalculator((s) => s.sortStrategy)
@@ -176,6 +181,31 @@ export default function Home() {
   const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
 
+  // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) for undo/redo of cargo & deck-layout
+  // history. Skipped while focus is inside a text input/textarea/contentEditable
+  // — those fields (width, weight, category, …) have their own native
+  // browser undo stack, and hijacking Ctrl+Z there would fight it instead of
+  // undoing whatever the user actually meant.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      const key = e.key.toLowerCase()
+      if (key !== 'z' && key !== 'y') return
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        useCalculator.temporal.getState().redo()
+      } else if (key === 'z') {
+        e.preventDefault()
+        useCalculator.temporal.getState().undo()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   // Escape cancels lashing-point placement mode and/or an active manual-mode
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
@@ -220,6 +250,10 @@ export default function Home() {
       activeStampId: null,
       stampRotated: false,
     })
+    // A different project's undo history shouldn't leak into this one — an
+    // Ctrl+Z right after switching would otherwise silently jump back to the
+    // previous project's data instead of doing nothing.
+    clearCalculatorHistory()
     loadedProjectId.current = activeId
   }, [hydrated, activeId, projects])
 
@@ -332,6 +366,7 @@ export default function Home() {
       activeStampId: null,
       stampRotated: false,
     })
+    clearCalculatorHistory()
     toast.success('Текущий расчёт очищен')
   }
 
@@ -351,6 +386,7 @@ export default function Home() {
       mode: 'auto',
       activeStampId: null,
     })
+    clearCalculatorHistory()
     toast.info('Восстановлен демонстрационный пример')
   }
 
@@ -767,6 +803,27 @@ export default function Home() {
               <Anchor className="h-3 w-3 mr-1" />
               {result.placedCount}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
             </Badge>
+
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              title="Отменить (Ctrl+Z)"
+              disabled={!canUndo}
+              onClick={() => useCalculator.temporal.getState().undo()}
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              title="Повторить (Ctrl+Y)"
+              disabled={!canRedo}
+              onClick={() => useCalculator.temporal.getState().redo()}
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </Button>
 
             <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
               <Download className="h-3.5 w-3.5 sm:mr-1" />
