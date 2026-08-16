@@ -42,7 +42,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
-        <Toaster position="top-center" richColors closeButton />
+        {/* top-center used to sit directly over the header's undo/redo
+            buttons — a toast from the action that made undo available was
+            often still showing right when the user reached for it, silently
+            eating the click. bottom-right stays clear of every header
+            control and the deck canvas. */}
+        <Toaster position="bottom-right" richColors closeButton />
       </body>
     </html>
   );
