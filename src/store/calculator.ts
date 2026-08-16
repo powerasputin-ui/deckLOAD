@@ -738,11 +738,26 @@ export const useCalculator = create<CalculatorState>()(
       limit: 50,
       equality: (a, b) => JSON.stringify(a) === JSON.stringify(b),
       handleSet: (handleSet) => {
-        return (pastState, replace) => {
+        type HandleSetArgs = Parameters<typeof handleSet>
+        return (...args: HandleSetArgs) => {
+          const [pastState, replace] = args
+          // A drag fires many set() calls (throttled ~50ms in
+          // DeckVisualization), each with the state from just before THAT
+          // tick as its `pastState`. Re-arming the timer on every call while
+          // always re-capturing `pastState` from the latest call meant the
+          // eventually-committed snapshot was the position one tick before
+          // the drag ENDED, not the position before the drag STARTED -
+          // undo only rewound by a fraction of a second of movement, which
+          // for a slow/short drag looked like it did nothing at all. Keep
+          // the first call's `pastState` for the whole burst so undo always
+          // reverts to where the item actually was before the gesture began.
+          if (historyPastState === undefined) historyPastState = { value: pastState }
           if (historyTimer) clearTimeout(historyTimer)
           historyTimer = setTimeout(() => {
             historyTimer = null
-            handleSet(pastState, replace)
+            const toCommit = historyPastState!.value as HandleSetArgs[0]
+            historyPastState = undefined
+            handleSet(toCommit, replace)
           }, 400)
         }
       },
@@ -760,11 +775,13 @@ export const useCalculator = create<CalculatorState>()(
 // belongs to the now-active project. Cancelling the pending timer first
 // closes that race.
 let historyTimer: ReturnType<typeof setTimeout> | null = null
+let historyPastState: { value: unknown } | undefined
 export function clearCalculatorHistory() {
   if (historyTimer) {
     clearTimeout(historyTimer)
     historyTimer = null
   }
+  historyPastState = undefined
   useCalculator.temporal.getState().clear()
 }
 

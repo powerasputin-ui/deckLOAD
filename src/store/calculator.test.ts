@@ -352,6 +352,30 @@ describe('calculator store undo/redo history', () => {
     expect(useCalculator.getState().items).toHaveLength(1)
   })
 
+  it('undo after a simulated drag (many rapid updates) restores the position from BEFORE the drag, not an intermediate tick (regression)', async () => {
+    const pinId = useCalculator.getState().pinFromPlaced(0, {
+      itemId: 'x', name: 'A', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000',
+    })
+    await waitForHistoryFlush()
+    expect(useCalculator.temporal.getState().pastStates.length).toBe(1)
+
+    // Simulate a drag: many rapid position updates, each well inside the
+    // 400ms debounce window (DeckVisualization throttles real drag commits
+    // to ~50ms). The old bug: handleSet re-captured `pastState` from every
+    // call, so the eventually-recorded snapshot was the position one tick
+    // before the LAST update, not the position before the FIRST one -
+    // undo only rewound a fraction of the drag instead of the whole thing.
+    for (const x of [1.2, 1.5, 1.8, 2.4, 3.0]) {
+      useCalculator.getState().updatePinned(0, pinId, { x })
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].x).toBe(3.0)
+    await waitForHistoryFlush()
+
+    useCalculator.temporal.getState().undo()
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].x).toBe(1)
+  })
+
   it('clearCalculatorHistory cancels a pending debounced snapshot instead of letting it land later', async () => {
     useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
     // clear() immediately after a mutation, before the 400ms debounce fires -
