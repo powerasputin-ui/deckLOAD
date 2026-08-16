@@ -66,6 +66,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
@@ -102,6 +107,15 @@ export function Sidebar({
   const deleteProject = useProjects((s) => s.deleteProject)
   const duplicateProject = useProjects((s) => s.duplicateProject)
   const renameProject = useProjects((s) => s.renameProject)
+
+  const globalRotation = useCalculator((s) => s.globalRotation)
+  const showFreeSpace = useCalculator((s) => s.showFreeSpace)
+  const showGrid = useCalculator((s) => s.showGrid)
+  const showLabels = useCalculator((s) => s.showLabels)
+  const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
+  const toggleFreeSpace = useCalculator((s) => s.toggleFreeSpace)
+  const toggleGrid = useCalculator((s) => s.toggleGrid)
+  const toggleLabels = useCalculator((s) => s.toggleLabels)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -330,19 +344,39 @@ export function Sidebar({
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
 
-        {/* Display settings */}
-        <DisplaySettings />
-
         {/* Presets */}
         <PresetsSection />
       </div>
 
-      {/* Footer reset */}
+      {/* Footer settings (display toggles + reset-to-demo) */}
       <div className="border-t p-3">
-        <Button variant="ghost" size="sm" onClick={onResetCurrent} className="w-full h-8 text-xs">
-          <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-          Сбросить к примеру
-        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm" className="w-full h-8 text-xs">
+              <Settings2 className="h-3.5 w-3.5 mr-1.5" />
+              Настройки
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent side="top" align="start" className="w-64 p-3 space-y-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Eye className="h-3.5 w-3.5" />
+                Отображение
+              </div>
+              <div className="space-y-2 pl-1">
+                <Toggle label="Разрешить вращение" checked={globalRotation} onToggle={toggleGlobalRotation} />
+                <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
+                <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />
+                <Toggle label="Метки грузов" checked={showLabels} onToggle={toggleLabels} />
+              </div>
+            </div>
+            <Separator />
+            <Button variant="ghost" size="sm" onClick={onResetCurrent} className="w-full h-8 text-xs">
+              <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+              Сбросить к примеру
+            </Button>
+          </PopoverContent>
+        </Popover>
       </div>
     </aside>
   )
@@ -524,28 +558,6 @@ function DeckSettings() {
             </SelectContent>
           </Select>
         </div>
-      </div>
-    </Section>
-  )
-}
-
-function DisplaySettings() {
-  const showFreeSpace = useCalculator((s) => s.showFreeSpace)
-  const showGrid = useCalculator((s) => s.showGrid)
-  const showLabels = useCalculator((s) => s.showLabels)
-  const globalRotation = useCalculator((s) => s.globalRotation)
-  const toggleFreeSpace = useCalculator((s) => s.toggleFreeSpace)
-  const toggleGrid = useCalculator((s) => s.toggleGrid)
-  const toggleLabels = useCalculator((s) => s.toggleLabels)
-  const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
-
-  return (
-    <Section icon={<Eye className="h-4 w-4" />} title="Отображение" defaultOpen={false}>
-      <div className="space-y-2">
-        <Toggle label="Разрешить вращение" checked={globalRotation} onToggle={toggleGlobalRotation} />
-        <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
-        <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />
-        <Toggle label="Метки грузов" checked={showLabels} onToggle={toggleLabels} />
       </div>
     </Section>
   )
