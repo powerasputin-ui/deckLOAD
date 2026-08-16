@@ -22,6 +22,23 @@ describe('projects store', () => {
     expect(state.hydrated).toBe(true)
   })
 
+  it('does not re-seed the demo project after the user deletes their last project (regression)', () => {
+    useProjects.getState().hydrate()
+    const demoId = useProjects.getState().projects[0].id
+    useProjects.getState().deleteProject(demoId)
+    expect(useProjects.getState().projects).toHaveLength(0)
+
+    // Simulate a fresh page load: a new store instance re-runs hydrate(),
+    // reading back whatever was persisted (an explicitly empty list, not
+    // "nothing was ever saved"). The old bug: loadFromStorage couldn't tell
+    // those two cases apart, so this re-seeded the demo project every time.
+    useProjects.setState({ hydrated: false })
+    useProjects.getState().hydrate()
+
+    expect(useProjects.getState().projects).toHaveLength(0)
+    expect(useProjects.getState().activeId).toBeNull()
+  })
+
   it('creates a new project', () => {
     useProjects.getState().hydrate()
     const id = useProjects.getState().createProject('Test Project')

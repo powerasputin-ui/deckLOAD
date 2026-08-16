@@ -261,11 +261,16 @@ function normalizeProject(p: Partial<Project>): Project {
   }
 }
 
-function loadFromStorage(): { projects: Project[]; activeId: string | null } {
-  if (typeof window === 'undefined') return { projects: [], activeId: null }
+// `hasStoredData` distinguishes "nothing has ever been saved" (truly the
+// first visit) from "the user emptied their project list" (the key exists,
+// just decodes to []) — `projects.length === 0` alone can't tell those
+// apart, which used to make a deleted last project silently come back as
+// the demo on the next reload.
+function loadFromStorage(): { projects: Project[]; activeId: string | null; hasStoredData: boolean } {
+  if (typeof window === 'undefined') return { projects: [], activeId: null, hasStoredData: false }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { projects: [], activeId: null }
+    if (!raw) return { projects: [], activeId: null, hasStoredData: false }
     const parsed = JSON.parse(raw)
     const projects = Array.isArray(parsed.projects)
       ? parsed.projects.map(normalizeProject)
@@ -273,9 +278,10 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null } {
     return {
       projects,
       activeId: parsed.activeId ?? null,
+      hasStoredData: true,
     }
   } catch {
-    return { projects: [], activeId: null }
+    return { projects: [], activeId: null, hasStoredData: false }
   }
 }
 
@@ -298,12 +304,17 @@ export const useProjects = create<ProjectsState>((set, get) => ({
 
   hydrate: () => {
     if (get().hydrated) return
-    const { projects, activeId } = loadFromStorage()
-    if (projects.length === 0) {
-      // First ever load: seed with a demo project so the app isn't empty
+    const { projects, activeId, hasStoredData } = loadFromStorage()
+    if (!hasStoredData) {
+      // Truly the first visit ever (nothing saved yet) — seed a demo project
+      // so the app isn't empty. If the user later deletes it, `hasStoredData`
+      // will be true next time (the key still exists, just with an empty
+      // list) and it won't come back.
       const p = freshProject('Демо-расчёт', true)
       set({ projects: [p], activeId: p.id, hydrated: true })
       saveToStorage([p], p.id)
+    } else if (projects.length === 0) {
+      set({ projects: [], activeId: null, hydrated: true })
     } else {
       const active = activeId && projects.some((p) => p.id === activeId)
         ? activeId
