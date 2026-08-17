@@ -747,7 +747,7 @@ function LashingPointsSection() {
               }
             }}
           >
-            <SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="open-sea">Открытое море</SelectItem>
               <SelectItem value="coastal">Прибрежное плавание</SelectItem>
@@ -794,7 +794,7 @@ function LashingPointsSection() {
                       })
                     }}
                   >
-                    <SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {Object.entries(LASHING_DEVICES).map(([key, d]) => (
                         <SelectItem key={key} value={key}>{d.label}</SelectItem>
