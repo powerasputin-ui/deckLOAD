@@ -249,7 +249,12 @@ export function PlacementPanel({
             <ScrollArea className="h-[200px] pr-1">
               <div className="space-y-1">
                 {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                  const color = PALETTE[i % PALETTE.length]
+                  // Continue the same palette sequence real cargo items use
+                  // (nextColor in calculator.ts starts from items.length) —
+                  // starting back at PALETTE[0] every time a category opens
+                  // meant preset rows almost always collided with colors
+                  // already taken by existing cargo.
+                  const color = PALETTE[(items.length + i) % PALETTE.length]
                   return (
                     <PresetTemplateRow
                       key={i}
