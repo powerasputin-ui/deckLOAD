@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -53,7 +54,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit, PRESETS } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, type Unit, PRESETS, PALETTE } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   VESSEL_MOTION_PRESETS,
@@ -844,12 +845,14 @@ function LashingPointsSection() {
 function PresetsSection() {
   const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
+  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
+  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
 
   return (
     <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>
       <div className="space-y-1.5">
         <p className="text-[10px] text-muted-foreground leading-tight">
-          Выберите категорию — её каталог появится справа, в панели размещения груза.
+          Выберите категорию, затем тип груза — он вооружится для клика по палубе.
         </p>
         <div className="grid grid-cols-2 gap-1.5">
           {Object.entries(PRESETS).map(([key, cat]) => (
@@ -864,8 +867,75 @@ function PresetsSection() {
             </Button>
           ))}
         </div>
+        {activePresetCategory && (
+          <ScrollArea className="h-[200px] pr-1">
+            <div className="space-y-1">
+              {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
+                // Fixed per template position — stable across renders (a
+                // color tied to items.length changed every time you
+                // reopened the category or added cargo, more confusing than
+                // an occasional collision). The real item created on
+                // placement gets its own collision-avoiding color from
+                // nextColor regardless of this preview color — see
+                // addOrIncrementCargoFromTemplate in calculator.ts.
+                const color = PALETTE[i % PALETTE.length]
+                const active = pendingPresetStamp?.name === tpl.name
+                return (
+                  <PresetTemplateRow
+                    key={i}
+                    template={tpl}
+                    color={color}
+                    active={active}
+                    onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
+                  />
+                )
+              })}
+            </div>
+          </ScrollArea>
+        )}
+        {pendingPresetStamp && (
+          <p className="text-[10px] text-muted-foreground leading-tight">
+            «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
+          </p>
+        )}
       </div>
     </Section>
+  )
+}
+
+function PresetTemplateRow({
+  template,
+  color,
+  active,
+  onSelect,
+}: {
+  template: { name?: string; width?: number; length?: number }
+  color: string
+  active: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
+        active
+          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+          : 'border-border hover:bg-accent'
+      )}
+    >
+      <span
+        className="h-7 w-7 shrink-0 rounded-md border border-black/10"
+        style={{ backgroundColor: color }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-medium truncate">{template.name}</div>
+        <div className="text-[10px] text-muted-foreground">
+          {template.width}×{template.length}
+        </div>
+      </div>
+      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
+    </button>
   )
 }
 

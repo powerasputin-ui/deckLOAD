@@ -11,7 +11,6 @@ import {
   MousePointerClick,
   Package,
   Layers,
-  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,7 +22,7 @@ import {
   CardDescription,
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useCalculator, PRESETS, PALETTE } from '@/store/calculator'
+import { useCalculator } from '@/store/calculator'
 import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
 import { rotatePlacement } from '@/lib/packing'
 import { cn } from '@/lib/utils'
@@ -63,8 +62,6 @@ export function PlacementPanel({
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
-  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
-  const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
   const deck = useCalculator((s) => s.deck)
@@ -212,23 +209,16 @@ export function PlacementPanel({
           </div>
         )}
 
-        {/* Stamp selector — click-to-place works in both modes now.
-            Switches between two views: the preset catalog (while a category
-            is picked in the left sidebar) and the normal "my cargo" list.
-            Placing something from the catalog switches back to the normal
-            list automatically — see the wasPendingPreset handoff in page.tsx. */}
+        {/* Stamp selector — click-to-place works in both modes now. The
+            preset catalog itself lives in the left sidebar's "Пресеты"
+            section; picking a row there arms pendingPresetStamp exactly
+            like picking a row here does, so this list doesn't need to
+            switch views for it. */}
         <div className="space-y-1.5">
-          {activePresetCategory ? (
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Sparkles className="h-3.5 w-3.5" />
-              Пресет: {PRESETS[activePresetCategory]?.label}
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Package className="h-3.5 w-3.5" />
-              Выбор груза для размещения
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Package className="h-3.5 w-3.5" />
+            Выбор груза для размещения
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -244,34 +234,13 @@ export function PlacementPanel({
           <p className="text-[10px] text-muted-foreground leading-tight">
             Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
           </p>
+          {pendingPresetStamp && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              «{pendingPresetStamp.name}» из пресетов готов — кликните по палубе, чтобы разместить.
+            </p>
+          )}
 
-          {activePresetCategory ? (
-            <ScrollArea className="h-[200px] pr-1">
-              <div className="space-y-1">
-                {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                  // Fixed per template position — stable across renders (a
-                  // color tied to items.length changed every time you
-                  // reopened the category or added cargo, which was more
-                  // confusing than an occasional collision). The real item
-                  // created on placement gets its own collision-avoiding
-                  // color from nextColor regardless of this preview color —
-                  // see addOrIncrementCargoFromTemplate in calculator.ts.
-                  const color = PALETTE[i % PALETTE.length]
-                  return (
-                    <PresetTemplateRow
-                      key={i}
-                      template={tpl}
-                      color={color}
-                      active={pendingPresetStamp?.name === tpl.name}
-                      onSelect={() =>
-                        setPendingPresetStamp(pendingPresetStamp?.name === tpl.name ? null : { ...tpl, color })
-                      }
-                    />
-                  )
-                })}
-              </div>
-            </ScrollArea>
-          ) : items.length === 0 ? (
+          {items.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-2">
               Сначала добавьте грузы
             </p>
@@ -291,11 +260,6 @@ export function PlacementPanel({
                 ))}
               </div>
             </ScrollArea>
-          )}
-          {pendingPresetStamp && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
-              «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
-            </p>
           )}
         </div>
 
@@ -381,42 +345,6 @@ export function PlacementPanel({
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-function PresetTemplateRow({
-  template,
-  color,
-  active,
-  onSelect,
-}: {
-  template: Partial<CargoItem>
-  color: string
-  active: boolean
-  onSelect: () => void
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={cn(
-        'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
-        active
-          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
-          : 'border-border hover:bg-accent'
-      )}
-    >
-      <span
-        className="h-7 w-7 shrink-0 rounded-md border border-black/10"
-        style={{ backgroundColor: color }}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium truncate">{template.name}</div>
-        <div className="text-[10px] text-muted-foreground">
-          {template.width}×{template.length}
-        </div>
-      </div>
-      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
-    </button>
   )
 }
 
