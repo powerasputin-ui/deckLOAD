@@ -8,12 +8,15 @@ import {
   resolveSnappedDragPosition,
   maxLayersFor,
   violatesSeparation,
+  DEFAULT_VESSEL_MOTION,
   type CargoItem,
   type SortStrategy,
   type ManualPlacement,
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
+  type LashingPoint,
+  type VesselMotion,
 } from '@/lib/packing'
 
 export type Unit = 'm' | 'cm' | 'ft'
@@ -43,13 +46,6 @@ function convertLength(value: number, from: Unit, to: Unit): number {
   return Math.round(meters * UNIT_PER_METER[to] * 1e9) / 1e9
 }
 
-export interface LashingPoint {
-  id: string
-  x: number
-  y: number
-  label?: string
-}
-
 export interface DeckConfig {
   width: number
   length: number
@@ -58,7 +54,8 @@ export interface DeckConfig {
   boardOffset: number // margin from the ship's board (deck edge)
   clearance: number // max stack height above deck; 0 or item without height = single tier (no stacking)
   loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
-  lashingPoints?: LashingPoint[] // visual markers only, do not constrain placement
+  lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
+  vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
 }
 
 const PALETTE = [
@@ -131,10 +128,13 @@ interface CalculatorState {
   updateLoadZone: (id: string, patch: Partial<LoadZone>) => void
   removeLoadZone: (id: string) => void
 
-  // Lashing/securing points (visual markers only)
-  addLashingPoint: (x: number, y: number, label?: string) => void
+  // Lashing/securing points — optionally attached to a placement (placementId
+  // + corner) for the CSS-Code-style securing-force check in packing.ts
+  addLashingPoint: (point: Omit<LashingPoint, 'id'>) => void
+  updateLashingPoint: (id: string, patch: Partial<LashingPoint>) => void
   removeLashingPoint: (id: string) => void
   setPlacingLashingPoint: (v: boolean) => void
+  setVesselMotion: (patch: Partial<VesselMotion>) => void
 
   // Cargo category separation rules
   addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
@@ -705,11 +705,18 @@ export const useCalculator = create<CalculatorState>()(
       deck: { ...s.deck, loadZones: (s.deck.loadZones ?? []).filter((z) => z.id !== id) },
     })),
 
-  addLashingPoint: (x, y, label) =>
+  addLashingPoint: (point) =>
     set((s) => ({
       deck: {
         ...s.deck,
-        lashingPoints: [...(s.deck.lashingPoints ?? []), { id: uuid(), x, y, label }],
+        lashingPoints: [...(s.deck.lashingPoints ?? []), { id: uuid(), ...point }],
+      },
+    })),
+  updateLashingPoint: (id, patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        lashingPoints: (s.deck.lashingPoints ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p)),
       },
     })),
   removeLashingPoint: (id) =>
@@ -720,6 +727,13 @@ export const useCalculator = create<CalculatorState>()(
       },
     })),
   setPlacingLashingPoint: (v) => set({ placingLashingPoint: v }),
+  setVesselMotion: (patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        vesselMotion: { ...(s.deck.vesselMotion ?? DEFAULT_VESSEL_MOTION), ...patch },
+      },
+    })),
 
   addSeparationRule: (rule) =>
     set((s) => ({ separationRules: [...s.separationRules, { ...rule, id: uuid() }] })),

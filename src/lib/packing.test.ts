@@ -10,12 +10,16 @@ import {
   rotatePlacement,
   resolveSnappedDragPosition,
   checkLoadDensity,
+  checkLashingBalance,
   violatesSeparation,
+  DEFAULT_VESSEL_MOTION,
+  VESSEL_MOTION_PRESETS,
   type CargoItem,
   type ManualPlacement,
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
+  type LashingPoint,
 } from './packing'
 
 function item(partial: Partial<CargoItem> & { id: string }): CargoItem {
@@ -554,6 +558,43 @@ describe('checkLoadDensity', () => {
     // 1x1 footprint at origin overlaps both zones; strict zone (1 t/m²) should govern.
     const result = checkLoadDensity({ x: 0, y: 0, width: 1, length: 1 }, 2000, zones)
     expect(result!.zoneId).toBe('strict')
+  })
+})
+
+describe('checkLashingBalance', () => {
+  const placement = { x: 0, y: 0, width: 2, length: 2, weight: 2000 }
+  const lashing = (partial: Partial<LashingPoint> & { id: string }): LashingPoint => ({
+    x: -5, y: 0, cornerX: 0, cornerY: 0, verticalAngleDeg: 0, mslKg: 300, ...partial,
+  })
+
+  it('returns null when nothing is attached (unsecured cargo is informational, not a failure)', () => {
+    expect(checkLashingBalance(placement, [], DEFAULT_VESSEL_MOTION)).toBeNull()
+    expect(
+      checkLashingBalance(placement, [{ id: 'l1', x: 1, y: 1 }], DEFAULT_VESSEL_MOTION)
+    ).toBeNull()
+  })
+
+  it('passes when friction + lashing MSL comfortably covers the required force', () => {
+    const lashings = [lashing({ id: 'l1' }), lashing({ id: 'l2', x: 0, y: -5, cornerX: 0, cornerY: 0 })]
+    const result = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
+    expect(result).not.toBeNull()
+    expect(result!.ok).toBe(true)
+  })
+
+  it('fails when a single weak lashing cannot cover the required force even with friction', () => {
+    const weak = [lashing({ id: 'l1', mslKg: 1 })]
+    const heavy = { ...placement, weight: 100000 }
+    const result = checkLashingBalance(heavy, weak, DEFAULT_VESSEL_MOTION)
+    expect(result).not.toBeNull()
+    expect(result!.ok).toBe(false)
+  })
+
+  it('a marginal transverse case passes under "coastal" but fails under "open-sea" (higher ay)', () => {
+    const lashings = [lashing({ id: 'l1' })]
+    const coastal = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
+    const openSea = checkLashingBalance(placement, lashings, { ...VESSEL_MOTION_PRESETS['open-sea'], preset: 'open-sea' })
+    expect(coastal!.transverse.ok).toBe(true)
+    expect(openSea!.transverse.ok).toBe(false)
   })
 })
 

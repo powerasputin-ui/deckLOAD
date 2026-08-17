@@ -171,7 +171,7 @@ describe('calculator store', () => {
 
   it('adds and removes a lashing point', () => {
     const s = useCalculator.getState()
-    s.addLashingPoint(2, 3, 'Точка 1')
+    s.addLashingPoint({ x: 2, y: 3, label: 'Точка 1' })
     const points = useCalculator.getState().deck.lashingPoints
     expect(points).toHaveLength(1)
     expect(points![0].label).toBe('Точка 1')

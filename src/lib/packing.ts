@@ -75,6 +75,126 @@ export function checkLoadDensity(
   return { densityKgPerM2, limitTPerM2: minLimit, zoneId: minZoneId }
 }
 
+// A lashing/securing device running from one corner of a placed cargo unit
+// (cornerX/cornerY, world coords) to an anchor point on the deck (x/y).
+// Visual-only until placementId is set — an unattached point is just a pin,
+// same as before this feature existed.
+export type LashingDeviceType = 'chain_g80_10' | 'wire_18' | 'webbing_5t' | 'custom'
+
+export interface LashingPoint {
+  id: string
+  x: number
+  y: number
+  label?: string
+  placementId?: string // id of the pinned/manual placement this secures
+  itemId?: string // cargo item type of that placement (for lookups/device suggestions)
+  cornerX?: number
+  cornerY?: number
+  verticalAngleDeg?: number // angle of the lashing off the deck plane, default 45
+  mslKg?: number // rated Maximum Securing Load of this device
+  deviceType?: LashingDeviceType
+}
+
+// Typical securing devices with their rated MSL (kg) — selecting one
+// auto-fills mslKg, which stays freely editable afterwards (custom gear).
+export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: number }> = {
+  chain_g80_10: { label: 'Цепь G80 10мм', mslKg: 4000 },
+  wire_18: { label: 'Трос 18мм', mslKg: 3200 },
+  webbing_5t: { label: 'Ремень 5т', mslKg: 2500 },
+  custom: { label: 'Другое (вручную)', mslKg: 0 },
+}
+
+// Vessel motion coefficients (in g) used by the simplified static-equivalent
+// lashing check below, plus the deck/cargo friction coefficient. Presets
+// stand in for a full GM/roll-period calculation, which real-world lashing
+// software also avoids asking casual users for.
+export type VesselMotionPreset = 'open-sea' | 'coastal' | 'sheltered' | 'custom'
+
+export interface VesselMotion {
+  ax: number
+  ay: number
+  az: number
+  friction: number
+  preset: VesselMotionPreset
+}
+
+export const VESSEL_MOTION_PRESETS: Record<Exclude<VesselMotionPreset, 'custom'>, Omit<VesselMotion, 'preset'>> = {
+  'open-sea': { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3 },
+  coastal: { ax: 0.2, ay: 0.35, az: 0.2, friction: 0.3 },
+  sheltered: { ax: 0.1, ay: 0.2, az: 0.1, friction: 0.3 },
+}
+
+export const DEFAULT_VESSEL_MOTION: VesselMotion = { ...VESSEL_MOTION_PRESETS.coastal, preset: 'coastal' }
+
+export interface LashingDirectionCheck {
+  requiredKg: number
+  availableKg: number
+  ok: boolean
+}
+
+export interface LashingCheck {
+  transverse: LashingDirectionCheck
+  longitudinal: LashingDirectionCheck
+  ok: boolean
+}
+
+const G = 9.80665
+
+// Simplified static-equivalent method (IMO CSS Code Annex 13 style): for each
+// direction, the weight's own inertial force under the vessel's motion
+// coefficient must be resisted by friction plus every attached lashing's
+// component in that direction. Non-blocking — same contract as
+// checkLoadDensity: pure function, returns a descriptive struct, never
+// mutates, caller decides how (or whether) to surface it. Returns null when
+// there's nothing attached to check (an unsecured item isn't a "failure",
+// it's just not evaluated — callers should track that separately).
+export function checkLashingBalance(
+  placement: { x: number; y: number; width: number; length: number; weight?: number },
+  lashings: LashingPoint[],
+  motion: VesselMotion
+): LashingCheck | null {
+  const attached = lashings.filter(
+    (l) => l.cornerX !== undefined && l.cornerY !== undefined && (l.mslKg ?? 0) > 0
+  )
+  if (attached.length === 0) return null
+  const weightKg = placement.weight ?? 0
+  const frictionForce = motion.friction * weightKg * G
+
+  let transverseAvail = frictionForce
+  let longitudinalAvail = frictionForce
+  for (const l of attached) {
+    const cornerX = l.cornerX!
+    const cornerY = l.cornerY!
+    const dx = l.x - cornerX
+    const dy = l.y - cornerY
+    const dist = Math.hypot(dx, dy)
+    if (dist <= 1e-9) continue
+    const verticalRad = ((l.verticalAngleDeg ?? 45) * Math.PI) / 180
+    const horizontalComponent = Math.cos(verticalRad) // fraction of MSL acting in the deck plane
+    // Deck-plane direction of the lashing, split into transverse (X, relative
+    // to the ship's centerline running along Y) and longitudinal (Y) parts.
+    const ux = Math.abs(dx / dist)
+    const uy = Math.abs(dy / dist)
+    const mslPlane = (l.mslKg ?? 0) * horizontalComponent * G
+    transverseAvail += mslPlane * ux
+    longitudinalAvail += mslPlane * uy
+  }
+  const transverseRequired = weightKg * G * motion.ay
+  const longitudinalRequired = weightKg * G * motion.ax
+
+  const transverse: LashingDirectionCheck = {
+    requiredKg: transverseRequired / G,
+    availableKg: transverseAvail / G,
+    ok: transverseAvail >= transverseRequired,
+  }
+  const longitudinal: LashingDirectionCheck = {
+    requiredKg: longitudinalRequired / G,
+    availableKg: longitudinalAvail / G,
+    ok: longitudinalAvail >= longitudinalRequired,
+  }
+  return { transverse, longitudinal, ok: transverse.ok && longitudinal.ok }
+}
+
 // A rule requiring at least `minDistance` (edge-to-edge, meters) between any
 // cargo of `categoryA` and any cargo of `categoryB`. Symmetric: a rule for
 // (A, B) also matches candidates in the order (B, A).

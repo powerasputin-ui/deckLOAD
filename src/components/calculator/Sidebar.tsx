@@ -54,7 +54,14 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
 import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
-import type { SortStrategy } from '@/lib/packing'
+import {
+  LASHING_DEVICES,
+  VESSEL_MOTION_PRESETS,
+  DEFAULT_VESSEL_MOTION,
+  type SortStrategy,
+  type LashingDeviceType,
+  type VesselMotionPreset,
+} from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -708,30 +715,111 @@ function SeparationRulesSection() {
 
 function LashingPointsSection() {
   const points = useCalculator((s) => s.deck.lashingPoints ?? EMPTY_POINTS)
+  const items = useCalculator((s) => s.items)
   const removeLashingPoint = useCalculator((s) => s.removeLashingPoint)
+  const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
+  const vesselMotion = useCalculator((s) => s.deck.vesselMotion ?? DEFAULT_VESSEL_MOTION)
+  const setVesselMotion = useCalculator((s) => s.setVesselMotion)
+
+  const attachedCount = points.filter((p) => p.placementId).length
 
   return (
-    <Section icon={<MapPin className="h-4 w-4" />} title="Точки крепления" badge={points.length} defaultOpen={false}>
-      <div className="space-y-2">
+    <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false}>
+      <div className="space-y-3">
         <p className="text-[10px] text-muted-foreground">
-          Визуальные метки на схеме для ориентира — не влияют на расстановку груза.
+          Клик по грузу, затем по палубе — привязывает линию крепления с расчётом усилия по IMO CSS Code
+          (упрощённый метод). Мягкая проверка — груз не блокируется. Точка без привязки — просто метка на схеме.
         </p>
-        {points.map((p, i) => (
-          <div key={p.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs">
-            <span className="truncate flex-1">
-              {p.label || `Точка ${i + 1}`} · ({p.x.toFixed(1)}, {p.y.toFixed(1)})
-            </span>
-            <button
-              onClick={() => removeLashingPoint(p.id)}
-              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-              title="Удалить точку"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
+
+        {/* Vessel motion / friction */}
+        <div className="rounded-md border p-2 space-y-1.5">
+          <div className="text-[10px] font-medium text-muted-foreground">Условия качки</div>
+          <Select
+            value={vesselMotion.preset}
+            onValueChange={(v) => {
+              const preset = v as VesselMotionPreset
+              if (preset === 'custom') {
+                setVesselMotion({ preset })
+              } else {
+                setVesselMotion({ ...VESSEL_MOTION_PRESETS[preset], preset })
+              }
+            }}
+          >
+            <SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="open-sea">Открытое море</SelectItem>
+              <SelectItem value="coastal">Прибрежное плавание</SelectItem>
+              <SelectItem value="sheltered">Защищённые воды</SelectItem>
+              <SelectItem value="custom">Свои значения</SelectItem>
+            </SelectContent>
+          </Select>
+          {vesselMotion.preset === 'custom' && (
+            <div className="grid grid-cols-4 gap-1">
+              <MiniNumField label="ax" value={vesselMotion.ax} unit="g" onChange={(v) => setVesselMotion({ ax: v })} />
+              <MiniNumField label="ay" value={vesselMotion.ay} unit="g" onChange={(v) => setVesselMotion({ ay: v })} />
+              <MiniNumField label="az" value={vesselMotion.az} unit="g" onChange={(v) => setVesselMotion({ az: v })} />
+              <MiniNumField label="μ" value={vesselMotion.friction} unit="" onChange={(v) => setVesselMotion({ friction: v })} />
+            </div>
+          )}
+        </div>
+
+        {points.map((p, i) => {
+          const item = p.itemId ? items.find((it) => it.id === p.itemId) : undefined
+          return (
+            <div key={p.id} className="rounded-md border p-2 space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate flex-1 text-xs">
+                  {p.label || `Точка ${i + 1}`}
+                  {item && <span className="text-muted-foreground"> · {item.name}</span>}
+                </span>
+                <button
+                  onClick={() => removeLashingPoint(p.id)}
+                  className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                  title="Удалить точку"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+              {p.placementId && (
+                <>
+                  <Select
+                    value={p.deviceType ?? 'custom'}
+                    onValueChange={(v) => {
+                      const deviceType = v as LashingDeviceType
+                      updateLashingPoint(p.id, {
+                        deviceType,
+                        mslKg: LASHING_DEVICES[deviceType].mslKg || p.mslKg,
+                      })
+                    }}
+                  >
+                    <SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(LASHING_DEVICES).map(([key, d]) => (
+                        <SelectItem key={key} value={key}>{d.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="grid grid-cols-2 gap-1">
+                    <MiniNumField
+                      label="MSL"
+                      value={p.mslKg ?? 0}
+                      unit="кг"
+                      onChange={(v) => updateLashingPoint(p.id, { mslKg: v })}
+                    />
+                    <MiniNumField
+                      label="Угол"
+                      value={p.verticalAngleDeg ?? 45}
+                      unit="°"
+                      onChange={(v) => updateLashingPoint(p.id, { verticalAngleDeg: v })}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })}
         <Button
           size="sm"
           variant={placingLashingPoint ? 'default' : 'outline'}
@@ -739,8 +827,14 @@ function LashingPointsSection() {
           onClick={() => setPlacingLashingPoint(!placingLashingPoint)}
         >
           <Plus className="h-3.5 w-3.5 mr-1" />
-          {placingLashingPoint ? 'Кликните по палубе… (Готово)' : 'Добавить точку'}
+          {placingLashingPoint ? 'Клик по грузу → по палубе… (Готово)' : 'Добавить крепление'}
         </Button>
+        {points.length > 0 && (
+          <p className="text-[10px] text-muted-foreground">
+            Закреплено грузов: {new Set(points.filter((p) => p.placementId).map((p) => p.placementId)).size} ·
+            {' '}точек с расчётом: {attachedCount}
+          </p>
+        )}
       </div>
     </Section>
   )

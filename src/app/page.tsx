@@ -34,6 +34,7 @@ import {
   maxLayersFor,
   computeFreeRects,
   checkLoadDensity,
+  LASHING_DEVICES,
   type ManualPlacement,
   type PackVariant,
   type PackingResult,
@@ -94,6 +95,7 @@ export default function Home() {
   const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
   const addLashingPoint = useCalculator((s) => s.addLashingPoint)
+  const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
 
   const projects = useProjects((s) => s.projects)
@@ -324,6 +326,16 @@ export default function Home() {
   const result = trips[clampedTripIndex] ?? trips[0]
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
+
+  // Resolve a lashing point's attached-placement id (pin id in auto mode,
+  // manual placement id in manual mode) back to its cargo item type.
+  const placementItemId = (placementId: string | undefined): string | undefined => {
+    if (!placementId) return undefined
+    return (
+      pinnedPlacements.find((p) => p.id === placementId)?.itemId ??
+      manualPlacements.find((m) => m.id === placementId)?.itemId
+    )
+  }
 
   // Warn (once) when moving/adding cargo or resizing a load zone pushes a
   // NEW placement over its zone's density limit. The overload is already
@@ -1089,10 +1101,24 @@ export default function Home() {
                     categoryByItemId={categoryByItemId}
                     separationRules={separationRulesInUnit}
                     placingLashingPoint={placingLashingPoint}
-                    onPlaceLashingPoint={(x, y) => {
+                    onPlaceLashingPoint={(x, y, corner) => {
                       const count = (deck.lashingPoints?.length ?? 0) + 1
-                      addLashingPoint(x, y, `Точка ${count}`)
+                      addLashingPoint({
+                        x,
+                        y,
+                        label: `Точка ${count}`,
+                        placementId: corner?.placementId,
+                        itemId: corner ? placementItemId(corner.placementId) : undefined,
+                        cornerX: corner?.cornerX,
+                        cornerY: corner?.cornerY,
+                        verticalAngleDeg: corner ? 45 : undefined,
+                        mslKg: corner ? LASHING_DEVICES.chain_g80_10.mslKg : undefined,
+                        deviceType: corner ? 'chain_g80_10' : undefined,
+                      })
+                      if (corner) toast.success('Крепление добавлено')
                     }}
+                    onUpdateLashingPoint={updateLashingPoint}
+                    vesselMotion={deck.vesselMotion}
                     onUpdateLoadZone={updateLoadZone}
                   />
                   )}

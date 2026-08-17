@@ -9,6 +9,8 @@ import {
   collidesWith,
   resolveSnappedDragPosition,
   checkLoadDensity,
+  checkLashingBalance,
+  DEFAULT_VESSEL_MOTION,
   violatesSeparation,
   type PackingResult,
   type PlacedItem,
@@ -16,8 +18,10 @@ import {
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
+  type LashingPoint,
+  type VesselMotion,
 } from '@/lib/packing'
-import { UNIT_LABEL, type LashingPoint } from '@/store/calculator'
+import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
@@ -69,7 +73,13 @@ interface DeckVisualizationProps {
   categoryByItemId?: Map<string, string | undefined>
   separationRules?: SeparationRule[]
   placingLashingPoint?: boolean
-  onPlaceLashingPoint?: (x: number, y: number) => void
+  onPlaceLashingPoint?: (
+    x: number,
+    y: number,
+    corner?: { placementId: string; cornerX: number; cornerY: number }
+  ) => void
+  onUpdateLashingPoint?: (id: string, patch: { x?: number; y?: number }) => void
+  vesselMotion?: VesselMotion
   onUpdateLoadZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number }) => void
 }
 
@@ -113,6 +123,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   separationRules,
   placingLashingPoint,
   onPlaceLashingPoint,
+  onUpdateLashingPoint,
+  vesselMotion,
   onUpdateLoadZone,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
@@ -134,6 +146,32 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const [panDrag, setPanDrag] = useState<{ startMouse: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [lashingHoverPos, setLashingHoverPos] = useState<{ x: number; y: number } | null>(null)
+  // Two-step lashing placement: first click picks the nearest corner of a
+  // pinned/manual cargo placement (a still-auto-placed item isn't eligible —
+  // its position can move on the next repack), second click drops the deck
+  // anchor. Cleared whenever placement mode is disarmed.
+  const [pendingLashingCorner, setPendingLashingCorner] = useState<{
+    placementId: string
+    itemId: string
+    cornerX: number
+    cornerY: number
+  } | null>(null)
+  const [selectedLashingId, setSelectedLashingId] = useState<string | null>(null)
+  const [lashingAnchorDrag, setLashingAnchorDrag] = useState<{
+    id: string
+    startMouse: { x: number; y: number }
+    startPos: { x: number; y: number }
+  } | null>(null)
+  // Reset the pending corner when placement mode is disarmed. Done inline
+  // during render, comparing against a plain-state "previous value" — the
+  // React-documented way to adjust state on a prop change ("You Might Not
+  // Need an Effect") — rather than a useEffect (extra render pass) or a ref
+  // read during render (disallowed by this project's lint rules).
+  const [prevPlacingLashingPoint, setPrevPlacingLashingPoint] = useState(placingLashingPoint)
+  if (placingLashingPoint !== prevPlacingLashingPoint) {
+    setPrevPlacingLashingPoint(placingLashingPoint)
+    if (!placingLashingPoint && pendingLashingCorner) setPendingLashingCorner(null)
+  }
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   type ZoneDrag = {
     id: string
@@ -385,16 +423,69 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       : { w: activeStamp.width, l: activeStamp.length }
     : null
 
-  // Lashing-point placement is independent of auto/manual mode — clicking the
-  // deck while armed places a point exactly where clicked (no edge margin: real
-  // lashing points are often right at the rail).
+  // First click of lashing placement: if it lands on a pinned (auto mode) or
+  // manual placement, return that placement's stable id + nearest corner so
+  // the lashing can be attached to it. A still-auto-placed (unpinned) item
+  // isn't eligible — its position can move on the next repack — so it falls
+  // through to the plain-unattached-point behavior below, same as clicking
+  // empty deck.
+  const findAttachableCorner = (
+    deckX: number,
+    deckY: number
+  ): { placementId: string; itemId: string; cornerX: number; cornerY: number } | null => {
+    for (const p of renderedItems) {
+      if (deckX < p.x || deckX > p.x + p.width || deckY < p.y || deckY > p.y + p.length) continue
+      const placementId =
+        mode === 'manual'
+          ? p.manualId
+          : pinnedPlacements.find(
+              (pin) => pin.itemId === p.itemId && Math.abs(pin.x - p.x) < 0.01 && Math.abs(pin.y - p.y) < 0.01
+            )?.id
+      if (!placementId) return null
+      const corners = [
+        { x: p.x, y: p.y },
+        { x: p.x + p.width, y: p.y },
+        { x: p.x, y: p.y + p.length },
+        { x: p.x + p.width, y: p.y + p.length },
+      ]
+      let best = corners[0]
+      let bestDist = Infinity
+      for (const c of corners) {
+        const d = Math.hypot(c.x - deckX, c.y - deckY)
+        if (d < bestDist) {
+          bestDist = d
+          best = c
+        }
+      }
+      return { placementId, itemId: p.itemId, cornerX: best.x, cornerY: best.y }
+    }
+    return null
+  }
+
+  // Lashing-point placement is independent of auto/manual mode. Two-step when
+  // the first click lands on an attachable placement (see above): the click
+  // arms the corner instead of placing anything, and the NEXT click drops the
+  // deck anchor and creates the attached point. Otherwise (empty deck, or an
+  // unpinned auto-placed item) a single click drops a plain unattached point,
+  // same as before this feature existed — no edge margin, real lashing
+  // points are often right at the rail.
   const handleLashingClick = (e: React.MouseEvent): boolean => {
     if (!placingLashingPoint || !onPlaceLashingPoint) return false
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return true
     const x = Math.max(0, Math.min(deckWidth, pos.x))
     const y = Math.max(0, Math.min(deckLength, pos.y))
-    onPlaceLashingPoint(x, y)
+    if (!pendingLashingCorner) {
+      const corner = findAttachableCorner(x, y)
+      if (corner) {
+        setPendingLashingCorner(corner)
+        return true
+      }
+      onPlaceLashingPoint(x, y)
+      return true
+    }
+    onPlaceLashingPoint(x, y, pendingLashingCorner)
+    setPendingLashingCorner(null)
     return true
   }
 
@@ -673,6 +764,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         onUpdateLoadZone(zoneDrag.id, patch)
       }
     }
+    if (lashingAnchorDrag && onUpdateLashingPoint) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const startDeck = screenToDeck(lashingAnchorDrag.startMouse.x, lashingAnchorDrag.startMouse.y)
+      if (!startDeck) return
+      const deltaX = pos.x - startDeck.x
+      const deltaY = pos.y - startDeck.y
+      const nx = Math.max(0, Math.min(deckWidth, lashingAnchorDrag.startPos.x + deltaX))
+      const ny = Math.max(0, Math.min(deckLength, lashingAnchorDrag.startPos.y + deltaY))
+      onUpdateLashingPoint(lashingAnchorDrag.id, { x: nx, y: ny })
+    }
     if (pinDrag && onUpdatePinned) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
@@ -734,6 +836,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPinDrag(null)
     setZoneDrag(null)
     setPanDrag(null)
+    setLashingAnchorDrag(null)
   }
 
   // A cancelled gesture (browser gesture, tab switch, context menu) never fires
@@ -751,6 +854,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setZoneDrag(null)
     setPanDrag(null)
     setMergeTargetId(null)
+    setLashingAnchorDrag(null)
   }
 
   const handleManualLeave = () => {
@@ -1012,32 +1116,96 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {/* Lashing/securing points (visual markers only) */}
+        {/* Lashing-point placement preview (follows cursor while armed) */}
+        {placingLashingPoint && lashingHoverPos && (
+          <g className="pointer-events-none" opacity={0.55}>
+            {pendingLashingCorner && (
+              <line
+                x1={toX(pendingLashingCorner.cornerX)}
+                y1={toY(pendingLashingCorner.cornerY)}
+                x2={toX(lashingHoverPos.x)}
+                y2={toY(lashingHoverPos.y)}
+                stroke="rgba(220,38,38,0.9)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+            )}
+            <circle cx={toX(lashingHoverPos.x)} cy={toY(lashingHoverPos.y)} r={6} fill="rgba(220,38,38,0.9)" stroke="#fff" strokeWidth={1.5} />
+            <line x1={toX(lashingHoverPos.x) - 3} y1={toY(lashingHoverPos.y)} x2={toX(lashingHoverPos.x) + 3} y2={toY(lashingHoverPos.y)} stroke="#fff" strokeWidth={1.2} />
+            <line x1={toX(lashingHoverPos.x)} y1={toY(lashingHoverPos.y) - 3} x2={toX(lashingHoverPos.x)} y2={toY(lashingHoverPos.y) + 3} stroke="#fff" strokeWidth={1.2} />
+          </g>
+        )}
+
+        {/* Persisted lashing points — a plain pin, or (if attached to a
+            placement) a line from the cargo corner to the deck anchor plus a
+            pass/fail badge from the CSS-Code-style securing check. */}
         {lashingPoints?.map((pt) => {
           const px = toX(pt.x)
           const py = toY(pt.y)
+          const isAttached = pt.placementId !== undefined && pt.cornerX !== undefined && pt.cornerY !== undefined
+          const isSelected = selectedLashingId === pt.id
+          const interactive = !!onUpdateLashingPoint
+          let check: ReturnType<typeof checkLashingBalance> = null
+          if (isAttached) {
+            const placement = renderedItems.find((p) =>
+              mode === 'manual' ? p.manualId === pt.placementId : p.itemId === pt.itemId
+            )
+            if (placement) {
+              const attachedHere = (lashingPoints ?? []).filter((l) => l.placementId === pt.placementId)
+              check = checkLashingBalance(placement, attachedHere, vesselMotion ?? DEFAULT_VESSEL_MOTION)
+            }
+          }
           return (
-            <g key={`lash-${pt.id}`} className="pointer-events-none">
-              <circle cx={px} cy={py} r={6} fill="rgba(15,23,42,0.85)" stroke="#fff" strokeWidth={1.5} />
-              <line x1={px - 3} y1={py} x2={px + 3} y2={py} stroke="#fff" strokeWidth={1.2} />
-              <line x1={px} y1={py - 3} x2={px} y2={py + 3} stroke="#fff" strokeWidth={1.2} />
+            <g key={`lash-${pt.id}`}>
+              {isAttached && (
+                <line
+                  x1={toX(pt.cornerX!)}
+                  y1={toY(pt.cornerY!)}
+                  x2={px}
+                  y2={py}
+                  stroke={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.6)'}
+                  strokeWidth={isSelected ? 2.5 : 1.5}
+                />
+              )}
+              <circle
+                cx={px}
+                cy={py}
+                r={6}
+                fill={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.85)'}
+                stroke="#fff"
+                strokeWidth={1.5}
+                style={{ cursor: interactive ? 'move' : 'default' }}
+                onPointerDown={
+                  interactive
+                    ? (e) => {
+                        e.stopPropagation()
+                        setSelectedLashingId(pt.id)
+                        setLashingAnchorDrag({ id: pt.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: pt.x, y: pt.y } })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }
+                    : undefined
+                }
+              >
+                {check && (
+                  <title>
+                    {`Груз ${check.ok ? 'закреплён' : 'НЕ закреплён'} — поперечно: ${check.transverse.availableKg.toFixed(0)}/${check.transverse.requiredKg.toFixed(0)} кг, продольно: ${check.longitudinal.availableKg.toFixed(0)}/${check.longitudinal.requiredKg.toFixed(0)} кг`}
+                  </title>
+                )}
+              </circle>
+              {!isAttached && (
+                <>
+                  <line x1={px - 3} y1={py} x2={px + 3} y2={py} stroke="#fff" strokeWidth={1.2} />
+                  <line x1={px} y1={py - 3} x2={px} y2={py + 3} stroke="#fff" strokeWidth={1.2} />
+                </>
+              )}
               {pt.label && (
-                <text x={px + 8} y={py + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none">
+                <text x={px + 8} y={py + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none pointer-events-none">
                   {pt.label}
                 </text>
               )}
             </g>
           )
         })}
-
-        {/* Lashing-point placement preview (follows cursor while armed) */}
-        {placingLashingPoint && lashingHoverPos && (
-          <g className="pointer-events-none" opacity={0.55}>
-            <circle cx={toX(lashingHoverPos.x)} cy={toY(lashingHoverPos.y)} r={6} fill="rgba(220,38,38,0.9)" stroke="#fff" strokeWidth={1.5} />
-            <line x1={toX(lashingHoverPos.x) - 3} y1={toY(lashingHoverPos.y)} x2={toX(lashingHoverPos.x) + 3} y2={toY(lashingHoverPos.y)} stroke="#fff" strokeWidth={1.2} />
-            <line x1={toX(lashingHoverPos.x)} y1={toY(lashingHoverPos.y) - 3} x2={toX(lashingHoverPos.x)} y2={toY(lashingHoverPos.y) + 3} stroke="#fff" strokeWidth={1.2} />
-          </g>
-        )}
 
         {/* Placed items */}
         {renderedItems.map((p, idx) => {
