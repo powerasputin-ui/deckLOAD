@@ -259,6 +259,43 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(pin.length).toBe(1)
   })
 
+  it('warns (once) when a placement newly exceeds a load zone\'s density limit', async () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1, weight: 5000 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 5000,
+      })
+    })
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('Перегрузка'))
+
+    // A zone covering the placement with a limit low enough that 5000kg/2m²
+    // (2.5 t/m²) exceeds it.
+    act(() => {
+      useCalculator.getState().addLoadZone({ x: 0, y: 0, width: 5, length: 5, maxLoadPerArea: 0.1 })
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Перегрузка'))
+
+    // Re-render for an unrelated reason (toggling a display setting) should
+    // NOT re-fire the warning - the overloaded count hasn't changed.
+    const warningCallsAfterFirst = (toast.warning as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+    act(() => {
+      useCalculator.getState().toggleGrid()
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect((toast.warning as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(warningCallsAfterFirst)
+  })
+
   it('handleModeChange (auto -> manual) converts pinned placements to manual and clears pins', () => {
     render(<Home />)
     clearDemoCargo()

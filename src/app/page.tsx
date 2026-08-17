@@ -33,6 +33,7 @@ import {
   rotatePlacement,
   maxLayersFor,
   computeFreeRects,
+  checkLoadDensity,
   type ManualPlacement,
   type PackVariant,
   type PackingResult,
@@ -178,6 +179,12 @@ export default function Home() {
   const [variants, setVariants] = useState<PackVariant[]>([])
   const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
+  // Baseline for the load-zone overload toast below — reset whenever the
+  // project's cargo/deck gets wholesale-replaced (loaded, "new calculation",
+  // "reset to example"), so opening a project that already has overloaded
+  // cargo doesn't itself fire the toast; only a NEW overload caused by the
+  // user's own next action does.
+  const prevOverloadCountRef = useRef(0)
 
   // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) for undo/redo of cargo & deck-layout
   // history. Skipped while focus is inside a text input/textarea/contentEditable
@@ -252,6 +259,7 @@ export default function Home() {
     // Ctrl+Z right after switching would otherwise silently jump back to the
     // previous project's data instead of doing nothing.
     clearCalculatorHistory()
+    prevOverloadCountRef.current = 0
     loadedProjectId.current = activeId
   }, [hydrated, activeId, projects])
 
@@ -317,6 +325,35 @@ export default function Home() {
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
 
+  // Warn (once) when moving/adding cargo or resizing a load zone pushes a
+  // NEW placement over its zone's density limit. The overload is already
+  // shown on the deck itself (red outline + "!" badge + hover tooltip on
+  // each over-limit box, see DeckVisualization) — this toast is just a
+  // proactive nudge for the moment it happens, so it isn't missed if the
+  // affected box is scrolled out of view or the deck is busy. Only fires
+  // when the overloaded count goes UP; fixing an overload (or just removing
+  // cargo) stays silent.
+  useEffect(() => {
+    const zones = deck.loadZones
+    if (!zones || zones.length === 0) {
+      prevOverloadCountRef.current = 0
+      return
+    }
+    const overloadedCount = result.placed.reduce((count, p) => {
+      const totalWeight = (p.weight ?? 0) * p.stackedCount
+      const check = checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, zones)
+      return check ? count + 1 : count
+    }, 0)
+    if (overloadedCount > prevOverloadCountRef.current) {
+      toast.warning(
+        overloadedCount === 1
+          ? 'Перегрузка: 1 место груза превышает нагрузку зоны'
+          : `Перегрузка: ${overloadedCount} мест груза превышают нагрузку зоны`
+      )
+    }
+    prevOverloadCountRef.current = overloadedCount
+  }, [result.placed, deck.loadZones])
+
   const categoryByItemId = useMemo(
     () => new Map(items.map((it) => [it.id, it.category])),
     [items]
@@ -365,6 +402,7 @@ export default function Home() {
       stampRotated: false,
     })
     clearCalculatorHistory()
+    prevOverloadCountRef.current = 0
     toast.success('Текущий расчёт очищен')
   }
 
@@ -385,6 +423,7 @@ export default function Home() {
       activeStampId: null,
     })
     clearCalculatorHistory()
+    prevOverloadCountRef.current = 0
     toast.info('Восстановлен демонстрационный пример')
   }
 
