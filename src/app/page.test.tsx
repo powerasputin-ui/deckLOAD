@@ -332,7 +332,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    fireEvent.click(screen.getByText('Авто'))
+    // getByText('Авто') is now ambiguous — PlacementPanel's preset category
+    // picker also has an "Авто" (vehicles) button. Scope to the mode toggle.
+    fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
 
     expect(useCalculator.getState().mode).toBe('auto')
     expect(useCalculator.getState().manualPlacements).toHaveLength(0)

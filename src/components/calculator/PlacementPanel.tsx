@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import {
   Pin,
   RotateCw,
@@ -11,6 +12,7 @@ import {
   MousePointerClick,
   Package,
   Layers,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -22,7 +24,7 @@ import {
   CardDescription,
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useCalculator } from '@/store/calculator'
+import { useCalculator, PRESETS } from '@/store/calculator'
 import type { CargoItem, PackVariant } from '@/lib/packing'
 import { rotatePlacement } from '@/lib/packing'
 import { cn } from '@/lib/utils'
@@ -59,9 +61,12 @@ export function PlacementPanel({
   const clearManualPlacements = useCalculator((s) => s.clearManualPlacements)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
+  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
+  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
   const deck = useCalculator((s) => s.deck)
+  const [openPresetCategory, setOpenPresetCategory] = useState<string | null>(null)
 
   // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
@@ -213,6 +218,60 @@ export function PlacementPanel({
           <p className="text-[10px] text-muted-foreground leading-tight">
             Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
           </p>
+
+          {/* Preset catalog — pick a category to reveal its standard cargo
+              types, click one to arm it the same way as an existing item
+              below. The real CargoItem is only created once it's actually
+              placed on the deck, not at selection time here. */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              <Sparkles className="h-3 w-3" />
+              Пресеты
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {Object.entries(PRESETS).map(([key, cat]) => (
+                <Button
+                  key={key}
+                  variant={openPresetCategory === key ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="h-6 text-[11px]"
+                  onClick={() => setOpenPresetCategory(openPresetCategory === key ? null : key)}
+                >
+                  {cat.label}
+                </Button>
+              ))}
+            </div>
+            {openPresetCategory && (
+              <div className="space-y-1">
+                {PRESETS[openPresetCategory].items.map((tpl, i) => {
+                  const active = pendingPresetStamp?.name === tpl.name
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setPendingPresetStamp(active ? null : tpl)}
+                      className={cn(
+                        'w-full flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-left transition-colors',
+                        active
+                          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+                          : 'border-border hover:bg-accent'
+                      )}
+                    >
+                      <span className="text-[11px] font-medium truncate">{tpl.name}</span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {tpl.width}×{tpl.length} м
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {pendingPresetStamp && (
+              <p className="text-[10px] text-muted-foreground leading-tight">
+                «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
+              </p>
+            )}
+          </div>
+
           {items.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-2">
               Сначала добавьте грузы
