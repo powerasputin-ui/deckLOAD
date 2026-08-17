@@ -152,6 +152,63 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items[0].quantity).toBe(2)
   })
 
+  it('handleLayerChangeManual("-") stands the freed unit up as its own placement, same as the pinned version', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 3, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: item.color,
+      })
+      useCalculator.setState({ selectedManualIds: ['m1'] })
+    })
+
+    const minusCircle = document.querySelector('svg circle[fill="#f59e0b"]')
+    expect(minusCircle).toBeTruthy()
+    fireEvent.click(minusCircle!)
+
+    // Same expectation as the pinned regression test: the freed unit should
+    // land as its own separate single-layer placement, not vanish.
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements).toHaveLength(2)
+    expect(placements.every((p) => p.layers === 1)).toBe(true)
+    expect(useCalculator.getState().items[0].quantity).toBe(3)
+  })
+
+  it('handleLayerChangeManual("+") pulls an existing placement off the deck instead of only unplaced quantity', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'mA', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'mB', itemId: item.id, name: item.name, x: 4, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      useCalculator.setState({ selectedManualIds: ['mA'] })
+    })
+
+    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    expect(plusCircle).toBeTruthy()
+    fireEvent.click(plusCircle!)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements).toHaveLength(1)
+    expect(placements[0].id).toBe('mA')
+    expect(placements[0].layers).toBe(2)
+    expect(useCalculator.getState().items[0].quantity).toBe(2)
+  })
+
   it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {
     render(<Home />)
     // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants

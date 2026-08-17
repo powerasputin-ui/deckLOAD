@@ -606,16 +606,63 @@ export default function Home() {
     toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }
 
+  // Manual-mode equivalent of findMergeSourcePinned — every placement here
+  // is already a manual placement (no separate "still auto-placed" pool to
+  // fall back to), so this just looks for another one of the same item.
+  const findMergeSourceManual = (itemId: string, excludeId: string): { id: string } | null => {
+    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId)
+    return other ? { id: other.id } : null
+  }
+
   const handleLayerChangeManual = (id: string, delta: number) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
     const current = Math.max(1, mp.layers)
+
+    // Same "+" logic as handleLayerChangePinned: grab an existing placement
+    // of this item off the deck and stack it, instead of only pulling from
+    // unplaced quantity.
+    if (delta > 0) {
+      const source = findMergeSourceManual(mp.itemId, id)
+      if (source) {
+        handleMergeManual(source.id, id)
+        return
+      }
+    }
+
     const check = checkLayerChange(mp.itemId, current, delta, id)
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
     }
     updateManualPlacement(id, { layers: current + delta })
+    // Same "-" logic as handleLayerChangePinned: stand the freed unit up as
+    // its own placement on open deck space instead of letting it vanish.
+    if (delta < 0) {
+      const item = items.find((it) => it.id === mp.itemId)
+      if (item) {
+        const spot = findFreeSpotForItem(item)
+        if (spot) {
+          useCalculator.getState().addManualPlacement({
+            id: crypto.randomUUID(),
+            itemId: item.id,
+            name: item.name,
+            x: spot.x,
+            y: spot.y,
+            width: spot.rotated ? item.length : item.width,
+            length: spot.rotated ? item.width : item.length,
+            layers: 1,
+            rotated: spot.rotated,
+            color: item.color,
+            weight: item.weight,
+          })
+          // addManualPlacement doesn't change selection — explicitly keep it
+          // on the placement the user is clicking "-" on, matching the pinned
+          // version's behavior (repeated clicks keep acting on the same one).
+          useCalculator.setState({ selectedManualIds: [id] })
+        }
+      }
+    }
   }
 
   // Drag one pinned placement onto another of the same item — merges them
