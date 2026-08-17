@@ -1193,6 +1193,7 @@ export default function Home() {
               <PlacementPanel
                 mode={mode}
                 tripIndex={clampedTripIndex}
+                result={result}
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}

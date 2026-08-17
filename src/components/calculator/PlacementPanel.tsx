@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator, PRESETS, PALETTE } from '@/store/calculator'
-import type { CargoItem, PackVariant } from '@/lib/packing'
+import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
 import { rotatePlacement } from '@/lib/packing'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -32,6 +32,7 @@ import { toast } from 'sonner'
 interface PlacementPanelProps {
   mode: 'auto' | 'manual'
   tripIndex: number
+  result: PackingResult
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
@@ -41,6 +42,7 @@ interface PlacementPanelProps {
 export function PlacementPanel({
   mode,
   tripIndex,
+  result,
   onAutoRedistribute,
   variants,
   onSelectVariant,
@@ -75,17 +77,22 @@ export function PlacementPanel({
   const showGroupActions = selectedCount > 0
 
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-  const totalPlaced = isAuto
-    ? pinnedPlacements.reduce((s, p) => s + (Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1), 0)
-    : manualPlacements.reduce((s, m) => s + (Number.isFinite(m.layers) && m.layers > 0 ? m.layers : 1), 0)
+  // What's actually shown on the deck — result.placed includes both
+  // deliberately pinned/manual placements AND whatever the auto-packer
+  // filled in on its own for unpinned quantity. Counting only
+  // pinnedPlacements/manualPlacements here used to undercount: increasing
+  // an item's quantity in auto mode auto-places the extra units without
+  // pinning them, so "Не распределено" kept showing units as missing even
+  // though they were already visible on the deck.
+  const totalPlaced = result.placedCount
 
-  // Per-item placed count, for the "всего / не распределено" line on each
-  // StampRow — mirrors totalPlaced above but grouped by itemId instead of
-  // summed across everything.
+  // Per-item placed count (same result.placed source, grouped by itemId —
+  // mirrors ItemList's own placedCount computation) for the "всего / не
+  // распределено" line on each StampRow.
   const placedByItemId = new Map<string, number>()
-  for (const p of placements) {
-    const layers = Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1
-    placedByItemId.set(p.itemId, (placedByItemId.get(p.itemId) ?? 0) + layers)
+  for (const p of result.placed) {
+    const count = Number.isFinite(p.stackedCount) && p.stackedCount > 0 ? p.stackedCount : 1
+    placedByItemId.set(p.itemId, (placedByItemId.get(p.itemId) ?? 0) + count)
   }
 
   const handleRotateSelected = () => {
