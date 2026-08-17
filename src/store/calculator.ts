@@ -158,8 +158,15 @@ interface CalculatorState {
   removeSeparationRule: (id: string) => void
 }
 
+// Picks the first palette color no current item is using — cycling purely
+// by items.length repeated colors as soon as an item was deleted (or a
+// preset/duplicate reused a color), since the count no longer matched
+// which colors were actually free. Only falls back to a repeat once every
+// palette color is genuinely taken.
 function nextColor(items: CargoItem[]): string {
-  return PALETTE[items.length % PALETTE.length]
+  const used = new Set(items.map((it) => it.color))
+  const free = PALETTE.find((c) => !used.has(c))
+  return free ?? PALETTE[items.length % PALETTE.length]
 }
 
 function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
@@ -603,7 +610,11 @@ export const useCalculator = create<CalculatorState>()(
         id = items[idx].id
         return { items }
       }
-      const item = makeItem(s.items, { ...template, quantity: 1 })
+      // Drop the template's preview color (used only for the picker row
+      // and the deck ghost preview) so the real item goes through
+      // nextColor's collision-avoiding pick instead of inheriting a fixed
+      // color that might already belong to another cargo item.
+      const item = makeItem(s.items, { ...template, color: undefined, quantity: 1 })
       id = item.id
       return { items: [...s.items, item] }
     })

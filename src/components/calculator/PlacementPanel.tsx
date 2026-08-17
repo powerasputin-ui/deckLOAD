@@ -249,12 +249,14 @@ export function PlacementPanel({
             <ScrollArea className="h-[200px] pr-1">
               <div className="space-y-1">
                 {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                  // Continue the same palette sequence real cargo items use
-                  // (nextColor in calculator.ts starts from items.length) —
-                  // starting back at PALETTE[0] every time a category opens
-                  // meant preset rows almost always collided with colors
-                  // already taken by existing cargo.
-                  const color = PALETTE[(items.length + i) % PALETTE.length]
+                  // Fixed per template position — stable across renders (a
+                  // color tied to items.length changed every time you
+                  // reopened the category or added cargo, which was more
+                  // confusing than an occasional collision). The real item
+                  // created on placement gets its own collision-avoiding
+                  // color from nextColor regardless of this preview color —
+                  // see addOrIncrementCargoFromTemplate in calculator.ts.
+                  const color = PALETTE[i % PALETTE.length]
                   return (
                     <PresetTemplateRow
                       key={i}
