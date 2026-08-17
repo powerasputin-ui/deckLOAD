@@ -79,6 +79,15 @@ export function PlacementPanel({
     ? pinnedPlacements.reduce((s, p) => s + (Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1), 0)
     : manualPlacements.reduce((s, m) => s + (Number.isFinite(m.layers) && m.layers > 0 ? m.layers : 1), 0)
 
+  // Per-item placed count, for the "всего / не распределено" line on each
+  // StampRow — mirrors totalPlaced above but grouped by itemId instead of
+  // summed across everything.
+  const placedByItemId = new Map<string, number>()
+  for (const p of placements) {
+    const layers = Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1
+    placedByItemId.set(p.itemId, (placedByItemId.get(p.itemId) ?? 0) + layers)
+  }
+
   const handleRotateSelected = () => {
     if (isAuto) {
       let rotatedCount = 0
@@ -261,6 +270,8 @@ export function PlacementPanel({
                     item={it}
                     active={activeStampId === it.id}
                     rotated={activeStampId === it.id && stampRotated}
+                    total={it.quantity}
+                    remaining={Math.max(0, it.quantity - (placedByItemId.get(it.id) ?? 0))}
                     onSelect={() => setActiveStamp(activeStampId === it.id ? null : it.id)}
                   />
                 ))}
@@ -399,11 +410,15 @@ function StampRow({
   item,
   active,
   rotated,
+  total,
+  remaining,
   onSelect,
 }: {
   item: CargoItem
   active: boolean
   rotated?: boolean
+  total: number
+  remaining: number
   onSelect: () => void
 }) {
   return (
@@ -424,6 +439,9 @@ function StampRow({
         <div className="text-xs font-medium truncate">{item.name}</div>
         <div className="text-[10px] text-muted-foreground">
           {rotated ? `${item.length}×${item.width} ↻` : `${item.width}×${item.length}`}
+        </div>
+        <div className={cn('text-[10px]', remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
+          Всего: {total} · Не распределено: {remaining}
         </div>
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
