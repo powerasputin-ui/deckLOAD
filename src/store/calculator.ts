@@ -284,6 +284,27 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   },
 }
 
+// One fixed color per template NAME, shared across every category — not per
+// row position. Position-based coloring made the first item of every
+// category the same color (Контейнер 20ft and Паллета EUR both blue) and
+// made a name appearing in two categories (Паллета EUR is in both
+// "Контейнеры" and "Паллеты") show a different color depending on which
+// list you found it in. Names that repeat across categories reuse the color
+// assigned the first time they were seen instead of getting a new one.
+export const PRESET_TEMPLATE_COLORS: Record<string, string> = (() => {
+  const colors: Record<string, string> = {}
+  let next = 0
+  for (const category of Object.values(PRESETS)) {
+    for (const item of category.items) {
+      const name = item.name
+      if (!name || colors[name]) continue
+      colors[name] = PALETTE[next % PALETTE.length]
+      next++
+    }
+  }
+  return colors
+})()
+
 // Undo/redo (Ctrl+Z / Ctrl+Y) history — scoped to cargo/deck "content" only.
 // UI-only fields (selection, active stamp, display toggles) are excluded via
 // `partialize` so they don't pollute the history or get reverted by undo.
@@ -610,11 +631,10 @@ export const useCalculator = create<CalculatorState>()(
         id = items[idx].id
         return { items }
       }
-      // Drop the template's preview color (used only for the picker row
-      // and the deck ghost preview) so the real item goes through
-      // nextColor's collision-avoiding pick instead of inheriting a fixed
-      // color that might already belong to another cargo item.
-      const item = makeItem(s.items, { ...template, color: undefined, quantity: 1 })
+      // Use the template's exact preview color (PRESET_TEMPLATE_COLORS) —
+      // the real item must match what the picker row showed, not silently
+      // switch to a different nextColor pick after placement.
+      const item = makeItem(s.items, { ...template, quantity: 1 })
       id = item.id
       return { items: [...s.items, item] }
     })

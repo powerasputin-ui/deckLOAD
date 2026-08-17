@@ -54,7 +54,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit, PRESETS, PALETTE } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, type Unit, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   VESSEL_MOTION_PRESETS,
@@ -871,14 +871,12 @@ function PresetsSection() {
           <ScrollArea className="h-[200px] pr-1">
             <div className="space-y-1">
               {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                // Fixed per template position — stable across renders (a
-                // color tied to items.length changed every time you
-                // reopened the category or added cargo, more confusing than
-                // an occasional collision). The real item created on
-                // placement gets its own collision-avoiding color from
-                // nextColor regardless of this preview color — see
-                // addOrIncrementCargoFromTemplate in calculator.ts.
-                const color = PALETTE[i % PALETTE.length]
+                // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
+                // not per row position — so the same type always shows the
+                // same color regardless of which category list it's viewed
+                // from, and the real item created on placement keeps this
+                // exact color (see addOrIncrementCargoFromTemplate).
+                const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
                 const active = pendingPresetStamp?.name === tpl.name
                 return (
                   <PresetTemplateRow
