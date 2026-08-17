@@ -88,6 +88,12 @@ interface CalculatorState {
   selectedPinIds: string[]
   selectedManualIds: string[]
   activeStampId: string | null
+  // A preset catalog item armed for click-to-place, before it exists as a
+  // real CargoItem. Mutually exclusive with activeStampId — only one stamp
+  // source is ever active. Turned into a real item (see
+  // addOrIncrementCargoFromTemplate) only at the moment it's actually placed
+  // on the deck, not when picked from the catalog.
+  pendingPresetStamp: Partial<CargoItem> | null
   stampRotated: boolean
   placingLashingPoint: boolean
 
@@ -103,9 +109,13 @@ interface CalculatorState {
   toggleFreeSpace: () => void
   toggleGrid: () => void
   toggleLabels: () => void
-  loadPreset: (preset: 'containers' | 'pallets' | 'vehicles' | 'mixed') => void
   setMode: (m: Mode) => void
   setActiveStamp: (id: string | null) => void
+  setPendingPresetStamp: (template: Partial<CargoItem> | null) => void
+  // Finds a cargo item matching the template's name and bumps its quantity
+  // by 1, or creates a new one with quantity 1 — used only when a preset
+  // catalog item is actually placed on the deck, never at selection time.
+  addOrIncrementCargoFromTemplate: (template: Partial<CargoItem>) => string
   toggleStampRotation: () => void
   addManualPlacement: (p: ManualPlacement) => void
   updateManualPlacement: (id: string, patch: Partial<ManualPlacement>) => void
@@ -221,40 +231,41 @@ function reflowResizedItem<T extends { x: number; y: number; width: number; leng
   return { list: result, moved, stillColliding }
 }
 
-const PRESETS: Record<
-  string,
-  { deck: DeckConfig; items: Partial<CargoItem>[] }
-> = {
+// Catalog of standard cargo types shown in the "Пресеты" picker, grouped by
+// category. Purely a picker source — selecting a category doesn't add
+// anything by itself; only actually placing one of its items on the deck
+// (see addOrIncrementCargoFromTemplate) creates a real CargoItem.
+export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[] }> = {
   containers: {
-    deck: { width: 30, length: 12, unit: 'm', gap: 0.15, boardOffset: 0.5, clearance: 7.8 },
+    label: 'Контейнеры',
     items: [
-      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 6, allowRotation: true, weight: 2200 },
-      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, quantity: 4, allowRotation: true, weight: 3800 },
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, allowRotation: true, weight: 500 },
+      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200 },
+      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, allowRotation: true, weight: 500 },
     ],
   },
   pallets: {
-    deck: { width: 10, length: 6, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 1.8 },
+    label: 'Паллеты',
     items: [
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 30, allowRotation: true, weight: 500 },
-      { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, quantity: 10, allowRotation: true, weight: 700 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, allowRotation: true, weight: 500 },
+      { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, allowRotation: true, weight: 700 },
     ],
   },
   vehicles: {
-    deck: { width: 50, length: 16, unit: 'm', gap: 0.2, boardOffset: 0.5, clearance: 0 },
+    label: 'Авто',
     items: [
-      { name: 'Седан', width: 4.6, length: 1.8, height: 1.4, quantity: 8, allowRotation: true, weight: 1400 },
-      { name: 'Внедорожник', width: 4.9, length: 1.95, height: 1.8, quantity: 6, allowRotation: true, weight: 2100 },
-      { name: 'Пикап', width: 5.3, length: 1.95, height: 1.9, quantity: 4, allowRotation: true, weight: 1900 },
+      { name: 'Седан', width: 4.6, length: 1.8, height: 1.4, allowRotation: true, weight: 1400 },
+      { name: 'Внедорожник', width: 4.9, length: 1.95, height: 1.8, allowRotation: true, weight: 2100 },
+      { name: 'Пикап', width: 5.3, length: 1.95, height: 1.9, allowRotation: true, weight: 1900 },
     ],
   },
   mixed: {
-    deck: { width: 24, length: 10, unit: 'm', gap: 0.1, boardOffset: 0.3, clearance: 3.5 },
+    label: 'Смешанный',
     items: [
-      { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, quantity: 6, allowRotation: true, weight: 800 },
-      { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, quantity: 12, allowRotation: true, weight: 350 },
-      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, quantity: 16, allowRotation: false, weight: 220 },
-      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, quantity: 4, allowRotation: false, weight: 600 },
+      { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, allowRotation: true, weight: 800 },
+      { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
+      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, allowRotation: false, weight: 220 },
+      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, allowRotation: false, weight: 600 },
     ],
   },
 }
@@ -292,6 +303,7 @@ export const useCalculator = create<CalculatorState>()(
   selectedPinIds: [],
   selectedManualIds: [],
   activeStampId: null,
+  pendingPresetStamp: null,
   stampRotated: false,
   placingLashingPoint: false,
 
@@ -561,29 +573,32 @@ export const useCalculator = create<CalculatorState>()(
   toggleFreeSpace: () => set((s) => ({ showFreeSpace: !s.showFreeSpace })),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
-  // Adds the preset's cargo to whatever is already on the deck — deck size,
-  // existing items, and placements are left untouched. A preset used to
-  // replace all of that wholesale, which meant picking a second preset after
-  // already placing cargo from the first silently wiped everything.
-  loadPreset: (preset) =>
-    set((s) => {
-      const p = PRESETS[preset]
-      if (!p) return s
-      // Build up the accumulator as we go (not just s.items) so each new
-      // item's color/fallback-name index accounts for the ones already
-      // added in this same batch, not just the pre-existing list.
-      const items = [...s.items]
-      for (const partial of p.items) items.push(makeItem(items, partial))
-      return { items }
-    }),
   setMode: (m) =>
     set(() => ({
       mode: m,
       activeStampId: null,
+      pendingPresetStamp: null,
       selectedPinIds: [],
       selectedManualIds: [],
     })),
-  setActiveStamp: (id) => set({ activeStampId: id }),
+  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null }),
+  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null }),
+  addOrIncrementCargoFromTemplate: (template) => {
+    let id = ''
+    set((s) => {
+      const idx = s.items.findIndex((it) => it.name === template.name)
+      if (idx >= 0) {
+        const items = [...s.items]
+        items[idx] = { ...items[idx], quantity: items[idx].quantity + 1 }
+        id = items[idx].id
+        return { items }
+      }
+      const item = makeItem(s.items, { ...template, quantity: 1 })
+      id = item.id
+      return { items: [...s.items, item] }
+    })
+    return id
+  },
   toggleStampRotation: () => set((s) => ({ stampRotated: !s.stampRotated })),
   addManualPlacement: (p) =>
     set((s) => ({ manualPlacements: [...s.manualPlacements, p] })),

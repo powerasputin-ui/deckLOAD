@@ -24,7 +24,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, PALETTE } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import {
   packDeckVariants,
@@ -73,6 +73,8 @@ export default function Home() {
   const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
+  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
+  const addOrIncrementCargoFromTemplate = useCalculator((s) => s.addOrIncrementCargoFromTemplate)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
@@ -217,15 +219,16 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !activeStampId) return
+    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
       if (activeStampId) setActiveStamp(null)
+      if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp])
+  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -255,6 +258,7 @@ export default function Home() {
       showGrid: proj.showGrid,
       showLabels: proj.showLabels,
       activeStampId: null,
+      pendingPresetStamp: null,
       stampRotated: false,
     })
     // A different project's undo history shouldn't leak into this one — an
@@ -371,12 +375,29 @@ export default function Home() {
     [items]
   )
 
+  // Preview color for a not-yet-created preset template — cosmetic only,
+  // the real item gets its actual color from nextColor at creation time.
+  const pendingPresetPreviewColor = useMemo(
+    () => PALETTE[items.length % PALETTE.length],
+    [items.length]
+  )
+
   const activeStamp = useMemo(() => {
-    if (mode !== 'manual' || !activeStampId) return null
+    if (pendingPresetStamp) {
+      return {
+        id: '__pending-preset__',
+        width: pendingPresetStamp.width ?? 2,
+        length: pendingPresetStamp.length ?? 1.2,
+        color: pendingPresetPreviewColor,
+        name: pendingPresetStamp.name ?? 'Груз',
+        weight: pendingPresetStamp.weight,
+      }
+    }
+    if (!activeStampId) return null
     const it = items.find((x) => x.id === activeStampId)
     if (!it) return null
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
-  }, [mode, activeStampId, items])
+  }, [activeStampId, pendingPresetStamp, pendingPresetPreviewColor, items])
 
   // NOTE: deck-geometry changes (gap/boardOffset/width/length/clearance) no
   // longer trigger a repack here — that used to duplicate and silently
@@ -411,6 +432,7 @@ export default function Home() {
       selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
+      pendingPresetStamp: null,
       stampRotated: false,
     })
     clearCalculatorHistory()
@@ -433,6 +455,7 @@ export default function Home() {
       selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
+      pendingPresetStamp: null,
     })
     clearCalculatorHistory()
     prevOverloadCountRef.current = 0
@@ -782,6 +805,7 @@ export default function Home() {
         pinnedPlacementsByTrip: {},
         selectedPinIds: [],
         activeStampId: null,
+        pendingPresetStamp: null,
       })
       toast.info('Ручной режим — размещения сохранены')
     } else {
@@ -806,6 +830,7 @@ export default function Home() {
         manualPlacements: [],
         selectedPinIds: [],
         activeStampId: null,
+        pendingPresetStamp: null,
       })
       toast.info('Авто-режим — размещения сохранены как закреплённые')
     }
@@ -1052,16 +1077,32 @@ export default function Home() {
                     activeStamp={activeStamp}
                     stampRotated={stampRotated}
                     onPlace={(p) => {
-                      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-                      const placedUnits = manualPlacements.reduce(
-                        (s, m) => s + Math.max(1, m.layers),
-                        0
-                      )
-                      if (placedUnits >= totalRequested) {
-                        toast.warning('Все грузы уже размещены')
-                        return
+                      // A preset catalog item being placed for the first time — the
+                      // click itself is what creates the CargoItem (quantity 1) and
+                      // defines it as "wanted", so the aggregate quantity cap below
+                      // doesn't apply here; resolve the real item id first.
+                      let itemId = p.itemId
+                      if (pendingPresetStamp) {
+                        itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
+                      } else {
+                        const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+                        const placedUnits =
+                          mode === 'manual'
+                            ? manualPlacements.reduce((s, m) => s + Math.max(1, m.layers), 0)
+                            : Object.values(pinnedPlacementsByTrip)
+                                .flat()
+                                .reduce((s, pin) => s + Math.max(1, pin.layers), 0)
+                        if (placedUnits >= totalRequested) {
+                          toast.warning('Все грузы уже размещены')
+                          return
+                        }
                       }
-                      useCalculator.getState().addManualPlacement(p)
+                      const placement = { ...p, itemId }
+                      if (mode === 'manual') {
+                        useCalculator.getState().addManualPlacement(placement)
+                      } else {
+                        pinFromPlaced(clampedTripIndex, placement)
+                      }
                     }}
                     onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                     onRemoveManual={removeManualPlacement}

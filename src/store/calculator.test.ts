@@ -82,11 +82,17 @@ describe('calculator store', () => {
     expect(useCalculator.getState().activeStampId).toBeNull()
   })
 
-  it('does not auto-select a cargo item when loading a preset', () => {
+  it('arming a preset template clears an active item stamp and vice versa', () => {
     const s = useCalculator.getState()
-    s.setActiveStamp(null)
-    s.loadPreset('pallets')
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.setActiveStamp(item.id)
+    expect(useCalculator.getState().activeStampId).toBe(item.id)
+    s.setPendingPresetStamp({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
     expect(useCalculator.getState().activeStampId).toBeNull()
+    expect(useCalculator.getState().pendingPresetStamp?.name).toBe('Контейнер 20ft')
+    s.setActiveStamp(item.id)
+    expect(useCalculator.getState().pendingPresetStamp).toBeNull()
   })
 
   it('shifts existing manual placements inward when boardOffset increases', () => {
@@ -137,28 +143,29 @@ describe('calculator store', () => {
     expect(useCalculator.getState().globalRotation).toBe(false)
   })
 
-  it('loads a preset', () => {
+  it('addOrIncrementCargoFromTemplate creates a new item with quantity 1 on first call', () => {
     const s = useCalculator.getState()
-    s.loadPreset('pallets')
+    const before = useCalculator.getState().items.length
+    const id = s.addOrIncrementCargoFromTemplate({ name: 'Контейнер 20ft', width: 6.06, length: 2.44, weight: 2200 })
     const state = useCalculator.getState()
-    expect(state.items.length).toBeGreaterThan(0)
+    expect(state.items.length).toBe(before + 1)
+    const created = state.items.find((it) => it.id === id)
+    expect(created?.quantity).toBe(1)
+    expect(created?.name).toBe('Контейнер 20ft')
   })
 
-  it('loadPreset adds to existing items/deck/placements instead of wiping them (regression: picking a second preset used to reset everything)', () => {
+  it('addOrIncrementCargoFromTemplate increments quantity on repeat calls instead of duplicating the item (regression: presets used to bulk-add a whole category at once)', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 15, length: 7 })
-    s.loadPreset('containers')
-    const item = useCalculator.getState().items[0]
-    s.pinFromPlaced(0, {
-      itemId: item.id, name: item.name, x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: item.color,
-    })
-    const itemCountAfterFirst = useCalculator.getState().items.length
-
-    s.loadPreset('pallets')
+    const before = useCalculator.getState().items.length
+    const id1 = s.addOrIncrementCargoFromTemplate({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
+    const id2 = s.addOrIncrementCargoFromTemplate({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
     const state = useCalculator.getState()
+    expect(id1).toBe(id2)
+    expect(state.items.length).toBe(before + 1)
+    expect(state.items.find((it) => it.id === id1)?.quantity).toBe(2)
+    // Deck size is never touched by cargo/preset actions.
     expect(state.deck.width).toBe(15)
-    expect(state.items.length).toBeGreaterThan(itemCountAfterFirst)
-    expect(state.pinnedPlacementsByTrip[0]).toHaveLength(1)
   })
 
   it('duplicates an item', () => {

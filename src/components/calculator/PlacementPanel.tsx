@@ -192,49 +192,47 @@ export function PlacementPanel({
           </div>
         )}
 
-        {/* Manual mode: stamp selector */}
-        {!isAuto && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Package className="h-3.5 w-3.5" />
-              Выбор груза для размещения
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                toggleStampRotation()
-              }}
-              className="w-full"
-              title="Влияет только на груз, который вы поставите следующим кликом. Уже размещённые грузы поворачиваются иконкой ↻ прямо на палубе."
-            >
-              <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-              Ориентация нового груза: {stampRotated ? '90°' : '0°'}
-            </Button>
-            <p className="text-[10px] text-muted-foreground leading-tight">
-              Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
-            </p>
-            {items.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-2">
-                Сначала добавьте грузы
-              </p>
-            ) : (
-              <ScrollArea className="h-[200px] pr-1">
-                <div className="space-y-1">
-                  {items.map((it) => (
-                    <StampRow
-                      key={it.id}
-                      item={it}
-                      active={activeStampId === it.id}
-                      rotated={activeStampId === it.id && stampRotated}
-                      onSelect={() => setActiveStamp(activeStampId === it.id ? null : it.id)}
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
+        {/* Stamp selector — click-to-place works in both modes now */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Package className="h-3.5 w-3.5" />
+            Выбор груза для размещения
           </div>
-        )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              toggleStampRotation()
+            }}
+            className="w-full"
+            title="Влияет только на груз, который вы поставите следующим кликом. Уже размещённые грузы поворачиваются иконкой ↻ прямо на палубе."
+          >
+            <RotateCw className="h-3.5 w-3.5 mr-1.5" />
+            Ориентация нового груза: {stampRotated ? '90°' : '0°'}
+          </Button>
+          <p className="text-[10px] text-muted-foreground leading-tight">
+            Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
+          </p>
+          {items.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              Сначала добавьте грузы
+            </p>
+          ) : (
+            <ScrollArea className="h-[200px] pr-1">
+              <div className="space-y-1">
+                {items.map((it) => (
+                  <StampRow
+                    key={it.id}
+                    item={it}
+                    active={activeStampId === it.id}
+                    rotated={activeStampId === it.id && stampRotated}
+                    onSelect={() => setActiveStamp(activeStampId === it.id ? null : it.id)}
+                  />
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </div>
 
         {/* Selected items (both modes) */}
         {showGroupActions && (
@@ -302,8 +300,8 @@ export function PlacementPanel({
         <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground space-y-0.5">
           {isAuto ? (
             <>
-              <div>• Клик по грузу — закрепить</div>
-              <div>• Перетаскивание — переместить</div>
+              <div>• Выберите груз слева и кликните по палубе — закрепит его в этой точке</div>
+              <div>• Клик по уже размещённому грузу — закрепить и перетащить</div>
               <div>• Shift+клик — выбрать несколько</div>
               <div>• ↻ на грузе — повернуть</div>
             </>

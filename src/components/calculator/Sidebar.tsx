@@ -53,7 +53,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, type Unit, PRESETS } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   VESSEL_MOTION_PRESETS,
@@ -868,26 +868,55 @@ function MiniNumField({
 }
 
 function PresetsSection() {
-  const loadPreset = useCalculator((s) => s.loadPreset)
-  const handleLoad = (name: 'containers' | 'pallets' | 'vehicles' | 'mixed', label: string) => {
-    loadPreset(name)
-    toast.success(`${label} добавлен`)
-  }
+  const [openCategory, setOpenCategory] = useState<string | null>(null)
+  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
+  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
+
   return (
     <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>
-      <div className="grid grid-cols-2 gap-1.5">
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('containers', 'Контейнеры')}>
-          Контейнеры
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('pallets', 'Паллеты')}>
-          Паллеты
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('vehicles', 'Авто')}>
-          Авто
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLoad('mixed', 'Смешанный')}>
-          Смешанный
-        </Button>
+      <div className="space-y-1.5">
+        <div className="grid grid-cols-2 gap-1.5">
+          {Object.entries(PRESETS).map(([key, cat]) => (
+            <Button
+              key={key}
+              variant={openCategory === key ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setOpenCategory(openCategory === key ? null : key)}
+            >
+              {cat.label}
+            </Button>
+          ))}
+        </div>
+        {openCategory && (
+          <div className="space-y-1">
+            {PRESETS[openCategory].items.map((tpl, i) => {
+              const active = pendingPresetStamp?.name === tpl.name
+              return (
+                <button
+                  key={i}
+                  onClick={() => setPendingPresetStamp(active ? null : tpl)}
+                  className={cn(
+                    'w-full flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors',
+                    active
+                      ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+                      : 'border-border hover:bg-accent'
+                  )}
+                >
+                  <span className="text-xs font-medium truncate">{tpl.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">
+                    {tpl.width}×{tpl.length} м
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {pendingPresetStamp && (
+          <p className="text-[10px] text-muted-foreground leading-tight">
+            «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить. Груз появится в «Грузы» после первого размещения.
+          </p>
+        )}
       </div>
     </Section>
   )

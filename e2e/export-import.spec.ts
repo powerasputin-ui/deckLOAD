@@ -47,8 +47,10 @@ test.describe('Project JSON export/import', () => {
     // its own distinct name, so assert on that instead of the demo count.
     expect(projectRowsAfter).toBe(projectRowsBefore)
     await expect(page.locator('aside').getByText('Импортированный расчёт')).toBeVisible()
-    // The newly imported project becomes active.
-    await expect(page.getByRole('button', { name: 'Тестовый груз' })).toBeVisible()
+    // The newly imported project becomes active. Scope to the cargo list
+    // card specifically — the deck panel's "choose cargo to place" stamp
+    // list (visible in both modes) also renders a same-named button.
+    await expect(page.getByRole('button', { name: 'Тестовый груз', exact: true })).toBeVisible()
   })
 
   test('importing garbage JSON is rejected without creating a project', async ({ page }) => {

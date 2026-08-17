@@ -495,7 +495,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       return
     }
     if (handleLashingClick(e)) return
-    if (mode !== 'manual' || !activeStamp || !stampDims || !onPlace) return
+    if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return
     // Snap so the item's top-left is at the cursor, then clamp inside deck
@@ -505,16 +505,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       deckLength,
       edgePad
     )
-    // Check collision with existing manual placements
-    const others = manualPlacements
-      .filter((m) => m.id !== 'preview')
-      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+    // Check collision against whatever is currently rendered — manual
+    // placements in manual mode, algorithm-placed/pinned items in auto mode
+    // (renderedItems already resolves to the right source for either).
+    const others = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
     if (collidesWith({ ...clamped, width: stampDims.w, length: stampDims.l }, others, gap)) {
       return // ignore overlapping placement
     }
     const category = categoryByItemId?.get(activeStamp.id)
     if (category && separationRules && separationRules.length > 0) {
-      const othersWithCategory = manualPlacements.map((m) => ({
+      const othersWithCategory = renderedItems.map((m) => ({
         x: m.x,
         y: m.y,
         width: m.width,
@@ -685,7 +685,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setLashingHoverPos(pos)
     }
-    if (mode === 'manual' && activeStamp && !dragState && !pinDrag) {
+    if (activeStamp && !dragState && !pinDrag) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (pos) {
         // Only show preview if cursor is inside the deck usable area
@@ -919,7 +919,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || (mode === 'manual' && activeStamp)
+      : placingLashingPoint || activeStamp
         ? 'crosshair'
         : 'default'
 
@@ -965,7 +965,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || activeStamp ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1460,8 +1460,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             )
           })()}
 
-        {/* Manual mode: preview stamp at cursor */}
-        {mode === 'manual' && activeStamp && stampDims && hoverPos && !dragState && (
+        {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
+        {activeStamp && stampDims && hoverPos && !dragState && (
           <rect
             x={toX(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).x)}
             y={toY(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).y)}
