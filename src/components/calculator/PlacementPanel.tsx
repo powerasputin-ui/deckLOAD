@@ -24,7 +24,7 @@ import {
   CardDescription,
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useCalculator, PRESETS } from '@/store/calculator'
+import { useCalculator, PRESETS, PALETTE } from '@/store/calculator'
 import type { CargoItem, PackVariant } from '@/lib/packing'
 import { rotatePlacement } from '@/lib/packing'
 import { cn } from '@/lib/utils'
@@ -244,23 +244,17 @@ export function PlacementPanel({
             {openPresetCategory && (
               <div className="space-y-1">
                 {PRESETS[openPresetCategory].items.map((tpl, i) => {
-                  const active = pendingPresetStamp?.name === tpl.name
+                  const color = PALETTE[i % PALETTE.length]
                   return (
-                    <button
+                    <PresetTemplateRow
                       key={i}
-                      onClick={() => setPendingPresetStamp(active ? null : tpl)}
-                      className={cn(
-                        'w-full flex items-center justify-between gap-2 rounded-md border px-2 py-1 text-left transition-colors',
-                        active
-                          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
-                          : 'border-border hover:bg-accent'
-                      )}
-                    >
-                      <span className="text-[11px] font-medium truncate">{tpl.name}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {tpl.width}×{tpl.length} м
-                      </span>
-                    </button>
+                      template={tpl}
+                      color={color}
+                      active={pendingPresetStamp?.name === tpl.name}
+                      onSelect={() =>
+                        setPendingPresetStamp(pendingPresetStamp?.name === tpl.name ? null : { ...tpl, color })
+                      }
+                    />
                   )
                 })}
               </div>
@@ -375,6 +369,42 @@ export function PlacementPanel({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function PresetTemplateRow({
+  template,
+  color,
+  active,
+  onSelect,
+}: {
+  template: Partial<CargoItem>
+  color: string
+  active: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
+        active
+          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+          : 'border-border hover:bg-accent'
+      )}
+    >
+      <span
+        className="h-7 w-7 shrink-0 rounded-md border border-black/10"
+        style={{ backgroundColor: color }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-medium truncate">{template.name}</div>
+        <div className="text-[10px] text-muted-foreground">
+          {template.width}×{template.length}
+        </div>
+      </div>
+      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
+    </button>
   )
 }
 

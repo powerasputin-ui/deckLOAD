@@ -375,20 +375,15 @@ export default function Home() {
     [items]
   )
 
-  // Preview color for a not-yet-created preset template — cosmetic only,
-  // the real item gets its actual color from nextColor at creation time.
-  const pendingPresetPreviewColor = useMemo(
-    () => PALETTE[items.length % PALETTE.length],
-    [items.length]
-  )
-
   const activeStamp = useMemo(() => {
     if (pendingPresetStamp) {
       return {
         id: '__pending-preset__',
         width: pendingPresetStamp.width ?? 2,
         length: pendingPresetStamp.length ?? 1.2,
-        color: pendingPresetPreviewColor,
+        // Matches the color swatch shown on the preset row it was armed
+        // from — the real item keeps this same color when created.
+        color: pendingPresetStamp.color ?? PALETTE[items.length % PALETTE.length],
         name: pendingPresetStamp.name ?? 'Груз',
         weight: pendingPresetStamp.weight,
       }
@@ -397,7 +392,7 @@ export default function Home() {
     const it = items.find((x) => x.id === activeStampId)
     if (!it) return null
     return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
-  }, [activeStampId, pendingPresetStamp, pendingPresetPreviewColor, items])
+  }, [activeStampId, pendingPresetStamp, items])
 
   // NOTE: deck-geometry changes (gap/boardOffset/width/length/clearance) no
   // longer trigger a repack here — that used to duplicate and silently
