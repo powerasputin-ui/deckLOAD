@@ -869,13 +869,9 @@ function MiniNumField({
 
 function PresetsSection() {
   const loadPreset = useCalculator((s) => s.loadPreset)
-  const currentUnit = useCalculator((s) => s.deck.unit)
   const handleLoad = (name: 'containers' | 'pallets' | 'vehicles' | 'mixed', label: string) => {
-    if (currentUnit !== 'm') {
-      toast.info('Единицы измерения сброшены на метры')
-    }
     loadPreset(name)
-    toast.success(`${label} загружен`)
+    toast.success(`${label} добавлен`)
   }
   return (
     <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>

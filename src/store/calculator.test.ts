@@ -142,7 +142,23 @@ describe('calculator store', () => {
     s.loadPreset('pallets')
     const state = useCalculator.getState()
     expect(state.items.length).toBeGreaterThan(0)
-    expect(state.deck.width).toBe(10)
+  })
+
+  it('loadPreset adds to existing items/deck/placements instead of wiping them (regression: picking a second preset used to reset everything)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 15, length: 7 })
+    s.loadPreset('containers')
+    const item = useCalculator.getState().items[0]
+    s.pinFromPlaced(0, {
+      itemId: item.id, name: item.name, x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: item.color,
+    })
+    const itemCountAfterFirst = useCalculator.getState().items.length
+
+    s.loadPreset('pallets')
+    const state = useCalculator.getState()
+    expect(state.deck.width).toBe(15)
+    expect(state.items.length).toBeGreaterThan(itemCountAfterFirst)
+    expect(state.pinnedPlacementsByTrip[0]).toHaveLength(1)
   })
 
   it('duplicates an item', () => {

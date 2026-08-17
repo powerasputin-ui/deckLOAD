@@ -561,14 +561,21 @@ export const useCalculator = create<CalculatorState>()(
   toggleFreeSpace: () => set((s) => ({ showFreeSpace: !s.showFreeSpace })),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
-  loadPreset: (preset) => {
-    const p = PRESETS[preset]
-    if (!p) return
-    const items = p.items.map((partial) =>
-      makeItem([], partial)
-    )
-    set({ deck: { ...p.deck }, items, manualPlacements: [], pinnedPlacementsByTrip: {}, separationRules: [], selectedPinIds: [], selectedManualIds: [], activeStampId: null })
-  },
+  // Adds the preset's cargo to whatever is already on the deck — deck size,
+  // existing items, and placements are left untouched. A preset used to
+  // replace all of that wholesale, which meant picking a second preset after
+  // already placing cargo from the first silently wiped everything.
+  loadPreset: (preset) =>
+    set((s) => {
+      const p = PRESETS[preset]
+      if (!p) return s
+      // Build up the accumulator as we go (not just s.items) so each new
+      // item's color/fallback-name index accounts for the ones already
+      // added in this same batch, not just the pre-existing list.
+      const items = [...s.items]
+      for (const partial of p.items) items.push(makeItem(items, partial))
+      return { items }
+    }),
   setMode: (m) =>
     set(() => ({
       mode: m,
