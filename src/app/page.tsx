@@ -259,6 +259,7 @@ export default function Home() {
       showLabels: proj.showLabels,
       activeStampId: null,
       pendingPresetStamp: null,
+      activePresetCategory: null,
       stampRotated: false,
     })
     // A different project's undo history shouldn't leak into this one — an
@@ -428,6 +429,7 @@ export default function Home() {
       mode: 'auto',
       activeStampId: null,
       pendingPresetStamp: null,
+      activePresetCategory: null,
       stampRotated: false,
     })
     clearCalculatorHistory()
@@ -451,6 +453,7 @@ export default function Home() {
       mode: 'auto',
       activeStampId: null,
       pendingPresetStamp: null,
+      activePresetCategory: null,
     })
     clearCalculatorHistory()
     prevOverloadCountRef.current = 0
@@ -801,6 +804,7 @@ export default function Home() {
         selectedPinIds: [],
         activeStampId: null,
         pendingPresetStamp: null,
+        activePresetCategory: null,
       })
       toast.info('Ручной режим — размещения сохранены')
     } else {
@@ -826,6 +830,7 @@ export default function Home() {
         selectedPinIds: [],
         activeStampId: null,
         pendingPresetStamp: null,
+        activePresetCategory: null,
       })
       toast.info('Авто-режим — размещения сохранены как закреплённые')
     }
@@ -1077,6 +1082,7 @@ export default function Home() {
                       // defines it as "wanted", so the aggregate quantity cap below
                       // doesn't apply here; resolve the real item id first.
                       let itemId = p.itemId
+                      const wasPendingPreset = !!pendingPresetStamp
                       if (pendingPresetStamp) {
                         itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
                       } else {
@@ -1097,6 +1103,15 @@ export default function Home() {
                         useCalculator.getState().addManualPlacement(placement)
                       } else {
                         pinFromPlaced(clampedTripIndex, placement)
+                      }
+                      // Hand off from the preset template to the real item —
+                      // the deck panel switches from showing the preset
+                      // catalog back to the normal cargo list, with this
+                      // item now visibly armed there so repeated clicks
+                      // keep placing more of it.
+                      if (wasPendingPreset) {
+                        setActiveStamp(itemId)
+                        useCalculator.getState().setActivePresetCategory(null)
                       }
                     }}
                     onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}

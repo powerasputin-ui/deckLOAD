@@ -28,6 +28,7 @@ import {
   Box,
   Undo2,
   Redo2,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -52,7 +53,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, type Unit, PRESETS } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   VESSEL_MOTION_PRESETS,
@@ -349,6 +350,10 @@ export function Sidebar({
 
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
+
+        {/* Presets — pick a category, the deck panel on the right shows
+            that category's catalog for click-to-place */}
+        <PresetsSection />
       </div>
 
       {/* Footer settings (display toggles + reset-to-demo) */}
@@ -831,6 +836,34 @@ function LashingPointsSection() {
             {' '}точек с расчётом: {attachedCount}
           </p>
         )}
+      </div>
+    </Section>
+  )
+}
+
+function PresetsSection() {
+  const activePresetCategory = useCalculator((s) => s.activePresetCategory)
+  const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
+
+  return (
+    <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>
+      <div className="space-y-1.5">
+        <p className="text-[10px] text-muted-foreground leading-tight">
+          Выберите категорию — её каталог появится справа, в панели размещения груза.
+        </p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {Object.entries(PRESETS).map(([key, cat]) => (
+            <Button
+              key={key}
+              variant={activePresetCategory === key ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
+            >
+              {cat.label}
+            </Button>
+          ))}
+        </div>
       </div>
     </Section>
   )

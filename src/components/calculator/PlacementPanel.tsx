@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import {
   Pin,
   RotateCw,
@@ -63,10 +62,10 @@ export function PlacementPanel({
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
   const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
+  const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
   const deck = useCalculator((s) => s.deck)
-  const [openPresetCategory, setOpenPresetCategory] = useState<string | null>(null)
 
   // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
@@ -197,12 +196,23 @@ export function PlacementPanel({
           </div>
         )}
 
-        {/* Stamp selector — click-to-place works in both modes now */}
+        {/* Stamp selector — click-to-place works in both modes now.
+            Switches between two views: the preset catalog (while a category
+            is picked in the left sidebar) and the normal "my cargo" list.
+            Placing something from the catalog switches back to the normal
+            list automatically — see the wasPendingPreset handoff in page.tsx. */}
         <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <Package className="h-3.5 w-3.5" />
-            Выбор груза для размещения
-          </div>
+          {activePresetCategory ? (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Sparkles className="h-3.5 w-3.5" />
+              Пресет: {PRESETS[activePresetCategory]?.label}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Package className="h-3.5 w-3.5" />
+              Выбор груза для размещения
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -219,31 +229,10 @@ export function PlacementPanel({
             Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
           </p>
 
-          {/* Preset catalog — pick a category to reveal its standard cargo
-              types, click one to arm it the same way as an existing item
-              below. The real CargoItem is only created once it's actually
-              placed on the deck, not at selection time here. */}
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-              <Sparkles className="h-3 w-3" />
-              Пресеты
-            </div>
-            <div className="grid grid-cols-2 gap-1">
-              {Object.entries(PRESETS).map(([key, cat]) => (
-                <Button
-                  key={key}
-                  variant={openPresetCategory === key ? 'secondary' : 'outline'}
-                  size="sm"
-                  className="h-6 text-[11px]"
-                  onClick={() => setOpenPresetCategory(openPresetCategory === key ? null : key)}
-                >
-                  {cat.label}
-                </Button>
-              ))}
-            </div>
-            {openPresetCategory && (
+          {activePresetCategory ? (
+            <ScrollArea className="h-[200px] pr-1">
               <div className="space-y-1">
-                {PRESETS[openPresetCategory].items.map((tpl, i) => {
+                {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
                   const color = PALETTE[i % PALETTE.length]
                   return (
                     <PresetTemplateRow
@@ -258,15 +247,8 @@ export function PlacementPanel({
                   )
                 })}
               </div>
-            )}
-            {pendingPresetStamp && (
-              <p className="text-[10px] text-muted-foreground leading-tight">
-                «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
-              </p>
-            )}
-          </div>
-
-          {items.length === 0 ? (
+            </ScrollArea>
+          ) : items.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-2">
               Сначала добавьте грузы
             </p>
@@ -284,6 +266,11 @@ export function PlacementPanel({
                 ))}
               </div>
             </ScrollArea>
+          )}
+          {pendingPresetStamp && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
+            </p>
           )}
         </div>
 

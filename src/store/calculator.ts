@@ -94,6 +94,12 @@ interface CalculatorState {
   // addOrIncrementCargoFromTemplate) only at the moment it's actually placed
   // on the deck, not when picked from the catalog.
   pendingPresetStamp: Partial<CargoItem> | null
+  // Which preset category is currently shown in the deck panel's stamp
+  // picker, replacing the normal "my cargo" list with that category's
+  // catalog. Cleared automatically once something is actually placed, so
+  // the panel snaps back to showing real cargo instead of staying stuck
+  // on the catalog view.
+  activePresetCategory: string | null
   stampRotated: boolean
   placingLashingPoint: boolean
 
@@ -112,6 +118,7 @@ interface CalculatorState {
   setMode: (m: Mode) => void
   setActiveStamp: (id: string | null) => void
   setPendingPresetStamp: (template: Partial<CargoItem> | null) => void
+  setActivePresetCategory: (key: string | null) => void
   // Finds a cargo item matching the template's name and bumps its quantity
   // by 1, or creates a new one with quantity 1 — used only when a preset
   // catalog item is actually placed on the deck, never at selection time.
@@ -304,6 +311,7 @@ export const useCalculator = create<CalculatorState>()(
   selectedManualIds: [],
   activeStampId: null,
   pendingPresetStamp: null,
+  activePresetCategory: null,
   stampRotated: false,
   placingLashingPoint: false,
 
@@ -578,11 +586,13 @@ export const useCalculator = create<CalculatorState>()(
       mode: m,
       activeStampId: null,
       pendingPresetStamp: null,
+      activePresetCategory: null,
       selectedPinIds: [],
       selectedManualIds: [],
     })),
   setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null }),
   setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null }),
+  setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
     let id = ''
     set((s) => {
