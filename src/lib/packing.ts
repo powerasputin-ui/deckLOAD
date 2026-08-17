@@ -21,6 +21,7 @@ export interface CargoItem {
   allowRotation: boolean
   weight?: number
   category?: string // free-text cargo category (e.g. "Опасный груз") used by separation rules
+  shape?: 'box' | 'cylinder' // 3D render hint (Deck3DView); defaults to 'box'. Footprint/packing math is unaffected — a cylinder still packs by its rectangular bounding box.
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -251,6 +252,7 @@ export interface PlacedItem {
   color: string
   weight?: number
   index: number
+  shape?: 'box' | 'cylinder'
 }
 
 export interface UnplacedItem {
@@ -533,6 +535,7 @@ export function packDeck(
   }))
   const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
+  const shapeByItemId = new Map(items.map((it) => [it.id, it.shape]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -661,6 +664,7 @@ export function packDeck(
       color: pin.color,
       weight: pin.weight,
       index: index++,
+      shape: shapeByItemId.get(pin.itemId),
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
@@ -840,6 +844,7 @@ export function packDeck(
       color: item.color,
       weight: item.weight,
       index: stackIdx++,
+      shape: item.shape,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -1364,10 +1369,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: 'box' | 'cylinder' }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0 })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape })
     }
   }
 
@@ -1385,6 +1390,7 @@ export function packingResultFromManual(
     color: p.color,
     weight: p.weight,
     index: i,
+    shape: itemMap.get(p.itemId)?.shape,
   }))
 
   // Breakdown by itemId

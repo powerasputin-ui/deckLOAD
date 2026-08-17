@@ -278,8 +278,8 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
     items: [
       { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, allowRotation: true, weight: 800 },
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
-      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, allowRotation: false, weight: 220 },
-      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, allowRotation: false, weight: 600 },
+      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, allowRotation: false, weight: 220, shape: 'cylinder', color: '#5c3a21' },
+      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, allowRotation: false, weight: 600, shape: 'cylinder', color: '#4b5563' },
     ],
   },
 }
@@ -298,6 +298,13 @@ export const PRESET_TEMPLATE_COLORS: Record<string, string> = (() => {
     for (const item of category.items) {
       const name = item.name
       if (!name || colors[name]) continue
+      // A template can pin its own real-world color (e.g. a pipe should
+      // look dark grey, a barrel dark brown) instead of an arbitrary
+      // palette cycle — honor that before auto-assigning one.
+      if (item.color) {
+        colors[name] = item.color
+        continue
+      }
       colors[name] = PALETTE[next % PALETTE.length]
       next++
     }

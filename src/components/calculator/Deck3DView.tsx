@@ -32,13 +32,13 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
   const SHRINK = 0.94
 
   const boxes = useMemo(() => {
-    const out: { key: string; w: number; d: number; h: number; x: number; y: number; z: number; color: string }[] = []
+    const out: { key: string; w: number; d: number; h: number; x: number; y: number; z: number; color: string; shape?: 'box' | 'cylinder' }[] = []
     for (const p of result.placed) {
       const x = p.x + p.width / 2 - deckWidth / 2
       const z = p.y + p.length / 2 - deckLength / 2
       const layers = Math.max(1, p.stackedCount)
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${p.index}`, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x, y: 0.15, z, color: p.color })
+        out.push({ key: `${p.itemId}-${p.index}`, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x, y: 0.15, z, color: p.color, shape: p.shape })
         continue
       }
       // A small gap between tiers (proportional to tier height, capped so it
@@ -56,6 +56,7 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
           z,
           y: layer * tierPitch + p.height / 2,
           color: p.color,
+          shape: p.shape,
         })
       }
     }
@@ -80,13 +81,39 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
           <Edges color="#1e293b" />
         </mesh>
 
-        {boxes.map((b) => (
-          <mesh key={b.key} position={[b.x, b.y, b.z]}>
-            <boxGeometry args={[b.w, b.h, b.d]} />
-            <meshStandardMaterial color={b.color} />
-            <Edges color="#0f172a" />
-          </mesh>
-        ))}
+        {boxes.map((b) => {
+          if (b.shape !== 'cylinder') {
+            return (
+              <mesh key={b.key} position={[b.x, b.y, b.z]}>
+                <boxGeometry args={[b.w, b.h, b.d]} />
+                <meshStandardMaterial color={b.color} />
+                <Edges color="#0f172a" />
+              </mesh>
+            )
+          }
+          // A cylinder's own geometry axis runs along Y. A barrel-shaped
+          // footprint (roughly square, tall) keeps that default orientation
+          // standing up. A pipe-shaped footprint (one dimension much longer
+          // than the other, both much larger than its height) instead lies
+          // on its side — rotated so the cylinder's axis runs along whichever
+          // of width/depth is the long one, with the radius taken from the
+          // short footprint dimension (its round cross-section).
+          const longSpan = Math.max(b.w, b.d)
+          const shortSpan = Math.min(b.w, b.d)
+          const isPipe = longSpan > shortSpan * 1.5 && longSpan > b.h * 1.5
+          const radius = isPipe ? Math.min(shortSpan, b.h) / 2 : shortSpan / 2
+          const cylinderLength = isPipe ? longSpan : b.h
+          const rotation: [number, number, number] = isPipe
+            ? (b.w >= b.d ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0])
+            : [0, 0, 0]
+          return (
+            <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={rotation}>
+              <cylinderGeometry args={[radius, radius, cylinderLength, 24]} />
+              <meshStandardMaterial color={b.color} />
+              <Edges color="#0f172a" />
+            </mesh>
+          )
+        })}
 
         <OrbitControls
           makeDefault
