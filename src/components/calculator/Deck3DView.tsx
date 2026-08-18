@@ -65,6 +65,18 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
 
   const maxDim = Math.max(deckWidth, deckLength, 1)
 
+  // minDistance used to be based purely on the deck's own size (maxDim),
+  // so on a full-size deck the camera could never get closer than several
+  // metres — nowhere near close enough to tell a 0.5-1m barrel/pipe's
+  // rounded shape apart from a box at a glance, no matter how far a user
+  // scrolled in. Let the camera approach small cargo much more closely
+  // when it's present, without changing the existing zoom range for decks
+  // that only have large cargo (containers/pallets) on them.
+  const minCargoDim = result.placed.length
+    ? Math.min(...result.placed.flatMap((p) => [p.width, p.length, p.height || 0.3]))
+    : maxDim
+  const minDistance = Math.min(maxDim * 0.3, Math.max(0.5, minCargoDim * 1.2))
+
   return (
     <div className="w-full rounded-lg border overflow-hidden bg-slate-100" style={{ height: 480 }}>
       <Canvas
@@ -118,7 +130,7 @@ export default function Deck3DView({ result, deckWidth, deckLength }: Deck3DView
         <OrbitControls
           makeDefault
           maxPolarAngle={Math.PI / 2 - 0.02}
-          minDistance={maxDim * 0.3}
+          minDistance={minDistance}
           maxDistance={maxDim * 4}
         />
       </Canvas>
