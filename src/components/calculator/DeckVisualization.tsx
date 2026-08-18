@@ -417,6 +417,33 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const toY = (v: number) => offY + v * scale
   const fmt = fmtNumber
 
+  // The rotate/delete/layer +/- controls anchor to an item's own corners in
+  // screen space — fine for normal cargo, but a thin item like a pipe
+  // (e.g. 9.5 x 0.15m) renders its short side as a near-zero pixel span, so
+  // two opposite corners collapse onto the same point and the controls pile
+  // up on top of each other. Anchor to a box centered on the item instead,
+  // clamped to a minimum on-screen span, so controls always have room to
+  // sit apart regardless of how thin the real footprint is.
+  const MIN_CONTROL_SPAN = 44
+  const controlAnchors = (x: number, y: number, width: number, length: number) => {
+    const left = toX(x)
+    const top = toY(y)
+    const pxW = toX(x + width) - left
+    const pxH = toY(y + length) - top
+    const effW = Math.max(pxW, MIN_CONTROL_SPAN)
+    const effH = Math.max(pxH, MIN_CONTROL_SPAN)
+    const ccx = left + pxW / 2
+    const ccy = top + pxH / 2
+    return {
+      rcx: ccx - effW / 2,
+      rcy: ccy - effH / 2,
+      dcx: ccx + effW / 2,
+      dcy: ccy - effH / 2,
+      lcx: ccx + effW / 2,
+      lcy: ccy + effH / 2,
+    }
+  }
+
   const stampDims = activeStamp
     ? stampRotated
       ? { w: activeStamp.length, l: activeStamp.width }
@@ -1273,13 +1300,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           (() => {
             const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
             if (!pin) return null
-            const rcx = toX(pin.x)
-            const rcy = toY(pin.y)
-            const dcx = toX(pin.x + pin.width)
-            const dcy = toY(pin.y)
-            // Layer buttons positioned at top-right and bottom-right
-            const lcx = toX(pin.x + pin.width)
-            const lcy = toY(pin.y + pin.length)
+            const { rcx, rcy, dcx, dcy, lcx, lcy } = controlAnchors(pin.x, pin.y, pin.width, pin.length)
             const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
             const canInc = layerInfo?.canIncrease ?? true
@@ -1369,12 +1390,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           (() => {
             const mp = manualPlacements.find((m) => m.id === selectedManual)
             if (!mp) return null
-            const rcx = toX(mp.x)
-            const rcy = toY(mp.y)
-            const dcx = toX(mp.x + mp.width)
-            const dcy = toY(mp.y)
-            const lcx = toX(mp.x + mp.width)
-            const lcy = toY(mp.y + mp.length)
+            const { rcx, rcy, dcx, dcy, lcx, lcy } = controlAnchors(mp.x, mp.y, mp.width, mp.length)
             const currentLayers = Math.max(1, mp.layers)
             const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
@@ -1566,8 +1582,11 @@ function PlacedRect({
     >
       {/* Stacked-layers cue: faint offset "ghost" outlines behind the main
           box, so a multi-layer footprint visually reads as a physical pile
-          rather than just the small "×N" badge. */}
-      {item.layers > 1 && w >= 16 && h >= 16 && (
+          rather than just the small "×N" badge. Round cargo (pipes/barrels)
+          gets its own schematic "bundle of circles" glyph instead — see
+          below — since a rectangular ghost-outline reads wrong for round
+          stock, and a thin pipe's real w/h is often sub-pixel anyway. */}
+      {item.layers > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <g className="pointer-events-none" opacity={0.5}>
           <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
           {item.layers > 2 && (
@@ -1624,7 +1643,38 @@ function PlacedRect({
           </text>
         </>
       )}
-      {item.layers > 1 && w >= 16 && h >= 16 && (
+      {item.layers > 1 && item.shape === 'cylinder' && (() => {
+        // Schematic "bundle of pipes" glyph — a row of small circles (one
+        // per unit, up to however many fit) instead of a numeric badge, so
+        // "several round items are stacked here" reads at a glance even
+        // when the item itself renders far too thin on screen to show its
+        // real cross-section (a 0.15m pipe is sub-pixel at deck scale).
+        // Anchored to a minimum on-screen span so it doesn't collapse for
+        // hairline-thin footprints, same reasoning as controlAnchors above.
+        const dia = 7
+        const gap = 2
+        const glyphW = Math.max(w, 30)
+        const cx = x + w / 2
+        const cy = y + h / 2
+        const maxFit = Math.max(1, Math.floor((glyphW + gap) / (dia + gap)))
+        const overflow = item.layers > maxFit
+        const circleCount = overflow ? maxFit - 1 : item.layers
+        const startX = cx - ((circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap) / 2 + dia / 2
+        return (
+          <g className="pointer-events-none">
+            <rect x={startX - dia / 2 - 2} y={cy - dia / 2 - 2} width={(circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap + 4} height={dia + 4} rx={3} fill="rgba(0,0,0,0.45)" />
+            {Array.from({ length: circleCount }).map((_, i) => (
+              <circle key={i} cx={startX + i * (dia + gap)} cy={cy} r={dia / 2} fill={item.color} stroke="#fff" strokeWidth={1} />
+            ))}
+            {overflow && (
+              <text x={startX + circleCount * (dia + gap)} y={cy + 3} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+                +{item.layers - circleCount}
+              </text>
+            )}
+          </g>
+        )
+      })()}
+      {item.layers > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <g className="pointer-events-none">
           <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
           <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">

@@ -35,7 +35,6 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -872,28 +871,30 @@ function PresetsSection() {
           })()}
         </div>
         {activePresetCategory && (
-          <ScrollArea className="h-[200px] pr-1">
-            <div className="space-y-1">
-              {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
-                // not per row position — so the same type always shows the
-                // same color regardless of which category list it's viewed
-                // from, and the real item created on placement keeps this
-                // exact color (see addOrIncrementCargoFromTemplate).
-                const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
-                const active = pendingPresetStamp?.name === tpl.name
-                return (
-                  <PresetTemplateRow
-                    key={i}
-                    template={tpl}
-                    color={color}
-                    active={active}
-                    onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
-                  />
-                )
-              })}
-            </div>
-          </ScrollArea>
+          // No fixed-height inner scrollbox — the list just flows like every
+          // other section, so it extends down naturally and only the
+          // sidebar's own outer scroll (already flex-1 overflow-y-auto)
+          // kicks in once total content is too tall to fit.
+          <div className="space-y-1">
+            {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
+              // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
+              // not per row position — so the same type always shows the
+              // same color regardless of which category list it's viewed
+              // from, and the real item created on placement keeps this
+              // exact color (see addOrIncrementCargoFromTemplate).
+              const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
+              const active = pendingPresetStamp?.name === tpl.name
+              return (
+                <PresetTemplateRow
+                  key={i}
+                  template={tpl}
+                  color={color}
+                  active={active}
+                  onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
+                />
+              )
+            })}
+          </div>
         )}
         {pendingPresetStamp && (
           <p className="text-[10px] text-muted-foreground leading-tight">
