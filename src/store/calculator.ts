@@ -6,6 +6,7 @@ import {
   clampToDeck,
   collidesWith,
   withClearanceFootprint,
+  lashingExclusionRects,
   resolveSnappedDragPosition,
   maxLayersFor,
   violatesSeparation,
@@ -440,7 +441,7 @@ export const useCalculator = create<CalculatorState>()(
       let layersClamped = false
       let stillColliding = false
 
-      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: number }>(
+      const reflow = <T extends { id: string; x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: number }>(
         list: T[]
       ): T[] => {
         const placed: T[] = []
@@ -455,7 +456,9 @@ export const useCalculator = create<CalculatorState>()(
             }
           }
           const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
-          const others = placed.map((p) => withClearanceFootprint(p))
+          const others = placed
+            .map((p) => withClearanceFootprint(p))
+            .concat(lashingExclusionRects(s.deck.lashingPoints ?? [], item.id))
           const needsResolve = collidesWith(
             { ...clamped, width: item.width, length: item.length },
             others,
@@ -558,7 +561,14 @@ export const useCalculator = create<CalculatorState>()(
             width: conv(z.width),
             length: conv(z.length),
           })),
-          lashingPoints: s.deck.lashingPoints?.map((p) => ({ ...p, x: conv(p.x), y: conv(p.y) })),
+          lashingPoints: s.deck.lashingPoints?.map((p) => ({
+            ...p,
+            x: conv(p.x),
+            y: conv(p.y),
+            cornerX: p.cornerX === undefined ? undefined : conv(p.cornerX),
+            cornerY: p.cornerY === undefined ? undefined : conv(p.cornerY),
+            blockMargin: p.blockMargin === undefined ? undefined : conv(p.blockMargin),
+          })),
         },
         items: s.items.map((it) => ({
           ...it,

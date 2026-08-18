@@ -918,6 +918,12 @@ function LashingPointsSection() {
                       onChange={(v) => updateLashingPoint(p.id, { verticalAngleDeg: v })}
                     />
                   </div>
+                  <MiniNumField
+                    label="Блок-зона"
+                    value={p.blockMargin ?? 0}
+                    unit={unit}
+                    onChange={(v) => updateLashingPoint(p.id, { blockMargin: v })}
+                  />
                 </>
               )}
             </div>

@@ -9,6 +9,7 @@ import {
   clampToDeck,
   collidesWith,
   withClearanceFootprint,
+  lashingExclusionRects,
   resolveSnappedDragPosition,
   checkLoadDensity,
   checkLashingBalance,
@@ -546,6 +547,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       toast.warning('Здесь нельзя разместить — зона отступа другого груза')
       return
     }
+    const lashingRects = lashingExclusionRects(lashingPoints ?? [])
+    if (collidesWith(target, lashingRects, gap)) {
+      toast.warning('Здесь нельзя — рядом чужая точка крепления')
+      return
+    }
     const category = categoryByItemId?.get(activeStamp.id)
     if (category && separationRules && separationRules.length > 0) {
       const othersWithCategory = renderedItems.map((m) => ({
@@ -755,6 +761,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const others = manualPlacements
             .filter((m) => m.id !== dragState.id)
             .map((m) => withClearanceFootprint(m))
+            .concat(lashingExclusionRects(lashingPoints ?? [], dragState.id))
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
@@ -830,6 +837,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const others = pinnedPlacements
           .filter((p) => p.id !== pinDrag.id)
           .map((p) => withClearanceFootprint(p))
+          .concat(lashingExclusionRects(lashingPoints ?? [], pinDrag.id))
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
@@ -1192,6 +1200,53 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     className="select-none"
                   >
                     {fmt(margin)} {UNIT_LABEL[unit]}
+                  </text>
+                )}
+              </g>
+            )
+          })}
+
+        {/* Hard-blocking exclusion zones around lashing points with a
+            blockMargin set — same visual language as the clearance zone
+            above (red dashed rect), drawn around the corner→anchor corridor
+            instead of around a whole placement. Only drawn when blockMargin
+            > 0 so the vast majority of existing points (no block zone) don't
+            clutter the screen. */}
+        {(lashingPoints ?? [])
+          .filter((pt) => (pt.blockMargin ?? 0) > 0)
+          .map((pt) => {
+            const m = pt.blockMargin!
+            const hasCorner = pt.cornerX !== undefined && pt.cornerY !== undefined
+            const x0 = hasCorner ? Math.min(pt.cornerX!, pt.x) : pt.x
+            const x1 = hasCorner ? Math.max(pt.cornerX!, pt.x) : pt.x
+            const y0 = hasCorner ? Math.min(pt.cornerY!, pt.y) : pt.y
+            const y1 = hasCorner ? Math.max(pt.cornerY!, pt.y) : pt.y
+            const zx = toX(x0 - m)
+            const zy = toY(y0 - m)
+            const zw = (x1 - x0 + m * 2) * scale
+            const zh = (y1 - y0 + m * 2) * scale
+            return (
+              <g key={`lash-block-${pt.id}`} className="pointer-events-none">
+                <rect
+                  x={zx}
+                  y={zy}
+                  width={zw}
+                  height={zh}
+                  fill="none"
+                  stroke="rgba(220,38,38,0.5)"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 3"
+                />
+                {zw > 30 && zh > 16 && (
+                  <text
+                    x={zx + 4}
+                    y={zy + 13}
+                    fontSize={10}
+                    fontWeight={600}
+                    fill="rgba(185,28,28,0.9)"
+                    className="select-none"
+                  >
+                    {fmt(m)} {UNIT_LABEL[unit]}
                   </text>
                 )}
               </g>

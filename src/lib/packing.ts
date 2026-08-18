@@ -100,6 +100,7 @@ export interface LashingPoint {
   verticalAngleDeg?: number // angle of the lashing off the deck plane, default 45
   mslKg?: number // rated Maximum Securing Load of this device
   deviceType?: LashingDeviceType
+  blockMargin?: number // hard-block exclusion radius (m) around the anchor + corridor along the line
 }
 
 // Typical securing devices with their rated MSL (kg) — selecting one
@@ -473,6 +474,7 @@ export interface PackOptions {
   clearance?: number // max stack height above deck (0 = single tier)
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
+  lashingPoints?: LashingPoint[] // hard-block exclusion zones around lashing anchors/corridors
 }
 
 export interface PinnedPlacement {
@@ -524,6 +526,7 @@ export function packDeck(
   )
   const pinned = typeof options === 'string' ? [] : options.pinned ?? []
   const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
+  const lashingPoints = typeof options === 'string' ? [] : options.lashingPoints ?? []
 
   // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
   const safeDeckWidth = toFinite(deckWidth, 0)
@@ -609,10 +612,15 @@ export function packDeck(
       })
       continue
     }
-    const overlapsAccepted = acceptedPins.some((ap) =>
-      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
-      collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
+    const acceptedLashingRects = lashingExclusionRects(
+      lashingPoints.filter((lp) => acceptedPins.some((ap) => ap.id === lp.placementId))
     )
+    const overlapsAccepted =
+      acceptedPins.some((ap) =>
+        collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
+        collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
+      ) ||
+      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, acceptedLashingRects, gap)
     if (overlapsAccepted) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -663,6 +671,14 @@ export function packDeck(
       },
       freeRects
     )
+    // Also reserve this pin's own lashing-point exclusion zones so the
+    // auto-packer never offers that space to algorithmically-placed cargo.
+    for (const rect of lashingExclusionRects(lashingPoints.filter((lp) => lp.placementId === pin.id))) {
+      placeRect(
+        { x: rect.x - gap / 2, y: rect.y - gap / 2, width: rect.width + gap, height: rect.length + gap },
+        freeRects
+      )
+    }
     result.placed.push({
       itemId: pin.itemId,
       name: pin.name,
@@ -1176,6 +1192,30 @@ export function withClearanceFootprint<
   const m = p.clearanceMargin ?? 0
   if (m <= 0) return p
   return { x: p.x - m, y: p.y - m, width: p.width + 2 * m, length: p.length + 2 * m }
+}
+
+// Hard-block exclusion rects around lashing points that carry a blockMargin —
+// an AABB of the corner-to-anchor line segment, inflated by the margin. This
+// deliberately approximates a "corridor + circle at the anchor" as a single
+// rectangle rather than introducing capsule/circle geometry, since the rest
+// of the app's hard-collision system (collidesWith) is strictly rectangular.
+export function lashingExclusionRects(
+  points: LashingPoint[],
+  excludePlacementId?: string
+): { x: number; y: number; width: number; length: number }[] {
+  const out: { x: number; y: number; width: number; length: number }[] = []
+  for (const p of points) {
+    const m = p.blockMargin ?? 0
+    if (m <= 0) continue
+    if (excludePlacementId && p.placementId === excludePlacementId) continue
+    const hasCorner = p.cornerX !== undefined && p.cornerY !== undefined
+    const x0 = hasCorner ? Math.min(p.cornerX!, p.x) : p.x
+    const x1 = hasCorner ? Math.max(p.cornerX!, p.x) : p.x
+    const y0 = hasCorner ? Math.min(p.cornerY!, p.y) : p.y
+    const y1 = hasCorner ? Math.max(p.cornerY!, p.y) : p.y
+    out.push({ x: x0 - m, y: y0 - m, width: x1 - x0 + m * 2, length: y1 - y0 + m * 2 })
+  }
+  return out
 }
 
 // Check whether a manual placement collides with any existing one.

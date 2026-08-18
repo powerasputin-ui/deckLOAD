@@ -7,6 +7,7 @@ import {
   maxLayersFor,
   collidesWith,
   withClearanceFootprint,
+  lashingExclusionRects,
   clampToDeck,
   rotatePlacement,
   resolveSnappedDragPosition,
@@ -440,6 +441,36 @@ describe('withClearanceFootprint', () => {
     // Far enough outside the 1m margin.
     const farAway = { x: 8, y: 5, width: 1, length: 1 }
     expect(collidesWith(farAway, [withClearanceFootprint(guarded)])).toBe(false)
+  })
+})
+
+describe('lashingExclusionRects', () => {
+  it('skips points with no blockMargin', () => {
+    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3 }]
+    expect(lashingExclusionRects(points)).toEqual([])
+  })
+
+  it('builds an AABB around the corner-to-anchor line, inflated by the margin', () => {
+    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3, blockMargin: 0.5 }]
+    expect(lashingExclusionRects(points)).toEqual([{ x: 2.5, y: 2.5, width: 3, length: 3 }])
+  })
+
+  it('falls back to a square around the anchor alone when there is no corner', () => {
+    const points = [{ id: 'p1', x: 5, y: 5, blockMargin: 1 }]
+    expect(lashingExclusionRects(points)).toEqual([{ x: 4, y: 4, width: 2, length: 2 }])
+  })
+
+  it('excludes points belonging to the given placement id', () => {
+    const points = [{ id: 'p1', x: 5, y: 5, blockMargin: 1, placementId: 'cargo-a' }]
+    expect(lashingExclusionRects(points, 'cargo-a')).toEqual([])
+    expect(lashingExclusionRects(points, 'cargo-b')).toHaveLength(1)
+  })
+
+  it('blocks placement of other cargo inside the exclusion rect via collidesWith', () => {
+    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3, blockMargin: 0.5 }]
+    const rects = lashingExclusionRects(points)
+    expect(collidesWith({ x: 5.2, y: 5.2, width: 1, length: 1 }, rects)).toBe(true)
+    expect(collidesWith({ x: 10, y: 10, width: 1, length: 1 }, rects)).toBe(false)
   })
 })
 
