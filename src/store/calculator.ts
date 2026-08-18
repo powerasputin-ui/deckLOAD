@@ -299,6 +299,20 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Якорная цепь в корзине', width: 1.5, length: 1.5, height: 1.2, allowRotation: false, weight: 3000 },
     ],
   },
+  // Real cargo with a non-rectangular footprint — 2D/3D actually draw its
+  // true shape (see CargoShape in packing.ts), not just a rectangle with a
+  // shape label. Placeholder generic dimensions/weight since there's no one
+  // "standard" round/triangular/diamond deck cargo the way there is for a
+  // container or pallet.
+  objects: {
+    label: 'Объекты',
+    items: [
+      { name: 'Круг', width: 1.2, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'circle' },
+      { name: 'Треугольник', width: 1.4, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'triangle' },
+      { name: 'Овал', width: 1.6, length: 1.0, height: 0.8, allowRotation: true, weight: 200, shape: 'oval' },
+      { name: 'Ромб', width: 1.4, length: 1.4, height: 0.8, allowRotation: true, weight: 200, shape: 'diamond' },
+    ],
+  },
 }
 
 // One fixed color per template NAME, shared across every category — not per

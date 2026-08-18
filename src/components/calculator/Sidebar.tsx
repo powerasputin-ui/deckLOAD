@@ -940,7 +940,7 @@ function PresetTemplateRow({
   active,
   onSelect,
 }: {
-  template: { name?: string; width?: number; length?: number }
+  template: { name?: string; width?: number; length?: number; shape?: 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond' }
   color: string
   active: boolean
   onSelect: () => void
@@ -956,8 +956,15 @@ function PresetTemplateRow({
       )}
     >
       <span
-        className="h-7 w-7 shrink-0 rounded-md border border-black/10"
-        style={{ backgroundColor: color }}
+        className={cn(
+          'h-7 w-7 shrink-0 border border-black/10',
+          template.shape === 'circle' || template.shape === 'oval' ? 'rounded-full' : 'rounded-md',
+          template.shape === 'diamond' && 'rotate-45'
+        )}
+        style={{
+          backgroundColor: color,
+          clipPath: template.shape === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' : undefined,
+        }}
       />
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium truncate">{template.name}</div>

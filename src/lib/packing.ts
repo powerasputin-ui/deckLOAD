@@ -10,6 +10,12 @@ export interface Rect {
   height: number
 }
 
+// 2D/3D render hint (DeckVisualization, Deck3DView) — defaults to 'box'.
+// Footprint/packing math is unaffected by any of these: every shape still
+// packs, collides and clamps by its rectangular bounding box, exactly like a
+// box. Only what gets *drawn* inside that bounding box differs.
+export type CargoShape = 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond'
+
 export interface CargoItem {
   id: string
   name: string
@@ -21,7 +27,7 @@ export interface CargoItem {
   allowRotation: boolean
   weight?: number
   category?: string // free-text cargo category (e.g. "Опасный груз") used by separation rules
-  shape?: 'box' | 'cylinder' // 3D render hint (Deck3DView); defaults to 'box'. Footprint/packing math is unaffected — a cylinder still packs by its rectangular bounding box.
+  shape?: CargoShape
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -252,7 +258,7 @@ export interface PlacedItem {
   color: string
   weight?: number
   index: number
-  shape?: 'box' | 'cylinder'
+  shape?: CargoShape
 }
 
 export interface UnplacedItem {
@@ -1381,7 +1387,7 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: 'box' | 'cylinder' }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape }>()
   if (items) {
     for (const it of items) {
       itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape })

@@ -38,7 +38,7 @@ interface DeckVisualizationProps {
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   mode: 'auto' | 'manual'
-  activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number } | null
+  activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number; shape?: PlacedItem['shape'] } | null
   stampRotated: boolean
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
@@ -1473,19 +1473,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
         {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
         {activeStamp && stampDims && hoverPos && !dragState && (
-          <rect
-            x={toX(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).x)}
-            y={toY(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).y)}
-            width={stampDims.w * scale}
-            height={stampDims.l * scale}
-            rx={2}
-            fill={activeStamp.color}
-            fillOpacity={0.35}
-            stroke={activeStamp.color}
-            strokeWidth={1.5}
-            strokeDasharray="4 2"
-            pointerEvents="none"
-          />
+          <g pointerEvents="none">
+            <FootprintShape
+              shape={activeStamp.shape}
+              x={toX(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).x)}
+              y={toY(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).y)}
+              w={stampDims.w * scale}
+              h={stampDims.l * scale}
+              fill={activeStamp.color}
+              fillOpacity={0.35}
+              stroke={activeStamp.color}
+              strokeWidth={1.5}
+              strokeDasharray="4 2"
+            />
+          </g>
         )}
 
         {/* Dimension labels */}
@@ -1508,6 +1509,51 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     </div>
   )
 })
+
+// Draws a footprint as its actual shape instead of always a rectangle — a
+// box/cylinder/undefined shape still gets the plain rounded rect (a real
+// cylinder's roundness only shows in 3D; the 2D plan view can't show a
+// side-on pipe's cross-section anyway, see the stacked-layers circle glyph
+// below instead), but 'circle'/'oval'/'triangle'/'diamond' cargo (added for
+// odd-shaped real cargo, not just cylinders) draws its true outline so it
+// reads as its own shape from the top too, not just a labelled square.
+function FootprintShape({
+  shape,
+  x,
+  y,
+  w,
+  h,
+  fill,
+  fillOpacity,
+  stroke,
+  strokeWidth,
+  strokeDasharray,
+}: {
+  shape?: PlacedItem['shape']
+  x: number
+  y: number
+  w: number
+  h: number
+  fill: string
+  fillOpacity: number
+  stroke: string
+  strokeWidth: number
+  strokeDasharray?: string
+}) {
+  const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
+  if (shape === 'circle' || shape === 'oval') {
+    return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
+  }
+  if (shape === 'triangle') {
+    const points = `${x + w / 2},${y} ${x},${y + h} ${x + w},${y + h}`
+    return <polygon points={points} strokeLinejoin="round" {...common} />
+  }
+  if (shape === 'diamond') {
+    const points = `${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}`
+    return <polygon points={points} strokeLinejoin="round" {...common} />
+  }
+  return <rect x={x} y={y} width={w} height={h} rx={2} {...common} />
+}
 
 function PlacedRect({
   item,
@@ -1589,12 +1635,12 @@ function PlacedRect({
           )}
         </g>
       )}
-      <rect
+      <FootprintShape
+        shape={item.shape}
         x={x}
         y={y}
-        width={w}
-        height={h}
-        rx={2}
+        w={w}
+        h={h}
         fill={item.color}
         fillOpacity={hovered ? 0.95 : 0.78}
         stroke={strokeColor}

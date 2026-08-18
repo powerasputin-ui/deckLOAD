@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Edges, Outlines } from '@react-three/drei'
+import { OrbitControls, Edges } from '@react-three/drei'
 import type { PackingResult, ManualPlacement, PinnedPlacement } from '@/lib/packing'
 
 interface PinData {
@@ -25,8 +25,6 @@ interface Deck3DViewProps {
   mode: 'auto' | 'manual'
   manualPlacements: ManualPlacement[]
   pinnedPlacements: PinnedPlacement[]
-  selectedManualIds: string[]
-  selectedPinIds: string[]
   onSelectManual?: (id: string, additive: boolean) => void
   onSelectPin?: (id: string, additive: boolean) => void
   // Auto mode only: clicking a mesh that isn't pinned yet (just placed by the
@@ -46,13 +44,12 @@ const SQRT3 = Math.sqrt(3)
 // cap, 2 = bottom cap.
 const PIPE_CAP_COLOR = '#cbd5e1'
 
-// 3D snapshot of the current layout. Camera rotate/zoom always works; cargo
-// itself is only clickable/selectable when it corresponds to a real
-// placement id (every item in manual mode, only pinned items in auto mode —
-// same restriction the 2D view already has, since auto-placed-by-algorithm
-// items aren't individually addressable). Selection is shared with the 2D
-// view via the same store fields, so picking a box here highlights it there
-// too, and vice versa.
+// 3D snapshot of the current layout — camera rotate/zoom only, no editing.
+// Clicking a mesh still updates the shared selection store (so switching to
+// 2D shows it already selected there, ready for the arrow-key/Space
+// shortcuts or drag), and an auto-mode click on a not-yet-pinned item pins
+// it in place first (mirroring the 2D view's click-to-pin), but nothing in
+// 3D itself moves/rotates cargo or shows a selection highlight.
 export default function Deck3DView({
   result,
   deckWidth,
@@ -60,8 +57,6 @@ export default function Deck3DView({
   mode,
   manualPlacements,
   pinnedPlacements,
-  selectedManualIds,
-  selectedPinIds,
   onSelectManual,
   onSelectPin,
   onPinInPlace,
@@ -88,7 +83,6 @@ export default function Deck3DView({
       placementId?: string
       pinData?: PinData
       color: string
-      shape?: 'box' | 'cylinder'
       x: number
       y: number
       z: number
@@ -98,6 +92,8 @@ export default function Deck3DView({
       radius?: number
       cylLen?: number
       rot?: [number, number, number]
+      radialSegments?: number
+      scaleZ?: number
     }[] = []
 
     // Manual mode's result.placed is built (packingResultFromManual) with
@@ -148,7 +144,7 @@ export default function Deck3DView({
       const layers = Math.max(1, p.stackedCount)
 
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color, shape: p.shape })
+        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color })
         continue
       }
 
@@ -157,6 +153,37 @@ export default function Deck3DView({
       // without visually inflating the stack's true height much.
       const gap = Math.min(0.05, p.height * 0.08)
       const tierPitch = p.height + gap
+
+      // Odd-shaped real cargo (added for the "Объекты" preset category) —
+      // stands upright like a barrel, no pyramid/pipe logic. One shared unit
+      // cylinder geometry (radius 0.5) covers all four: circle/oval use a
+      // smooth 32-sided rim, triangle/diamond use 3/4 sides; the non-uniform
+      // `scaleZ` (relative to the X radius) turns a round cross-section into
+      // an oval, and turns the width×length bounding box into the right
+      // footprint for the others too. Diamond gets an extra 45° spin so a
+      // 4-sided prism reads as a rhombus (a corner pointing along each axis)
+      // instead of an axis-aligned square.
+      const polygonSides: Record<string, number> = { circle: 32, oval: 32, triangle: 3, diamond: 4 }
+      if (p.shape && p.shape in polygonSides) {
+        const radius = p.width / 2
+        for (let layer = 0; layer < layers; layer++) {
+          out.push({
+            key: `${p.itemId}-${thisIdx}-${layer}`,
+            placementId,
+            pinData,
+            radius,
+            cylLen: p.height,
+            rot: [0, p.shape === 'diamond' ? Math.PI / 4 : 0, 0],
+            radialSegments: polygonSides[p.shape],
+            scaleZ: p.length / (p.width || 1),
+            x: cx,
+            z: cz,
+            y: layer * tierPitch + p.height / 2,
+            color: p.color,
+          })
+        }
+        continue
+      }
 
       if (p.shape !== 'cylinder') {
         for (let layer = 0; layer < layers; layer++) {
@@ -171,7 +198,6 @@ export default function Deck3DView({
             z: cz,
             y: layer * tierPitch + p.height / 2,
             color: p.color,
-            shape: p.shape,
           })
         }
         continue
@@ -209,7 +235,6 @@ export default function Deck3DView({
             z: cz,
             y: layer * tierPitch + p.height / 2,
             color: p.color,
-            shape: p.shape,
           })
         }
         continue
@@ -242,7 +267,6 @@ export default function Deck3DView({
             z: cz + (acrossIsX ? 0 : across),
             y: rowY,
             color: p.color,
-            shape: p.shape,
           })
         }
         remaining -= rowCount
@@ -251,11 +275,6 @@ export default function Deck3DView({
     }
     return out
   }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements])
-
-  const selectedSet = useMemo(
-    () => new Set(mode === 'manual' ? selectedManualIds : selectedPinIds),
-    [mode, selectedManualIds, selectedPinIds]
-  )
 
   const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
     if (!placementId) {
@@ -305,19 +324,34 @@ export default function Deck3DView({
         </mesh>
 
         {boxes.map((b) => {
-          // Selection is shown as an outline around the mesh's own silhouette
-          // (not by tinting its material) — a dark preset color stays exactly
-          // that color whether selected or not; only a thin yellow ring gets
-          // added on top. For a cylinder viewed end-on, that ring reads as a
-          // highlighted circle around the pipe's round cross-section.
-          const isSelected = !!b.placementId && selectedSet.has(b.placementId)
+          // No visual selection highlight in 3D — clicking still updates the
+          // shared selection state (so 2D reflects it after switching back),
+          // but nothing here tints or outlines the mesh; cargo always shows
+          // its own true color. 3D stays camera-only for editing (move/
+          // rotate happen in 2D, via drag or the arrow-key/Space shortcuts).
           if (b.radius === undefined) {
             return (
               <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId, b.pinData)}>
                 <boxGeometry args={[b.w!, b.h!, b.d!]} />
                 <meshStandardMaterial color={b.color} />
                 <Edges color="#0f172a" />
-                {isSelected && <Outlines thickness={3} color="#facc15" />}
+              </mesh>
+            )
+          }
+          if (b.radialSegments !== undefined) {
+            // Odd-shaped "Объекты" cargo (circle/oval/triangle/diamond) —
+            // one solid color, no pipe-style end-cap split.
+            return (
+              <mesh
+                key={b.key}
+                position={[b.x, b.y, b.z]}
+                rotation={b.rot}
+                scale={[1, 1, b.scaleZ ?? 1]}
+                onClick={handleClick(b.placementId, b.pinData)}
+              >
+                <cylinderGeometry args={[b.radius, b.radius, b.cylLen, b.radialSegments]} />
+                <meshStandardMaterial color={b.color} />
+                <Edges color="#0f172a" />
               </mesh>
             )
           }
@@ -328,7 +362,6 @@ export default function Deck3DView({
               <meshStandardMaterial attach="material-1" color={PIPE_CAP_COLOR} />
               <meshStandardMaterial attach="material-2" color={PIPE_CAP_COLOR} />
               <Edges color="#0f172a" />
-              {isSelected && <Outlines thickness={3} color="#facc15" />}
             </mesh>
           )
         })}

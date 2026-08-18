@@ -390,12 +390,13 @@ export default function Home() {
         color: pendingPresetStamp.color ?? PALETTE[items.length % PALETTE.length],
         name: pendingPresetStamp.name ?? 'Груз',
         weight: pendingPresetStamp.weight,
+        shape: pendingPresetStamp.shape,
       }
     }
     if (!activeStampId) return null
     const it = items.find((x) => x.id === activeStampId)
     if (!it) return null
-    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight }
+    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight, shape: it.shape }
   }, [activeStampId, pendingPresetStamp, items])
 
   // NOTE: deck-geometry changes (gap/boardOffset/width/length/clearance) no
@@ -513,11 +514,9 @@ export default function Home() {
     })
   }
 
-  // Arrow keys nudge the selected cargo item; Space rotates it — works in
-  // both 2D and 3D (2D still has its own pointer-drag too, this is just a
-  // finer-grained/keyboard-only alternative; 3D has no drag at all, so this
-  // is its only way to adjust placement). Rotate reuses the exact same path
-  // as the 2D rotate button so behaviour never diverges between entry points.
+  // Arrow keys nudge the selected cargo item; Space rotates it — 2D only
+  // (alongside its existing pointer-drag, as a keyboard alternative). The 3D
+  // view stays camera-only (rotate/zoom), no keyboard-driven editing there.
   // Skipped while focus is inside a text input (same guard as the other two
   // keydown listeners above). The listener stays attached whenever nothing
   // is selected too — it still needs to swallow Space/arrow keys (via
@@ -528,6 +527,7 @@ export default function Home() {
   // up, so selecting a new item takes effect immediately without waiting
   // for the effect to re-subscribe.
   useEffect(() => {
+    if (viewMode !== '2d') return
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const tag = target?.tagName
@@ -578,7 +578,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned])
+  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned])
 
   // Check whether a layer change is allowed for a placement.
   // - maxPhys: physical ceiling from clearance / item.height
@@ -1098,7 +1098,7 @@ export default function Home() {
                       </CardTitle>
                       <CardDescription className="mt-0.5">
                         {viewMode === '3d' ? (
-                          <>Клик по грузу — выбрать · стрелки — двигать · Пробел — повернуть</>
+                          <>Вращение/приближение камеры · клик по грузу — выбрать (двигать и вращать — в 2D)</>
                         ) : (
                           <>
                             Вид сверху · зелёная штриховка — свободное пространство
@@ -1144,8 +1144,6 @@ export default function Home() {
                       mode={mode}
                       manualPlacements={manualPlacements}
                       pinnedPlacements={pinnedPlacements}
-                      selectedManualIds={selectedManualIds}
-                      selectedPinIds={selectedPinIds}
                       onSelectManual={toggleManualSelection}
                       onSelectPin={togglePinSelection}
                       onPinInPlace={(p) => pinFromPlaced(clampedTripIndex, p)}
