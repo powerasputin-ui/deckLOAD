@@ -310,7 +310,6 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Круг', width: 1.2, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'circle' },
       { name: 'Треугольник', width: 1.4, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'triangle' },
       { name: 'Овал', width: 1.6, length: 1.0, height: 0.8, allowRotation: true, weight: 200, shape: 'oval' },
-      { name: 'Ромб', width: 1.4, length: 1.4, height: 0.8, allowRotation: true, weight: 200, shape: 'diamond' },
     ],
   },
 }
