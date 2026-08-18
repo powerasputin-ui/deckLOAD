@@ -1137,6 +1137,18 @@ export interface ManualPlacement {
   weight?: number
 }
 
+// Snap-to-grid step for dragging/nudging placements, scaled to the deck's
+// own size so a tiny deck doesn't get a coarse 10m step and a huge deck
+// doesn't get an imperceptible 0.5m one. Shared by 2D drag-snapping and the
+// 3D keyboard nudge, so both move cargo by the same increment.
+export function computeGridStep(deckWidth: number, deckLength: number): number {
+  const dim = Math.max(deckWidth, deckLength)
+  if (dim <= 6) return 0.5
+  if (dim <= 20) return 1
+  if (dim <= 60) return 5
+  return 10
+}
+
 // Check whether a manual placement collides with any existing one.
 export function collidesWith(
   placement: { x: number; y: number; width: number; length: number },

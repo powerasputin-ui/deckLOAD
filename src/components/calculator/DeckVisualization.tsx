@@ -5,6 +5,7 @@ import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   computeFreeRects,
+  computeGridStep,
   clampToDeck,
   collidesWith,
   resolveSnappedDragPosition,
@@ -276,13 +277,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const offX = (maxW - w) / 2
   const offY = (maxH - h) / 2
 
-  const gridStep = (() => {
-    const dim = Math.max(deckWidth, deckLength)
-    if (dim <= 6) return 0.5
-    if (dim <= 20) return 1
-    if (dim <= 60) return 5
-    return 10
-  })()
+  const gridStep = computeGridStep(deckWidth, deckLength)
 
   // Zoom/pan window into the fixed maxW×maxH user-space coordinate system.
   const MIN_ZOOM = 1
