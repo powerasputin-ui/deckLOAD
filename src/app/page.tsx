@@ -530,9 +530,15 @@ export default function Home() {
   useEffect(() => {
     if (viewMode !== '2d') return
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
+      // e.target is typed as HTMLElement by KeyboardEvent's declaration, but
+      // at runtime it can be a non-Element EventTarget (document, window —
+      // e.g. when nothing has focus, or on a synthetically dispatched
+      // event), which has neither .tagName nor .getAttribute/.closest and
+      // would throw. Guard with a real instanceof check instead of trusting
+      // the type cast.
+      const target = e.target instanceof Element ? e.target : null
       const tag = target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target as HTMLElement | null)?.isContentEditable) return
       // Also stay out of the way of open dropdowns/comboboxes (deck unit,
       // packing strategy, etc.) — those use arrows/Space for their own
       // keyboard navigation (Radix's Select trigger has role="combobox",

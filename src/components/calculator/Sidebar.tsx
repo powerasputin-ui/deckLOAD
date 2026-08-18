@@ -763,7 +763,12 @@ function LashingPointsSection() {
     }
   }
   const selectedPlacement = selectedManual ?? selectedPin
-  const selectedHasClearance = (selectedPlacement?.clearanceMargin ?? 0) > 0
+  // Whether "zone" mode is active must NOT depend on the current value being
+  // nonzero — while typing a value like "0,4", the field passes through an
+  // intermediate 0, and if that briefly counted as "back to points mode" the
+  // whole toggle (and the input itself) would flicker away mid-edit. Mode is
+  // tracked by whether a margin is set AT ALL, not by its size.
+  const selectedHasClearance = selectedPlacement?.clearanceMargin !== undefined
   const updateSelectedPlacement = (patch: { clearanceMargin?: number }) => {
     if (selectedManual) updateManualPlacement(selectedManual.id, patch)
     else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
