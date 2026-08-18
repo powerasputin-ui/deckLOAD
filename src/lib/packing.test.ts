@@ -6,6 +6,7 @@ import {
   packingResultFromManual,
   maxLayersFor,
   collidesWith,
+  withClearanceFootprint,
   clampToDeck,
   rotatePlacement,
   resolveSnappedDragPosition,
@@ -188,6 +189,32 @@ describe('packDeck', () => {
     })
     expect(res.placed.some((p) => p.x === 1 && p.y === 1)).toBe(true)
     expect(res.placedCount).toBe(3)
+  })
+
+  it('reserves a pinned clearance margin so auto-placed cargo stays out of it', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1',
+      itemId: 'a',
+      name: 'Груз',
+      x: 1,
+      y: 1,
+      width: 2,
+      length: 2,
+      layers: 1,
+      rotated: false,
+      color: '#0ea5e9',
+      clearanceMargin: 1, // reserves roughly (0,0)-(4,4)
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 4 })], {
+      gap: 0,
+      pinned: [pin],
+    })
+    expect(res.placedCount).toBe(4) // all fit on a 10x10 deck even with the margin excluded
+    for (const p of res.placed) {
+      if (p.x === pin.x && p.y === pin.y) continue // the pin itself
+      const intrudesMargin = p.x < 4 && p.y < 4
+      expect(intrudesMargin).toBe(false)
+    }
   })
 
   it('rejects pinned placement outside deck', () => {
@@ -391,6 +418,28 @@ describe('collidesWith', () => {
     // have cells [-1,1] and [1,3] — they touch at x=1 but do not overlap.
     expect(collidesWith({ x: 0, y: 0, width: 1, length: 1 }, [{ x: 2, y: 0, width: 1, length: 1 }], 1)).toBe(false)
     expect(collidesWith({ x: 0, y: 0, width: 1, length: 1 }, [{ x: 1.4, y: 0, width: 1, length: 1 }], 1)).toBe(true)
+  })
+})
+
+describe('withClearanceFootprint', () => {
+  it('returns the footprint unchanged when no margin is set', () => {
+    const p = { x: 1, y: 1, width: 2, length: 2 }
+    expect(withClearanceFootprint(p)).toEqual(p)
+  })
+
+  it('inflates the footprint symmetrically by the margin', () => {
+    const p = { x: 1, y: 1, width: 2, length: 2, clearanceMargin: 0.5 }
+    expect(withClearanceFootprint(p)).toEqual({ x: 0.5, y: 0.5, width: 3, length: 3 })
+  })
+
+  it('makes collidesWith reject placements inside the exclusion zone', () => {
+    const guarded = { x: 5, y: 5, width: 1, length: 1, clearanceMargin: 1 }
+    // 0.5m away from the guarded item's edge — inside its 1m margin.
+    const nearby = { x: 6.5, y: 5, width: 1, length: 1 }
+    expect(collidesWith(nearby, [withClearanceFootprint(guarded)])).toBe(true)
+    // Far enough outside the 1m margin.
+    const farAway = { x: 8, y: 5, width: 1, length: 1 }
+    expect(collidesWith(farAway, [withClearanceFootprint(guarded)])).toBe(false)
   })
 })
 

@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import {
   clampToDeck,
   collidesWith,
+  withClearanceFootprint,
   resolveSnappedDragPosition,
   maxLayersFor,
   violatesSeparation,
@@ -165,6 +166,11 @@ interface CalculatorState {
   removeLashingPoint: (id: string) => void
   setPlacingLashingPoint: (v: boolean) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
+  // Lashing points and a clearance-margin exclusion zone are mutually
+  // exclusive per placement (see clearanceMargin on ManualPlacement/
+  // PinnedPlacement in packing.ts) — switching a placement to "zone" mode
+  // clears whatever points it already had.
+  clearLashingPointsFor: (placementId: string) => void
 
   // Cargo category separation rules
   addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
@@ -403,7 +409,7 @@ export const useCalculator = create<CalculatorState>()(
       let layersClamped = false
       let stillColliding = false
 
-      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string }>(
+      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: number }>(
         list: T[]
       ): T[] => {
         const placed: T[] = []
@@ -418,7 +424,7 @@ export const useCalculator = create<CalculatorState>()(
             }
           }
           const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
-          const others = placed.map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+          const others = placed.map((p) => withClearanceFootprint(p))
           const needsResolve = collidesWith(
             { ...clamped, width: item.width, length: item.length },
             others,
@@ -536,6 +542,7 @@ export const useCalculator = create<CalculatorState>()(
           y: conv(m.y),
           width: conv(m.width),
           length: conv(m.length),
+          clearanceMargin: m.clearanceMargin !== undefined ? conv(m.clearanceMargin) : undefined,
         })),
         pinnedPlacementsByTrip: Object.fromEntries(
           Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
@@ -546,6 +553,7 @@ export const useCalculator = create<CalculatorState>()(
               y: conv(p.y),
               width: conv(p.width),
               length: conv(p.length),
+              clearanceMargin: p.clearanceMargin !== undefined ? conv(p.clearanceMargin) : undefined,
             })),
           ])
         ),
@@ -824,6 +832,13 @@ export const useCalculator = create<CalculatorState>()(
       deck: {
         ...s.deck,
         lashingPoints: (s.deck.lashingPoints ?? []).filter((p) => p.id !== id),
+      },
+    })),
+  clearLashingPointsFor: (placementId) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        lashingPoints: (s.deck.lashingPoints ?? []).filter((p) => p.placementId !== placementId),
       },
     })),
   setPlacingLashingPoint: (v) => set({ placingLashingPoint: v }),

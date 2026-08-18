@@ -61,6 +61,7 @@ import {
   type SortStrategy,
   type LashingDeviceType,
   type VesselMotionPreset,
+  type PinnedPlacement,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
@@ -731,8 +732,42 @@ function LashingPointsSection() {
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
   const vesselMotion = useCalculator((s) => s.deck.vesselMotion ?? DEFAULT_VESSEL_MOTION)
   const setVesselMotion = useCalculator((s) => s.setVesselMotion)
+  const unit = useCalculator((s) => s.deck.unit)
+  const mode = useCalculator((s) => s.mode)
+  const selectedManualIds = useCalculator((s) => s.selectedManualIds)
+  const selectedPinIds = useCalculator((s) => s.selectedPinIds)
+  const manualPlacements = useCalculator((s) => s.manualPlacements)
+  const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
+  const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
+  const updatePinned = useCalculator((s) => s.updatePinned)
+  const clearLashingPointsFor = useCalculator((s) => s.clearLashingPointsFor)
 
   const attachedCount = points.filter((p) => p.placementId).length
+
+  // Clearance zones and lashing points are mutually exclusive per placement
+  // (see clearanceMargin in packing.ts) — the mode toggle below acts on
+  // whichever placement is currently selected in the deck view, regardless
+  // of which trip it's pinned on (searched across all trips by id, since
+  // this section doesn't otherwise track the active trip index).
+  const selectedManual = mode === 'manual' ? manualPlacements.find((m) => m.id === selectedManualIds[0]) : undefined
+  let selectedPin: PinnedPlacement | undefined
+  let selectedPinTrip: number | undefined
+  if (mode === 'auto' && selectedPinIds[0]) {
+    for (const [tripKey, list] of Object.entries(pinnedPlacementsByTrip)) {
+      const found = list.find((p) => p.id === selectedPinIds[0])
+      if (found) {
+        selectedPin = found
+        selectedPinTrip = Number(tripKey)
+        break
+      }
+    }
+  }
+  const selectedPlacement = selectedManual ?? selectedPin
+  const selectedHasClearance = (selectedPlacement?.clearanceMargin ?? 0) > 0
+  const updateSelectedPlacement = (patch: { clearanceMargin?: number }) => {
+    if (selectedManual) updateManualPlacement(selectedManual.id, patch)
+    else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
+  }
 
   return (
     <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false}>
@@ -741,6 +776,46 @@ function LashingPointsSection() {
           Клик по грузу, затем по палубе — привязывает линию крепления с расчётом усилия по IMO CSS Code
           (упрощённый метод). Мягкая проверка — груз не блокируется. Точка без привязки — просто метка на схеме.
         </p>
+
+        {/* Mode toggle for the currently selected placement — lashing points
+            and a clearance zone are mutually exclusive per placement, so
+            switching one off clears the other. */}
+        {selectedPlacement && (
+          <div className="rounded-md border p-2 space-y-1.5">
+            <div className="text-[10px] font-medium text-muted-foreground truncate">
+              Режим для «{selectedPlacement.name}»
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              <Button
+                size="sm"
+                variant={!selectedHasClearance ? 'default' : 'outline'}
+                className="h-6 text-[10px] px-1"
+                onClick={() => updateSelectedPlacement({ clearanceMargin: undefined })}
+              >
+                Точки крепления
+              </Button>
+              <Button
+                size="sm"
+                variant={selectedHasClearance ? 'default' : 'outline'}
+                className="h-6 text-[10px] px-1"
+                onClick={() => {
+                  clearLashingPointsFor(selectedPlacement.id)
+                  updateSelectedPlacement({ clearanceMargin: selectedPlacement.clearanceMargin || 1 })
+                }}
+              >
+                Зона отступа
+              </Button>
+            </div>
+            {selectedHasClearance && (
+              <MiniNumField
+                label="Отступ"
+                value={selectedPlacement.clearanceMargin ?? 0}
+                unit={UNIT_LABEL[unit]}
+                onChange={(v) => updateSelectedPlacement({ clearanceMargin: Math.max(0, v) })}
+              />
+            )}
+          </div>
+        )}
 
         {/* Vessel motion / friction */}
         <div className="rounded-md border p-2 space-y-1.5">
@@ -829,15 +904,17 @@ function LashingPointsSection() {
             </div>
           )
         })}
-        <Button
-          size="sm"
-          variant={placingLashingPoint ? 'default' : 'outline'}
-          className="h-7 text-xs w-full"
-          onClick={() => setPlacingLashingPoint(!placingLashingPoint)}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          {placingLashingPoint ? 'Клик по грузу → по палубе… (Готово)' : 'Добавить крепление'}
-        </Button>
+        {!selectedHasClearance && (
+          <Button
+            size="sm"
+            variant={placingLashingPoint ? 'default' : 'outline'}
+            className="h-7 text-xs w-full"
+            onClick={() => setPlacingLashingPoint(!placingLashingPoint)}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {placingLashingPoint ? 'Клик по грузу → по палубе… (Готово)' : 'Добавить крепление'}
+          </Button>
+        )}
         {points.length > 0 && (
           <p className="text-[10px] text-muted-foreground">
             Закреплено грузов: {new Set(points.filter((p) => p.placementId).map((p) => p.placementId)).size} ·

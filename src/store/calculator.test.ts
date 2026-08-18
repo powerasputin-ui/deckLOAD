@@ -202,6 +202,38 @@ describe('calculator store', () => {
     expect(useCalculator.getState().deck.lashingPoints).toHaveLength(0)
   })
 
+  it('clears lashing points for a placement via clearLashingPointsFor', () => {
+    const s = useCalculator.getState()
+    s.addLashingPoint({ x: 2, y: 3, placementId: 'p1' })
+    s.addLashingPoint({ x: 4, y: 5, placementId: 'p2' })
+    s.clearLashingPointsFor('p1')
+    const points = useCalculator.getState().deck.lashingPoints
+    expect(points).toHaveLength(1)
+    expect(points![0].placementId).toBe('p2')
+  })
+
+  it('converts a placement clearanceMargin when switching units', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1',
+      itemId: item.id,
+      name: 'Box',
+      x: 0,
+      y: 0,
+      width: 2,
+      length: 1,
+      layers: 1,
+      rotated: false,
+      color: item.color,
+      clearanceMargin: 1,
+    })
+    s.setUnit('cm')
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.clearanceMargin).toBeCloseTo(100)
+  })
+
   it('adds and removes a separation rule', () => {
     const s = useCalculator.getState()
     s.addSeparationRule({ categoryA: 'hazard', categoryB: 'standard', minDistance: 5 })

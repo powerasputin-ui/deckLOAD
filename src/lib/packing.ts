@@ -259,6 +259,7 @@ export interface PlacedItem {
   weight?: number
   index: number
   shape?: CargoShape
+  clearanceMargin?: number // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
 }
 
 export interface UnplacedItem {
@@ -486,6 +487,11 @@ export interface PinnedPlacement {
   rotated: boolean
   color: string
   weight?: number
+  // Hard-blocking exclusion margin (deck units, e.g. meters) around this
+  // placement — an alternative to individual lashing points, not a
+  // combination of both (see clearLashingPointsFor in calculator.ts).
+  // Other cargo cannot be placed, dragged, or auto-packed into this margin.
+  clearanceMargin?: number
 }
 
 // Compute how many tiers (layers) can be stacked for an item.
@@ -604,11 +610,8 @@ export function packDeck(
       continue
     }
     const overlapsAccepted = acceptedPins.some((ap) =>
-      collidesWith(
-        { x: pin.x, y: pin.y, width: pin.width, length: pin.length },
-        [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }],
-        gap
-      )
+      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
+      collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
     )
     if (overlapsAccepted) {
       result.unplaced.push({
@@ -646,13 +649,17 @@ export function packDeck(
     // Subtract accepted pin layers from remaining quantity (only for accepted pins)
     const r = remainingByItem.get(pin.itemId) ?? 0
     remainingByItem.set(pin.itemId, Math.max(0, r - layers))
-    // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap)
+    // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap).
+    // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
+    // inflated cell instead, so the free-rect splitter never offers that
+    // space to algorithmically-placed (non-pinned) cargo either.
+    const clearance = pin.clearanceMargin ?? 0
     placeRect(
       {
-        x: pin.x - gap / 2,
-        y: pin.y - gap / 2,
-        width: pin.width + gap,
-        height: pin.length + gap,
+        x: pin.x - gap / 2 - clearance,
+        y: pin.y - gap / 2 - clearance,
+        width: pin.width + gap + clearance * 2,
+        height: pin.length + gap + clearance * 2,
       },
       freeRects
     )
@@ -671,6 +678,7 @@ export function packDeck(
       weight: pin.weight,
       index: index++,
       shape: shapeByItemId.get(pin.itemId),
+      clearanceMargin: pin.clearanceMargin,
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
@@ -1141,6 +1149,8 @@ export interface ManualPlacement {
   rotated: boolean
   color: string
   weight?: number
+  // See PinnedPlacement.clearanceMargin above — same meaning here.
+  clearanceMargin?: number
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
@@ -1153,6 +1163,19 @@ export function computeGridStep(deckWidth: number, deckLength: number): number {
   if (dim <= 20) return 1
   if (dim <= 60) return 5
   return 10
+}
+
+// Inflates a placement's own footprint by its clearanceMargin (if any) —
+// used when OTHER items test collision against this one, so its hard-block
+// exclusion zone actually excludes them. Never applied to the placement's
+// own clamp-to-deck-edge or self-collision checks — only when it appears in
+// someone else's `others` array.
+export function withClearanceFootprint<
+  T extends { x: number; y: number; width: number; length: number; clearanceMargin?: number }
+>(p: T): { x: number; y: number; width: number; length: number } {
+  const m = p.clearanceMargin ?? 0
+  if (m <= 0) return p
+  return { x: p.x - m, y: p.y - m, width: p.width + 2 * m, length: p.length + 2 * m }
 }
 
 // Check whether a manual placement collides with any existing one.
@@ -1409,6 +1432,7 @@ export function packingResultFromManual(
     weight: p.weight,
     index: i,
     shape: itemMap.get(p.itemId)?.shape,
+    clearanceMargin: p.clearanceMargin,
   }))
 
   // Breakdown by itemId

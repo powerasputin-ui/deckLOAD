@@ -36,6 +36,7 @@ import {
   computeGridStep,
   clampToDeck,
   collidesWith,
+  withClearanceFootprint,
   checkLoadDensity,
   LASHING_DEVICES,
   type ManualPlacement,
@@ -474,7 +475,7 @@ export default function Home() {
     }
     const others = pinnedPlacements
       .filter((p) => p.id !== id)
-      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+      .map((p) => withClearanceFootprint(p))
     const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -499,7 +500,7 @@ export default function Home() {
     }
     const others = manualPlacements
       .filter((m) => m.id !== id)
-      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+      .map((m) => withClearanceFootprint(m))
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -564,7 +565,7 @@ export default function Home() {
       if (!current) return
       const others = placements
         .filter((p) => p.id !== selectedId)
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+        .map((p) => withClearanceFootprint(p))
       const target2 = {
         x: current.x + dx * step,
         y: current.y + dy * step,

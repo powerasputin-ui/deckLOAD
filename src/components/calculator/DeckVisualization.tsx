@@ -8,6 +8,7 @@ import {
   computeGridStep,
   clampToDeck,
   collidesWith,
+  withClearanceFootprint,
   resolveSnappedDragPosition,
   checkLoadDensity,
   checkLashingBalance,
@@ -530,7 +531,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // Check collision against whatever is currently rendered — manual
     // placements in manual mode, algorithm-placed/pinned items in auto mode
     // (renderedItems already resolves to the right source for either).
-    const others = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+    const others = renderedItems.map((m) => withClearanceFootprint(m))
     if (collidesWith({ ...clamped, width: stampDims.w, length: stampDims.l }, others, gap)) {
       return // ignore overlapping placement
     }
@@ -742,7 +743,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         if (!target) {
           const others = manualPlacements
             .filter((m) => m.id !== dragState.id)
-            .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+            .map((m) => withClearanceFootprint(m))
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
@@ -817,7 +818,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         // Prevent overlap with OTHER pinned items (auto-packed items reflow)
         const others = pinnedPlacements
           .filter((p) => p.id !== pinDrag.id)
-          .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
+          .map((p) => withClearanceFootprint(p))
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
@@ -934,6 +935,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           weight: m.weight,
           index: i,
           manualId: m.id,
+          clearanceMargin: m.clearanceMargin,
         }))
       : result.placed
 
@@ -1138,6 +1140,48 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
+        {/* Hard-blocking clearance zones — the alternative to individual
+            lashing points (see clearanceMargin on ManualPlacement/
+            PinnedPlacement). Red, not blue like LoadZone, since this is an
+            actual placement-blocking boundary rather than an informational
+            load-density warning. No drag/resize handles — edited only via
+            the numeric field in the sidebar. */}
+        {renderedItems
+          .filter((p) => (p.clearanceMargin ?? 0) > 0)
+          .map((p, i) => {
+            const margin = p.clearanceMargin!
+            const zx = toX(p.x - margin)
+            const zy = toY(p.y - margin)
+            const zw = (p.width + margin * 2) * scale
+            const zh = (p.length + margin * 2) * scale
+            return (
+              <g key={`clearance-${p.itemId}-${p.index}-${i}`} className="pointer-events-none">
+                <rect
+                  x={zx}
+                  y={zy}
+                  width={zw}
+                  height={zh}
+                  fill="none"
+                  stroke="rgba(220,38,38,0.5)"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 3"
+                />
+                {zw > 30 && zh > 16 && (
+                  <text
+                    x={zx + 4}
+                    y={zy + 13}
+                    fontSize={10}
+                    fontWeight={600}
+                    fill="rgba(185,28,28,0.9)"
+                    className="select-none"
+                  >
+                    {fmt(margin)} {UNIT_LABEL[unit]}
+                  </text>
+                )}
+              </g>
+            )
+          })}
+
         {/* Lashing-point placement preview (follows cursor while armed) */}
         {placingLashingPoint && lashingHoverPos && (
           <g className="pointer-events-none" opacity={0.55}>
@@ -1166,6 +1210,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const py = toY(pt.y)
           const isAttached = pt.placementId !== undefined && pt.cornerX !== undefined && pt.cornerY !== undefined
           const isSelected = selectedLashingId === pt.id
+          // Live length readout while actively dragging this anchor — same
+          // Math.hypot(dx,dy) distance checkLashingBalance already computes
+          // for its direction unit vectors (packing.ts), just surfaced here
+          // as a plain number instead of feeding a force calculation.
+          const dragDistance =
+            isAttached && lashingAnchorDrag?.id === pt.id
+              ? Math.hypot(pt.x - pt.cornerX!, pt.y - pt.cornerY!)
+              : null
           const interactive = !!onUpdateLashingPoint
           let check: ReturnType<typeof checkLashingBalance> = null
           if (isAttached) {
@@ -1188,6 +1240,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   stroke={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.6)'}
                   strokeWidth={isSelected ? 2.5 : 1.5}
                 />
+              )}
+              {dragDistance !== null && (
+                <text
+                  x={(toX(pt.cornerX!) + px) / 2}
+                  y={(toY(pt.cornerY!) + py) / 2 - 6}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontWeight={600}
+                  fill="#0f172a"
+                  className="select-none pointer-events-none"
+                  style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                >
+                  {fmt(dragDistance)} {UNIT_LABEL[unit]}
+                </text>
               )}
               <circle
                 cx={px}
