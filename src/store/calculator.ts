@@ -181,6 +181,7 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     allowRotation: partial?.allowRotation ?? true,
     weight: partial?.weight,
     category: partial?.category,
+    shape: partial?.shape,
   }
 }
 
