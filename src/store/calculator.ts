@@ -69,6 +69,19 @@ const PALETTE = [
   '#f97316',
   '#84cc16',
   '#06b6d4',
+  // Extended so the growing preset catalog (offshore equipment added more
+  // distinct cargo names than the original 10 colors could keep unique)
+  // still gets a fresh color per name most of the time.
+  '#a855f7',
+  '#eab308',
+  '#22c55e',
+  '#f43f5e',
+  '#3b82f6',
+  '#d946ef',
+  '#65a30d',
+  '#0d9488',
+  '#c2410c',
+  '#7c3aed',
 ]
 
 interface CalculatorState {
@@ -281,6 +294,24 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
       { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, allowRotation: false, weight: 220, shape: 'cylinder', color: '#5c3a21' },
       { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, allowRotation: false, weight: 600, shape: 'cylinder', color: '#4b5563' },
+    ],
+  },
+  // Cargo typical for offshore/shelf resupply operations (PSV/OSV runs to a
+  // drilling platform) — sizes/weights sourced from DNV 2.7-1 offshore
+  // container specs and API drill pipe specs, not just generic containers.
+  offshore: {
+    label: 'Шельфовое оборудование',
+    items: [
+      { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
+      { name: 'Офшорный контейнер 10ft (DNV 2.7-1)', width: 2.99, length: 2.44, height: 2.59, allowRotation: true, weight: 2000 },
+      { name: 'Грузовая корзина 20ft (открытая)', width: 6.06, length: 2.44, height: 1.1, allowRotation: true, weight: 1800 },
+      { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900 },
+      { name: 'Скип для бурового шлама', width: 2.4, length: 1.5, height: 1.6, allowRotation: true, weight: 1400 },
+      { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650 },
+      { name: 'Бурильная труба (свеча, Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: false, weight: 400, shape: 'cylinder', color: '#334155' },
+      { name: 'Обсадная труба', width: 9.5, length: 0.25, height: 0.25, allowRotation: false, weight: 700, shape: 'cylinder', color: '#57534e' },
+      { name: 'Генераторная установка (энергоблок)', width: 3.0, length: 1.5, height: 1.8, allowRotation: false, weight: 3000 },
+      { name: 'Якорная цепь в корзине', width: 1.5, length: 1.5, height: 1.2, allowRotation: false, weight: 3000 },
     ],
   },
 }
