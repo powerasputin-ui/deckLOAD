@@ -855,17 +855,21 @@ function PresetsSection() {
           Выберите категорию, затем тип груза — он вооружится для клика по палубе.
         </p>
         <div className="grid grid-cols-2 gap-1.5">
-          {Object.entries(PRESETS).map(([key, cat]) => (
-            <Button
-              key={key}
-              variant={activePresetCategory === key ? 'secondary' : 'outline'}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
-            >
-              {cat.label}
-            </Button>
-          ))}
+          {(() => {
+            const entries = Object.entries(PRESETS)
+            const isLastAlone = entries.length % 2 === 1
+            return entries.map(([key, cat], i) => (
+              <Button
+                key={key}
+                variant={activePresetCategory === key ? 'secondary' : 'outline'}
+                size="sm"
+                className={cn('h-7 text-xs', isLastAlone && i === entries.length - 1 && 'col-span-2')}
+                onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
+              >
+                {cat.label}
+              </Button>
+            ))
+          })()}
         </div>
         {activePresetCategory && (
           <ScrollArea className="h-[200px] pr-1">

@@ -270,6 +270,13 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200 },
       { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800 },
       { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, allowRotation: true, weight: 500 },
+      // Offshore/DNV 2.7-1 units — same "container" family as the two
+      // above, just certified/shaped for platform crane transfer.
+      { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
+      { name: 'Офшорный контейнер 10ft (DNV 2.7-1)', width: 2.99, length: 2.44, height: 2.59, allowRotation: true, weight: 2000 },
+      { name: 'Грузовая корзина 20ft (открытая)', width: 6.06, length: 2.44, height: 1.1, allowRotation: true, weight: 1800 },
+      { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900 },
+      { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650 },
     ],
   },
   pallets: {
@@ -279,35 +286,13 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, allowRotation: true, weight: 700 },
     ],
   },
-  vehicles: {
-    label: 'Авто',
-    items: [
-      { name: 'Седан', width: 4.6, length: 1.8, height: 1.4, allowRotation: true, weight: 1400 },
-      { name: 'Внедорожник', width: 4.9, length: 1.95, height: 1.8, allowRotation: true, weight: 2100 },
-      { name: 'Пикап', width: 5.3, length: 1.95, height: 1.9, allowRotation: true, weight: 1900 },
-    ],
-  },
   mixed: {
     label: 'Смешанный',
     items: [
       { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, allowRotation: true, weight: 800 },
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
-      { name: 'Бочка', width: 0.9, length: 0.9, height: 1.0, allowRotation: false, weight: 220, shape: 'cylinder', color: '#5c3a21' },
-      { name: 'Труба', width: 6.0, length: 0.5, height: 0.5, allowRotation: false, weight: 600, shape: 'cylinder', color: '#4b5563' },
-    ],
-  },
-  // Cargo typical for offshore/shelf resupply operations (PSV/OSV runs to a
-  // drilling platform) — sizes/weights sourced from DNV 2.7-1 offshore
-  // container specs and API drill pipe specs, not just generic containers.
-  offshore: {
-    label: 'Шельфовое оборудование',
-    items: [
-      { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
-      { name: 'Офшорный контейнер 10ft (DNV 2.7-1)', width: 2.99, length: 2.44, height: 2.59, allowRotation: true, weight: 2000 },
-      { name: 'Грузовая корзина 20ft (открытая)', width: 6.06, length: 2.44, height: 1.1, allowRotation: true, weight: 1800 },
-      { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900 },
+      // Realistic offshore pipe types replace the old generic "Бочка"/"Труба".
       { name: 'Скип для бурового шлама', width: 2.4, length: 1.5, height: 1.6, allowRotation: true, weight: 1400 },
-      { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650 },
       { name: 'Бурильная труба (свеча, Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: false, weight: 400, shape: 'cylinder', color: '#334155' },
       { name: 'Обсадная труба', width: 9.5, length: 0.25, height: 0.25, allowRotation: false, weight: 700, shape: 'cylinder', color: '#57534e' },
       { name: 'Генераторная установка (энергоблок)', width: 3.0, length: 1.5, height: 1.8, allowRotation: false, weight: 3000 },
