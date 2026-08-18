@@ -38,6 +38,14 @@ interface Deck3DViewProps {
 
 const SQRT3 = Math.sqrt(3)
 
+// The two flat round end caps of every cylinder (pipe or barrel) always get
+// this color, distinct from the cargo's own side-surface color — a fixed,
+// permanent detail (not tied to selection) so a pipe reads as a hollow tube
+// with visible ends rather than a plain solid rod. `CylinderGeometry`
+// exposes 3 material groups by default: 0 = the lateral surface, 1 = top
+// cap, 2 = bottom cap.
+const PIPE_CAP_COLOR = '#cbd5e1'
+
 // 3D snapshot of the current layout. Camera rotate/zoom always works; cargo
 // itself is only clickable/selectable when it corresponds to a real
 // placement id (every item in manual mode, only pinned items in auto mode —
@@ -316,7 +324,9 @@ export default function Deck3DView({
           return (
             <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={b.rot} onClick={handleClick(b.placementId, b.pinData)}>
               <cylinderGeometry args={[b.radius, b.radius, b.cylLen, 24]} />
-              <meshStandardMaterial color={b.color} />
+              <meshStandardMaterial attach="material-0" color={b.color} />
+              <meshStandardMaterial attach="material-1" color={PIPE_CAP_COLOR} />
+              <meshStandardMaterial attach="material-2" color={PIPE_CAP_COLOR} />
               <Edges color="#0f172a" />
               {isSelected && <Outlines thickness={3} color="#facc15" />}
             </mesh>

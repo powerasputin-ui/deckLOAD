@@ -513,26 +513,31 @@ export default function Home() {
     })
   }
 
-  // Arrow keys nudge the selected cargo item while the 3D view is open —
-  // fine-grained repositioning without switching back to 2D (the 3D view
-  // itself has no drag, only camera rotate/zoom, so this is its only way to
-  // adjust placement). Space rotates it, reusing the exact same rotate path
-  // as the 2D rotate button so behaviour never diverges between views.
+  // Arrow keys nudge the selected cargo item; Space rotates it — works in
+  // both 2D and 3D (2D still has its own pointer-drag too, this is just a
+  // finer-grained/keyboard-only alternative; 3D has no drag at all, so this
+  // is its only way to adjust placement). Rotate reuses the exact same path
+  // as the 2D rotate button so behaviour never diverges between entry points.
   // Skipped while focus is inside a text input (same guard as the other two
-  // keydown listeners above). The listener stays attached whenever the 3D
-  // view is open, even with nothing selected — it still needs to swallow
-  // Space/arrow keys (via preventDefault) so they don't fall through to
-  // whatever toolbar button currently has DOM focus (Space on a focused
-  // <button> re-clicks it natively) rather than silently doing nothing.
-  // Which item is selected is read fresh on every keypress rather than once
-  // when the effect was set up, so clicking a new item in 3D takes effect
-  // immediately without waiting for the effect to re-subscribe.
+  // keydown listeners above). The listener stays attached whenever nothing
+  // is selected too — it still needs to swallow Space/arrow keys (via
+  // preventDefault) so they don't fall through to whatever toolbar button
+  // currently has DOM focus (Space on a focused <button> re-clicks it
+  // natively) rather than silently doing nothing. Which item is selected is
+  // read fresh on every keypress rather than once when the effect was set
+  // up, so selecting a new item takes effect immediately without waiting
+  // for the effect to re-subscribe.
   useEffect(() => {
-    if (viewMode !== '3d') return
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const tag = target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return
+      // Also stay out of the way of open dropdowns/comboboxes (deck unit,
+      // packing strategy, etc.) — those use arrows/Space for their own
+      // keyboard navigation (Radix's Select trigger has role="combobox",
+      // its option list role="listbox") and would otherwise get hijacked by
+      // this listener now that it's active outside the 3D view too.
+      if (target?.getAttribute('role') === 'combobox' || target?.closest('[role="listbox"]')) return
 
       const isSpace = e.key === ' ' || e.code === 'Space'
       let dx = 0
@@ -573,7 +578,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned])
+  }, [mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned])
 
   // Check whether a layer change is allowed for a placement.
   // - maxPhys: physical ceiling from clearance / item.height
@@ -1092,14 +1097,15 @@ export default function Home() {
                         )}
                       </CardTitle>
                       <CardDescription className="mt-0.5">
-                        {viewMode === '3d'
-                          ? 'Клик по грузу — выбрать · стрелки — двигать · Пробел — повернуть'
-                          : (
-                            <>
-                              Вид сверху · зелёная штриховка — свободное пространство
-                              {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
-                            </>
-                          )}
+                        {viewMode === '3d' ? (
+                          <>Клик по грузу — выбрать · стрелки — двигать · Пробел — повернуть</>
+                        ) : (
+                          <>
+                            Вид сверху · зелёная штриховка — свободное пространство
+                            {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+                            {' · выбрали груз? стрелки/Пробел тоже работают'}
+                          </>
+                        )}
                       </CardDescription>
                     </div>
                     {viewMode === '2d' && (
