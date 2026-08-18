@@ -182,6 +182,37 @@ interface CalculatorState {
 // preset/duplicate reused a color), since the count no longer matched
 // which colors were actually free. Only falls back to a repeat once every
 // palette color is genuinely taken.
+// A lashing point's cornerX/cornerY is a snapshot of the cargo corner it's
+// attached to, taken at the moment the point was created — it never
+// recomputes on its own. Without this, dragging/nudging the cargo left the
+// line pointing at the OLD position (visually detached, and feeding
+// checkLashingBalance stale geometry that no longer describes the actual
+// placement) — the fastening looked "broken" the moment you moved anything.
+// Shifts every lashing point attached to `id` by the same x/y delta the
+// placement itself just moved, so the corner keeps tracking it. A plain
+// translation isn't perfectly correct through a 90° rotation (corners swap
+// which side they're on), but it keeps the point glued close enough rather
+// than badly stale, and is exact for the common case (plain drag/nudge).
+function dragLashingCorners(
+  deck: DeckConfig,
+  placementId: string,
+  prev: { x: number; y: number } | undefined,
+  patch: { x?: number; y?: number }
+): DeckConfig {
+  const points = deck.lashingPoints
+  if (!prev || !points || (patch.x === undefined && patch.y === undefined)) return deck
+  const dx = (patch.x ?? prev.x) - prev.x
+  const dy = (patch.y ?? prev.y) - prev.y
+  if (dx === 0 && dy === 0) return deck
+  let changed = false
+  const lashingPoints = points.map((lp) => {
+    if (lp.placementId !== placementId || lp.cornerX === undefined || lp.cornerY === undefined) return lp
+    changed = true
+    return { ...lp, cornerX: lp.cornerX + dx, cornerY: lp.cornerY + dy }
+  })
+  return changed ? { ...deck, lashingPoints } : deck
+}
+
 function nextColor(items: CargoItem[]): string {
   const used = new Set(items.map((it) => it.color))
   const free = PALETTE.find((c) => !used.has(c))
@@ -689,11 +720,13 @@ export const useCalculator = create<CalculatorState>()(
   addManualPlacement: (p) =>
     set((s) => ({ manualPlacements: [...s.manualPlacements, p] })),
   updateManualPlacement: (id, patch) =>
-    set((s) => ({
-      manualPlacements: s.manualPlacements.map((mp) =>
+    set((s) => {
+      const prev = s.manualPlacements.find((mp) => mp.id === id)
+      const manualPlacements = s.manualPlacements.map((mp) =>
         mp.id === id ? { ...mp, ...patch } : mp
-      ),
-    })),
+      )
+      return { manualPlacements, deck: dragLashingCorners(s.deck, id, prev, patch) }
+    }),
   removeManualPlacement: (id) =>
     set((s) => ({
       manualPlacements: s.manualPlacements.filter((mp) => mp.id !== id),
@@ -729,14 +762,16 @@ export const useCalculator = create<CalculatorState>()(
     return id
   },
   updatePinned: (tripIndex, id, patch) =>
-    set((s) => ({
-      pinnedPlacementsByTrip: {
+    set((s) => {
+      const prev = (s.pinnedPlacementsByTrip[tripIndex] ?? []).find((p) => p.id === id)
+      const pinnedPlacementsByTrip = {
         ...s.pinnedPlacementsByTrip,
         [tripIndex]: (s.pinnedPlacementsByTrip[tripIndex] ?? []).map((p) =>
           p.id === id ? { ...p, ...patch } : p
         ),
-      },
-    })),
+      }
+      return { pinnedPlacementsByTrip, deck: dragLashingCorners(s.deck, id, prev, patch) }
+    }),
   removePinned: (tripIndex, id) =>
     set((s) => ({
       pinnedPlacementsByTrip: {

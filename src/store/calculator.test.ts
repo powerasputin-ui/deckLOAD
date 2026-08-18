@@ -202,6 +202,31 @@ describe('calculator store', () => {
     expect(useCalculator.getState().deck.lashingPoints).toHaveLength(0)
   })
 
+  it('keeps a lashing point glued to its cargo corner when the placement moves', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1',
+      itemId: item.id,
+      name: 'Box',
+      x: 0,
+      y: 0,
+      width: 2,
+      length: 1,
+      layers: 1,
+      rotated: false,
+      color: item.color,
+    })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'm1', cornerX: 2, cornerY: 1 })
+    s.updateManualPlacement('m1', { x: 3, y: 4 })
+    const point = useCalculator.getState().deck.lashingPoints![0]
+    // The placement moved by (+3, +4) — the corner anchor should follow by
+    // the same delta (2+3, 1+4), not stay behind at its original snapshot.
+    expect(point.cornerX).toBeCloseTo(5)
+    expect(point.cornerY).toBeCloseTo(5)
+  })
+
   it('clears lashing points for a placement via clearLashingPointsFor', () => {
     const s = useCalculator.getState()
     s.addLashingPoint({ x: 2, y: 3, placementId: 'p1' })

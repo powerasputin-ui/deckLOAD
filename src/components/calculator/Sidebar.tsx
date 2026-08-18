@@ -773,6 +773,9 @@ function LashingPointsSection() {
     if (selectedManual) updateManualPlacement(selectedManual.id, patch)
     else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
   }
+  const selectedPointsCount = selectedPlacement
+    ? points.filter((p) => p.placementId === selectedPlacement.id).length
+    : 0
 
   return (
     <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false}>
@@ -818,6 +821,17 @@ function LashingPointsSection() {
                 unit={UNIT_LABEL[unit]}
                 onChange={(v) => updateSelectedPlacement({ clearanceMargin: Math.max(0, v) })}
               />
+            )}
+            {!selectedHasClearance && selectedPointsCount > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[10px] w-full text-destructive hover:text-destructive"
+                onClick={() => clearLashingPointsFor(selectedPlacement.id)}
+              >
+                <Trash2 className="h-3 w-3 mr-1" />
+                Снять все точки ({selectedPointsCount}) с этого груза
+              </Button>
             )}
           </div>
         )}
