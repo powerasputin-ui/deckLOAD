@@ -120,3 +120,25 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Subtle scrollbar for internal scroll regions (e.g. sidebar preset list) —
+   a thin, low-contrast thumb that only darkens on hover, instead of the
+   browser's default wide/high-contrast scrollbar. */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}

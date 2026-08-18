@@ -231,7 +231,8 @@ export function Sidebar({
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+      <div className="flex-1 flex flex-col min-h-0 px-3 py-3">
+      <div className="thin-scrollbar min-h-0 overflow-y-auto space-y-4 pr-0.5">
         {/* Quick actions */}
         <div className="grid grid-cols-2 gap-2">
           <Button size="sm" onClick={handleCreate} className="h-8">
@@ -350,10 +351,17 @@ export function Sidebar({
 
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
+      </div>
 
-        {/* Presets — pick a category, the deck panel on the right shows
-            that category's catalog for click-to-place */}
+      {/* Presets — pick a category, the deck panel on the right shows
+          that category's catalog for click-to-place. This is the one
+          section allowed to grow and fill the remaining space down to
+          the Settings footer, scrolling internally if its list is too
+          tall — everything above stays at natural height so the rest of
+          the sidebar never scrolls as a whole. */}
+      <div className="flex-1 min-h-[180px] flex flex-col mt-4">
         <PresetsSection />
+      </div>
       </div>
 
       {/* Footer settings (display toggles + reset-to-demo) */}
@@ -842,67 +850,87 @@ function LashingPointsSection() {
 }
 
 function PresetsSection() {
+  const [open, setOpen] = useState(false)
   const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
   const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
 
+  // Custom collapsible header (not the generic `Section`) because this is
+  // the one section that needs to grow/shrink and scroll internally — the
+  // expanded item list fills whatever space is left down to the Settings
+  // footer, and only that list scrolls, not the rest of the sidebar.
+  const growing = open && !!activePresetCategory
   return (
-    <Section icon={<Sparkles className="h-4 w-4" />} title="Пресеты" defaultOpen={false}>
-      <div className="space-y-1.5">
-        <p className="text-[10px] text-muted-foreground leading-tight">
-          Выберите категорию, затем тип груза — он вооружится для клика по палубе.
-        </p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {(() => {
-            const entries = Object.entries(PRESETS)
-            const isLastAlone = entries.length % 2 === 1
-            return entries.map(([key, cat], i) => (
-              <Button
-                key={key}
-                variant={activePresetCategory === key ? 'secondary' : 'outline'}
-                size="sm"
-                className={cn('h-7 text-xs', isLastAlone && i === entries.length - 1 && 'col-span-2')}
-                onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
-              >
-                {cat.label}
-              </Button>
-            ))
-          })()}
-        </div>
-        {activePresetCategory && (
-          // No fixed-height inner scrollbox — the list just flows like every
-          // other section, so it extends down naturally and only the
-          // sidebar's own outer scroll (already flex-1 overflow-y-auto)
-          // kicks in once total content is too tall to fit.
-          <div className="space-y-1">
-            {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-              // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
-              // not per row position — so the same type always shows the
-              // same color regardless of which category list it's viewed
-              // from, and the real item created on placement keeps this
-              // exact color (see addOrIncrementCargoFromTemplate).
-              const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
-              const active = pendingPresetStamp?.name === tpl.name
-              return (
-                <PresetTemplateRow
-                  key={i}
-                  template={tpl}
-                  color={color}
-                  active={active}
-                  onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
-                />
-              )
-            })}
-          </div>
+    <div className={cn('flex flex-col min-h-0', growing ? 'flex-1' : 'shrink-0')}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 w-full text-left mb-1.5 group shrink-0"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         )}
-        {pendingPresetStamp && (
-          <p className="text-[10px] text-muted-foreground leading-tight">
-            «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
+        <span className="text-muted-foreground group-hover:text-foreground transition-colors">
+          <Sparkles className="h-4 w-4" />
+        </span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Пресеты
+        </span>
+      </button>
+      {open && (
+        <div className={cn('pl-1 flex flex-col min-h-0', growing && 'flex-1')}>
+          <p className="text-[10px] text-muted-foreground leading-tight shrink-0">
+            Выберите категорию, затем тип груза — он вооружится для клика по палубе.
           </p>
-        )}
-      </div>
-    </Section>
+          <div className="grid grid-cols-2 gap-1.5 mt-1.5 shrink-0">
+            {(() => {
+              const entries = Object.entries(PRESETS)
+              const isLastAlone = entries.length % 2 === 1
+              return entries.map(([key, cat], i) => (
+                <Button
+                  key={key}
+                  variant={activePresetCategory === key ? 'secondary' : 'outline'}
+                  size="sm"
+                  className={cn('h-7 text-xs', isLastAlone && i === entries.length - 1 && 'col-span-2')}
+                  onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
+                >
+                  {cat.label}
+                </Button>
+              ))
+            })()}
+          </div>
+          {activePresetCategory && (
+            <div className="thin-scrollbar space-y-1 mt-1.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
+              {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
+                // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
+                // not per row position — so the same type always shows the
+                // same color regardless of which category list it's viewed
+                // from, and the real item created on placement keeps this
+                // exact color (see addOrIncrementCargoFromTemplate).
+                const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
+                const active = pendingPresetStamp?.name === tpl.name
+                return (
+                  <PresetTemplateRow
+                    key={i}
+                    template={tpl}
+                    color={color}
+                    active={active}
+                    onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
+                  />
+                )
+              })}
+            </div>
+          )}
+          {pendingPresetStamp && (
+            <p className="text-[10px] text-muted-foreground leading-tight mt-1.5 shrink-0">
+              «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
