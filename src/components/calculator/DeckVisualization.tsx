@@ -531,9 +531,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // Check collision against whatever is currently rendered — manual
     // placements in manual mode, algorithm-placed/pinned items in auto mode
     // (renderedItems already resolves to the right source for either).
-    const others = renderedItems.map((m) => withClearanceFootprint(m))
-    if (collidesWith({ ...clamped, width: stampDims.w, length: stampDims.l }, others, gap)) {
+    // Checked in two passes so a rejection caused specifically by someone
+    // else's clearance zone gets an explanation — plain overlap with a real
+    // footprint is self-evident on screen and stays a silent no-op, like it
+    // always has, but a click that's rejected only because of an invisible
+    // inflated margin looked like the click just did nothing.
+    const rawOthers = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
+    const target = { ...clamped, width: stampDims.w, length: stampDims.l }
+    if (collidesWith(target, rawOthers, gap)) {
       return // ignore overlapping placement
+    }
+    const clearanceOthers = renderedItems.map((m) => withClearanceFootprint(m))
+    if (collidesWith(target, clearanceOthers, gap)) {
+      toast.warning('Здесь нельзя разместить — зона отступа другого груза')
+      return
     }
     const category = categoryByItemId?.get(activeStamp.id)
     if (category && separationRules && separationRules.length > 0) {
@@ -844,8 +855,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     // Always flush any pending drag position before releasing the pointer
     flushPendingDrag()
-    // Click on empty deck area clears selection (pins in auto mode, load zones always)
-    if (!pinDrag && !dragState && !zoneDrag && !panDrag) {
+    // Click on empty deck area clears selection (pins in auto mode, load zones always) —
+    // but not while a stamp is armed: that click is about placing a NEW item
+    // elsewhere, not about dismissing the current selection, and clearing it
+    // first (pointerup fires before the click that actually places the item)
+    // made the sidebar's lashing panel lose track of whichever placement the
+    // user had just been configuring, even when the new item landed cleanly.
+    if (!pinDrag && !dragState && !zoneDrag && !panDrag && !activeStamp) {
       const target = e.target as Element
       // Only clear if clicked directly on the deck background (marked via a
       // data attribute) or the SVG root itself — not coupled to fill colors,
