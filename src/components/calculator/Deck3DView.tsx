@@ -160,9 +160,11 @@ export default function Deck3DView({
       // smooth 32-sided rim, triangle/diamond use 3/4 sides; the non-uniform
       // `scaleZ` (relative to the X radius) turns a round cross-section into
       // an oval, and turns the width×length bounding box into the right
-      // footprint for the others too. Diamond gets an extra 45° spin so a
-      // 4-sided prism reads as a rhombus (a corner pointing along each axis)
-      // instead of an axis-aligned square.
+      // footprint for the others too. No extra rotation on the diamond —
+      // `CylinderGeometry`'s own default vertex layout already puts its
+      // corners along the X/Z axes, the same "corner at each edge midpoint"
+      // orientation the 2D diamond polygon uses, so the two views agree
+      // without needing a corrective spin.
       const polygonSides: Record<string, number> = { circle: 32, oval: 32, triangle: 3, diamond: 4 }
       if (p.shape && p.shape in polygonSides) {
         const radius = p.width / 2
@@ -173,7 +175,6 @@ export default function Deck3DView({
             pinData,
             radius,
             cylLen: p.height,
-            rot: [0, p.shape === 'diamond' ? Math.PI / 4 : 0, 0],
             radialSegments: polygonSides[p.shape],
             scaleZ: p.length / (p.width || 1),
             x: cx,
