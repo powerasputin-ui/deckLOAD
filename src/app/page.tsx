@@ -37,7 +37,6 @@ import {
   clampToDeck,
   collidesWith,
   withClearanceFootprint,
-  lashingExclusionRects,
   checkLoadDensity,
   LASHING_DEVICES,
   type ManualPlacement,
@@ -323,12 +322,11 @@ export default function Home() {
         boardOffset: deck.boardOffset,
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
-        lashingPoints: deck.lashingPoints,
       },
       10,
       pinnedPlacementsByTrip
     )
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.lashingPoints, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
@@ -478,7 +476,6 @@ export default function Home() {
     const others = pinnedPlacements
       .filter((p) => p.id !== id)
       .map((p) => withClearanceFootprint(p))
-      .concat(lashingExclusionRects(deck.lashingPoints ?? [], id))
     const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -504,7 +501,6 @@ export default function Home() {
     const others = manualPlacements
       .filter((m) => m.id !== id)
       .map((m) => withClearanceFootprint(m))
-      .concat(lashingExclusionRects(deck.lashingPoints ?? [], id))
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -576,7 +572,6 @@ export default function Home() {
       const others = placements
         .filter((p) => p.id !== selectedId)
         .map((p) => withClearanceFootprint(p))
-        .concat(lashingExclusionRects(deck.lashingPoints ?? [], selectedId))
       const target2 = {
         x: current.x + dx * step,
         y: current.y + dy * step,
@@ -1214,6 +1209,7 @@ export default function Home() {
                       }
                     }}
                     onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
+                    onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}
                     onRemoveManual={removeManualPlacement}
                     onMergeManual={handleMergeManual}
                     manualPlacements={manualPlacements}
@@ -1221,6 +1217,7 @@ export default function Home() {
                     selectedPinIds={selectedPinIds}
                     onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
                     onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
+                    onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
                     onMergePinned={handleMergePinned}
                     onRemovePinned={handleRemovePinned}
                     onRotatePinned={handleRotatePinned}

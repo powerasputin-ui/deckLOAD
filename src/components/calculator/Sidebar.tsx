@@ -62,6 +62,7 @@ import {
   type LashingDeviceType,
   type VesselMotionPreset,
   type PinnedPlacement,
+  type ClearanceMargin,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
@@ -769,9 +770,13 @@ function LashingPointsSection() {
   // whole toggle (and the input itself) would flicker away mid-edit. Mode is
   // tracked by whether a margin is set AT ALL, not by its size.
   const selectedHasClearance = selectedPlacement?.clearanceMargin !== undefined
-  const updateSelectedPlacement = (patch: { clearanceMargin?: number }) => {
+  const updateSelectedPlacement = (patch: { clearanceMargin?: ClearanceMargin }) => {
     if (selectedManual) updateManualPlacement(selectedManual.id, patch)
     else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
+  }
+  const updateClearanceSide = (side: keyof ClearanceMargin, v: number) => {
+    const current = selectedPlacement?.clearanceMargin ?? { top: 0, right: 0, bottom: 0, left: 0 }
+    updateSelectedPlacement({ clearanceMargin: { ...current, [side]: Math.max(0, v) } })
   }
   const selectedPointsCount = selectedPlacement
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
@@ -808,19 +813,41 @@ function LashingPointsSection() {
                 className="h-6 text-[10px] px-1"
                 onClick={() => {
                   clearLashingPointsFor(selectedPlacement.id)
-                  updateSelectedPlacement({ clearanceMargin: selectedPlacement.clearanceMargin || 1 })
+                  updateSelectedPlacement({
+                    clearanceMargin: selectedPlacement.clearanceMargin ?? { top: 1, right: 1, bottom: 1, left: 1 },
+                  })
                 }}
               >
                 Зона отступа
               </Button>
             </div>
             {selectedHasClearance && (
-              <MiniNumField
-                label="Отступ"
-                value={selectedPlacement.clearanceMargin ?? 0}
-                unit={UNIT_LABEL[unit]}
-                onChange={(v) => updateSelectedPlacement({ clearanceMargin: Math.max(0, v) })}
-              />
+              <div className="grid grid-cols-2 gap-1">
+                <MiniNumField
+                  label="Верх"
+                  value={selectedPlacement.clearanceMargin?.top ?? 0}
+                  unit={UNIT_LABEL[unit]}
+                  onChange={(v) => updateClearanceSide('top', v)}
+                />
+                <MiniNumField
+                  label="Право"
+                  value={selectedPlacement.clearanceMargin?.right ?? 0}
+                  unit={UNIT_LABEL[unit]}
+                  onChange={(v) => updateClearanceSide('right', v)}
+                />
+                <MiniNumField
+                  label="Низ"
+                  value={selectedPlacement.clearanceMargin?.bottom ?? 0}
+                  unit={UNIT_LABEL[unit]}
+                  onChange={(v) => updateClearanceSide('bottom', v)}
+                />
+                <MiniNumField
+                  label="Лево"
+                  value={selectedPlacement.clearanceMargin?.left ?? 0}
+                  unit={UNIT_LABEL[unit]}
+                  onChange={(v) => updateClearanceSide('left', v)}
+                />
+              </div>
             )}
             {!selectedHasClearance && selectedPointsCount > 0 && (
               <Button
@@ -918,12 +945,6 @@ function LashingPointsSection() {
                       onChange={(v) => updateLashingPoint(p.id, { verticalAngleDeg: v })}
                     />
                   </div>
-                  <MiniNumField
-                    label="Блок-зона"
-                    value={p.blockMargin ?? 0}
-                    unit={unit}
-                    onChange={(v) => updateLashingPoint(p.id, { blockMargin: v })}
-                  />
                 </>
               )}
             </div>

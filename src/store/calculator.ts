@@ -6,7 +6,6 @@ import {
   clampToDeck,
   collidesWith,
   withClearanceFootprint,
-  lashingExclusionRects,
   resolveSnappedDragPosition,
   maxLayersFor,
   violatesSeparation,
@@ -18,6 +17,7 @@ import {
   type LoadZone,
   type SeparationRule,
   type LashingPoint,
+  type ClearanceMargin,
   type VesselMotion,
 } from '@/lib/packing'
 
@@ -183,6 +183,16 @@ interface CalculatorState {
 // preset/duplicate reused a color), since the count no longer matched
 // which colors were actually free. Only falls back to a repeat once every
 // palette color is genuinely taken.
+// Converts every side of a per-side clearance margin through the same unit
+// conversion used for coordinates/dimensions — undefined stays undefined.
+function convClearance(
+  m: ClearanceMargin | undefined,
+  conv: (v: number) => number
+): ClearanceMargin | undefined {
+  if (!m) return undefined
+  return { top: conv(m.top), right: conv(m.right), bottom: conv(m.bottom), left: conv(m.left) }
+}
+
 // A lashing point's cornerX/cornerY is a snapshot of the cargo corner it's
 // attached to, taken at the moment the point was created — it never
 // recomputes on its own. Without this, dragging/nudging the cargo left the
@@ -441,7 +451,7 @@ export const useCalculator = create<CalculatorState>()(
       let layersClamped = false
       let stillColliding = false
 
-      const reflow = <T extends { id: string; x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: number }>(
+      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: ClearanceMargin }>(
         list: T[]
       ): T[] => {
         const placed: T[] = []
@@ -456,9 +466,7 @@ export const useCalculator = create<CalculatorState>()(
             }
           }
           const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
-          const others = placed
-            .map((p) => withClearanceFootprint(p))
-            .concat(lashingExclusionRects(s.deck.lashingPoints ?? [], item.id))
+          const others = placed.map((p) => withClearanceFootprint(p))
           const needsResolve = collidesWith(
             { ...clamped, width: item.width, length: item.length },
             others,
@@ -567,7 +575,6 @@ export const useCalculator = create<CalculatorState>()(
             y: conv(p.y),
             cornerX: p.cornerX === undefined ? undefined : conv(p.cornerX),
             cornerY: p.cornerY === undefined ? undefined : conv(p.cornerY),
-            blockMargin: p.blockMargin === undefined ? undefined : conv(p.blockMargin),
           })),
         },
         items: s.items.map((it) => ({
@@ -583,7 +590,7 @@ export const useCalculator = create<CalculatorState>()(
           y: conv(m.y),
           width: conv(m.width),
           length: conv(m.length),
-          clearanceMargin: m.clearanceMargin !== undefined ? conv(m.clearanceMargin) : undefined,
+          clearanceMargin: convClearance(m.clearanceMargin, conv),
         })),
         pinnedPlacementsByTrip: Object.fromEntries(
           Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
@@ -594,7 +601,7 @@ export const useCalculator = create<CalculatorState>()(
               y: conv(p.y),
               width: conv(p.width),
               length: conv(p.length),
-              clearanceMargin: p.clearanceMargin !== undefined ? conv(p.clearanceMargin) : undefined,
+              clearanceMargin: convClearance(p.clearanceMargin, conv),
             })),
           ])
         ),

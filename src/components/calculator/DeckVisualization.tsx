@@ -9,7 +9,6 @@ import {
   clampToDeck,
   collidesWith,
   withClearanceFootprint,
-  lashingExclusionRects,
   resolveSnappedDragPosition,
   checkLoadDensity,
   checkLashingBalance,
@@ -23,6 +22,7 @@ import {
   type SeparationRule,
   type LashingPoint,
   type VesselMotion,
+  type ClearanceMargin,
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber } from '@/lib/utils'
@@ -44,6 +44,7 @@ interface DeckVisualizationProps {
   stampRotated: boolean
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
+  onUpdateManualClearance?: (id: string, margin: ClearanceMargin) => void
   onRemoveManual?: (id: string) => void
   // Dragging one placement onto another of the same item merges them into a
   // single stacked footprint (layers add up, the dragged one is removed).
@@ -54,6 +55,7 @@ interface DeckVisualizationProps {
   selectedPinIds: string[]
   onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string | undefined
   onUpdatePinned?: (id: string, x: number, y: number) => void
+  onUpdatePinnedClearance?: (id: string, margin: ClearanceMargin) => void
   onMergePinned?: (draggedId: string, targetId: string) => void
   onRemovePinned?: (id: string) => void
   onRotatePinned?: (id: string) => void
@@ -101,6 +103,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   stampRotated,
   onPlace,
   onMoveManual,
+  onUpdateManualClearance,
   onRemoveManual,
   onMergeManual,
   manualPlacements,
@@ -108,6 +111,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   selectedPinIds,
   onPinPlaced,
   onUpdatePinned,
+  onUpdatePinnedClearance,
   onMergePinned,
   onRemovePinned,
   onRotatePinned,
@@ -184,6 +188,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startRect: { x: number; y: number; width: number; length: number }
   }
   const [zoneDrag, setZoneDrag] = useState<ZoneDrag | null>(null)
+  // Dragging a clearance-zone corner handle changes 1-2 adjacent margin
+  // sides at once (not a freestanding rect move/resize like LoadZone —
+  // the rect is always cargo footprint + margin, so the handle edits the
+  // margin, and the cargo itself never moves).
+  const [clearanceDrag, setClearanceDrag] = useState<{
+    kind: 'manual' | 'pin'
+    id: string
+    corner: 'nw' | 'ne' | 'sw' | 'se'
+    startMouse: { x: number; y: number }
+    startMargin: ClearanceMargin
+  } | null>(null)
   // While dragging a placement over another same-item placement, this holds
   // the id of the potential merge target (see handlePointerMove).
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
@@ -547,11 +562,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       toast.warning('Здесь нельзя разместить — зона отступа другого груза')
       return
     }
-    const lashingRects = lashingExclusionRects(lashingPoints ?? [])
-    if (collidesWith(target, lashingRects, gap)) {
-      toast.warning('Здесь нельзя — рядом чужая точка крепления')
-      return
-    }
     const category = categoryByItemId?.get(activeStamp.id)
     if (category && separationRules && separationRules.length > 0) {
       const othersWithCategory = renderedItems.map((m) => ({
@@ -761,7 +771,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const others = manualPlacements
             .filter((m) => m.id !== dragState.id)
             .map((m) => withClearanceFootprint(m))
-            .concat(lashingExclusionRects(lashingPoints ?? [], dragState.id))
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
@@ -805,6 +814,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         onUpdateLoadZone(zoneDrag.id, patch)
       }
     }
+    if (clearanceDrag) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const startDeck = screenToDeck(clearanceDrag.startMouse.x, clearanceDrag.startMouse.y)
+      if (!startDeck) return
+      const deltaX = pos.x - startDeck.x
+      const deltaY = pos.y - startDeck.y
+      const m = clearanceDrag.startMargin
+      const next: ClearanceMargin = { ...m }
+      if (clearanceDrag.corner === 'nw' || clearanceDrag.corner === 'ne') next.top = Math.max(0, m.top - deltaY)
+      else next.bottom = Math.max(0, m.bottom + deltaY)
+      if (clearanceDrag.corner === 'nw' || clearanceDrag.corner === 'sw') next.left = Math.max(0, m.left - deltaX)
+      else next.right = Math.max(0, m.right + deltaX)
+      if (clearanceDrag.kind === 'manual') onUpdateManualClearance?.(clearanceDrag.id, next)
+      else onUpdatePinnedClearance?.(clearanceDrag.id, next)
+    }
     if (lashingAnchorDrag && onUpdateLashingPoint) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
@@ -837,7 +862,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const others = pinnedPlacements
           .filter((p) => p.id !== pinDrag.id)
           .map((p) => withClearanceFootprint(p))
-          .concat(lashingExclusionRects(lashingPoints ?? [], pinDrag.id))
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
@@ -858,6 +882,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       setDragState(null)
       setPinDrag(null)
       setZoneDrag(null)
+      setClearanceDrag(null)
       setPanDrag(null)
       return
     }
@@ -869,7 +894,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // first (pointerup fires before the click that actually places the item)
     // made the sidebar's lashing panel lose track of whichever placement the
     // user had just been configuring, even when the new item landed cleanly.
-    if (!pinDrag && !dragState && !zoneDrag && !panDrag && !activeStamp) {
+    if (!pinDrag && !dragState && !zoneDrag && !clearanceDrag && !panDrag && !activeStamp) {
       const target = e.target as Element
       // Only clear if clicked directly on the deck background (marked via a
       // data attribute) or the SVG root itself — not coupled to fill colors,
@@ -882,6 +907,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setDragState(null)
     setPinDrag(null)
     setZoneDrag(null)
+    setClearanceDrag(null)
     setPanDrag(null)
     setLashingAnchorDrag(null)
   }
@@ -899,6 +925,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setDragState(null)
     setPinDrag(null)
     setZoneDrag(null)
+    setClearanceDrag(null)
     setPanDrag(null)
     setMergeTargetId(null)
     setLashingAnchorDrag(null)
@@ -935,6 +962,24 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       corner,
       startMouse: { x: e.clientX, y: e.clientY },
       startRect: { x: zone.x, y: zone.y, width: zone.width, length: zone.length },
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  const handleClearanceCornerPointerDown = (
+    e: React.PointerEvent,
+    kind: 'manual' | 'pin',
+    id: string,
+    margin: ClearanceMargin,
+    corner: 'nw' | 'ne' | 'sw' | 'se'
+  ) => {
+    e.stopPropagation()
+    setClearanceDrag({
+      kind,
+      id,
+      corner,
+      startMouse: { x: e.clientX, y: e.clientY },
+      startMargin: margin,
     })
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
@@ -1168,18 +1213,42 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             lashing points (see clearanceMargin on ManualPlacement/
             PinnedPlacement). Red, not blue like LoadZone, since this is an
             actual placement-blocking boundary rather than an informational
-            load-density warning. No drag/resize handles — edited only via
-            the numeric field in the sidebar. */}
+            load-density warning. Per-side margin, so the rect isn't
+            necessarily centered on the cargo. Corner drag-handles (same
+            visual language as LoadZone's) appear only on the selected
+            placement's zone, to avoid cluttering the screen with handles on
+            every cargo that has one. */}
         {renderedItems
-          .filter((p) => (p.clearanceMargin ?? 0) > 0)
+          .filter((p) => !!p.clearanceMargin)
           .map((p, i) => {
             const margin = p.clearanceMargin!
-            const zx = toX(p.x - margin)
-            const zy = toY(p.y - margin)
-            const zw = (p.width + margin * 2) * scale
-            const zh = (p.length + margin * 2) * scale
+            const matchingPin = isInteractiveAuto
+              ? pinnedPlacements.find(
+                  (pin) =>
+                    pin.itemId === p.itemId &&
+                    Math.abs(pin.x - p.x) < 0.01 &&
+                    Math.abs(pin.y - p.y) < 0.01
+                )
+              : undefined
+            const kind: 'manual' | 'pin' = mode === 'manual' ? 'manual' : 'pin'
+            const placementId = mode === 'manual' ? p.manualId : matchingPin?.id
+            const isSelected =
+              mode === 'manual'
+                ? selectedManualIds?.includes(p.manualId ?? '') ?? false
+                : !!placementId && selectedPinIds.includes(placementId)
+            const canDrag = isSelected && !!placementId
+            const zx = toX(p.x - margin.left)
+            const zy = toY(p.y - margin.top)
+            const zw = (p.width + margin.left + margin.right) * scale
+            const zh = (p.length + margin.top + margin.bottom) * scale
+            const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
+              { key: 'nw', x: zx, y: zy },
+              { key: 'ne', x: zx + zw, y: zy },
+              { key: 'sw', x: zx, y: zy + zh },
+              { key: 'se', x: zx + zw, y: zy + zh },
+            ]
             return (
-              <g key={`clearance-${p.itemId}-${p.index}-${i}`} className="pointer-events-none">
+              <g key={`clearance-${p.itemId}-${p.index}-${i}`}>
                 <rect
                   x={zx}
                   y={zy}
@@ -1189,66 +1258,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   stroke="rgba(220,38,38,0.5)"
                   strokeWidth={1.5}
                   strokeDasharray="5 3"
+                  className="pointer-events-none"
                 />
-                {zw > 30 && zh > 16 && (
-                  <text
-                    x={zx + 4}
-                    y={zy + 13}
-                    fontSize={10}
-                    fontWeight={600}
-                    fill="rgba(185,28,28,0.9)"
-                    className="select-none"
-                  >
-                    {fmt(margin)} {UNIT_LABEL[unit]}
-                  </text>
-                )}
-              </g>
-            )
-          })}
-
-        {/* Hard-blocking exclusion zones around lashing points with a
-            blockMargin set — same visual language as the clearance zone
-            above (red dashed rect), drawn around the corner→anchor corridor
-            instead of around a whole placement. Only drawn when blockMargin
-            > 0 so the vast majority of existing points (no block zone) don't
-            clutter the screen. */}
-        {(lashingPoints ?? [])
-          .filter((pt) => (pt.blockMargin ?? 0) > 0)
-          .map((pt) => {
-            const m = pt.blockMargin!
-            const hasCorner = pt.cornerX !== undefined && pt.cornerY !== undefined
-            const x0 = hasCorner ? Math.min(pt.cornerX!, pt.x) : pt.x
-            const x1 = hasCorner ? Math.max(pt.cornerX!, pt.x) : pt.x
-            const y0 = hasCorner ? Math.min(pt.cornerY!, pt.y) : pt.y
-            const y1 = hasCorner ? Math.max(pt.cornerY!, pt.y) : pt.y
-            const zx = toX(x0 - m)
-            const zy = toY(y0 - m)
-            const zw = (x1 - x0 + m * 2) * scale
-            const zh = (y1 - y0 + m * 2) * scale
-            return (
-              <g key={`lash-block-${pt.id}`} className="pointer-events-none">
-                <rect
-                  x={zx}
-                  y={zy}
-                  width={zw}
-                  height={zh}
-                  fill="none"
-                  stroke="rgba(220,38,38,0.5)"
-                  strokeWidth={1.5}
-                  strokeDasharray="5 3"
-                />
-                {zw > 30 && zh > 16 && (
-                  <text
-                    x={zx + 4}
-                    y={zy + 13}
-                    fontSize={10}
-                    fontWeight={600}
-                    fill="rgba(185,28,28,0.9)"
-                    className="select-none"
-                  >
-                    {fmt(m)} {UNIT_LABEL[unit]}
-                  </text>
-                )}
+                {canDrag &&
+                  corners.map((c) => (
+                    <rect
+                      key={c.key}
+                      x={c.x - 4}
+                      y={c.y - 4}
+                      width={8}
+                      height={8}
+                      fill="#fff"
+                      stroke="rgba(220,38,38,0.9)"
+                      strokeWidth={1.5}
+                      style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
+                      onPointerDown={(e) => handleClearanceCornerPointerDown(e, kind, placementId!, margin, c.key)}
+                    />
+                  ))}
               </g>
             )
           })}

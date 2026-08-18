@@ -7,7 +7,6 @@ import {
   maxLayersFor,
   collidesWith,
   withClearanceFootprint,
-  lashingExclusionRects,
   clampToDeck,
   rotatePlacement,
   resolveSnappedDragPosition,
@@ -204,7 +203,7 @@ describe('packDeck', () => {
       layers: 1,
       rotated: false,
       color: '#0ea5e9',
-      clearanceMargin: 1, // reserves roughly (0,0)-(4,4)
+      clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 }, // reserves roughly (0,0)-(4,4)
     }
     const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 4 })], {
       gap: 0,
@@ -428,49 +427,19 @@ describe('withClearanceFootprint', () => {
     expect(withClearanceFootprint(p)).toEqual(p)
   })
 
-  it('inflates the footprint symmetrically by the margin', () => {
-    const p = { x: 1, y: 1, width: 2, length: 2, clearanceMargin: 0.5 }
-    expect(withClearanceFootprint(p)).toEqual({ x: 0.5, y: 0.5, width: 3, length: 3 })
+  it('inflates the footprint per side by the margin', () => {
+    const p = { x: 1, y: 1, width: 2, length: 2, clearanceMargin: { top: 0.5, right: 1, bottom: 0.25, left: 2 } }
+    expect(withClearanceFootprint(p)).toEqual({ x: -1, y: 0.5, width: 5, length: 2.75 })
   })
 
   it('makes collidesWith reject placements inside the exclusion zone', () => {
-    const guarded = { x: 5, y: 5, width: 1, length: 1, clearanceMargin: 1 }
+    const guarded = { x: 5, y: 5, width: 1, length: 1, clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 } }
     // 0.5m away from the guarded item's edge — inside its 1m margin.
     const nearby = { x: 6.5, y: 5, width: 1, length: 1 }
     expect(collidesWith(nearby, [withClearanceFootprint(guarded)])).toBe(true)
     // Far enough outside the 1m margin.
     const farAway = { x: 8, y: 5, width: 1, length: 1 }
     expect(collidesWith(farAway, [withClearanceFootprint(guarded)])).toBe(false)
-  })
-})
-
-describe('lashingExclusionRects', () => {
-  it('skips points with no blockMargin', () => {
-    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3 }]
-    expect(lashingExclusionRects(points)).toEqual([])
-  })
-
-  it('builds an AABB around the corner-to-anchor line, inflated by the margin', () => {
-    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3, blockMargin: 0.5 }]
-    expect(lashingExclusionRects(points)).toEqual([{ x: 2.5, y: 2.5, width: 3, length: 3 }])
-  })
-
-  it('falls back to a square around the anchor alone when there is no corner', () => {
-    const points = [{ id: 'p1', x: 5, y: 5, blockMargin: 1 }]
-    expect(lashingExclusionRects(points)).toEqual([{ x: 4, y: 4, width: 2, length: 2 }])
-  })
-
-  it('excludes points belonging to the given placement id', () => {
-    const points = [{ id: 'p1', x: 5, y: 5, blockMargin: 1, placementId: 'cargo-a' }]
-    expect(lashingExclusionRects(points, 'cargo-a')).toEqual([])
-    expect(lashingExclusionRects(points, 'cargo-b')).toHaveLength(1)
-  })
-
-  it('blocks placement of other cargo inside the exclusion rect via collidesWith', () => {
-    const points = [{ id: 'p1', x: 5, y: 5, cornerX: 3, cornerY: 3, blockMargin: 0.5 }]
-    const rects = lashingExclusionRects(points)
-    expect(collidesWith({ x: 5.2, y: 5.2, width: 1, length: 1 }, rects)).toBe(true)
-    expect(collidesWith({ x: 10, y: 10, width: 1, length: 1 }, rects)).toBe(false)
   })
 })
 

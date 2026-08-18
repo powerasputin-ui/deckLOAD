@@ -252,11 +252,14 @@ describe('calculator store', () => {
       layers: 1,
       rotated: false,
       color: item.color,
-      clearanceMargin: 1,
+      clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 },
     })
     s.setUnit('cm')
     const placement = useCalculator.getState().manualPlacements[0]
-    expect(placement.clearanceMargin).toBeCloseTo(100)
+    expect(placement.clearanceMargin?.top).toBeCloseTo(100)
+    expect(placement.clearanceMargin?.right).toBeCloseTo(100)
+    expect(placement.clearanceMargin?.bottom).toBeCloseTo(100)
+    expect(placement.clearanceMargin?.left).toBeCloseTo(100)
   })
 
   it('adds and removes a separation rule', () => {

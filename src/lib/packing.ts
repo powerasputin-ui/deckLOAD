@@ -100,7 +100,6 @@ export interface LashingPoint {
   verticalAngleDeg?: number // angle of the lashing off the deck plane, default 45
   mslKg?: number // rated Maximum Securing Load of this device
   deviceType?: LashingDeviceType
-  blockMargin?: number // hard-block exclusion radius (m) around the anchor + corridor along the line
 }
 
 // Typical securing devices with their rated MSL (kg) — selecting one
@@ -260,7 +259,7 @@ export interface PlacedItem {
   weight?: number
   index: number
   shape?: CargoShape
-  clearanceMargin?: number // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
+  clearanceMargin?: ClearanceMargin // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
 }
 
 export interface UnplacedItem {
@@ -474,7 +473,6 @@ export interface PackOptions {
   clearance?: number // max stack height above deck (0 = single tier)
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
-  lashingPoints?: LashingPoint[] // hard-block exclusion zones around lashing anchors/corridors
 }
 
 export interface PinnedPlacement {
@@ -493,7 +491,7 @@ export interface PinnedPlacement {
   // placement — an alternative to individual lashing points, not a
   // combination of both (see clearLashingPointsFor in calculator.ts).
   // Other cargo cannot be placed, dragged, or auto-packed into this margin.
-  clearanceMargin?: number
+  clearanceMargin?: ClearanceMargin
 }
 
 // Compute how many tiers (layers) can be stacked for an item.
@@ -526,7 +524,6 @@ export function packDeck(
   )
   const pinned = typeof options === 'string' ? [] : options.pinned ?? []
   const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
-  const lashingPoints = typeof options === 'string' ? [] : options.lashingPoints ?? []
 
   // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
   const safeDeckWidth = toFinite(deckWidth, 0)
@@ -612,15 +609,10 @@ export function packDeck(
       })
       continue
     }
-    const acceptedLashingRects = lashingExclusionRects(
-      lashingPoints.filter((lp) => acceptedPins.some((ap) => ap.id === lp.placementId))
+    const overlapsAccepted = acceptedPins.some((ap) =>
+      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
+      collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
     )
-    const overlapsAccepted =
-      acceptedPins.some((ap) =>
-        collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
-        collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
-      ) ||
-      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, acceptedLashingRects, gap)
     if (overlapsAccepted) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -661,24 +653,16 @@ export function packDeck(
     // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
     // inflated cell instead, so the free-rect splitter never offers that
     // space to algorithmically-placed (non-pinned) cargo either.
-    const clearance = pin.clearanceMargin ?? 0
+    const cm = pin.clearanceMargin
     placeRect(
       {
-        x: pin.x - gap / 2 - clearance,
-        y: pin.y - gap / 2 - clearance,
-        width: pin.width + gap + clearance * 2,
-        height: pin.length + gap + clearance * 2,
+        x: pin.x - gap / 2 - (cm?.left ?? 0),
+        y: pin.y - gap / 2 - (cm?.top ?? 0),
+        width: pin.width + gap + (cm?.left ?? 0) + (cm?.right ?? 0),
+        height: pin.length + gap + (cm?.top ?? 0) + (cm?.bottom ?? 0),
       },
       freeRects
     )
-    // Also reserve this pin's own lashing-point exclusion zones so the
-    // auto-packer never offers that space to algorithmically-placed cargo.
-    for (const rect of lashingExclusionRects(lashingPoints.filter((lp) => lp.placementId === pin.id))) {
-      placeRect(
-        { x: rect.x - gap / 2, y: rect.y - gap / 2, width: rect.width + gap, height: rect.length + gap },
-        freeRects
-      )
-    }
     result.placed.push({
       itemId: pin.itemId,
       name: pin.name,
@@ -1166,7 +1150,7 @@ export interface ManualPlacement {
   color: string
   weight?: number
   // See PinnedPlacement.clearanceMargin above — same meaning here.
-  clearanceMargin?: number
+  clearanceMargin?: ClearanceMargin
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
@@ -1181,41 +1165,32 @@ export function computeGridStep(deckWidth: number, deckLength: number): number {
   return 10
 }
 
+// Independent hard-block margin per side of a placement's footprint —
+// lets the exclusion zone be wider on, say, the side a rigger needs to work
+// from, rather than a single symmetric radius.
+export interface ClearanceMargin {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
 // Inflates a placement's own footprint by its clearanceMargin (if any) —
 // used when OTHER items test collision against this one, so its hard-block
 // exclusion zone actually excludes them. Never applied to the placement's
 // own clamp-to-deck-edge or self-collision checks — only when it appears in
 // someone else's `others` array.
 export function withClearanceFootprint<
-  T extends { x: number; y: number; width: number; length: number; clearanceMargin?: number }
+  T extends { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }
 >(p: T): { x: number; y: number; width: number; length: number } {
-  const m = p.clearanceMargin ?? 0
-  if (m <= 0) return p
-  return { x: p.x - m, y: p.y - m, width: p.width + 2 * m, length: p.length + 2 * m }
-}
-
-// Hard-block exclusion rects around lashing points that carry a blockMargin —
-// an AABB of the corner-to-anchor line segment, inflated by the margin. This
-// deliberately approximates a "corridor + circle at the anchor" as a single
-// rectangle rather than introducing capsule/circle geometry, since the rest
-// of the app's hard-collision system (collidesWith) is strictly rectangular.
-export function lashingExclusionRects(
-  points: LashingPoint[],
-  excludePlacementId?: string
-): { x: number; y: number; width: number; length: number }[] {
-  const out: { x: number; y: number; width: number; length: number }[] = []
-  for (const p of points) {
-    const m = p.blockMargin ?? 0
-    if (m <= 0) continue
-    if (excludePlacementId && p.placementId === excludePlacementId) continue
-    const hasCorner = p.cornerX !== undefined && p.cornerY !== undefined
-    const x0 = hasCorner ? Math.min(p.cornerX!, p.x) : p.x
-    const x1 = hasCorner ? Math.max(p.cornerX!, p.x) : p.x
-    const y0 = hasCorner ? Math.min(p.cornerY!, p.y) : p.y
-    const y1 = hasCorner ? Math.max(p.cornerY!, p.y) : p.y
-    out.push({ x: x0 - m, y: y0 - m, width: x1 - x0 + m * 2, length: y1 - y0 + m * 2 })
+  const m = p.clearanceMargin
+  if (!m) return p
+  return {
+    x: p.x - m.left,
+    y: p.y - m.top,
+    width: p.width + m.left + m.right,
+    length: p.length + m.top + m.bottom,
   }
-  return out
 }
 
 // Check whether a manual placement collides with any existing one.
