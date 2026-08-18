@@ -1065,16 +1065,39 @@ function MiniNumField({
   unit: string
   onChange: (v: number) => void
 }) {
+  // type="number" silently rejects a comma decimal separator as you type it
+  // (Russian convention, e.g. "0,4") — this field accepts both "," and "."
+  // so a value like 0.4 doesn't get mangled into 04. Needs its own text
+  // buffer (not just formatting `value` on the fly) so an in-progress
+  // entry like "0," or "0." isn't immediately snapped back to "0" by the
+  // controlled value before the user finishes typing the decimal part.
+  const [text, setText] = useState(String(value))
+  // Resync the text buffer when `value` changes from outside (not from this
+  // field's own onChange) — the React-recommended "adjust state during
+  // render" pattern instead of an effect, since setState-in-effect here
+  // would cause an extra render pass for no benefit.
+  const [prevValue, setPrevValue] = useState(value)
+  if (value !== prevValue) {
+    setPrevValue(value)
+    setText(String(value))
+  }
+
   return (
     <div className="space-y-0.5">
       <label className="text-[9px] text-muted-foreground leading-none block">
         {label}{unit ? ` (${unit})` : ''}
       </label>
       <Input
-        type="number"
-        step={0.1}
-        value={value}
-        onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v)) onChange(v) }}
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => {
+          const raw = e.target.value
+          setText(raw)
+          const v = Number(raw.replace(',', '.'))
+          if (!isNaN(v) && raw.trim() !== '') onChange(v)
+        }}
+        onBlur={() => setText(String(value))}
         className="h-6 text-[11px] px-1"
       />
     </div>
