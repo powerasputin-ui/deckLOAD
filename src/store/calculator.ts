@@ -293,8 +293,8 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
       // Realistic offshore pipe types replace the old generic "Бочка"/"Труба".
       { name: 'Скип для бурового шлама', width: 2.4, length: 1.5, height: 1.6, allowRotation: true, weight: 1400 },
-      { name: 'Бурильная труба (свеча, Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: false, weight: 400, shape: 'cylinder', color: '#334155' },
-      { name: 'Обсадная труба', width: 9.5, length: 0.25, height: 0.25, allowRotation: false, weight: 700, shape: 'cylinder', color: '#57534e' },
+      { name: 'Бурильная труба (свеча, Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: true, weight: 400, shape: 'cylinder', color: '#334155' },
+      { name: 'Обсадная труба', width: 9.5, length: 0.25, height: 0.25, allowRotation: true, weight: 700, shape: 'cylinder', color: '#57534e' },
       { name: 'Генераторная установка (энергоблок)', width: 3.0, length: 1.5, height: 1.8, allowRotation: false, weight: 3000 },
       { name: 'Якорная цепь в корзине', width: 1.5, length: 1.5, height: 1.2, allowRotation: false, weight: 3000 },
     ],

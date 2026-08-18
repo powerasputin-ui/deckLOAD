@@ -519,32 +519,39 @@ export default function Home() {
   // adjust placement). Space rotates it, reusing the exact same rotate path
   // as the 2D rotate button so behaviour never diverges between views.
   // Skipped while focus is inside a text input (same guard as the other two
-  // keydown listeners above) and while nothing is selected or the 2D view is
-  // active, so it never fights the 2D view's own pointer-drag.
+  // keydown listeners above). The listener stays attached whenever the 3D
+  // view is open, even with nothing selected — it still needs to swallow
+  // Space/arrow keys (via preventDefault) so they don't fall through to
+  // whatever toolbar button currently has DOM focus (Space on a focused
+  // <button> re-clicks it natively) rather than silently doing nothing.
+  // Which item is selected is read fresh on every keypress rather than once
+  // when the effect was set up, so clicking a new item in 3D takes effect
+  // immediately without waiting for the effect to re-subscribe.
   useEffect(() => {
     if (viewMode !== '3d') return
-    const selectedId = mode === 'manual' ? selectedManualIds[0] : selectedPinIds[0]
-    if (!selectedId) return
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
 
-      if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault()
-        if (mode === 'manual') handleRotateManual(selectedId)
-        else handleRotatePinned(selectedId)
-        return
-      }
-
+      const isSpace = e.key === ' ' || e.code === 'Space'
       let dx = 0
       let dy = 0
       if (e.key === 'ArrowLeft') dx = -1
       else if (e.key === 'ArrowRight') dx = 1
       else if (e.key === 'ArrowUp') dy = -1
       else if (e.key === 'ArrowDown') dy = 1
-      else return
+      else if (!isSpace) return
       e.preventDefault()
+
+      const selectedId = mode === 'manual' ? selectedManualIds[0] : selectedPinIds[0]
+      if (!selectedId) return
+
+      if (isSpace) {
+        if (mode === 'manual') handleRotateManual(selectedId)
+        else handleRotatePinned(selectedId)
+        return
+      }
 
       const step = computeGridStep(deck.width, deck.length) / 4
       const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
@@ -1085,8 +1092,14 @@ export default function Home() {
                         )}
                       </CardTitle>
                       <CardDescription className="mt-0.5">
-                        Вид сверху · зелёная штриховка — свободное пространство
-                        {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+                        {viewMode === '3d'
+                          ? 'Клик по грузу — выбрать · стрелки — двигать · Пробел — повернуть'
+                          : (
+                            <>
+                              Вид сверху · зелёная штриховка — свободное пространство
+                              {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+                            </>
+                          )}
                       </CardDescription>
                     </div>
                     {viewMode === '2d' && (
@@ -1129,6 +1142,7 @@ export default function Home() {
                       selectedPinIds={selectedPinIds}
                       onSelectManual={toggleManualSelection}
                       onSelectPin={togglePinSelection}
+                      onPinInPlace={(p) => pinFromPlaced(clampedTripIndex, p)}
                     />
                   ) : (
                   <DeckVisualization

@@ -2,8 +2,21 @@
 
 import { useMemo } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Edges } from '@react-three/drei'
+import { OrbitControls, Edges, Outlines } from '@react-three/drei'
 import type { PackingResult, ManualPlacement, PinnedPlacement } from '@/lib/packing'
+
+interface PinData {
+  itemId: string
+  name: string
+  x: number
+  y: number
+  width: number
+  length: number
+  layers: number
+  rotated: boolean
+  color: string
+  weight?: number
+}
 
 interface Deck3DViewProps {
   result: PackingResult
@@ -16,6 +29,11 @@ interface Deck3DViewProps {
   selectedPinIds: string[]
   onSelectManual?: (id: string, additive: boolean) => void
   onSelectPin?: (id: string, additive: boolean) => void
+  // Auto mode only: clicking a mesh that isn't pinned yet (just placed by the
+  // algorithm) pins it at its current position — the same "click to pin in
+  // place" action the 2D view already does via onPinPlaced — so any visible
+  // cargo becomes selectable/movable in 3D, not just already-pinned pieces.
+  onPinInPlace?: (p: PinData) => void
 }
 
 const SQRT3 = Math.sqrt(3)
@@ -38,6 +56,7 @@ export default function Deck3DView({
   selectedPinIds,
   onSelectManual,
   onSelectPin,
+  onPinInPlace,
 }: Deck3DViewProps) {
   // Deck plane sits in XZ; height (Y) is item.height per tier. Each stacked
   // layer is rendered as its own mesh (with a thin gap between them) instead
@@ -59,6 +78,7 @@ export default function Deck3DView({
     const out: {
       key: string
       placementId?: string
+      pinData?: PinData
       color: string
       shape?: 'box' | 'cylinder'
       x: number
@@ -87,14 +107,40 @@ export default function Deck3DView({
       return pin?.id
     }
 
+    // `PlacedItem.index` is NOT globally unique across result.placed in auto
+    // mode — pinned and algorithm-placed items are numbered from separate
+    // counters in packing.ts, so a pinned item and an auto-placed item of
+    // the same cargo type can both land on `index: 0`. Keying meshes off
+    // `p.index` then collided (React "duplicate key" warning, and one of
+    // the two silently failed to render) — count array position locally
+    // instead, which is always unique regardless of the source counters.
+    let pIdx = 0
     for (const p of result.placed) {
+      const thisIdx = pIdx++
       const placementId = placementIdFor(p)
+      // Only relevant in auto mode for a not-yet-pinned (algorithm-placed)
+      // item — gives handleClick enough to pin it in place on first click.
+      const pinData: PinData | undefined =
+        mode === 'auto' && !placementId
+          ? {
+              itemId: p.itemId,
+              name: p.name,
+              x: p.x,
+              y: p.y,
+              width: p.width,
+              length: p.length,
+              layers: p.stackedCount,
+              rotated: p.rotated,
+              color: p.color,
+              weight: p.weight,
+            }
+          : undefined
       const cx = p.x + p.width / 2 - deckWidth / 2
       const cz = p.y + p.length / 2 - deckLength / 2
       const layers = Math.max(1, p.stackedCount)
 
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${p.index}`, placementId, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color, shape: p.shape })
+        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color, shape: p.shape })
         continue
       }
 
@@ -107,8 +153,9 @@ export default function Deck3DView({
       if (p.shape !== 'cylinder') {
         for (let layer = 0; layer < layers; layer++) {
           out.push({
-            key: `${p.itemId}-${p.index}-${layer}`,
+            key: `${p.itemId}-${thisIdx}-${layer}`,
             placementId,
+            pinData,
             w: p.width * SHRINK,
             d: p.length * SHRINK,
             h: p.height,
@@ -144,8 +191,9 @@ export default function Deck3DView({
         // and a lone pipe obviously has no pyramid to form.
         for (let layer = 0; layer < layers; layer++) {
           out.push({
-            key: `${p.itemId}-${p.index}-${layer}`,
+            key: `${p.itemId}-${thisIdx}-${layer}`,
             placementId,
+            pinData,
             radius,
             cylLen,
             rot,
@@ -176,8 +224,9 @@ export default function Deck3DView({
         for (let i = 0; i < rowCount; i++) {
           const across = (i - (rowCount - 1) / 2) * radius * 2
           out.push({
-            key: `${p.itemId}-${p.index}-${seq++}`,
+            key: `${p.itemId}-${thisIdx}-${seq++}`,
             placementId,
+            pinData,
             radius,
             cylLen,
             rot,
@@ -200,8 +249,17 @@ export default function Deck3DView({
     [mode, selectedManualIds, selectedPinIds]
   )
 
-  const handleClick = (placementId: string | undefined) => (e: ThreeEvent<MouseEvent>) => {
-    if (!placementId) return
+  const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
+    if (!placementId) {
+      // Auto mode, not pinned yet — pin it where it already sits (mirrors
+      // the 2D view's click-to-pin behaviour) so it becomes selectable and
+      // movable instead of staying a dead click.
+      if (pinData) {
+        e.stopPropagation()
+        onPinInPlace?.(pinData)
+      }
+      return
+    }
     e.stopPropagation()
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (mode === 'manual') onSelectManual?.(placementId, additive)
@@ -239,23 +297,28 @@ export default function Deck3DView({
         </mesh>
 
         {boxes.map((b) => {
+          // Selection is shown as an outline around the mesh's own silhouette
+          // (not by tinting its material) — a dark preset color stays exactly
+          // that color whether selected or not; only a thin yellow ring gets
+          // added on top. For a cylinder viewed end-on, that ring reads as a
+          // highlighted circle around the pipe's round cross-section.
           const isSelected = !!b.placementId && selectedSet.has(b.placementId)
-          const emissive = isSelected ? '#facc15' : '#000000'
-          const emissiveIntensity = isSelected ? 0.5 : 0
           if (b.radius === undefined) {
             return (
-              <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId)}>
+              <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId, b.pinData)}>
                 <boxGeometry args={[b.w!, b.h!, b.d!]} />
-                <meshStandardMaterial color={b.color} emissive={emissive} emissiveIntensity={emissiveIntensity} />
+                <meshStandardMaterial color={b.color} />
                 <Edges color="#0f172a" />
+                {isSelected && <Outlines thickness={3} color="#facc15" />}
               </mesh>
             )
           }
           return (
-            <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={b.rot} onClick={handleClick(b.placementId)}>
+            <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={b.rot} onClick={handleClick(b.placementId, b.pinData)}>
               <cylinderGeometry args={[b.radius, b.radius, b.cylLen, 24]} />
-              <meshStandardMaterial color={b.color} emissive={emissive} emissiveIntensity={emissiveIntensity} />
+              <meshStandardMaterial color={b.color} />
               <Edges color="#0f172a" />
+              {isSelected && <Outlines thickness={3} color="#facc15" />}
             </mesh>
           )
         })}
