@@ -1202,13 +1202,23 @@ export default function Home() {
                       } else {
                         pinFromPlaced(clampedTripIndex, placement)
                       }
-                      // Hand off from the preset template to the real item —
-                      // the deck panel switches from showing the preset
-                      // catalog back to the normal cargo list, with this
-                      // item now visibly armed there so repeated clicks
-                      // keep placing more of it.
+                      // Deliberately NOT calling setActiveStamp(itemId) here.
+                      // pendingPresetStamp stays armed after this first
+                      // placement, so the next click keeps going through the
+                      // uncapped addOrIncrementCargoFromTemplate branch above
+                      // instead of falling into the aggregate-quantity cap —
+                      // that cap makes sense for a pre-declared "Грузы" item
+                      // (its quantity was set on purpose), but a preset has
+                      // no quantity yet; it's only ever defined by how many
+                      // times the user clicks. Switching to the capped
+                      // activeStampId after one click used to leave a stamp
+                      // that still looked armed but silently refused every
+                      // further click ("Все грузы уже размещены") until the
+                      // user went and manually raised the quantity in
+                      // "Грузы" — this keeps placing for as long as the
+                      // preset stamp stays armed (toggle it off, Escape, or
+                      // arm something else to stop).
                       if (wasPendingPreset) {
-                        setActiveStamp(itemId)
                         useCalculator.getState().setActivePresetCategory(null)
                       }
                     }}
