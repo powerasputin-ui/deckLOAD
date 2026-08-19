@@ -1212,15 +1212,29 @@ export default function Home() {
                       if (pendingPresetStamp) {
                         itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
                       } else {
-                        const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-                        const placedUnits =
+                        // Scoped to THIS item, not a global sum across every
+                        // cargo type — an aggregate check let a fully-placed
+                        // item keep being over-placed by clicking its own
+                        // stamp, as long as some OTHER item's quantity still
+                        // had "room" in the total (e.g. item A qty 1 already
+                        // placed, item B qty 1 still unplaced: clicking A's
+                        // stamp again passed 1 >= 2 = false and placed a
+                        // second A anyway).
+                        const item = items.find((it) => it.id === p.itemId)
+                        const itemRequested = item?.quantity ?? 0
+                        const itemPlaced =
                           mode === 'manual'
-                            ? manualPlacements.reduce((s, m) => s + Math.max(1, m.layers), 0)
+                            ? manualPlacements
+                                .filter((m) => m.itemId === p.itemId)
+                                .reduce((s, m) => s + Math.max(1, m.layers), 0)
                             : Object.values(pinnedPlacementsByTrip)
                                 .flat()
+                                .filter((pin) => pin.itemId === p.itemId)
                                 .reduce((s, pin) => s + Math.max(1, pin.layers), 0)
-                        if (placedUnits >= totalRequested) {
-                          toast.warning('Все грузы уже размещены')
+                        if (itemPlaced >= itemRequested) {
+                          toast.warning(
+                            `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
+                          )
                           return
                         }
                       }
