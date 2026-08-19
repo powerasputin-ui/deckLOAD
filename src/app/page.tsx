@@ -9,6 +9,7 @@ import {
   Anchor,
   Download,
   Upload,
+  AlertTriangle,
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
@@ -1075,6 +1076,33 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {/* Unplaced-cargo banner — sits outside the scrollable <main> (like the
+          header) so it's visible the instant something doesn't fit, instead
+          of requiring a scroll all the way down to the bottom of the
+          Статистика card to discover it. */}
+      {result.unplaced.length > 0 && (
+        <div className="shrink-0 border-b bg-red-50 dark:bg-red-950/30 px-4 py-2">
+          <div className="flex items-start gap-2 flex-wrap">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-400 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Не поместилось ({result.unplaced.length}):
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {result.unplaced.map((u, i) => (
+                <Badge
+                  key={`${u.itemId}-${i}`}
+                  variant="destructive"
+                  className="text-[10px] font-normal"
+                  title={u.reason}
+                >
+                  {u.name} — {u.reason}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Workspace */}
       <div className="flex-1 flex min-h-0">

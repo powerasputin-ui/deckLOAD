@@ -1,6 +1,6 @@
 'use client'
 
-import { TrendingUp, LayoutGrid, Square, PackageX, Weight, CheckCircle2, AlertTriangle, Package, Layers } from 'lucide-react'
+import { TrendingUp, LayoutGrid, Square, Weight, CheckCircle2, AlertTriangle, Package, Layers } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import {
   Card,
@@ -9,7 +9,6 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { checkLoadDensity, type PackingResult, type LoadZone } from '@/lib/packing'
 import { fmtNumber } from '@/lib/utils'
 import { UNIT_LABEL, type Unit } from '@/store/calculator'
@@ -27,7 +26,6 @@ export function StatsPanel({ result, unit, loadZones }: StatsPanelProps) {
     freeArea,
     utilization,
     placed,
-    unplaced,
     totalWeight,
     requestedCount,
     placedCount,
@@ -226,29 +224,6 @@ export function StatsPanel({ result, unit, loadZones }: StatsPanelProps) {
                   })}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
-
-        {/* Unplaced list */}
-        {unplaced.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-sm font-medium">
-              <PackageX className="h-4 w-4 text-destructive" />
-              Не размещённые грузы
-            </div>
-            <div className="space-y-1">
-              {unplaced.map((u, i) => (
-                <div
-                  key={`${u.itemId}-${i}`}
-                  className="flex items-center justify-between gap-2 rounded-md border border-destructive/20 bg-destructive/5 px-2.5 py-1.5 text-xs"
-                >
-                  <span className="truncate font-medium">{u.name}</span>
-                  <Badge variant="destructive" className="shrink-0 text-[10px]">
-                    {u.reason}
-                  </Badge>
-                </div>
-              ))}
             </div>
           </div>
         )}
