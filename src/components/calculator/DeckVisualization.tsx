@@ -11,6 +11,7 @@ import {
   clampToDeck,
   collidesPrecisely,
   rectInsidePolygon,
+  erodePolygon,
   withClearanceFootprint,
   lashingPointExclusionRects,
   rotateOutline90,
@@ -399,6 +400,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     [deckWidth, deckLength, result.placed, gap, boardOffset, deckOutline]
   )
 
+  // Board offset along the real contour, not the bounding box — see
+  // erodePolygon's own comment in packing.ts. Used everywhere a placement
+  // needs to stay clear of both the deck's cut edges AND its normal board
+  // offset margin; undefined when there's no custom outline (rectangle deck
+  // keeps using the existing edgePad-based clamp/checks, unchanged).
+  const usableOutline = useMemo(
+    () => (deckOutline && deckOutline.length >= 3 ? erodePolygon(deckOutline, boardOffset) : undefined),
+    [deckOutline, boardOffset]
+  )
+
   // Layout geometry
   const maxW = 900
   const maxH = 560
@@ -773,7 +784,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (collidesPrecisely(target, rawOthers, gap)) {
       return // ignore overlapping placement
     }
-    if (deckOutline && deckOutline.length >= 3 && !rectInsidePolygon(target, deckOutline)) {
+    if (usableOutline && !rectInsidePolygon(target, usableOutline)) {
       toast.warning('Здесь груз выходит за пределы палубы')
       return
     }
@@ -1033,7 +1044,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
           const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline }
-          const insideDeck = !deckOutline || deckOutline.length < 3 || rectInsidePolygon(resolvedTarget, deckOutline)
+          const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
           if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
             scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
           }
@@ -1136,7 +1147,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
         const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline }
-        const insideDeck = !deckOutline || deckOutline.length < 3 || rectInsidePolygon(resolvedTarget, deckOutline)
+        const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
         if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
           scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
         }
@@ -1485,20 +1496,34 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           />
         )}
 
-        {/* Edge padding border (usable region) */}
-        {edgePad > 0 && (
-          <rect
-            x={toX(edgePad)}
-            y={toY(edgePad)}
-            width={(deckWidth - edgePad * 2) * scale}
-            height={(deckLength - edgePad * 2) * scale}
-            fill="none"
-            stroke="#94a3b8"
-            strokeWidth={0.75}
-            strokeDasharray="3 3"
-            opacity={0.6}
-          />
-        )}
+        {/* Edge padding border (usable region) — follows the real contour
+            (usableOutline) on a non-rectangular deck instead of a plain
+            inset rectangle, matching what click/drag/auto-pack actually
+            enforce. */}
+        {edgePad > 0 &&
+          (usableOutline ? (
+            <polygon
+              points={usableOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth={0.75}
+              strokeDasharray="3 3"
+              opacity={0.6}
+              className="pointer-events-none"
+            />
+          ) : (
+            <rect
+              x={toX(edgePad)}
+              y={toY(edgePad)}
+              width={(deckWidth - edgePad * 2) * scale}
+              height={(deckLength - edgePad * 2) * scale}
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth={0.75}
+              strokeDasharray="3 3"
+              opacity={0.6}
+            />
+          ))}
 
         {/* Free space */}
         {showFreeSpace &&

@@ -40,6 +40,7 @@ import {
   collidesWith,
   collidesPrecisely,
   rectInsidePolygon,
+  erodePolygon,
   withClearanceFootprint,
   lashingPointExclusionRects,
   checkLoadDensity,
@@ -110,6 +111,14 @@ export default function Home() {
   const separationRulesInUnit = useMemo(
     () => separationRules.map((r) => ({ ...r, minDistance: convertLength(r.minDistance, 'm', deck.unit) })),
     [separationRules, deck.unit]
+  )
+  // Board offset along the real contour on a non-rectangular deck — see
+  // erodePolygon in packing.ts. undefined for a plain rectangle deck, so
+  // every `usableOutline &&` check below is dead code there (no behavior
+  // change for existing projects without a custom outline).
+  const usableOutline = useMemo(
+    () => (deck.outline && deck.outline.length >= 3 ? erodePolygon(deck.outline, deck.boardOffset) : undefined),
+    [deck.outline, deck.boardOffset]
   )
   const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
@@ -499,7 +508,7 @@ export default function Home() {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
-    if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon(rotated, deck.outline)) {
+    if (usableOutline && !rectInsidePolygon(rotated, usableOutline)) {
       toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
@@ -543,7 +552,7 @@ export default function Home() {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
-    if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon(rotated, deck.outline)) {
+    if (usableOutline && !rectInsidePolygon(rotated, usableOutline)) {
       toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
@@ -689,7 +698,7 @@ export default function Home() {
       }
       const clamped = clampToDeck(target2, deck.width, deck.length, deck.boardOffset)
       if (collidesWith({ ...clamped, width: current.width, length: current.length }, others, deck.gap)) return
-      if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon({ ...clamped, width: current.width, length: current.length }, deck.outline)) return
+      if (usableOutline && !rectInsidePolygon({ ...clamped, width: current.width, length: current.length }, usableOutline)) return
       const nudgedItem = items.find((it) => it.id === current.itemId)
       if (nudgedItem?.outline) {
         const preciseOthers =

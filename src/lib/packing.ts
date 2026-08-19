@@ -652,6 +652,7 @@ export function packDeck(
 
   if (safeDeckWidth <= 0 || safeDeckLength <= 0) return result
 
+  const hasOutline = !!outline && outline.length >= 3
   // Usable region after board offset (margin from the ship's board).
   // The packer draws each item at `cell origin + gap/2` (symmetric gap model),
   // so the free-rect origin is pulled in by gap/2 to compensate — otherwise the
@@ -664,7 +665,16 @@ export function packDeck(
   const uw = Math.max(0, safeDeckWidth - boardOffset * 2 + gap)
   const ul = Math.max(0, safeDeckLength - boardOffset * 2 + gap)
 
-  const freeRects: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
+  // Non-rectangular deck: board offset is an inset along the real contour
+  // (erodePolygon), not the bounding box — otherwise a cut/diagonal edge
+  // would get zero clearance while the deck's straight sides got the normal
+  // margin. Seed the free-rect list at the full bounding box and let the
+  // eroded-outline exclusion carve out both "outside the deck" AND "inside
+  // the deck but within boardOffset of its edge" in one pass.
+  const usableOutline = hasOutline ? erodePolygon(outline!, boardOffset) : undefined
+  const freeRects: FreeRect[] = hasOutline
+    ? [{ x: 0, y: 0, width: safeDeckWidth, height: safeDeckLength }]
+    : [{ x: ux, y: uy, width: uw, height: ul }]
 
   // Reserve the area outside a non-rectangular deck outline as pre-occupied
   // cells, BEFORE pinned stacks — exclusions are structural (part of the
@@ -672,8 +682,8 @@ export function packDeck(
   // bin-packer itself never learns about the polygon; it only ever sees one
   // more rectangle to route around, via the exact same placeRect mechanism
   // already used for pins below.
-  if (outline && outline.length >= 3) {
-    for (const rect of deckOutlineExclusionRects(outline, safeDeckWidth, safeDeckLength)) {
+  if (hasOutline) {
+    for (const rect of deckOutlineExclusionRects(usableOutline!, safeDeckWidth, safeDeckLength)) {
       placeRect(rect, freeRects)
     }
   }
@@ -691,11 +701,12 @@ export function packDeck(
   const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
     const layers = toLayers(pin.layers, 1)
-    const inside =
-      pin.x >= boardOffset - 1e-6 &&
-      pin.y >= boardOffset - 1e-6 &&
-      pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
-      pin.y + pin.length <= safeDeckLength - boardOffset + 1e-6
+    const inside = hasOutline
+      ? rectInsidePolygon(pin, usableOutline!)
+      : pin.x >= boardOffset - 1e-6 &&
+        pin.y >= boardOffset - 1e-6 &&
+        pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
+        pin.y + pin.length <= safeDeckLength - boardOffset + 1e-6
     if (!inside) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -1218,6 +1229,7 @@ export function computeFreeRects(
   const dl = toFinite(deckLength, 0)
   const off = toFinite(boardOffset, 0)
   const g = toFinite(gap, 0)
+  const hasOutline = !!outline && outline.length >= 3
   // Same gap/2 compensation as packDeck, so the free-space overlay matches the
   // actual edge clearance (exactly `boardOffset`) rather than `boardOffset + gap/2`.
   const halfGap = g / 2
@@ -1225,9 +1237,14 @@ export function computeFreeRects(
   const uy = Math.max(0, off - halfGap)
   const uw = Math.max(0, dw - off * 2 + g)
   const ul = Math.max(0, dl - off * 2 + g)
-  const free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
-  if (outline && outline.length >= 3) {
-    for (const rect of deckOutlineExclusionRects(outline, dw, dl)) {
+  // Non-rectangular deck: same contour-following board-offset inset as
+  // packDeck (erodePolygon), not a bounding-box inset — see packDeck for why.
+  const free: FreeRect[] = hasOutline
+    ? [{ x: 0, y: 0, width: dw, height: dl }]
+    : [{ x: ux, y: uy, width: uw, height: ul }]
+  if (hasOutline) {
+    const usableOutline = erodePolygon(outline!, off)
+    for (const rect of deckOutlineExclusionRects(usableOutline, dw, dl)) {
       placeRect(rect, free)
     }
   }
@@ -1491,6 +1508,57 @@ export function rectInsidePolygon(
     }
   }
   return true
+}
+
+// Shrinks a simple polygon inward by `margin` along its real contour — used
+// so "board offset" (margin from the ship's board) applies to a
+// non-rectangular deck the same way it already applies to a rectangular one,
+// instead of only insetting the bounding box and leaving zero clearance
+// along a cut/diagonal edge. Each edge is shifted inward along its own
+// normal (found via pointInPolygon, so it's correct regardless of winding
+// direction), then each new vertex is the intersection of its two adjacent
+// shifted edges (as infinite lines, not segments). Falls back to the
+// original polygon if erosion would produce a degenerate result (parallel
+// edges with no intersection, or a shrunken shape that didn't actually
+// shrink) — better to give too little inset than a broken shape.
+export function erodePolygon(
+  poly: { x: number; y: number }[],
+  margin: number
+): { x: number; y: number }[] {
+  if (margin <= 0 || poly.length < 3) return poly
+  const n = poly.length
+  const offsetLines: { p: { x: number; y: number }; d: { x: number; y: number } }[] = []
+  for (let i = 0; i < n; i++) {
+    const p1 = poly[i]
+    const p2 = poly[(i + 1) % n]
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const len = Math.hypot(dx, dy)
+    if (len < 1e-9) return poly // degenerate (repeated point) — bail out
+    const ux = dx / len
+    const uy = dy / len
+    let nx = -uy
+    let ny = ux
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+    const probe = { x: mid.x + nx * 1e-3, y: mid.y + ny * 1e-3 }
+    if (!pointInPolygon(probe, poly)) {
+      nx = -nx
+      ny = -ny
+    }
+    offsetLines.push({ p: { x: p1.x + nx * margin, y: p1.y + ny * margin }, d: { x: ux, y: uy } })
+  }
+  const result: { x: number; y: number }[] = []
+  for (let i = 0; i < n; i++) {
+    const a = offsetLines[(i - 1 + n) % n]
+    const b = offsetLines[i]
+    const denom = a.d.x * b.d.y - a.d.y * b.d.x
+    if (Math.abs(denom) < 1e-9) return poly // parallel adjacent edges — bail out
+    const t = ((b.p.x - a.p.x) * b.d.y - (b.p.y - a.p.y) * b.d.x) / denom
+    result.push({ x: a.p.x + a.d.x * t, y: a.p.y + a.d.y * t })
+  }
+  const erodedArea = polygonArea(result)
+  if (erodedArea < 1e-6 || erodedArea >= polygonArea(poly)) return poly
+  return result
 }
 
 // Bbox pre-check first (cheap, already what every caller does) — only

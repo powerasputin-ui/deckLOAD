@@ -21,6 +21,7 @@ import {
   polygonArea,
   rectInsidePolygon,
   deckOutlineExclusionRects,
+  erodePolygon,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   type CargoItem,
@@ -609,6 +610,38 @@ describe('deckOutlineExclusionRects', () => {
       (r) => inNotch.x >= r.x && inNotch.x <= r.x + r.width && inNotch.y >= r.y && inNotch.y <= r.y + r.height
     )
     expect(covered).toBe(true)
+  })
+})
+
+describe('erodePolygon', () => {
+  it('shrinks a rectangle to the same result as a plain bounding-box inset', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }]
+    const eroded = erodePolygon(rect, 1)
+    expect(eroded).toHaveLength(4)
+    const xs = eroded.map((p) => p.x).sort((a, b) => a - b)
+    const ys = eroded.map((p) => p.y).sort((a, b) => a - b)
+    expect(xs[0]).toBeCloseTo(1)
+    expect(xs[3]).toBeCloseTo(9)
+    expect(ys[0]).toBeCloseTo(1)
+    expect(ys[3]).toBeCloseTo(5)
+  })
+
+  it('shrinks a corner-cut deck so the diagonal edge also gets clearance', () => {
+    const cutCorner = [
+      { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 8 }, { x: 8, y: 8 }, { x: 8, y: 10 }, { x: 0, y: 10 },
+    ]
+    const eroded = erodePolygon(cutCorner, 1)
+    // A point right on the original diagonal cut edge must now be outside
+    // the eroded shape — the whole point of contour-following board offset.
+    expect(rectInsidePolygon({ x: 8.4, y: 8.4, width: 0.1, length: 0.1 }, eroded)).toBe(false)
+    // A point well inside, away from every edge, stays inside.
+    expect(rectInsidePolygon({ x: 4, y: 4, width: 0.5, length: 0.5 }, eroded)).toBe(true)
+  })
+
+  it('returns 0 (no-op) for a non-positive margin', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }]
+    expect(erodePolygon(rect, 0)).toEqual(rect)
+    expect(erodePolygon(rect, -1)).toEqual(rect)
   })
 })
 
