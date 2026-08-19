@@ -357,6 +357,43 @@ describe('calculator store', () => {
     expect(byTrip[1][0].y).toBeGreaterThanOrEqual(1)
   })
 
+  it('reflow never leaves genuinely overlapping pins after a gap increase on a dense layout', () => {
+    // A single forward sweep only checks each item against the ones
+    // already resolved before it — a dense, snugly-packed layout can have
+    // enough simultaneous violations under a larger gap that one pass
+    // can't untangle them all, leaving some pairs still overlapping.
+    const s = useCalculator.getState()
+    s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0.05 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    // Pack a tight 6x6 grid of 1x1 boxes with only 0.05 spacing — plenty of
+    // pairs will violate a much larger gap simultaneously.
+    for (let row = 0; row < 6; row++) {
+      for (let col = 0; col < 6; col++) {
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: item.id,
+          name: 'Box',
+          x: col * 1.05,
+          y: row * 1.05,
+          width: 1,
+          length: 1,
+          layers: 1,
+          rotated: false,
+          color: '#000',
+        })
+      }
+    }
+    useCalculator.getState().setDeck({ gap: 0.5 })
+    const pins = useCalculator.getState().pinnedPlacementsByTrip[0]
+    const overlaps = (a: { x: number; y: number; width: number; length: number }, b: typeof a) =>
+      a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.length && a.y + a.length > b.y
+    for (let i = 0; i < pins.length; i++) {
+      for (let j = i + 1; j < pins.length; j++) {
+        expect(overlaps(pins[i], pins[j])).toBe(false)
+      }
+    }
+  })
+
   it('clamps layers down when clearance shrinks below the stacked height', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0, clearance: 10 })

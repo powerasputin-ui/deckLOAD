@@ -40,6 +40,7 @@ import {
   collidesWith,
   collidesPrecisely,
   withClearanceFootprint,
+  lashingPointExclusionRects,
   checkLoadDensity,
   LASHING_DEVICES,
   type ManualPlacement,
@@ -484,6 +485,7 @@ export default function Home() {
     const others = pinnedPlacements
       .filter((p) => p.id !== id)
       .map((p) => withClearanceFootprint(p))
+      .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
     const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -523,6 +525,7 @@ export default function Home() {
     const others = manualPlacements
       .filter((m) => m.id !== id)
       .map((m) => withClearanceFootprint(m))
+      .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -661,6 +664,7 @@ export default function Home() {
       const others = placements
         .filter((p) => p.id !== selectedId)
         .map((p) => withClearanceFootprint(p))
+        .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
       const target2 = {
         x: current.x + dx * step,
         y: current.y + dy * step,

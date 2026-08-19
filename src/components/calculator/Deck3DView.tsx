@@ -146,6 +146,37 @@ export default function Deck3DView({
       const cz = p.y + p.length / 2 - deckLength / 2
       const layers = Math.max(1, p.stackedCount)
 
+      // Hand-drawn custom outline (incl. concave — L/Z shapes) — checked
+      // BEFORE the height<=0 fallback below, since a freshly drawn shape
+      // defaults to height 0 (no height field in the draw finalize form)
+      // and would otherwise always take the plain-box fallback, silently
+      // never reaching the real extrusion branch. `p.outline` is stored in
+      // the item's own local UNROTATED frame; resolve it into the
+      // post-rotation bbox frame the same way the 2D FootprintShape does
+      // (rotateOutline90 is the single shared implementation, so the two
+      // views can't drift apart on this).
+      if (p.shape === 'custom' && p.outline && p.outline.length >= 3) {
+        const origWidth = p.rotated ? p.length : p.width
+        const origLength = p.rotated ? p.width : p.length
+        const localOutline = p.rotated ? rotateOutline90(p.outline, origWidth, origLength) : p.outline
+        const depth = p.height > 0 ? p.height : 0.3
+        const tierPitch0 = depth + Math.min(0.05, depth * 0.08)
+        for (let layer = 0; layer < layers; layer++) {
+          out.push({
+            key: `${p.itemId}-${thisIdx}-${layer}`,
+            placementId,
+            pinData,
+            customOutline: localOutline,
+            depth,
+            x: cx - p.width / 2,
+            z: cz - p.length / 2,
+            y: layer * tierPitch0,
+            color: p.color,
+          })
+        }
+        continue
+      }
+
       if (p.height <= 0) {
         out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color })
         continue
@@ -183,32 +214,6 @@ export default function Deck3DView({
             x: cx,
             z: cz,
             y: layer * tierPitch + p.height / 2,
-            color: p.color,
-          })
-        }
-        continue
-      }
-
-      // Hand-drawn custom outline (incl. concave — L/Z shapes) — a real
-      // extruded silhouette, not a box approximation. `p.outline` is stored
-      // in the item's own local UNROTATED frame; resolve it into the
-      // post-rotation bbox frame the same way the 2D FootprintShape does
-      // (rotateOutline90 is the single shared implementation, so the two
-      // views can't drift apart on this).
-      if (p.shape === 'custom' && p.outline && p.outline.length >= 3) {
-        const origWidth = p.rotated ? p.length : p.width
-        const origLength = p.rotated ? p.width : p.length
-        const localOutline = p.rotated ? rotateOutline90(p.outline, origWidth, origLength) : p.outline
-        for (let layer = 0; layer < layers; layer++) {
-          out.push({
-            key: `${p.itemId}-${thisIdx}-${layer}`,
-            placementId,
-            pinData,
-            customOutline: localOutline,
-            depth: p.height,
-            x: p.x - deckWidth / 2,
-            z: p.y - deckLength / 2,
-            y: layer * tierPitch,
             color: p.color,
           })
         }

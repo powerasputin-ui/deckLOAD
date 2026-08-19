@@ -17,6 +17,7 @@ import {
   polygonsOverlap,
   collidesPrecisely,
   worldPolygon,
+  lashingPointExclusionRects,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   type CargoItem,
@@ -572,6 +573,31 @@ describe('collidesPrecisely', () => {
     const separate = { x: 10, y: 10, width: 2, length: 2 }
     expect(collidesPrecisely(a, [overlapping])).toBe(collidesWith(a, [overlapping]))
     expect(collidesPrecisely(a, [separate])).toBe(collidesWith(a, [separate]))
+  })
+})
+
+describe('lashingPointExclusionRects', () => {
+  it('builds a square of at least the minimum exclusion size around each point, even with gap 0', () => {
+    const rects = lashingPointExclusionRects([{ x: 5, y: 5 }], 0)
+    expect(rects).toHaveLength(1)
+    const r = rects[0]
+    expect(r.width).toBeGreaterThan(0)
+    expect(r.length).toBe(r.width)
+    // Centered on the anchor.
+    expect(r.x + r.width / 2).toBeCloseTo(5)
+    expect(r.y + r.length / 2).toBeCloseTo(5)
+  })
+
+  it('grows with the deck gap so widening cargo spacing also pushes cargo further from lashing points', () => {
+    const tight = lashingPointExclusionRects([{ x: 0, y: 0 }], 0.1)
+    const wide = lashingPointExclusionRects([{ x: 0, y: 0 }], 1)
+    expect(wide[0].width).toBeGreaterThan(tight[0].width)
+  })
+
+  it('blocks a cargo placement dropped directly on a lashing point anchor', () => {
+    const exclusions = lashingPointExclusionRects([{ x: 5, y: 5 }], 0.2)
+    const candidate = { x: 4.9, y: 4.9, width: 1, length: 1 }
+    expect(collidesWith(candidate, exclusions)).toBe(true)
   })
 })
 

@@ -9,6 +9,7 @@ import {
   clampToDeck,
   collidesPrecisely,
   withClearanceFootprint,
+  lashingPointExclusionRects,
   rotateOutline90,
   resolveSnappedDragPosition,
   checkLoadDensity,
@@ -632,6 +633,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       toast.warning('Здесь нельзя разместить — зона отступа другого груза')
       return
     }
+    // A lashing point's anchor needs rigging access — cargo can't be
+    // dropped directly on top of one.
+    if (lashingPoints && lashingPoints.length > 0) {
+      const lashingExclusions = lashingPointExclusionRects(lashingPoints, gap)
+      if (collidesPrecisely(target, lashingExclusions, gap)) {
+        toast.warning('Здесь нельзя разместить — рядом точка крепления')
+        return
+      }
+    }
     const category = categoryByItemId?.get(activeStamp.id)
     if (category && separationRules && separationRules.length > 0) {
       const othersWithCategory = renderedItems.map((m) => ({
@@ -847,7 +857,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // ManualPlacement itself never carries outline, only PlacedItem
           // (resolved fresh from the source CargoItem) does.
           const draggedRendered = renderedItems.find((m) => m.manualId === dragState.id)
-          const preciseOthers = renderedItems.filter((m) => m.manualId !== dragState.id)
+          const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
+          const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
+            ...renderedItems.filter((m) => m.manualId !== dragState.id),
+            ...lashingExclusions,
+          ]
           const others = preciseOthers.map((m) => withClearanceFootprint(m))
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
@@ -945,7 +959,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const draggedRendered = renderedItems.find(
           (p2) => p2.itemId === pin.itemId && Math.abs(p2.x - pin.x) < 0.01 && Math.abs(p2.y - pin.y) < 0.01
         )
-        const preciseOthers = renderedItems.filter((p2) => p2 !== draggedRendered)
+        const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
+        const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
+          ...renderedItems.filter((p2) => p2 !== draggedRendered),
+          ...lashingExclusions,
+        ]
         const others = preciseOthers.map((p2) => withClearanceFootprint(p2))
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others

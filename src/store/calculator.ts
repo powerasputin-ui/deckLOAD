@@ -499,11 +499,23 @@ export const useCalculator = create<CalculatorState>()(
       let layersClamped = false
       let stillColliding = false
 
+      // Multi-pass: a single forward sweep only ever checks item[i] against
+      // the ALREADY-RESOLVED items before it (`placed`) — items later in the
+      // list are still at their stale pre-change positions and never get
+      // re-checked once earlier items land near them. On a dense layout
+      // (e.g. right after "Автораспределение" pins everything), increasing
+      // the gap can leave a tangle of mutual violations a single sweep
+      // can't fully untangle — some pairs end up genuinely overlapping,
+      // and shrinking the gap back afterward doesn't repair it either,
+      // since by then nothing is "violating" the smaller value anymore.
+      // Iterating full passes — each one checking every item against every
+      // OTHER item's current (possibly just-updated) position — converges
+      // to a fully collision-free layout instead, at the cost of moving
+      // more items than a minimal fix strictly requires.
       const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: ClearanceMargin }>(
         list: T[]
       ): T[] => {
-        const placed: T[] = []
-        for (const item of list) {
+        const current: T[] = list.map((item) => {
           let layers = item.layers
           const cargo = itemById.get(item.itemId)
           if (cargo) {
@@ -513,44 +525,62 @@ export const useCalculator = create<CalculatorState>()(
               layersClamped = true
             }
           }
-          const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
-          const others = placed.map((p) => withClearanceFootprint(p))
-          const needsResolve = collidesWith(
-            { ...clamped, width: item.width, length: item.length },
-            others,
-            nextDeck.gap
-          )
-          const resolved = needsResolve
-            ? resolveSnappedDragPosition(
-                clamped.x,
-                clamped.y,
-                item.width,
-                item.length,
-                item.x,
-                item.y,
-                others,
-                nextDeck.width,
-                nextDeck.length,
-                nextDeck.boardOffset,
-                nextDeck.gap,
-                0,
-                // No drag vector here — pick the nearest collision-free spot,
-                // however far, rather than staying within a tight magnet radius.
-                Infinity
-              )
-            : clamped
-          if (resolved.x !== item.x || resolved.y !== item.y) moved = true
-          if (
-            collidesWith({ ...resolved, width: item.width, length: item.length }, others, nextDeck.gap)
-          ) {
-            // resolveSnappedDragPosition always returns SOME position (last
-            // resort: clamped to the usable margin) even if none are
-            // collision-free — surface that instead of silently overlapping.
+          return { ...item, layers }
+        })
+
+        const MAX_PASSES = 8
+        for (let pass = 0; pass < MAX_PASSES; pass++) {
+          let changedThisPass = false
+          for (let i = 0; i < current.length; i++) {
+            const item = current[i]
+            const others = current
+              .filter((_, idx) => idx !== i)
+              .map((p) => withClearanceFootprint(p))
+            const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
+            const needsResolve = collidesWith(
+              { ...clamped, width: item.width, length: item.length },
+              others,
+              nextDeck.gap
+            )
+            const resolved = needsResolve
+              ? resolveSnappedDragPosition(
+                  clamped.x,
+                  clamped.y,
+                  item.width,
+                  item.length,
+                  item.x,
+                  item.y,
+                  others,
+                  nextDeck.width,
+                  nextDeck.length,
+                  nextDeck.boardOffset,
+                  nextDeck.gap,
+                  0,
+                  // No drag vector here — pick the nearest collision-free spot,
+                  // however far, rather than staying within a tight magnet radius.
+                  Infinity
+                )
+              : clamped
+            if (resolved.x !== item.x || resolved.y !== item.y) {
+              moved = true
+              changedThisPass = true
+            }
+            current[i] = { ...item, x: resolved.x, y: resolved.y }
+          }
+          if (!changedThisPass) break
+        }
+
+        for (let i = 0; i < current.length; i++) {
+          const item = current[i]
+          const others = current.filter((_, idx) => idx !== i).map((p) => withClearanceFootprint(p))
+          if (collidesWith({ ...item, width: item.width, length: item.length }, others, nextDeck.gap)) {
+            // The pass cap above is a safety bound, not a proof of
+            // convergence — surface a genuinely irreconcilable layout
+            // instead of silently leaving it overlapping.
             stillColliding = true
           }
-          placed.push({ ...item, x: resolved.x, y: resolved.y, layers })
         }
-        return placed
+        return current
       }
 
       const manualPlacements = reflow(s.manualPlacements)

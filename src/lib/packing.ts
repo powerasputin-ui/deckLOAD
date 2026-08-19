@@ -1217,6 +1217,22 @@ export function withClearanceFootprint<
   }
 }
 
+// A lashing point's anchor needs clear room for rigging access (tensioning,
+// inspecting, releasing the device) — cargo shouldn't be placeable directly
+// on top of it. The exclusion square is sized to track the deck's own gap
+// setting (never smaller than a sensible minimum), so widening the general
+// cargo-to-cargo spacing also pushes cargo further from lashing points, not
+// just from other cargo — the same "gap" the user configures everywhere
+// else, applied here too instead of a second, disconnected setting.
+const LASHING_POINT_MIN_EXCLUSION = 0.15
+export function lashingPointExclusionRects(
+  points: { x: number; y: number }[],
+  gap: number
+): { x: number; y: number; width: number; length: number }[] {
+  const r = Math.max(LASHING_POINT_MIN_EXCLUSION, gap)
+  return points.map((p) => ({ x: p.x - r, y: p.y - r, width: r * 2, length: r * 2 }))
+}
+
 // Check whether a manual placement collides with any existing one.
 export function collidesWith(
   placement: { x: number; y: number; width: number; length: number },
