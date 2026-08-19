@@ -986,26 +986,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   const hasContent = result.placed.length > 0 || deckWidth > 0
 
-  // Manual mode: rendered items come from manualPlacements; auto: from result.placed
+  // Both modes render from `result.placed` — it's already the correctly
+  // computed PlacedItem list (packingResultFromManual for manual mode,
+  // packDeck for auto), including fields like `shape` and real `height`
+  // that a hand-rebuilt object here previously had to remember to copy one
+  // by one and silently could (and did) drop. `manualId` is resolved the
+  // same index-matching way Deck3DView already does it (placementIdFor) —
+  // packingResultFromManual builds placed[i].index = i from this exact
+  // manualPlacements array in the same order, so the two stay aligned.
   const renderedItems: (PlacedItem & { manualId?: string })[] =
     mode === 'manual'
-      ? manualPlacements.map((m, i) => ({
-          itemId: m.itemId,
-          name: m.name,
-          x: m.x,
-          y: m.y,
-          width: m.width,
-          length: m.length,
-          height: 0,
-          layers: Math.max(1, m.layers),
-          stackedCount: Math.max(1, m.layers),
-          rotated: m.rotated,
-          color: m.color,
-          weight: m.weight,
-          index: i,
-          manualId: m.id,
-          clearanceMargin: m.clearanceMargin,
-        }))
+      ? result.placed.map((p) => ({ ...p, manualId: manualPlacements[p.index]?.id }))
       : result.placed
 
   const backgroundCursor = panDrag
