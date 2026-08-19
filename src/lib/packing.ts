@@ -1477,9 +1477,34 @@ export function packingResultFromManual(
     map.set(p.itemId, b)
   }
 
+  // Manual mode never had this populated — nothing is "rejected" by an
+  // algorithm here, the user just hasn't clicked yet. But from the user's
+  // point of view "some of my declared cargo isn't on the deck" is the same
+  // fact either way, and the top unplaced-cargo banner (and the "Не влезло"
+  // stat) stayed permanently blind to it in manual mode as a result. Report
+  // each item's own shortfall (declared quantity minus what's actually
+  // placed), worded as "not yet placed" rather than auto mode's "didn't
+  // fit" — this is a to-do, not a packing failure.
+  const unplaced: UnplacedItem[] = []
+  if (items) {
+    for (const it of items) {
+      const placedForItem = map.get(it.id)?.placed ?? 0
+      const remaining = Math.max(0, toPositiveInt(it.quantity, 0) - placedForItem)
+      if (remaining > 0) {
+        unplaced.push({
+          itemId: it.id,
+          name: it.name,
+          width: toFinite(it.width, 0),
+          length: toFinite(it.length, 0),
+          reason: `Не размещено вручную (${remaining} ед.)`,
+        })
+      }
+    }
+  }
+
   return {
     placed,
-    unplaced: [],
+    unplaced,
     breakdown: [...map.values()],
     requestedCount: totalRequestedSafe,
     placedCount,

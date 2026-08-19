@@ -402,6 +402,36 @@ describe('packingResultFromManual', () => {
     expect(res.placed).toHaveLength(0)
     expect(res.utilization).toBe(0)
   })
+
+  it('reports a shortfall as unplaced when fewer units are placed than requested', () => {
+    const placements: ManualPlacement[] = [
+      { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 3, layers: 1, rotated: false, color: '#0ea5e9' },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 5, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 5, color: '#0ea5e9', allowRotation: true },
+    ])
+    expect(res.unplaced).toHaveLength(1)
+    expect(res.unplaced[0]).toMatchObject({ itemId: 'a', name: 'A' })
+    expect(res.unplaced[0].reason).toContain('4')
+  })
+
+  it('reports no unplaced entry once every requested unit is placed', () => {
+    const placements: ManualPlacement[] = [
+      { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 3, layers: 2, rotated: false, color: '#0ea5e9' },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 2, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 2, color: '#0ea5e9', allowRotation: true },
+    ])
+    expect(res.unplaced).toHaveLength(0)
+  })
+
+  it('reports an unplaced entry for an item with zero placements', () => {
+    const res = packingResultFromManual(10, 10, [], 3, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 3, color: '#0ea5e9', allowRotation: true },
+    ])
+    expect(res.unplaced).toHaveLength(1)
+    expect(res.unplaced[0].reason).toContain('3')
+  })
 })
 
 describe('collidesWith', () => {
