@@ -816,6 +816,18 @@ function LashingPointsSection() {
                   updateSelectedPlacement({
                     clearanceMargin: selectedPlacement.clearanceMargin ?? { top: 1, right: 1, bottom: 1, left: 1 },
                   })
+                  // The "Добавить крепление" placing tool is global, not
+                  // scoped to a selected placement — if it was armed before
+                  // (e.g. clicked with nothing selected yet, or left on from
+                  // a previous placement), switching THIS placement to zone
+                  // mode left it silently still armed: the toggle button
+                  // itself disappears once selectedHasClearance flips true
+                  // (so there's no visible way to tell), but the deck stayed
+                  // in corner-then-anchor placing mode and a click on this
+                  // same cargo would attach a brand new point to it anyway —
+                  // defeating the "mutually exclusive" point of switching to
+                  // a zone at all.
+                  if (placingLashingPoint) setPlacingLashingPoint(false)
                 }}
               >
                 Зона отступа
