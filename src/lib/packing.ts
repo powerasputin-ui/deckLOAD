@@ -478,6 +478,73 @@ function placeRect(used: Rect, freeRects: FreeRect[]): void {
 }
 
 
+// Decomposes "inside the [0,width]×[0,length] bounding box but OUTSIDE the
+// deck outline polygon" into a set of axis-aligned rectangles, so the
+// existing rectangle-only free-space machinery (placeRect, already used to
+// reserve pinned-stack cells) can treat a non-rectangular deck exactly like
+// a bunch of pre-occupied cells — the bin-packer itself never learns about
+// polygons at all.
+//
+// Vertical scanline decomposition: slice the bounding box into vertical
+// strips at each distinct outline-vertex X (deduped within EPS), then for
+// each strip cast a ray at its horizontal midpoint against every polygon
+// edge, collect the Y crossings, sort them, and pair them up even/odd
+// (standard scanline-fill rule) to get the polygon's inside-Y span(s) in
+// that strip. Everything above the first span and below the last (plus any
+// gaps between multiple spans, for a shape that's concave top-to-bottom) is
+// excluded. Correct for any simple polygon, convex or concave — O(n²)
+// worst case (n = vertex count), trivial for hand-drawn outlines.
+const SCANLINE_EPS = 1e-6
+export function deckOutlineExclusionRects(
+  outline: { x: number; y: number }[],
+  width: number,
+  length: number
+): Rect[] {
+  if (outline.length < 3) return []
+  const xs = Array.from(new Set(outline.map((p) => p.x))).sort((a, b) => a - b)
+  const dedupedXs: number[] = []
+  for (const x of xs) {
+    if (dedupedXs.length === 0 || x - dedupedXs[dedupedXs.length - 1] > SCANLINE_EPS) dedupedXs.push(x)
+  }
+  // Clip the strip range to the bounding box — a hand-drawn outline is
+  // already meant to stay within it, but this keeps the result well-formed
+  // even if a point sits exactly on/past the edge due to float drift.
+  const clampedXs = [0, ...dedupedXs.filter((x) => x > 0 && x < width), width]
+
+  const out: Rect[] = []
+  for (let i = 0; i < clampedXs.length - 1; i++) {
+    const xLo = clampedXs[i]
+    const xHi = clampedXs[i + 1]
+    if (xHi - xLo <= SCANLINE_EPS) continue
+    const xMid = (xLo + xHi) / 2
+
+    const ys: number[] = []
+    for (let j = 0; j < outline.length; j++) {
+      const p1 = outline[j]
+      const p2 = outline[(j + 1) % outline.length]
+      if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
+        const t = (xMid - p1.x) / (p2.x - p1.x)
+        ys.push(p1.y + t * (p2.y - p1.y))
+      }
+    }
+    ys.sort((a, b) => a - b)
+
+    let prevY = 0
+    for (let k = 0; k < ys.length; k += 2) {
+      const yLo = ys[k]
+      const yHi = ys[k + 1] ?? length
+      if (yLo - prevY > SCANLINE_EPS) {
+        out.push({ x: xLo, y: prevY, width: xHi - xLo, height: yLo - prevY })
+      }
+      prevY = yHi
+    }
+    if (length - prevY > SCANLINE_EPS) {
+      out.push({ x: xLo, y: prevY, width: xHi - xLo, height: length - prevY })
+    }
+  }
+  return out
+}
+
 export interface PackOptions {
   sortStrategy?: SortStrategy
   gap?: number // spacing between items
@@ -485,6 +552,7 @@ export interface PackOptions {
   clearance?: number // max stack height above deck (0 = single tier)
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
+  outline?: { x: number; y: number }[] // non-rectangular deck silhouette, see deckOutlineExclusionRects
 }
 
 export interface PinnedPlacement {
@@ -536,11 +604,15 @@ export function packDeck(
   )
   const pinned = typeof options === 'string' ? [] : options.pinned ?? []
   const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
+  const outline = typeof options === 'string' ? undefined : options.outline
 
   // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
   const safeDeckWidth = toFinite(deckWidth, 0)
   const safeDeckLength = toFinite(deckLength, 0)
-  const totalArea = safeDeckWidth * safeDeckLength
+  // The bounding-box rectangle stays authoritative for every other
+  // computation below (clamping, free-rect splitting, collision) — only the
+  // reported total area needs the polygon's true (smaller) size.
+  const totalArea = outline && outline.length >= 3 ? polygonArea(outline) : safeDeckWidth * safeDeckLength
 
   // Sanitize cargo items: coerce numeric fields to finite values so corrupted
   // storage or programmatic input can't propagate NaN into aggregations.
@@ -593,6 +665,18 @@ export function packDeck(
   const ul = Math.max(0, safeDeckLength - boardOffset * 2 + gap)
 
   const freeRects: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
+
+  // Reserve the area outside a non-rectangular deck outline as pre-occupied
+  // cells, BEFORE pinned stacks — exclusions are structural (part of the
+  // deck's real shape), pins are dynamic reservations on top of that. The
+  // bin-packer itself never learns about the polygon; it only ever sees one
+  // more rectangle to route around, via the exact same placeRect mechanism
+  // already used for pins below.
+  if (outline && outline.length >= 3) {
+    for (const rect of deckOutlineExclusionRects(outline, safeDeckWidth, safeDeckLength)) {
+      placeRect(rect, freeRects)
+    }
+  }
 
   // Account for units already placed in pinned stacks: reduce the quantity to pack.
   // IMPORTANT: only subtract for ACCEPTED pins (validated below), otherwise rejected
@@ -1127,7 +1211,8 @@ export function computeFreeRects(
   deckLength: number,
   placed: PlacedItem[],
   gap = 0,
-  boardOffset = 0
+  boardOffset = 0,
+  outline?: { x: number; y: number }[]
 ): Rect[] {
   const dw = toFinite(deckWidth, 0)
   const dl = toFinite(deckLength, 0)
@@ -1141,6 +1226,11 @@ export function computeFreeRects(
   const uw = Math.max(0, dw - off * 2 + g)
   const ul = Math.max(0, dl - off * 2 + g)
   const free: FreeRect[] = [{ x: ux, y: uy, width: uw, height: ul }]
+  if (outline && outline.length >= 3) {
+    for (const rect of deckOutlineExclusionRects(outline, dw, dl)) {
+      placeRect(rect, free)
+    }
+  }
   for (const p of placed) {
     // Symmetric gap model: cell = (x - gap/2, y - gap/2, w+gap, l+gap)
     const pw = toFinite(p.width, 0)
@@ -1360,6 +1450,49 @@ export function polygonsOverlap(
   return pointInPolygon(polyA[0], polyB) || pointInPolygon(polyB[0], polyA)
 }
 
+// Standard shoelace formula — used for the deck's true area when it has a
+// non-rectangular outline (replaces width*length).
+export function polygonArea(poly: { x: number; y: number }[]): number {
+  let sum = 0
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    sum += a.x * b.y - b.x * a.y
+  }
+  return Math.abs(sum) / 2
+}
+
+// True iff `rect` is fully contained in `poly` — all 4 corners inside AND no
+// rect edge crosses a polygon edge (the same "corners-in AND no-crossing"
+// shape as polygonsOverlap, just testing containment instead of overlap).
+// Used to gate interactive cargo placement against a non-rectangular deck
+// outline — reuses pointInPolygon/segmentsIntersect directly, no new
+// geometry primitives.
+export function rectInsidePolygon(
+  rect: { x: number; y: number; width: number; length: number },
+  poly: { x: number; y: number }[]
+): boolean {
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.length },
+    { x: rect.x, y: rect.y + rect.length },
+  ]
+  for (const c of corners) {
+    if (!pointInPolygon(c, poly)) return false
+  }
+  for (let i = 0; i < corners.length; i++) {
+    const a1 = corners[i]
+    const a2 = corners[(i + 1) % corners.length]
+    for (let j = 0; j < poly.length; j++) {
+      const b1 = poly[j]
+      const b2 = poly[(j + 1) % poly.length]
+      if (segmentsIntersect(a1, a2, b1, b2)) return false
+    }
+  }
+  return true
+}
+
 // Bbox pre-check first (cheap, already what every caller does) — only
 // escalates to precise polygon math when the bbox says "maybe" AND at least
 // one side has real outline data. Boxes/circles/pipes/etc. (no outline)
@@ -1561,11 +1694,12 @@ export function packingResultFromManual(
   placements: ManualPlacement[],
   totalRequested: number,
   items?: CargoItem[],
-  clearance?: number
+  clearance?: number,
+  outline?: { x: number; y: number }[]
 ): PackingResult {
   const dw = toFinite(deckWidth, 0)
   const dl = toFinite(deckLength, 0)
-  const totalArea = dw * dl
+  const totalArea = outline && outline.length >= 3 ? polygonArea(outline) : dw * dl
   const totalRequestedSafe = toPositiveInt(totalRequested, 0)
   const layersFor = (p: ManualPlacement) => toLayers(p.layers, 1)
   const usedArea = placements.reduce((s, p) => s + toFinite(p.width, 0) * toFinite(p.length, 0), 0)

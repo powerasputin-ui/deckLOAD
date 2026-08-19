@@ -39,6 +39,7 @@ import {
   clampToDeck,
   collidesWith,
   collidesPrecisely,
+  rectInsidePolygon,
   withClearanceFootprint,
   lashingPointExclusionRects,
   checkLoadDensity,
@@ -69,6 +70,7 @@ export default function Home() {
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useCalculator.temporal, (s) => s.futureStates.length > 0)
   const deck = useCalculator((s) => s.deck)
+  const setDeck = useCalculator((s) => s.setDeck)
   const items = useCalculator((s) => s.items)
   const sortStrategy = useCalculator((s) => s.sortStrategy)
   const globalRotation = useCalculator((s) => s.globalRotation)
@@ -88,6 +90,8 @@ export default function Home() {
   const drawingCustomShape = useCalculator((s) => s.drawingCustomShape)
   const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
   const setPendingCustomShape = useCalculator((s) => s.setPendingCustomShape)
+  const editingDeckOutline = useCalculator((s) => s.editingDeckOutline)
+  const setEditingDeckOutline = useCalculator((s) => s.setEditingDeckOutline)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
@@ -232,7 +236,7 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape) return
+    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
@@ -240,10 +244,11 @@ export default function Home() {
       if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
       if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
       if (pendingCustomShape) useCalculator.getState().setPendingCustomShape(null)
+      if (editingDeckOutline) setEditingDeckOutline(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape])
+  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -315,7 +320,7 @@ export default function Home() {
   const trips: PackingResult[] = useMemo(() => {
     if (mode === 'manual') {
       const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-      return [packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance)]
+      return [packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance, deck.outline)]
     }
     const effectiveItems = globalRotation
       ? items
@@ -333,11 +338,12 @@ export default function Home() {
         boardOffset: deck.boardOffset,
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
+        outline: deck.outline,
       },
       10,
       pinnedPlacementsByTrip
     )
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
@@ -493,6 +499,10 @@ export default function Home() {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
+    if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon(rotated, deck.outline)) {
+      toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
+      return
+    }
     // Additive precision check for custom (possibly concave) outlines —
     // rotatePlacement above is bbox-only and unchanged; this only rejects a
     // bbox-approved rotation that a real outline-vs-outline check finds
@@ -531,6 +541,10 @@ export default function Home() {
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
+      return
+    }
+    if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon(rotated, deck.outline)) {
+      toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
     if (item.outline) {
@@ -675,6 +689,7 @@ export default function Home() {
       }
       const clamped = clampToDeck(target2, deck.width, deck.length, deck.boardOffset)
       if (collidesWith({ ...clamped, width: current.width, length: current.length }, others, deck.gap)) return
+      if (deck.outline && deck.outline.length >= 3 && !rectInsidePolygon({ ...clamped, width: current.width, length: current.length }, deck.outline)) return
       const nudgedItem = items.find((it) => it.id === current.itemId)
       if (nudgedItem?.outline) {
         const preciseOthers =
@@ -746,7 +761,7 @@ export default function Home() {
   const findFreeSpotForItem = (
     item: { width: number; length: number; allowRotation?: boolean }
   ): { x: number; y: number; rotated: boolean } | null => {
-    const freeRects = computeFreeRects(deck.width, deck.length, result.placed, deck.gap, deck.boardOffset)
+    const freeRects = computeFreeRects(deck.width, deck.length, result.placed, deck.gap, deck.boardOffset, deck.outline)
     for (const r of freeRects) {
       const cellW = item.width + deck.gap
       const cellL = item.length + deck.gap
@@ -1288,6 +1303,7 @@ export default function Home() {
                       result={result}
                       deckWidth={result.deckWidth}
                       deckLength={result.deckLength}
+                      deckOutline={deck.outline}
                       mode={mode}
                       manualPlacements={manualPlacements}
                       pinnedPlacements={pinnedPlacements}
@@ -1309,6 +1325,10 @@ export default function Home() {
                     backgroundImageOpacity={deck.backgroundImageOpacity}
                     onSetBackgroundImage={setDeckBackgroundImage}
                     onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
+                    deckOutline={deck.outline}
+                    editingDeckOutline={editingDeckOutline}
+                    onSetDeckOutline={(outline) => setDeck({ outline })}
+                    onSetEditingDeckOutline={setEditingDeckOutline}
                     hoveredItemId={hoveredItemId}
                     onHover={handleHover}
                     mode={mode}

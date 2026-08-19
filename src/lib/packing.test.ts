@@ -18,6 +18,9 @@ import {
   collidesPrecisely,
   worldPolygon,
   lashingPointExclusionRects,
+  polygonArea,
+  rectInsidePolygon,
+  deckOutlineExclusionRects,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   type CargoItem,
@@ -523,6 +526,89 @@ describe('polygonsOverlap', () => {
     ]
     const inSolidPart = [{ x: 0.5, y: 0.5 }, { x: 1.5, y: 0.5 }, { x: 1.5, y: 1.5 }, { x: 0.5, y: 1.5 }]
     expect(polygonsOverlap(lShape, inSolidPart)).toBe(true)
+  })
+})
+
+describe('polygonArea', () => {
+  it('computes the area of a plain rectangle', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 }, { x: 0, y: 2 }]
+    expect(polygonArea(rect)).toBeCloseTo(8)
+  })
+
+  it('computes the area of a corner-cut (convex) deck outline', () => {
+    // 4x4 square with a 1x1 corner cut off the top-right — area 15.
+    const cutCorner = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }, { x: 3, y: 3 }, { x: 3, y: 4 }, { x: 0, y: 4 },
+    ]
+    expect(polygonArea(cutCorner)).toBeCloseTo(15)
+  })
+
+  it('computes the area of a concave L-shape', () => {
+    const lShape = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    expect(polygonArea(lShape)).toBeCloseTo(12)
+  })
+})
+
+describe('rectInsidePolygon', () => {
+  const cutCorner = [
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }, { x: 3, y: 3 }, { x: 3, y: 4 }, { x: 0, y: 4 },
+  ]
+
+  it('accepts a rect fully inside the polygon', () => {
+    expect(rectInsidePolygon({ x: 0, y: 0, width: 2, length: 2 }, cutCorner)).toBe(true)
+  })
+
+  it('rejects a rect that overlaps the cut-off corner', () => {
+    expect(rectInsidePolygon({ x: 3, y: 3, width: 1, length: 1 }, cutCorner)).toBe(false)
+  })
+
+  it('rejects a rect that extends past the polygon boundary', () => {
+    expect(rectInsidePolygon({ x: 3.5, y: 0, width: 1, length: 1 }, cutCorner)).toBe(false)
+  })
+})
+
+describe('deckOutlineExclusionRects', () => {
+  it('returns no exclusion rects for a plain rectangle outline', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 }, { x: 0, y: 2 }]
+    expect(deckOutlineExclusionRects(rect, 4, 2)).toEqual([])
+  })
+
+  it('excludes the cut-off corner of a convex corner-cut deck', () => {
+    const cutCorner = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 3 }, { x: 3, y: 3 }, { x: 3, y: 4 }, { x: 0, y: 4 },
+    ]
+    const rects = deckOutlineExclusionRects(cutCorner, 4, 4)
+    const excludedArea = rects.reduce((sum, r) => sum + r.width * r.height, 0)
+    // Bounding box is 16, polygon area is 15 -> excluded area should be 1.
+    expect(excludedArea).toBeCloseTo(1)
+    // The excluded rect must sit in the top-right corner.
+    for (const r of rects) {
+      expect(r.x + r.width).toBeLessThanOrEqual(4 + 1e-6)
+      expect(r.y + r.height).toBeLessThanOrEqual(4 + 1e-6)
+      expect(r.x).toBeGreaterThanOrEqual(3 - 1e-6)
+      expect(r.y).toBeGreaterThanOrEqual(3 - 1e-6)
+    }
+  })
+
+  it('excludes the notch of a concave L-shaped deck', () => {
+    const lShape = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    const rects = deckOutlineExclusionRects(lShape, 4, 4)
+    const excludedArea = rects.reduce((sum, r) => sum + r.width * r.height, 0)
+    // Bounding box is 16, L-shape area is 12 -> excluded (notch) area is 4.
+    expect(excludedArea).toBeCloseTo(4)
+    // A point inside the notch (top-right quadrant) must be covered by some
+    // exclusion rect.
+    const inNotch = { x: 3, y: 3 }
+    const covered = rects.some(
+      (r) => inNotch.x >= r.x && inNotch.x <= r.x + r.width && inNotch.y >= r.y && inNotch.y <= r.y + r.height
+    )
+    expect(covered).toBe(true)
   })
 })
 

@@ -23,6 +23,9 @@ interface Deck3DViewProps {
   result: PackingResult
   deckWidth: number
   deckLength: number
+  // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
+  // in calculator.ts. Undefined = plain rectangle floor, today's behavior.
+  deckOutline?: { x: number; y: number }[]
   mode: 'auto' | 'manual'
   manualPlacements: ManualPlacement[]
   pinnedPlacements: PinnedPlacement[]
@@ -55,6 +58,7 @@ export default function Deck3DView({
   result,
   deckWidth,
   deckLength,
+  deckOutline,
   mode,
   manualPlacements,
   pinnedPlacements,
@@ -351,12 +355,32 @@ export default function Deck3DView({
         <ambientLight intensity={0.7} />
         <directionalLight position={[maxDim, maxDim * 1.5, maxDim]} intensity={1} />
 
-        {/* Deck base plane */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-          <planeGeometry args={[deckWidth, deckLength]} />
-          <meshStandardMaterial color="#e2e8f0" />
-          <Edges color="#1e293b" />
-        </mesh>
+        {/* Deck base — real (possibly non-rectangular) silhouette when an
+            outline is set, matching the 2D clipped render; otherwise the
+            plain rectangle floor as before. */}
+        {deckOutline && deckOutline.length >= 3 ? (
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0, 0]}
+          >
+            <extrudeGeometry
+              args={[
+                new THREE.Shape(
+                  deckOutline.map((p) => new THREE.Vector2(p.x - deckWidth / 2, -(p.y - deckLength / 2)))
+                ),
+                { depth: 0.02, bevelEnabled: false },
+              ]}
+            />
+            <meshStandardMaterial color="#e2e8f0" />
+            <Edges color="#1e293b" />
+          </mesh>
+        ) : (
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+            <planeGeometry args={[deckWidth, deckLength]} />
+            <meshStandardMaterial color="#e2e8f0" />
+            <Edges color="#1e293b" />
+          </mesh>
+        )}
 
         {boxes.map((b) => {
           // No visual selection highlight in 3D — clicking still updates the

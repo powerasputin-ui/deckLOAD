@@ -60,6 +60,13 @@ export interface DeckConfig {
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
   backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
   backgroundImageOpacity?: number // 0..1, seeded to 0.5 the first time a photo is attached
+  // Real (possibly non-rectangular) deck silhouette, in deck-meter coords,
+  // always within [0,width]×[0,length]. width/length stay the authoritative
+  // bounding rectangle every packing/collision function already trusts —
+  // outline is additive precision data on top, the exact same relationship
+  // CargoItem.outline already has to a cargo item's own width/length.
+  // Undefined = today's plain rectangle, zero behavior change anywhere.
+  outline?: { x: number; y: number }[]
 }
 
 const PALETTE = [
@@ -130,6 +137,11 @@ interface CalculatorState {
   // (0,0)-origin frame; x/y is where it was drawn on the deck, so the
   // finalize step can place an instance right there.
   pendingCustomShape: { outline: { x: number; y: number }[]; width: number; length: number; x: number; y: number } | null
+  // Armed "edit the deck's own outline" mode — same mutual-exclusion web as
+  // drawingCustomShape/placingLashingPoint/activeStampId/pendingPresetStamp.
+  // The in-progress point list is local component state in
+  // DeckVisualization, same split as the other armed-drawing modes.
+  editingDeckOutline: boolean
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -183,6 +195,7 @@ interface CalculatorState {
   setPlacingLashingPoint: (v: boolean) => void
   setDrawingCustomShape: (v: boolean) => void
   setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
+  setEditingDeckOutline: (v: boolean) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
   // Lashing points and a clearance-margin exclusion zone are mutually
   // exclusive per placement (see clearanceMargin on ManualPlacement/
@@ -479,6 +492,7 @@ export const useCalculator = create<CalculatorState>()(
   placingLashingPoint: false,
   drawingCustomShape: false,
   pendingCustomShape: null,
+  editingDeckOutline: false,
 
   setDeck: (patch) =>
     set((s) => {
@@ -807,8 +821,8 @@ export const useCalculator = create<CalculatorState>()(
       selectedPinIds: [],
       selectedManualIds: [],
     })),
-  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null, drawingCustomShape: false }),
-  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null, drawingCustomShape: false }),
+  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null, drawingCustomShape: false, editingDeckOutline: false }),
+  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null, drawingCustomShape: false, editingDeckOutline: false }),
   setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
     let id = ''
@@ -1010,13 +1024,18 @@ export const useCalculator = create<CalculatorState>()(
   pruneStaleLashingPoints: () =>
     set((s) => ({ deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, s.pinnedPlacementsByTrip) })),
   setPlacingLashingPoint: (v) =>
-    set({ placingLashingPoint: v, ...(v ? { drawingCustomShape: false } : {}) }),
+    set({ placingLashingPoint: v, ...(v ? { drawingCustomShape: false, editingDeckOutline: false } : {}) }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
-      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false } : {}),
+      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, editingDeckOutline: false } : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
+  setEditingDeckOutline: (v) =>
+    set({
+      editingDeckOutline: v,
+      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, drawingCustomShape: false } : {}),
+    }),
   setVesselMotion: (patch) =>
     set((s) => ({
       deck: {

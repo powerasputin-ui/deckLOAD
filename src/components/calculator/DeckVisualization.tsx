@@ -4,12 +4,13 @@ import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'r
 import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { compressImageToDataUrl } from '@/lib/imageCompression'
+import { PhotoCropDialog } from './PhotoCropDialog'
 import {
   computeFreeRects,
   computeGridStep,
   clampToDeck,
   collidesPrecisely,
+  rectInsidePolygon,
   withClearanceFootprint,
   lashingPointExclusionRects,
   rotateOutline90,
@@ -45,6 +46,12 @@ interface DeckVisualizationProps {
   backgroundImageOpacity?: number
   onSetBackgroundImage?: (dataUrl: string | null) => void
   onSetBackgroundImageOpacity?: (opacity: number) => void
+  // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
+  // in calculator.ts. Undefined = plain rectangle, today's behavior.
+  deckOutline?: { x: number; y: number }[]
+  editingDeckOutline?: boolean
+  onSetDeckOutline?: (outline: { x: number; y: number }[] | undefined) => void
+  onSetEditingDeckOutline?: (v: boolean) => void
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   mode: 'auto' | 'manual'
@@ -114,6 +121,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   backgroundImageOpacity,
   onSetBackgroundImage,
   onSetBackgroundImageOpacity,
+  deckOutline,
+  editingDeckOutline,
+  onSetDeckOutline,
+  onSetEditingDeckOutline,
   hoveredItemId,
   onHover,
   mode,
@@ -170,22 +181,57 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // viewBox), all existing click/drag placement math keeps working unchanged.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  // Deck background photo: file picker + compression happen here, the
-  // compressed data URL/opacity live in the store (deck.backgroundImage),
-  // threaded in as plain props like every other deck setting this
-  // component never reaches into useCalculator for.
+  // Deck background photo: file picker opens the crop dialog with the raw
+  // decoded bitmap (no compression yet — that happens once, on crop
+  // confirm, against the already-cropped region). Compressed data
+  // URL/opacity live in the store (deck.backgroundImage), threaded in as
+  // plain props like every other deck setting this component never reaches
+  // into useCalculator for.
   const backgroundFileInputRef = useRef<HTMLInputElement>(null)
+  const [cropBitmap, setCropBitmap] = useState<ImageBitmap | null>(null)
   const handleBackgroundFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file later
     if (!file) return
     try {
-      const dataUrl = await compressImageToDataUrl(file)
-      onSetBackgroundImage?.(dataUrl)
+      const bitmap = await createImageBitmap(file)
+      setCropBitmap(bitmap)
     } catch {
       toast.error('Не удалось загрузить фото палубы')
     }
   }
+  const handleCropConfirm = (dataUrl: string) => {
+    onSetBackgroundImage?.(dataUrl)
+    cropBitmap?.close?.()
+    setCropBitmap(null)
+  }
+  const handleCropCancel = () => {
+    cropBitmap?.close?.()
+    setCropBitmap(null)
+  }
+  // Right-click deck menu: "Редактировать" (deck outline) / "Загрузить
+  // фото" (same upload flow as the toolbar button — reuses the same hidden
+  // file input, no duplicate upload logic). Screen-space {x,y}, not deck
+  // coords, since the menu is a position:fixed overlay.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const handleDeckContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [contextMenu])
   const [panDrag, setPanDrag] = useState<{ startMouse: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [lashingHoverPos, setLashingHoverPos] = useState<{ x: number; y: number } | null>(null)
@@ -225,6 +271,31 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   if (drawingCustomShape !== prevDrawingCustomShape) {
     setPrevDrawingCustomShape(drawingCustomShape)
     if (!drawingCustomShape && drawingPoints.length) setDrawingPoints([])
+  }
+  // Deck outline editor: drag existing vertices, click a mid-edge to insert
+  // a new one, "×" a vertex to remove it (min 3 kept). Seeded fresh every
+  // time the mode is armed — from the current deck.outline if one exists,
+  // else the plain bounding-box rectangle's 4 corners (editing always starts
+  // from "currently a rectangle" when nothing's been drawn yet).
+  const [editingOutline, setEditingOutline] = useState<{ x: number; y: number }[]>([])
+  const [draggingVertexIndex, setDraggingVertexIndex] = useState<number | null>(null)
+  const [prevEditingDeckOutline, setPrevEditingDeckOutline] = useState(editingDeckOutline)
+  if (editingDeckOutline !== prevEditingDeckOutline) {
+    setPrevEditingDeckOutline(editingDeckOutline)
+    if (editingDeckOutline) {
+      setEditingOutline(
+        deckOutline && deckOutline.length >= 3
+          ? deckOutline
+          : [
+              { x: 0, y: 0 },
+              { x: deckWidth, y: 0 },
+              { x: deckWidth, y: deckLength },
+              { x: 0, y: deckLength },
+            ]
+      )
+    } else {
+      setDraggingVertexIndex(null)
+    }
   }
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   type ZoneDrag = {
@@ -324,8 +395,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const edgePad = boardOffset
 
   const freeRects = useMemo(
-    () => computeFreeRects(deckWidth, deckLength, result.placed, gap, boardOffset),
-    [deckWidth, deckLength, result.placed, gap, boardOffset]
+    () => computeFreeRects(deckWidth, deckLength, result.placed, gap, boardOffset, deckOutline),
+    [deckWidth, deckLength, result.placed, gap, boardOffset, deckOutline]
   )
 
   // Layout geometry
@@ -599,6 +670,62 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return true
   }
 
+  const EDGE_INSERT_PIXEL_RADIUS = 10
+
+  // Editor click: clicking near an existing vertex handle is handled by
+  // that handle's own onPointerDown (drag), so any click that reaches here
+  // means "insert a new vertex" — find the nearest edge segment (by
+  // perpendicular screen-px distance) and splice a point in after it. Short
+  // clicks that land far from every edge are ignored (dead corner-click,
+  // same as clicking empty deck space elsewhere in this file).
+  const handleOutlineEditClick = (e: React.MouseEvent): boolean => {
+    if (!editingDeckOutline) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    let bestIndex = -1
+    let bestDistPx = Infinity
+    for (let i = 0; i < editingOutline.length; i++) {
+      const a = editingOutline[i]
+      const b = editingOutline[(i + 1) % editingOutline.length]
+      const ax = toX(a.x), ay = toY(a.y), bx = toX(b.x), by = toY(b.y)
+      const px = toX(x), py = toY(y)
+      const dx = bx - ax, dy = by - ay
+      const lenSq = dx * dx + dy * dy
+      const t = lenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0
+      const cx = ax + t * dx, cy = ay + t * dy
+      const distPx = Math.hypot(px - cx, py - cy)
+      if (distPx < bestDistPx) {
+        bestDistPx = distPx
+        bestIndex = i
+      }
+    }
+    if (bestIndex >= 0 && bestDistPx <= EDGE_INSERT_PIXEL_RADIUS) {
+      setEditingOutline((pts) => [...pts.slice(0, bestIndex + 1), { x, y }, ...pts.slice(bestIndex + 1)])
+    }
+    return true
+  }
+
+  const handleOutlineVertexPointerDown = (e: React.PointerEvent, index: number) => {
+    e.stopPropagation()
+    setDraggingVertexIndex(index)
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  const handleOutlineVertexRemove = (index: number) => {
+    if (editingOutline.length <= 3) return
+    setEditingOutline((pts) => pts.filter((_, i) => i !== index))
+  }
+
+  const handleOutlineConfirm = () => {
+    onSetDeckOutline?.(editingOutline)
+    onSetEditingDeckOutline?.(false)
+  }
+  const handleOutlineCancel = () => {
+    onSetEditingDeckOutline?.(false)
+  }
+
   // Backspace removes the last placed vertex while drawing (Escape cancels
   // the whole in-progress drawing — handled in page.tsx's combined disarm
   // handler, alongside placingLashingPoint/activeStampId/pendingPresetStamp).
@@ -621,6 +748,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       return
     }
     if (handleDrawClick(e)) return
+    if (handleOutlineEditClick(e)) return
     if (handleLashingClick(e)) return
     if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
@@ -644,6 +772,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     const target = { ...clamped, width: stampDims.w, length: stampDims.l, rotated: stampRotated, outline: activeStamp.outline }
     if (collidesPrecisely(target, rawOthers, gap)) {
       return // ignore overlapping placement
+    }
+    if (deckOutline && deckOutline.length >= 3 && !rectInsidePolygon(target, deckOutline)) {
+      toast.warning('Здесь груз выходит за пределы палубы')
+      return
     }
     // withClearanceFootprint returns the placement UNCHANGED (outline
     // intact) when it has no clearance margin, and a plain inflated
@@ -845,6 +977,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setDrawHoverPos(pos)
     }
+    if (draggingVertexIndex !== null) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (pos) {
+        const x = Math.max(0, Math.min(deckWidth, pos.x))
+        const y = Math.max(0, Math.min(deckLength, pos.y))
+        setEditingOutline((pts) => pts.map((p, i) => (i === draggingVertexIndex ? { x, y } : p)))
+      }
+    }
     if (activeStamp && !dragState && !pinDrag) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (pos) {
@@ -893,7 +1033,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
           const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline }
-          if (!collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+          const insideDeck = !deckOutline || deckOutline.length < 3 || rectInsidePolygon(resolvedTarget, deckOutline)
+          if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
             scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
           }
         }
@@ -995,7 +1136,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
         const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline }
-        if (!collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+        const insideDeck = !deckOutline || deckOutline.length < 3 || rectInsidePolygon(resolvedTarget, deckOutline)
+        if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
           scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
         }
       }
@@ -1042,6 +1184,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setClearanceDrag(null)
     setPanDrag(null)
     setLashingAnchorDrag(null)
+    setDraggingVertexIndex(null)
   }
 
   // A cancelled gesture (browser gesture, tab switch, context menu) never fires
@@ -1061,6 +1204,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPanDrag(null)
     setMergeTargetId(null)
     setLashingAnchorDrag(null)
+    setDraggingVertexIndex(null)
   }
 
   const handleManualLeave = () => {
@@ -1135,18 +1279,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || activeStamp || drawingCustomShape
+      : placingLashingPoint || activeStamp || drawingCustomShape || editingDeckOutline
         ? 'crosshair'
         : 'default'
 
   return (
     <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
-      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm">
+      {/* pointer-events-none on the container + pointer-events-auto on each
+          button: this panel floats over the deck's top-right corner, which
+          is also where an outline-editor vertex handle can sit — without
+          this split the panel's own (non-interactive) padding silently
+          swallowed clicks/drags meant for the SVG underneath it. */}
+      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm pointer-events-none">
         <Button
           type="button"
           size="icon"
           variant="ghost"
-          className="h-7 w-7"
+          className="h-7 w-7 pointer-events-auto"
           title="Увеличить"
           disabled={zoom >= MAX_ZOOM}
           onClick={() => zoomAtCenter(zoom + 0.5)}
@@ -1157,7 +1306,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           type="button"
           size="icon"
           variant="ghost"
-          className="h-7 w-7"
+          className="h-7 w-7 pointer-events-auto"
           title="Уменьшить"
           disabled={zoom <= MIN_ZOOM}
           onClick={() => zoomAtCenter(zoom - 0.5)}
@@ -1168,7 +1317,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           type="button"
           size="icon"
           variant="ghost"
-          className="h-7 w-7"
+          className="h-7 w-7 pointer-events-auto"
           title="Сбросить масштаб"
           disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
           onClick={resetZoom}
@@ -1188,7 +1337,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               type="button"
               size="icon"
               variant={backgroundImage ? 'secondary' : 'ghost'}
-              className="h-7 w-7"
+              className="h-7 w-7 pointer-events-auto"
               title="Фоновое фото палубы"
             >
               <ImageIcon className="h-4 w-4" />
@@ -1245,12 +1394,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || activeStamp || drawingCustomShape ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || activeStamp || drawingCustomShape || editingDeckOutline ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onPointerLeave={() => { setHoverPos(null); setLashingHoverPos(null) }}
+        onContextMenu={handleDeckContextMenu}
       >
         <defs>
           <pattern
@@ -1270,46 +1420,69 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <rect width="8" height="8" fill="transparent" />
             <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(16,185,129,0.28)" strokeWidth="3" />
           </pattern>
+          {deckOutline && deckOutline.length >= 3 && (
+            <clipPath id="deck-outline-clip">
+              <polygon points={deckOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')} />
+            </clipPath>
+          )}
         </defs>
 
-        {/* Deck background */}
-        <rect
-          data-deck-background="true"
-          x={offX}
-          y={offY}
-          width={w}
-          height={h}
-          rx={6}
-          fill="#ffffff"
-          stroke="#1e293b"
-          strokeWidth={2}
-        />
-
-        {/* Optional real deck photo, aligned to the exact same rect the deck
-            background/grid use so it rescales in lockstep with deck-size and
-            zoom changes. Drawn AFTER the opaque white background rect (an
-            SVG rect fill is fully opaque — an image behind it would just be
-            hidden) but before the grid overlay and everything else.
-            Stretch-to-fill (not slice) is intentional — the goal is
-            aligning a real photo to the deck's real rectangle corner-to-
-            corner, and slicing would crop it unpredictably depending on the
-            source aspect ratio. pointer-events:none keeps every existing
-            pan/drag/click handler working through it. */}
-        {backgroundImage && (
-          <image
-            href={backgroundImage}
+        {/* Deck background — clipped to the real (possibly non-rectangular)
+            outline when one is set, so the white fill/grid/photo all
+            respect the cut shape instead of drawing a full rectangle with
+            cargo just silently blocked in the excluded corners. Every rect
+            below stays untouched; only the wrapping clip changes. */}
+        <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
+          <rect
+            data-deck-background="true"
             x={offX}
             y={offY}
             width={w}
             height={h}
-            opacity={backgroundImageOpacity ?? 0.5}
-            preserveAspectRatio="none"
-            style={{ pointerEvents: 'none' }}
+            rx={6}
+            fill="#ffffff"
+            stroke="#1e293b"
+            strokeWidth={2}
           />
-        )}
 
-        {showGrid && hasContent && (
-          <rect data-deck-background="true" x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
+          {/* Optional real deck photo, aligned to the exact same rect the deck
+              background/grid use so it rescales in lockstep with deck-size and
+              zoom changes. Drawn AFTER the opaque white background rect (an
+              SVG rect fill is fully opaque — an image behind it would just be
+              hidden) but before the grid overlay and everything else.
+              Stretch-to-fill (not slice) is intentional — the goal is
+              aligning a real photo to the deck's real rectangle corner-to-
+              corner, and slicing would crop it unpredictably depending on the
+              source aspect ratio. pointer-events:none keeps every existing
+              pan/drag/click handler working through it. */}
+          {backgroundImage && (
+            <image
+              href={backgroundImage}
+              x={offX}
+              y={offY}
+              width={w}
+              height={h}
+              opacity={backgroundImageOpacity ?? 0.5}
+              preserveAspectRatio="none"
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
+
+          {showGrid && hasContent && (
+            <rect data-deck-background="true" x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
+          )}
+        </g>
+
+        {/* The cut edge itself, drawn as a visible stroke so it reads as an
+            intentional boundary rather than a clip artifact. */}
+        {deckOutline && deckOutline.length >= 3 && (
+          <polygon
+            points={deckOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+            fill="none"
+            stroke="#1e293b"
+            strokeWidth={2}
+            className="pointer-events-none"
+          />
         )}
 
         {/* Edge padding border (usable region) */}
@@ -1542,6 +1715,52 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 stroke="#fff"
                 strokeWidth={1.2}
               />
+            ))}
+          </g>
+        )}
+
+        {/* Deck outline editor: live closed polygon, draggable vertex
+            handles, and a small "×" per vertex to remove it (min 3 kept).
+            Unlike the open-path custom-shape drawing above, this edits an
+            already-closed shape — every vertex is always visible/draggable
+            at once, not built up sequentially. */}
+        {editingDeckOutline && editingOutline.length > 0 && (
+          <g opacity={0.9}>
+            <polygon
+              points={editingOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              fill="rgba(37,99,235,0.08)"
+              stroke="rgba(37,99,235,0.9)"
+              strokeWidth={1.5}
+              className="pointer-events-none"
+            />
+            {editingOutline.map((p, i) => (
+              <g key={i}>
+                <circle
+                  cx={toX(p.x)}
+                  cy={toY(p.y)}
+                  r={6}
+                  fill="rgba(37,99,235,0.9)"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                  style={{ cursor: 'grab' }}
+                  onPointerDown={(e) => handleOutlineVertexPointerDown(e, i)}
+                />
+                {editingOutline.length > 3 && (
+                  <g
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleOutlineVertexRemove(i)
+                    }}
+                  >
+                    <circle cx={toX(p.x) + 10} cy={toY(p.y) - 10} r={7} fill="#ef4444" stroke="#fff" strokeWidth={1.2} />
+                    <text x={toX(p.x) + 10} y={toY(p.y) - 9} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="#fff">
+                      ×
+                    </text>
+                  </g>
+                )}
+              </g>
             ))}
           </g>
         )}
@@ -1932,6 +2151,57 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         </text>
         <circle cx={offX} cy={offY} r={3} fill="#0f172a" />
       </svg>
+      <PhotoCropDialog
+        open={!!cropBitmap}
+        bitmap={cropBitmap}
+        aspectRatio={deckWidth / deckLength}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
+      />
+      {contextMenu && (
+        <div
+          className="fixed z-50 w-48 rounded-lg border bg-card p-1 shadow-md"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 200),
+            top: Math.min(contextMenu.y, window.innerHeight - 100),
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onClick={() => {
+              onSetEditingDeckOutline?.(true)
+              setContextMenu(null)
+            }}
+          >
+            Редактировать
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onClick={() => {
+              backgroundFileInputRef.current?.click()
+              setContextMenu(null)
+            }}
+          >
+            Загрузить фото
+          </button>
+        </div>
+      )}
+      {editingDeckOutline && (
+        <div className="absolute left-2 bottom-2 z-10 flex gap-1.5 rounded-lg border bg-card/95 p-1.5 shadow-sm backdrop-blur-sm">
+          <span className="self-center px-1.5 text-xs text-muted-foreground">
+            Тяните точки, кликните на край — добавить точку
+          </span>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={handleOutlineCancel}>
+            Отмена
+          </Button>
+          <Button type="button" size="sm" className="h-7 text-xs" onClick={handleOutlineConfirm}>
+            Сохранить
+          </Button>
+        </div>
+      )}
     </div>
   )
 })
