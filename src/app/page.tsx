@@ -75,6 +75,8 @@ export default function Home() {
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
+  const setDeckBackgroundImage = useCalculator((s) => s.setDeckBackgroundImage)
+  const setDeckBackgroundImageOpacity = useCalculator((s) => s.setDeckBackgroundImageOpacity)
   const mode = useCalculator((s) => s.mode)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
   const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
@@ -1303,6 +1305,10 @@ export default function Home() {
                     showFreeSpace={showFreeSpace}
                     showGrid={showGrid}
                     showLabels={showLabels}
+                    backgroundImage={deck.backgroundImage}
+                    backgroundImageOpacity={deck.backgroundImageOpacity}
+                    onSetBackgroundImage={setDeckBackgroundImage}
+                    onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
                     hoveredItemId={hoveredItemId}
                     onHover={handleHover}
                     mode={mode}

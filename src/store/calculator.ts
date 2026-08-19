@@ -58,6 +58,8 @@ export interface DeckConfig {
   loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
   lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
+  backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
+  backgroundImageOpacity?: number // 0..1, seeded to 0.5 the first time a photo is attached
 }
 
 const PALETTE = [
@@ -141,6 +143,8 @@ interface CalculatorState {
   toggleFreeSpace: () => void
   toggleGrid: () => void
   toggleLabels: () => void
+  setDeckBackgroundImage: (dataUrl: string | null) => void
+  setDeckBackgroundImageOpacity: (opacity: number) => void
   setMode: (m: Mode) => void
   setActiveStamp: (id: string | null) => void
   setPendingPresetStamp: (template: Partial<CargoItem> | null) => void
@@ -781,6 +785,19 @@ export const useCalculator = create<CalculatorState>()(
   toggleFreeSpace: () => set((s) => ({ showFreeSpace: !s.showFreeSpace })),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
+  // Built directly, not routed through setDeck — a photo/opacity change must
+  // never trigger setDeck's boundsChanged/reflow logic, since it has no
+  // effect on placement geometry.
+  setDeckBackgroundImage: (dataUrl) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        backgroundImage: dataUrl ?? undefined,
+        backgroundImageOpacity: dataUrl ? (s.deck.backgroundImageOpacity ?? 0.5) : s.deck.backgroundImageOpacity,
+      },
+    })),
+  setDeckBackgroundImageOpacity: (opacity) =>
+    set((s) => ({ deck: { ...s.deck, backgroundImageOpacity: Math.min(1, Math.max(0, opacity)) } })),
   setMode: (m) =>
     set(() => ({
       mode: m,

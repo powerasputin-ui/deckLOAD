@@ -1,8 +1,10 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
-import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { compressImageToDataUrl } from '@/lib/imageCompression'
 import {
   computeFreeRects,
   computeGridStep,
@@ -39,6 +41,10 @@ interface DeckVisualizationProps {
   showFreeSpace: boolean
   showGrid: boolean
   showLabels: boolean
+  backgroundImage?: string
+  backgroundImageOpacity?: number
+  onSetBackgroundImage?: (dataUrl: string | null) => void
+  onSetBackgroundImageOpacity?: (opacity: number) => void
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   mode: 'auto' | 'manual'
@@ -104,6 +110,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   showFreeSpace,
   showGrid,
   showLabels,
+  backgroundImage,
+  backgroundImageOpacity,
+  onSetBackgroundImage,
+  onSetBackgroundImageOpacity,
   hoveredItemId,
   onHover,
   mode,
@@ -160,6 +170,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // viewBox), all existing click/drag placement math keeps working unchanged.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  // Deck background photo: file picker + compression happen here, the
+  // compressed data URL/opacity live in the store (deck.backgroundImage),
+  // threaded in as plain props like every other deck setting this
+  // component never reaches into useCalculator for.
+  const backgroundFileInputRef = useRef<HTMLInputElement>(null)
+  const handleBackgroundFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file later
+    if (!file) return
+    try {
+      const dataUrl = await compressImageToDataUrl(file)
+      onSetBackgroundImage?.(dataUrl)
+    } catch {
+      toast.error('Не удалось загрузить фото палубы')
+    }
+  }
   const [panDrag, setPanDrag] = useState<{ startMouse: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [lashingHoverPos, setLashingHoverPos] = useState<{ x: number; y: number } | null>(null)
@@ -1149,6 +1175,70 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         >
           <Maximize className="h-4 w-4" />
         </Button>
+        <input
+          ref={backgroundFileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleBackgroundFileChange}
+        />
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              variant={backgroundImage ? 'secondary' : 'ghost'}
+              className="h-7 w-7"
+              title="Фоновое фото палубы"
+            >
+              <ImageIcon className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent side="left" align="start" className="w-64 p-3 space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Фоновое фото
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => backgroundFileInputRef.current?.click()}
+            >
+              <Upload className="h-3.5 w-3.5 mr-1.5" />
+              {backgroundImage ? 'Заменить фото' : 'Загрузить фото'}
+            </Button>
+            {backgroundImage && (
+              <>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Прозрачность</span>
+                    <span>{Math.round((backgroundImageOpacity ?? 0.5) * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={backgroundImageOpacity ?? 0.5}
+                    onChange={(e) => onSetBackgroundImageOpacity?.(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full h-8 text-xs text-destructive hover:text-destructive"
+                  onClick={() => onSetBackgroundImage?.(null)}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  Удалить фото
+                </Button>
+              </>
+            )}
+          </PopoverContent>
+        </Popover>
       </div>
       <svg
         ref={setSvgRef}
@@ -1194,6 +1284,30 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           stroke="#1e293b"
           strokeWidth={2}
         />
+
+        {/* Optional real deck photo, aligned to the exact same rect the deck
+            background/grid use so it rescales in lockstep with deck-size and
+            zoom changes. Drawn AFTER the opaque white background rect (an
+            SVG rect fill is fully opaque — an image behind it would just be
+            hidden) but before the grid overlay and everything else.
+            Stretch-to-fill (not slice) is intentional — the goal is
+            aligning a real photo to the deck's real rectangle corner-to-
+            corner, and slicing would crop it unpredictably depending on the
+            source aspect ratio. pointer-events:none keeps every existing
+            pan/drag/click handler working through it. */}
+        {backgroundImage && (
+          <image
+            href={backgroundImage}
+            x={offX}
+            y={offY}
+            width={w}
+            height={h}
+            opacity={backgroundImageOpacity ?? 0.5}
+            preserveAspectRatio="none"
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
+
         {showGrid && hasContent && (
           <rect data-deck-background="true" x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
         )}

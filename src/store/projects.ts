@@ -243,6 +243,8 @@ function normalizeProject(p: Partial<Project>): Project {
       clearance: toFiniteNonNegative(p.deck?.clearance, 0),
       loadZones: normalizeLoadZones(p.deck?.loadZones),
       lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
+      backgroundImage: toOptionalString(p.deck?.backgroundImage),
+      backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
     },
     items: Array.isArray(p.items)
       ? p.items.map((it) => ({
