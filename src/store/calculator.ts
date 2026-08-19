@@ -433,12 +433,16 @@ type CalculatorHistoryState = Pick<
 export const useCalculator = create<CalculatorState>()(
   temporal(
     (set) => ({
+  // Starts empty, not with demo cargo — this is the store's state before
+  // the actual saved project has loaded from localStorage (an async effect
+  // in page.tsx, see useProjects.hydrate). Seeding it with demo items here
+  // used to auto-pack and render a demo layout for one paint, which then
+  // got yanked out and replaced the instant the real project loaded —
+  // a "flash of wrong content" on every refresh. First-time visitors still
+  // get the demo, but through freshProject() in store/projects.ts, which
+  // feeds this store via that same load-project effect, not from here.
   deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
-  items: [
-    makeItem([], { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 }),
-    makeItem([], { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 }),
-    makeItem([], { name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 }),
-  ],
+  items: [],
   separationRules: [],
   sortStrategy: 'area-desc',
   globalRotation: true,

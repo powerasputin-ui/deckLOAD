@@ -9,6 +9,10 @@ function headerBadge(page: Page) {
 test.describe('Deleting a pinned cargo item', () => {
   test('the X button on a pinned item actually removes it (not just unpins)', async ({ page }) => {
     await page.goto('/')
+    // The store starts empty and only fills in once the saved/demo project
+    // loads (an async effect) — wait for that to settle instead of reading
+    // the badge's transient "0/0" from the very first paint.
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     const before = await headerBadge(page).textContent()
     const [beforePlaced, beforeTotal] = (before?.match(/(\d+)\/(\d+)/) ?? []).slice(1).map(Number)
 

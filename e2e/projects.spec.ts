@@ -16,6 +16,10 @@ test.describe('Projects', () => {
 
   test('switching between projects updates cargo list', async ({ page }) => {
     await page.goto('/')
+    // The store starts empty and only fills in once the demo project loads
+    // (an async effect) — wait for that to settle instead of reading the
+    // badge's transient "0/0" from the very first paint.
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     const initial = await headerBadge(page).textContent()
     await page.getByRole('button', { name: 'Новый' }).first().click()
     await expect(page.getByText('Список грузов пуст')).toBeVisible()
