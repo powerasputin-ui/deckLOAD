@@ -62,6 +62,7 @@ export function PlacementPanel({
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
+  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
   const deck = useCalculator((s) => s.deck)
@@ -247,17 +248,39 @@ export function PlacementPanel({
           ) : (
             <ScrollArea className="h-[200px] pr-1">
               <div className="space-y-1">
-                {items.map((it) => (
-                  <StampRow
-                    key={it.id}
-                    item={it}
-                    active={activeStampId === it.id}
-                    rotated={activeStampId === it.id && stampRotated}
-                    total={it.quantity}
-                    remaining={Math.max(0, it.quantity - (placedByItemId.get(it.id) ?? 0))}
-                    onSelect={() => setActiveStamp(activeStampId === it.id ? null : it.id)}
-                  />
-                ))}
+                {items.map((it) => {
+                  // A preset stamp stays armed (uncapped placement) after its
+                  // first click rather than converting to a normal capped
+                  // activeStampId — see page.tsx's onPlace. That left this
+                  // row with no visual "активен" state even while the user
+                  // could keep clicking the deck to place more of it, and no
+                  // obvious way to stop other than pressing Escape. Matching
+                  // by name (armed presets always resolve to the one item
+                  // that shares their name — addOrIncrementCargoFromTemplate
+                  // never creates a second one) shows the row as active, and
+                  // clicking it disarms the preset stamp directly instead of
+                  // routing through setActiveStamp, which would silently cap
+                  // it back at whatever quantity it already reached.
+                  const isArmedPreset = pendingPresetStamp?.name === it.name
+                  const active = activeStampId === it.id || isArmedPreset
+                  return (
+                    <StampRow
+                      key={it.id}
+                      item={it}
+                      active={active}
+                      rotated={active && stampRotated}
+                      total={it.quantity}
+                      remaining={Math.max(0, it.quantity - (placedByItemId.get(it.id) ?? 0))}
+                      onSelect={() => {
+                        if (isArmedPreset) {
+                          setPendingPresetStamp(null)
+                        } else {
+                          setActiveStamp(activeStampId === it.id ? null : it.id)
+                        }
+                      }}
+                    />
+                  )
+                })}
               </div>
             </ScrollArea>
           )}
