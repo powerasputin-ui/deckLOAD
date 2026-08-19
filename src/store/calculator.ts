@@ -117,6 +117,17 @@ interface CalculatorState {
   activePresetCategory: string | null
   stampRotated: boolean
   placingLashingPoint: boolean
+  // Armed "draw a custom cargo outline" mode — mutually exclusive with
+  // activeStampId/pendingPresetStamp/placingLashingPoint (arming any of the
+  // four disarms the other three). The in-progress point list itself is
+  // local component state in DeckVisualization, same split as
+  // placingLashingPoint/pendingLashingCorner.
+  drawingCustomShape: boolean
+  // A just-closed drawing, awaiting a name/weight before it becomes a real
+  // CargoItem. outline/width/length are already normalized to a local
+  // (0,0)-origin frame; x/y is where it was drawn on the deck, so the
+  // finalize step can place an instance right there.
+  pendingCustomShape: { outline: { x: number; y: number }[]; width: number; length: number; x: number; y: number } | null
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -166,6 +177,8 @@ interface CalculatorState {
   updateLashingPoint: (id: string, patch: Partial<LashingPoint>) => void
   removeLashingPoint: (id: string) => void
   setPlacingLashingPoint: (v: boolean) => void
+  setDrawingCustomShape: (v: boolean) => void
+  setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
   // Lashing points and a clearance-margin exclusion zone are mutually
   // exclusive per placement (see clearanceMargin on ManualPlacement/
@@ -271,6 +284,7 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     weight: partial?.weight,
     category: partial?.category,
     shape: partial?.shape,
+    outline: partial?.outline,
   }
 }
 
@@ -459,6 +473,8 @@ export const useCalculator = create<CalculatorState>()(
   activePresetCategory: null,
   stampRotated: false,
   placingLashingPoint: false,
+  drawingCustomShape: false,
+  pendingCustomShape: null,
 
   setDeck: (patch) =>
     set((s) => {
@@ -614,6 +630,7 @@ export const useCalculator = create<CalculatorState>()(
           width: conv(it.width),
           length: conv(it.length),
           height: conv(it.height),
+          outline: it.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
         })),
         // Convert coordinates/dimensions of all existing placements too
         manualPlacements: s.manualPlacements.map((m) => ({
@@ -743,8 +760,8 @@ export const useCalculator = create<CalculatorState>()(
       selectedPinIds: [],
       selectedManualIds: [],
     })),
-  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null }),
-  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null }),
+  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null, drawingCustomShape: false }),
+  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null, drawingCustomShape: false }),
   setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
     let id = ''
@@ -945,7 +962,14 @@ export const useCalculator = create<CalculatorState>()(
     })),
   pruneStaleLashingPoints: () =>
     set((s) => ({ deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, s.pinnedPlacementsByTrip) })),
-  setPlacingLashingPoint: (v) => set({ placingLashingPoint: v }),
+  setPlacingLashingPoint: (v) =>
+    set({ placingLashingPoint: v, ...(v ? { drawingCustomShape: false } : {}) }),
+  setDrawingCustomShape: (v) =>
+    set({
+      drawingCustomShape: v,
+      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false } : {}),
+    }),
+  setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
   setVesselMotion: (patch) =>
     set((s) => ({
       deck: {

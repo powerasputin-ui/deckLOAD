@@ -13,8 +13,12 @@ export interface Rect {
 // 2D/3D render hint (DeckVisualization, Deck3DView) — defaults to 'box'.
 // Footprint/packing math is unaffected by any of these: every shape still
 // packs, collides and clamps by its rectangular bounding box, exactly like a
-// box. Only what gets *drawn* inside that bounding box differs.
-export type CargoShape = 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond'
+// box. Only what gets *drawn* inside that bounding box differs — EXCEPT
+// 'custom' (see `outline` below), whose precise silhouette also feeds
+// collidesPrecisely() for direct manual placement/drag/rotate, while the
+// auto-packer still only ever reserves its bounding box, same as every
+// other shape.
+export type CargoShape = 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond' | 'custom'
 
 export interface CargoItem {
   id: string
@@ -28,6 +32,13 @@ export interface CargoItem {
   weight?: number
   category?: string // free-text cargo category (e.g. "Опасный груз") used by separation rules
   shape?: CargoShape
+  // Hand-drawn silhouette for shape: 'custom' — vertices in the item's own
+  // local, UNROTATED frame, same units as width/length, spanning exactly
+  // [0,width] x [0,length]. width/length remain the authoritative bounding
+  // box every packing/collision function already trusts; this is purely
+  // additive precision data. Rotated on the fly via rotateOutline90() —
+  // never stored pre-rotated, so there's only ever one source of truth.
+  outline?: { x: number; y: number }[]
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -259,6 +270,7 @@ export interface PlacedItem {
   weight?: number
   index: number
   shape?: CargoShape
+  outline?: { x: number; y: number }[] // see CargoItem.outline — same local/unrotated convention
   clearanceMargin?: ClearanceMargin // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
 }
 
@@ -548,6 +560,7 @@ export function packDeck(
   const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
   const shapeByItemId = new Map(items.map((it) => [it.id, it.shape]))
+  const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -609,10 +622,19 @@ export function packDeck(
       })
       continue
     }
-    const overlapsAccepted = acceptedPins.some((ap) =>
-      collidesWith({ x: pin.x, y: pin.y, width: pin.width, length: pin.length }, [withClearanceFootprint(ap)], gap) ||
-      collidesWith(withClearanceFootprint(pin), [{ x: ap.x, y: ap.y, width: ap.width, length: ap.length }], gap)
-    )
+    // Precise (not just bbox) so a pin dropped into another pin's custom-
+    // shape notch — already accepted by the same collidesPrecisely check at
+    // click-time in DeckVisualization — doesn't turn around and get flagged
+    // "intersects" here, which would otherwise silently move it to
+    // `unplaced` right after the UI told the user it was placed.
+    const pinWithOutline = { x: pin.x, y: pin.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: outlineByItemId.get(pin.itemId) }
+    const overlapsAccepted = acceptedPins.some((ap) => {
+      const apWithOutline = { x: ap.x, y: ap.y, width: ap.width, length: ap.length, rotated: ap.rotated, outline: outlineByItemId.get(ap.itemId) }
+      return (
+        collidesPrecisely(pinWithOutline, [withClearanceFootprint(apWithOutline)], gap) ||
+        collidesPrecisely(withClearanceFootprint(pinWithOutline), [apWithOutline], gap)
+      )
+    })
     if (overlapsAccepted) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -678,6 +700,7 @@ export function packDeck(
       weight: pin.weight,
       index: index++,
       shape: shapeByItemId.get(pin.itemId),
+      outline: outlineByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
     })
     result.usedArea += pin.width * pin.length
@@ -859,6 +882,7 @@ export function packDeck(
       weight: item.weight,
       index: stackIdx++,
       shape: item.shape,
+      outline: item.outline,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -1226,6 +1250,121 @@ export function collidesWith(
   })
 }
 
+// Rotates a local outline 90° CW to match rotatePlacement's width/length
+// swap: the unrotated box is [0,width]×[0,length]; the rotated box is
+// [0,length]×[0,width]. `width`/`length` here are the box the INPUT points
+// are defined against (i.e. the un-rotated source box), not the rotated
+// result.
+export function rotateOutline90(
+  points: { x: number; y: number }[],
+  width: number,
+  length: number
+): { x: number; y: number }[] {
+  return points.map((p) => ({ x: length - p.y, y: p.x }))
+}
+
+// Converts a placement's local outline into a world-space polygon — rotated
+// (if needed) then translated by the placement's own x/y. Placements without
+// a custom outline fall back to their plain bounding-box rectangle, so this
+// is safe to call unconditionally. Shared by 2D/3D render and
+// collidesPrecisely so there's exactly one rotation implementation (the
+// duplication that caused an earlier bug — shape being hand-copied and
+// silently dropped in one of several places — is exactly what this avoids).
+export function worldPolygon(p: {
+  x: number
+  y: number
+  width: number
+  length: number
+  rotated?: boolean
+  outline?: { x: number; y: number }[]
+}): { x: number; y: number }[] {
+  if (!p.outline || p.outline.length < 3) {
+    return [
+      { x: p.x, y: p.y },
+      { x: p.x + p.width, y: p.y },
+      { x: p.x + p.width, y: p.y + p.length },
+      { x: p.x, y: p.y + p.length },
+    ]
+  }
+  // p.width/p.length already reflect the ROTATED bbox (rotatePlacement
+  // swaps them) — the stored outline is always in the UNROTATED frame, so
+  // recover the pre-rotation box size to rotate the points correctly.
+  const unrotatedWidth = p.rotated ? p.length : p.width
+  const unrotatedLength = p.rotated ? p.width : p.length
+  const local = p.rotated ? rotateOutline90(p.outline, unrotatedWidth, unrotatedLength) : p.outline
+  return local.map((pt) => ({ x: p.x + pt.x, y: p.y + pt.y }))
+}
+
+function segmentsIntersect(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  p3: { x: number; y: number },
+  p4: { x: number; y: number }
+): boolean {
+  const d = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  const d1 = d(p3, p4, p1)
+  const d2 = d(p3, p4, p2)
+  const d3 = d(p1, p2, p3)
+  const d4 = d(p1, p2, p4)
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+}
+
+function pointInPolygon(pt: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x
+    const yi = poly[i].y
+    const xj = poly[j].x
+    const yj = poly[j].y
+    const intersect = yi > pt.y !== yj > pt.y && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+// True if two simple polygons (convex or concave) overlap — edge-crossing
+// test plus a containment check (needed for the case where one polygon is
+// entirely inside the other with no edge crossings at all). No library
+// needed; three.js's own earcut handles concave triangulation separately
+// for 3D extrusion.
+export function polygonsOverlap(
+  polyA: { x: number; y: number }[],
+  polyB: { x: number; y: number }[]
+): boolean {
+  for (let i = 0; i < polyA.length; i++) {
+    const a1 = polyA[i]
+    const a2 = polyA[(i + 1) % polyA.length]
+    for (let j = 0; j < polyB.length; j++) {
+      const b1 = polyB[j]
+      const b2 = polyB[(j + 1) % polyB.length]
+      if (segmentsIntersect(a1, a2, b1, b2)) return true
+    }
+  }
+  return pointInPolygon(polyA[0], polyB) || pointInPolygon(polyB[0], polyA)
+}
+
+// Bbox pre-check first (cheap, already what every caller does) — only
+// escalates to precise polygon math when the bbox says "maybe" AND at least
+// one side has real outline data. Boxes/circles/pipes/etc. (no outline)
+// behave EXACTLY as collidesWith does today — zero behavior change for
+// every shape except the new hand-drawn 'custom' one. `gap` is only applied
+// during the bbox pre-check (a Minkowski-expanded gap around an arbitrary
+// polygon isn't worth the complexity here) — a custom shape's own true
+// boundary is treated as touching-is-colliding.
+export function collidesPrecisely(
+  a: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[] },
+  others: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[] }[],
+  gap = 0
+): boolean {
+  for (const b of others) {
+    if (!collidesWith(a, [b], gap)) continue
+    if (!a.outline && !b.outline) return true
+    if (polygonsOverlap(worldPolygon(a), worldPolygon(b))) return true
+  }
+  return false
+}
+
 // Clamp a placement so it stays fully inside the deck.
 export function clampToDeck(
   placement: { x: number; y: number; width: number; length: number },
@@ -1425,10 +1564,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[] }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline })
     }
   }
 
@@ -1447,6 +1586,7 @@ export function packingResultFromManual(
     weight: p.weight,
     index: i,
     shape: itemMap.get(p.itemId)?.shape,
+    outline: itemMap.get(p.itemId)?.outline,
     clearanceMargin: p.clearanceMargin,
   }))
 

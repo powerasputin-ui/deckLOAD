@@ -1,9 +1,10 @@
 'use client'
 
 import { useMemo } from 'react'
+import * as THREE from 'three'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Edges } from '@react-three/drei'
-import type { PackingResult, ManualPlacement, PinnedPlacement } from '@/lib/packing'
+import { rotateOutline90, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 
 interface PinData {
   itemId: string
@@ -94,6 +95,8 @@ export default function Deck3DView({
       rot?: [number, number, number]
       radialSegments?: number
       scaleZ?: number
+      customOutline?: { x: number; y: number }[]
+      depth?: number
     }[] = []
 
     // Manual mode's result.placed is built (packingResultFromManual) with
@@ -180,6 +183,32 @@ export default function Deck3DView({
             x: cx,
             z: cz,
             y: layer * tierPitch + p.height / 2,
+            color: p.color,
+          })
+        }
+        continue
+      }
+
+      // Hand-drawn custom outline (incl. concave — L/Z shapes) — a real
+      // extruded silhouette, not a box approximation. `p.outline` is stored
+      // in the item's own local UNROTATED frame; resolve it into the
+      // post-rotation bbox frame the same way the 2D FootprintShape does
+      // (rotateOutline90 is the single shared implementation, so the two
+      // views can't drift apart on this).
+      if (p.shape === 'custom' && p.outline && p.outline.length >= 3) {
+        const origWidth = p.rotated ? p.length : p.width
+        const origLength = p.rotated ? p.width : p.length
+        const localOutline = p.rotated ? rotateOutline90(p.outline, origWidth, origLength) : p.outline
+        for (let layer = 0; layer < layers; layer++) {
+          out.push({
+            key: `${p.itemId}-${thisIdx}-${layer}`,
+            placementId,
+            pinData,
+            customOutline: localOutline,
+            depth: p.height,
+            x: p.x - deckWidth / 2,
+            z: p.y - deckLength / 2,
+            y: layer * tierPitch,
             color: p.color,
           })
         }
@@ -330,6 +359,27 @@ export default function Deck3DView({
           // but nothing here tints or outlines the mesh; cargo always shows
           // its own true color. 3D stays camera-only for editing (move/
           // rotate happen in 2D, via drag or the arrow-key/Space shortcuts).
+          if (b.customOutline) {
+            // Extrude the real (possibly concave) silhouette. The shape is
+            // built in local XY with Y negated, then rotated -90° about X —
+            // that combination maps local extrusion depth to world Y (up)
+            // while keeping local X/Y aligned with world X/Z exactly like
+            // the 2D top-down view (no mirroring), see rotateOutline90 usage
+            // above for why the outline itself needs no further correction.
+            const shape = new THREE.Shape(b.customOutline.map((p) => new THREE.Vector2(p.x, -p.y)))
+            return (
+              <mesh
+                key={b.key}
+                position={[b.x, b.y, b.z]}
+                rotation={[-Math.PI / 2, 0, 0]}
+                onClick={handleClick(b.placementId, b.pinData)}
+              >
+                <extrudeGeometry args={[shape, { depth: b.depth ?? 0.3, bevelEnabled: false }]} />
+                <meshStandardMaterial color={b.color} />
+                <Edges color="#0f172a" />
+              </mesh>
+            )
+          }
           if (b.radius === undefined) {
             return (
               <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId, b.pinData)}>

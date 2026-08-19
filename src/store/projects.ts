@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule } from '@/lib/packing'
 import type { DeckConfig, Mode, Unit } from './calculator'
 
 export interface Project {
@@ -78,6 +78,29 @@ function toBool(value: unknown, fallback: boolean): boolean {
 
 function toOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom'])
+function normalizeShape(value: unknown): CargoShape | undefined {
+  return typeof value === 'string' && VALID_SHAPES.has(value as CargoShape) ? (value as CargoShape) : undefined
+}
+
+// A hand-drawn custom outline — dropped by this same allowlist-normalizer
+// before this fix, which silently reverted every persisted 'custom'-shape
+// item back to a plain box (and broke its precise collision) on the very
+// next project load.
+function normalizeOutline(value: unknown): { x: number; y: number }[] | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined
+  const points = value
+    .map((p) => {
+      if (!p || typeof p !== 'object') return null
+      const x = (p as { x?: unknown }).x
+      const y = (p as { y?: unknown }).y
+      if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y)) return null
+      return { x, y }
+    })
+    .filter((p): p is { x: number; y: number } => p !== null)
+  return points.length >= 3 ? points : undefined
 }
 
 // Coerce persisted load zones — dropped entirely before this fix, so old
@@ -233,6 +256,8 @@ function normalizeProject(p: Partial<Project>): Project {
           allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
           weight: typeof it.weight === 'number' && Number.isFinite(it.weight) ? it.weight : undefined,
           category: toOptionalString(it.category),
+          shape: normalizeShape(it.shape),
+          outline: normalizeOutline(it.outline),
         }))
       : [],
     manualPlacements: Array.isArray(p.manualPlacements)

@@ -13,6 +13,10 @@ import {
   checkLoadDensity,
   checkLashingBalance,
   violatesSeparation,
+  rotateOutline90,
+  polygonsOverlap,
+  collidesPrecisely,
+  worldPolygon,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   type CargoItem,
@@ -470,6 +474,104 @@ describe('withClearanceFootprint', () => {
     // Far enough outside the 1m margin.
     const farAway = { x: 8, y: 5, width: 1, length: 1 }
     expect(collidesWith(farAway, [withClearanceFootprint(guarded)])).toBe(false)
+  })
+})
+
+describe('rotateOutline90', () => {
+  it('rotates the corners of a box to the corners of its swapped-dimension box', () => {
+    // A 4x2 box rotated 90° becomes a 2x4 box — every corner of the source
+    // must land exactly on a corner of the new [0,2]x[0,4] box.
+    const points = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 }, { x: 0, y: 2 }]
+    const rotated = rotateOutline90(points, 4, 2)
+    const xs = rotated.map((p) => p.x)
+    const ys = rotated.map((p) => p.y)
+    expect(Math.min(...xs)).toBeCloseTo(0)
+    expect(Math.max(...xs)).toBeCloseTo(2)
+    expect(Math.min(...ys)).toBeCloseTo(0)
+    expect(Math.max(...ys)).toBeCloseTo(4)
+  })
+})
+
+describe('polygonsOverlap', () => {
+  it('detects overlapping convex polygons', () => {
+    const a = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }]
+    const b = [{ x: 1, y: 1 }, { x: 3, y: 1 }, { x: 3, y: 3 }, { x: 1, y: 3 }]
+    expect(polygonsOverlap(a, b)).toBe(true)
+  })
+
+  it('returns false for separated convex polygons', () => {
+    const a = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }]
+    const b = [{ x: 5, y: 5 }, { x: 7, y: 5 }, { x: 7, y: 7 }, { x: 5, y: 7 }]
+    expect(polygonsOverlap(a, b)).toBe(false)
+  })
+
+  it('a shape sitting entirely in an L-shape notch does not overlap it', () => {
+    // L-shape: 4x4 outer box with the top-right 2x2 quadrant cut out.
+    const lShape = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    const inNotch = [{ x: 2.5, y: 2.5 }, { x: 3.5, y: 2.5 }, { x: 3.5, y: 3.5 }, { x: 2.5, y: 3.5 }]
+    expect(polygonsOverlap(lShape, inNotch)).toBe(false)
+  })
+
+  it('a shape overlapping the L-shape\'s solid part does overlap it', () => {
+    const lShape = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    const inSolidPart = [{ x: 0.5, y: 0.5 }, { x: 1.5, y: 0.5 }, { x: 1.5, y: 1.5 }, { x: 0.5, y: 1.5 }]
+    expect(polygonsOverlap(lShape, inSolidPart)).toBe(true)
+  })
+})
+
+describe('worldPolygon', () => {
+  it('falls back to the plain bounding-box rectangle when there is no outline', () => {
+    const poly = worldPolygon({ x: 1, y: 1, width: 2, length: 3 })
+    expect(poly).toEqual([
+      { x: 1, y: 1 }, { x: 3, y: 1 }, { x: 3, y: 4 }, { x: 1, y: 4 },
+    ])
+  })
+
+  it('translates a custom outline by the placement position', () => {
+    const outline = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }]
+    const poly = worldPolygon({ x: 5, y: 5, width: 2, length: 2, outline })
+    expect(poly).toEqual([
+      { x: 5, y: 5 }, { x: 7, y: 5 }, { x: 7, y: 7 }, { x: 5, y: 7 },
+    ])
+  })
+})
+
+describe('collidesPrecisely', () => {
+  it('allows a placement inside an L-shape notch that its bounding box would have blocked', () => {
+    const lOutline = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    const lShapePlacement = { x: 0, y: 0, width: 4, length: 4, outline: lOutline }
+    const candidateInNotch = { x: 2.5, y: 2.5, width: 1, length: 1 }
+    // Bounding-box collision (plain collidesWith) says these overlap...
+    expect(collidesWith(candidateInNotch, [lShapePlacement])).toBe(true)
+    // ...but the precise check correctly allows it, since the notch is empty.
+    expect(collidesPrecisely(candidateInNotch, [lShapePlacement])).toBe(false)
+  })
+
+  it('still blocks a placement overlapping the L-shape\'s solid part', () => {
+    const lOutline = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 2 },
+      { x: 2, y: 2 }, { x: 2, y: 4 }, { x: 0, y: 4 },
+    ]
+    const lShapePlacement = { x: 0, y: 0, width: 4, length: 4, outline: lOutline }
+    const candidateInSolidPart = { x: 0.5, y: 0.5, width: 1, length: 1 }
+    expect(collidesPrecisely(candidateInSolidPart, [lShapePlacement])).toBe(true)
+  })
+
+  it('behaves exactly like collidesWith when neither side has an outline', () => {
+    const a = { x: 0, y: 0, width: 2, length: 2 }
+    const overlapping = { x: 1, y: 1, width: 2, length: 2 }
+    const separate = { x: 10, y: 10, width: 2, length: 2 }
+    expect(collidesPrecisely(a, [overlapping])).toBe(collidesWith(a, [overlapping]))
+    expect(collidesPrecisely(a, [separate])).toBe(collidesWith(a, [separate]))
   })
 })
 

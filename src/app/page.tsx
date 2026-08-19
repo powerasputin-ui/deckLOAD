@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { v4 as uuid } from 'uuid'
 import {
   Ship,
   Wand2,
@@ -37,6 +38,7 @@ import {
   computeGridStep,
   clampToDeck,
   collidesWith,
+  collidesPrecisely,
   withClearanceFootprint,
   checkLoadDensity,
   LASHING_DEVICES,
@@ -80,6 +82,9 @@ export default function Home() {
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
   const addOrIncrementCargoFromTemplate = useCalculator((s) => s.addOrIncrementCargoFromTemplate)
+  const drawingCustomShape = useCalculator((s) => s.drawingCustomShape)
+  const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
+  const setPendingCustomShape = useCalculator((s) => s.setPendingCustomShape)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
@@ -224,16 +229,18 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp) return
+    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
       if (activeStampId) setActiveStamp(null)
       if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
+      if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
+      if (pendingCustomShape) useCalculator.getState().setPendingCustomShape(null)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp])
+  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -482,6 +489,20 @@ export default function Home() {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
+    // Additive precision check for custom (possibly concave) outlines —
+    // rotatePlacement above is bbox-only and unchanged; this only rejects a
+    // bbox-approved rotation that a real outline-vs-outline check finds
+    // actually overlapping.
+    if (item.outline) {
+      const preciseOthers = result.placed
+        .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
+      const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline }
+      if (collidesPrecisely(target, preciseOthers, deck.gap)) {
+        toast.warning('Невозможно повернуть: нет места')
+        return
+      }
+    }
     updatePinned(clampedTripIndex, id, {
       x: rotated.x,
       y: rotated.y,
@@ -507,6 +528,16 @@ export default function Home() {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
+    if (item.outline) {
+      const preciseOthers = result.placed
+        .filter((p) => manualPlacements[p.index]?.id !== id)
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
+      const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline }
+      if (collidesPrecisely(target, preciseOthers, deck.gap)) {
+        toast.warning('Невозможно повернуть: нет места')
+        return
+      }
+    }
     updateManualPlacement(id, {
       x: rotated.x,
       y: rotated.y,
@@ -514,6 +545,63 @@ export default function Home() {
       length: rotated.length,
       rotated: !mp.rotated,
     })
+  }
+
+  // Raw drawn points (deck-meter coords, click order) -> a normalized outline
+  // whose bounding box starts at (0,0), which is what CargoItem.outline
+  // expects. Handed to the store as `pendingCustomShape` so Sidebar can show
+  // the name/weight finalize form; DeckVisualization stays "dumb" (it only
+  // ever sees the armed boolean + this callback).
+  const handleFinishDrawing = (points: { x: number; y: number }[]) => {
+    useCalculator.getState().setDrawingCustomShape(false)
+    if (points.length < 3) return
+    const minX = Math.min(...points.map((p) => p.x))
+    const minY = Math.min(...points.map((p) => p.y))
+    const maxX = Math.max(...points.map((p) => p.x))
+    const maxY = Math.max(...points.map((p) => p.y))
+    setPendingCustomShape({
+      outline: points.map((p) => ({ x: p.x - minX, y: p.y - minY })),
+      width: maxX - minX,
+      length: maxY - minY,
+      x: minX,
+      y: minY,
+    })
+  }
+
+  // Finalizes a drawn shape into a real CargoItem (reusing
+  // addOrIncrementCargoFromTemplate, same as any other preset) and places one
+  // instance right where it was drawn — mode-aware, mirroring onPlace's own
+  // manual/auto branching below.
+  const handlePlaceCustomShape = (name: string, weight?: number) => {
+    if (!pendingCustomShape) return
+    const itemId = addOrIncrementCargoFromTemplate({
+      name,
+      weight,
+      shape: 'custom',
+      outline: pendingCustomShape.outline,
+      width: pendingCustomShape.width,
+      length: pendingCustomShape.length,
+    })
+    const color = useCalculator.getState().items.find((it) => it.id === itemId)?.color ?? PALETTE[0]
+    const placement = {
+      id: uuid(),
+      itemId,
+      name,
+      x: pendingCustomShape.x,
+      y: pendingCustomShape.y,
+      width: pendingCustomShape.width,
+      length: pendingCustomShape.length,
+      layers: 1,
+      rotated: false,
+      color,
+      weight,
+    }
+    if (mode === 'manual') {
+      useCalculator.getState().addManualPlacement(placement)
+    } else {
+      pinFromPlaced(clampedTripIndex, placement)
+    }
+    setPendingCustomShape(null)
   }
 
   // Arrow keys nudge the selected cargo item; Space rotates it — 2D only
@@ -581,12 +669,25 @@ export default function Home() {
       }
       const clamped = clampToDeck(target2, deck.width, deck.length, deck.boardOffset)
       if (collidesWith({ ...clamped, width: current.width, length: current.length }, others, deck.gap)) return
+      const nudgedItem = items.find((it) => it.id === current.itemId)
+      if (nudgedItem?.outline) {
+        const preciseOthers =
+          mode === 'manual'
+            ? result.placed
+                .filter((p) => manualPlacements[p.index]?.id !== selectedId)
+                .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
+            : result.placed
+                .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
+                .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
+        const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem.outline }
+        if (collidesPrecisely(target3, preciseOthers, deck.gap)) return
+      }
       if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
       else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y })
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned])
+  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned, items, result])
 
   // Check whether a layer change is allowed for a placement.
   // - maxPhys: physical ceiling from clearance / item.height
@@ -1117,6 +1218,7 @@ export default function Home() {
           canRedo={canRedo}
           onUndo={() => useCalculator.temporal.getState().undo()}
           onRedo={() => useCalculator.temporal.getState().redo()}
+          onPlaceCustomShape={handlePlaceCustomShape}
         />
 
         {/* Main content */}
@@ -1202,6 +1304,8 @@ export default function Home() {
                     mode={mode}
                     activeStamp={activeStamp}
                     stampRotated={stampRotated}
+                    drawingCustomShape={drawingCustomShape}
+                    onFinishDrawing={handleFinishDrawing}
                     onPlace={(p) => {
                       // A preset catalog item being placed for the first time — the
                       // click itself is what creates the CargoItem (quantity 1) and

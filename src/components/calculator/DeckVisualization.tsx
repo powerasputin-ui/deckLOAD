@@ -7,8 +7,9 @@ import {
   computeFreeRects,
   computeGridStep,
   clampToDeck,
-  collidesWith,
+  collidesPrecisely,
   withClearanceFootprint,
+  rotateOutline90,
   resolveSnappedDragPosition,
   checkLoadDensity,
   checkLashingBalance,
@@ -40,7 +41,7 @@ interface DeckVisualizationProps {
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   mode: 'auto' | 'manual'
-  activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number; shape?: PlacedItem['shape'] } | null
+  activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number; shape?: PlacedItem['shape']; outline?: { x: number; y: number }[] } | null
   stampRotated: boolean
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
@@ -86,6 +87,12 @@ interface DeckVisualizationProps {
   onUpdateLashingPoint?: (id: string, patch: { x?: number; y?: number }) => void
   vesselMotion?: VesselMotion
   onUpdateLoadZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number }) => void
+  // Custom hand-drawn cargo outline ("Нарисовать"): armed boolean + finish
+  // callback, mirroring placingLashingPoint/onPlaceLashingPoint. Points are
+  // raw deck-meter coordinates in click order; normalization into a
+  // local-origin outline happens in page.tsx, keeping this component "dumb".
+  drawingCustomShape?: boolean
+  onFinishDrawing?: (points: { x: number; y: number }[]) => void
 }
 
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
@@ -133,6 +140,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onUpdateLashingPoint,
   vesselMotion,
   onUpdateLoadZone,
+  drawingCustomShape,
+  onFinishDrawing,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -178,6 +187,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   if (placingLashingPoint !== prevPlacingLashingPoint) {
     setPrevPlacingLashingPoint(placingLashingPoint)
     if (!placingLashingPoint && pendingLashingCorner) setPendingLashingCorner(null)
+  }
+  // Custom-shape drawing: confirmed points + live cursor position, same
+  // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
+  // disarm via the same "compare against previous prop" render-time pattern
+  // (not useEffect — this project's lint rules forbid setState in effects).
+  const [drawingPoints, setDrawingPoints] = useState<{ x: number; y: number }[]>([])
+  const [drawHoverPos, setDrawHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [prevDrawingCustomShape, setPrevDrawingCustomShape] = useState(drawingCustomShape)
+  if (drawingCustomShape !== prevDrawingCustomShape) {
+    setPrevDrawingCustomShape(drawingCustomShape)
+    if (!drawingCustomShape && drawingPoints.length) setDrawingPoints([])
   }
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   type ZoneDrag = {
@@ -528,11 +548,52 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return true
   }
 
+  const CLOSE_LOOP_PIXEL_RADIUS = 10
+
+  // Point-by-point outline drawing: each click appends a vertex; clicking
+  // near the first vertex (once >=3 exist) closes the loop and hands the raw
+  // points to onFinishDrawing. Same short-circuit shape as handleLashingClick.
+  const handleDrawClick = (e: React.MouseEvent): boolean => {
+    if (!drawingCustomShape || !onFinishDrawing) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    if (drawingPoints.length >= 3) {
+      const first = drawingPoints[0]
+      const distPx = Math.hypot(toX(x) - toX(first.x), toY(y) - toY(first.y))
+      if (distPx <= CLOSE_LOOP_PIXEL_RADIUS) {
+        onFinishDrawing(drawingPoints)
+        setDrawingPoints([])
+        return true
+      }
+    }
+    setDrawingPoints((pts) => [...pts, { x, y }])
+    return true
+  }
+
+  // Backspace removes the last placed vertex while drawing (Escape cancels
+  // the whole in-progress drawing — handled in page.tsx's combined disarm
+  // handler, alongside placingLashingPoint/activeStampId/pendingPresetStamp).
+  useEffect(() => {
+    if (!drawingCustomShape) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      e.preventDefault()
+      setDrawingPoints((pts) => pts.slice(0, -1))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [drawingCustomShape])
+
   const handleDeckClick = (e: React.MouseEvent) => {
     if (panMovedRef.current) {
       panMovedRef.current = false
       return
     }
+    if (handleDrawClick(e)) return
     if (handleLashingClick(e)) return
     if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
@@ -552,13 +613,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // footprint is self-evident on screen and stays a silent no-op, like it
     // always has, but a click that's rejected only because of an invisible
     // inflated margin looked like the click just did nothing.
-    const rawOthers = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length }))
-    const target = { ...clamped, width: stampDims.w, length: stampDims.l }
-    if (collidesWith(target, rawOthers, gap)) {
+    const rawOthers = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, rotated: m.rotated, outline: m.outline }))
+    const target = { ...clamped, width: stampDims.w, length: stampDims.l, rotated: stampRotated, outline: activeStamp.outline }
+    if (collidesPrecisely(target, rawOthers, gap)) {
       return // ignore overlapping placement
     }
+    // withClearanceFootprint returns the placement UNCHANGED (outline
+    // intact) when it has no clearance margin, and a plain inflated
+    // rectangle (outline dropped) when it does — so collidesPrecisely here
+    // naturally does shape-accurate comparison in the common no-margin case
+    // and falls back to bbox-only for an actual clearance zone (which is
+    // inherently a padded rectangle, not a shape-precision concept). Plain
+    // collidesWith here would treat every custom-shaped neighbour's full
+    // bounding box as solid even with zero margin, falsely blocking clicks
+    // into its notch right after the precise pass above just allowed it.
     const clearanceOthers = renderedItems.map((m) => withClearanceFootprint(m))
-    if (collidesWith(target, clearanceOthers, gap)) {
+    if (collidesPrecisely(target, clearanceOthers, gap)) {
       toast.warning('Здесь нельзя разместить — зона отступа другого груза')
       return
     }
@@ -735,6 +805,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setLashingHoverPos(pos)
     }
+    if (drawingCustomShape) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      setDrawHoverPos(pos)
+    }
     if (activeStamp && !dragState && !pinDrag) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (pos) {
@@ -768,13 +842,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           : null
         setMergeTargetId(target)
         if (!target) {
-          const others = manualPlacements
-            .filter((m) => m.id !== dragState.id)
-            .map((m) => withClearanceFootprint(m))
+          // Source "others" from renderedItems (not raw manualPlacements) so
+          // outline data is available for the precise post-check below —
+          // ManualPlacement itself never carries outline, only PlacedItem
+          // (resolved fresh from the source CargoItem) does.
+          const draggedRendered = renderedItems.find((m) => m.manualId === dragState.id)
+          const preciseOthers = renderedItems.filter((m) => m.manualId !== dragState.id)
+          const others = preciseOthers.map((m) => withClearanceFootprint(m))
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
-          scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
+          const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline }
+          if (!collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+            scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
+          }
         }
       }
     }
@@ -858,14 +939,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         : null
       setMergeTargetId(target)
       if (!target) {
-        // Prevent overlap with OTHER pinned items (auto-packed items reflow)
-        const others = pinnedPlacements
-          .filter((p) => p.id !== pinDrag.id)
-          .map((p) => withClearanceFootprint(p))
+        // Prevent overlap with OTHER pinned items (auto-packed items reflow).
+        // Sourced from renderedItems (not raw pinnedPlacements) so outline
+        // data is available — same reasoning as the manual-drag branch above.
+        const draggedRendered = renderedItems.find(
+          (p2) => p2.itemId === pin.itemId && Math.abs(p2.x - pin.x) < 0.01 && Math.abs(p2.y - pin.y) < 0.01
+        )
+        const preciseOthers = renderedItems.filter((p2) => p2 !== draggedRendered)
+        const others = preciseOthers.map((p2) => withClearanceFootprint(p2))
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
-        scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
+        const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline }
+        if (!collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+          scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
+        }
       }
     }
   }
@@ -1003,7 +1091,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || activeStamp
+      : placingLashingPoint || activeStamp || drawingCustomShape
         ? 'crosshair'
         : 'default'
 
@@ -1049,7 +1137,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || activeStamp ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || activeStamp || drawingCustomShape ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1290,6 +1378,42 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </g>
         )}
 
+        {/* Custom-shape drawing preview: confirmed points + a dashed segment
+            to the cursor, with the first vertex highlighted once the loop
+            can be closed (>=3 points placed). */}
+        {drawingCustomShape && drawingPoints.length > 0 && (
+          <g className="pointer-events-none" opacity={0.8}>
+            <polyline
+              points={drawingPoints.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              fill="none"
+              stroke="rgba(37,99,235,0.9)"
+              strokeWidth={1.5}
+            />
+            {drawHoverPos && (
+              <line
+                x1={toX(drawingPoints[drawingPoints.length - 1].x)}
+                y1={toY(drawingPoints[drawingPoints.length - 1].y)}
+                x2={toX(drawHoverPos.x)}
+                y2={toY(drawHoverPos.y)}
+                stroke="rgba(37,99,235,0.9)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+            )}
+            {drawingPoints.map((p, i) => (
+              <circle
+                key={i}
+                cx={toX(p.x)}
+                cy={toY(p.y)}
+                r={i === 0 && drawingPoints.length >= 3 ? 7 : 4}
+                fill={i === 0 && drawingPoints.length >= 3 ? 'rgba(34,197,94,0.9)' : 'rgba(37,99,235,0.9)'}
+                stroke="#fff"
+                strokeWidth={1.2}
+              />
+            ))}
+          </g>
+        )}
+
         {/* Placed items */}
         {renderedItems.map((p, idx) => {
           const pw = p.width * scale
@@ -1327,6 +1451,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               y={toY(p.y)}
               w={pw}
               h={ph}
+              scale={scale}
               hovered={isHover || isSelected || isPinnedSelected}
               showLabels={showLabels}
               fmt={fmt}
@@ -1651,6 +1776,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               stroke={activeStamp.color}
               strokeWidth={1.5}
               strokeDasharray="4 2"
+              outline={activeStamp.outline}
+              rotated={stampRotated}
+              scale={scale}
             />
           </g>
         )}
@@ -1694,6 +1822,9 @@ function FootprintShape({
   stroke,
   strokeWidth,
   strokeDasharray,
+  outline,
+  rotated,
+  scale,
 }: {
   shape?: PlacedItem['shape']
   x: number
@@ -1705,8 +1836,23 @@ function FootprintShape({
   stroke: string
   strokeWidth: number
   strokeDasharray?: string
+  // Custom hand-drawn shapes: `outline` is the local, UNROTATED silhouette
+  // (spans [0,origWidth]x[0,origLength]); `w`/`h` here are always the
+  // POST-rotation bbox in screen px, so the original box is recovered by
+  // swapping when `rotated` — same logic worldPolygon uses, kept in sync by
+  // sharing rotateOutline90 rather than re-deriving it.
+  outline?: { x: number; y: number }[]
+  rotated?: boolean
+  scale?: number
 }) {
   const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
+  if (shape === 'custom' && outline && outline.length >= 3 && scale) {
+    const origWidth = rotated ? h / scale : w / scale
+    const origLength = rotated ? w / scale : h / scale
+    const local = rotated ? rotateOutline90(outline, origWidth, origLength) : outline
+    const points = local.map((p) => `${x + p.x * scale},${y + p.y * scale}`).join(' ')
+    return <polygon points={points} strokeLinejoin="round" {...common} />
+  }
   if (shape === 'circle' || shape === 'oval') {
     return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
   }
@@ -1740,12 +1886,14 @@ function PlacedRect({
   overLoadTitle,
   mergeTarget,
   dimmed,
+  scale,
 }: {
   item: PlacedItem
   x: number
   y: number
   w: number
   h: number
+  scale: number
   hovered: boolean
   showLabels: boolean
   fmt: (v: number) => string
@@ -1812,6 +1960,9 @@ function PlacedRect({
         stroke={strokeColor}
         strokeWidth={strokeWidth}
         strokeDasharray={mergeTarget ? '6 3' : pinned ? '4 2' : undefined}
+        outline={item.outline}
+        rotated={item.rotated}
+        scale={scale}
       />
       {overLoadTitle && <title>{overLoadTitle}</title>}
       {overLoad && w >= 14 && h >= 14 && (

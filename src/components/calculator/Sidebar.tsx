@@ -63,6 +63,7 @@ import {
   type VesselMotionPreset,
   type PinnedPlacement,
   type ClearanceMargin,
+  type CargoShape,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
@@ -95,6 +96,10 @@ interface SidebarProps {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
+  // Places one instance of a just-finalized drawn shape at the point it was
+  // drawn — mode-aware (manual vs auto), lives in page.tsx since that's the
+  // only place trip-index/mode context is available.
+  onPlaceCustomShape: (name: string, weight?: number) => void
 }
 
 export function Sidebar({
@@ -108,6 +113,7 @@ export function Sidebar({
   canRedo,
   onUndo,
   onRedo,
+  onPlaceCustomShape,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -362,7 +368,7 @@ export function Sidebar({
           tall — everything above stays at natural height so the rest of
           the sidebar never scrolls as a whole. */}
       <div className="flex-1 min-h-[180px] flex flex-col mt-4">
-        <PresetsSection />
+        <PresetsSection onPlaceCustomShape={onPlaceCustomShape} />
       </div>
       </div>
 
@@ -984,12 +990,29 @@ function LashingPointsSection() {
   )
 }
 
-function PresetsSection() {
+function PresetsSection({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
   const [open, setOpen] = useState(false)
   const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
   const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
   const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
+  const drawingCustomShape = useCalculator((s) => s.drawingCustomShape)
+  const setDrawingCustomShape = useCalculator((s) => s.setDrawingCustomShape)
+  const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
+  const setPendingCustomShape = useCalculator((s) => s.setPendingCustomShape)
+  const [drawName, setDrawName] = useState('')
+  const [drawWeight, setDrawWeight] = useState('')
+  // Reset the finalize form's fields once the pending shape is cleared
+  // (placed, or cancelled via Escape) — same render-time "compare previous
+  // prop" pattern used elsewhere in this app instead of a useEffect.
+  const [prevPendingCustomShape, setPrevPendingCustomShape] = useState(pendingCustomShape)
+  if (pendingCustomShape !== prevPendingCustomShape) {
+    setPrevPendingCustomShape(pendingCustomShape)
+    if (!pendingCustomShape) {
+      setDrawName('')
+      setDrawWeight('')
+    }
+  }
 
   // Custom collapsible header (not the generic `Section`) because this is
   // the one section that needs to grow/shrink and scroll internally — the
@@ -1056,12 +1079,77 @@ function PresetsSection() {
                   />
                 )
               })}
+              {activePresetCategory === 'objects' && (
+                <button
+                  onClick={() => setDrawingCustomShape(!drawingCustomShape)}
+                  className={cn(
+                    'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
+                    drawingCustomShape
+                      ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+                      : 'border-border hover:bg-accent'
+                  )}
+                >
+                  <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-muted-foreground">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs font-medium truncate">Нарисовать</span>
+                    <span className="block text-[10px] text-muted-foreground">свой контур по точкам</span>
+                  </span>
+                </button>
+              )}
             </div>
           )}
           {pendingPresetStamp && (
             <p className="text-[10px] text-muted-foreground leading-tight mt-1.5 shrink-0">
               «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
             </p>
+          )}
+          {drawingCustomShape && (
+            <p className="text-[10px] text-muted-foreground leading-tight mt-1.5 shrink-0">
+              Кликайте по палубе, чтобы поставить точки контура (минимум 3), затем кликните рядом с первой точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
+            </p>
+          )}
+          {pendingCustomShape && (
+            <div className="mt-1.5 shrink-0 space-y-1.5 rounded-lg border p-2">
+              <p className="text-[10px] text-muted-foreground leading-tight">
+                Контур готов — задайте имя, затем разместите.
+              </p>
+              <Input
+                value={drawName}
+                onChange={(e) => setDrawName(e.target.value)}
+                placeholder="Название груза"
+                className="h-7 text-xs"
+              />
+              <Input
+                value={drawWeight}
+                onChange={(e) => setDrawWeight(e.target.value)}
+                placeholder="Вес, кг (необязательно)"
+                inputMode="decimal"
+                className="h-7 text-xs"
+              />
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs flex-1"
+                  disabled={!drawName.trim()}
+                  onClick={() => {
+                    const w = parseFloat(drawWeight)
+                    onPlaceCustomShape(drawName.trim(), Number.isFinite(w) && w > 0 ? w : undefined)
+                  }}
+                >
+                  Разместить
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setPendingCustomShape(null)}
+                >
+                  Отмена
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -1075,7 +1163,7 @@ function PresetTemplateRow({
   active,
   onSelect,
 }: {
-  template: { name?: string; width?: number; length?: number; shape?: 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond' }
+  template: { name?: string; width?: number; length?: number; shape?: CargoShape }
   color: string
   active: boolean
   onSelect: () => void
