@@ -883,6 +883,7 @@ export default function Home() {
         pendingPresetStamp: null,
         activePresetCategory: null,
       })
+      useCalculator.getState().pruneStaleLashingPoints()
       toast.info('Ручной режим — размещения сохранены')
     } else {
       // Convert manual placements into pinned placements, preserving layers.
@@ -909,6 +910,7 @@ export default function Home() {
         pendingPresetStamp: null,
         activePresetCategory: null,
       })
+      useCalculator.getState().pruneStaleLashingPoints()
       toast.info('Авто-режим — размещения сохранены как закреплённые')
     }
   }
@@ -981,6 +983,7 @@ export default function Home() {
         pinnedPlacementsByTrip: {},
         selectedPinIds: [],
       })
+      useCalculator.getState().pruneStaleLashingPoints()
     } else {
       const newPinned = variant.result.placed.map((p) => ({
         id: crypto.randomUUID(),
@@ -1000,6 +1003,7 @@ export default function Home() {
         manualPlacements: [],
         selectedPinIds: [],
       })
+      useCalculator.getState().pruneStaleLashingPoints()
     }
   }
 

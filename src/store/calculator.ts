@@ -172,6 +172,11 @@ interface CalculatorState {
   // PinnedPlacement in packing.ts) — switching a placement to "zone" mode
   // clears whatever points it already had.
   clearLashingPointsFor: (placementId: string) => void
+  // Drops lashing points whose placementId no longer matches any existing
+  // manual/pinned placement — call after any bulk replace of placements
+  // (e.g. applying an auto-redistribute variant) that doesn't go through
+  // the normal remove/clear actions, which already do this internally.
+  pruneStaleLashingPoints: () => void
 
   // Cargo category separation rules
   addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
@@ -191,6 +196,29 @@ function convClearance(
 ): ClearanceMargin | undefined {
   if (!m) return undefined
   return { top: conv(m.top), right: conv(m.right), bottom: conv(m.bottom), left: conv(m.left) }
+}
+
+// Drops lashing points whose placementId no longer matches any existing
+// manual or pinned placement (across every trip). Without this, deleting,
+// merging away, or auto-redistributing a placement leaves its attached
+// points behind forever, frozen at their last position — indistinguishable
+// on screen from a real, currently-attached point, and free to end up
+// visually underneath whatever cargo later lands nearby. Unattached "plain
+// pin" points (no placementId) are left alone — they're independent deck
+// markers, not tied to any placement's lifecycle.
+function pruneOrphanLashingPoints(
+  deck: DeckConfig,
+  manualPlacements: ManualPlacement[],
+  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+): DeckConfig {
+  const points = deck.lashingPoints
+  if (!points || points.length === 0) return deck
+  const liveIds = new Set<string>(manualPlacements.map((m) => m.id))
+  for (const list of Object.values(pinnedPlacementsByTrip)) {
+    for (const p of list) liveIds.add(p.id)
+  }
+  const lashingPoints = points.filter((p) => !p.placementId || liveIds.has(p.placementId))
+  return lashingPoints.length === points.length ? deck : { ...deck, lashingPoints }
 }
 
 // A lashing point's cornerX/cornerY is a snapshot of the cargo corner it's
@@ -745,12 +773,19 @@ export const useCalculator = create<CalculatorState>()(
       return { manualPlacements, deck: dragLashingCorners(s.deck, id, prev, patch) }
     }),
   removeManualPlacement: (id) =>
+    set((s) => {
+      const manualPlacements = s.manualPlacements.filter((mp) => mp.id !== id)
+      return {
+        manualPlacements,
+        activeStampId: s.activeStampId === id ? null : s.activeStampId,
+        deck: pruneOrphanLashingPoints(s.deck, manualPlacements, s.pinnedPlacementsByTrip),
+      }
+    }),
+  clearManualPlacements: () =>
     set((s) => ({
-      manualPlacements: s.manualPlacements.filter((mp) => mp.id !== id),
-      activeStampId:
-        s.activeStampId === id ? null : s.activeStampId,
+      manualPlacements: [],
+      deck: pruneOrphanLashingPoints(s.deck, [], s.pinnedPlacementsByTrip),
     })),
-  clearManualPlacements: () => set({ manualPlacements: [] }),
 
   pinFromPlaced: (tripIndex, placed) => {
     const id = uuid()
@@ -790,16 +825,26 @@ export const useCalculator = create<CalculatorState>()(
       return { pinnedPlacementsByTrip, deck: dragLashingCorners(s.deck, id, prev, patch) }
     }),
   removePinned: (tripIndex, id) =>
-    set((s) => ({
-      pinnedPlacementsByTrip: {
+    set((s) => {
+      const pinnedPlacementsByTrip = {
         ...s.pinnedPlacementsByTrip,
         [tripIndex]: (s.pinnedPlacementsByTrip[tripIndex] ?? []).filter((p) => p.id !== id),
-      },
-      selectedPinIds: s.selectedPinIds.filter((sid) => sid !== id),
-    })),
+      }
+      return {
+        pinnedPlacementsByTrip,
+        selectedPinIds: s.selectedPinIds.filter((sid) => sid !== id),
+        deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, pinnedPlacementsByTrip),
+      }
+    }),
   clearPinned: (tripIndex) =>
     set((s) => {
-      if (tripIndex === undefined) return { pinnedPlacementsByTrip: {}, selectedPinIds: [] }
+      if (tripIndex === undefined) {
+        return {
+          pinnedPlacementsByTrip: {},
+          selectedPinIds: [],
+          deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, {}),
+        }
+      }
       const { [tripIndex]: removedTrip, ...rest } = s.pinnedPlacementsByTrip
       // Only drop selection ids that belonged to the cleared trip — a live
       // selection on a different (currently unrelated) trip shouldn't vanish.
@@ -807,6 +852,7 @@ export const useCalculator = create<CalculatorState>()(
       return {
         pinnedPlacementsByTrip: rest,
         selectedPinIds: s.selectedPinIds.filter((sid) => !removedIds.has(sid)),
+        deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, rest),
       }
     }),
   togglePinSelection: (id, additive) =>
@@ -893,6 +939,8 @@ export const useCalculator = create<CalculatorState>()(
         lashingPoints: (s.deck.lashingPoints ?? []).filter((p) => p.placementId !== placementId),
       },
     })),
+  pruneStaleLashingPoints: () =>
+    set((s) => ({ deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, s.pinnedPlacementsByTrip) })),
   setPlacingLashingPoint: (v) => set({ placingLashingPoint: v }),
   setVesselMotion: (patch) =>
     set((s) => ({

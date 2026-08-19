@@ -1299,9 +1299,73 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </g>
         )}
 
+        {/* Placed items */}
+        {renderedItems.map((p, idx) => {
+          const pw = p.width * scale
+          const ph = p.length * scale
+          const isHover = hoveredItemId === p.itemId
+          const isSelected =
+            mode === 'manual' &&
+            (selectedManual === p.manualId ||
+              (selectedManualIds?.includes(p.manualId ?? '') ?? false))
+          // Find pinned placement matching this placed item (same position + itemId)
+          const matchingPin = isInteractiveAuto
+            ? pinnedPlacements.find(
+                (pin) =>
+                  pin.itemId === p.itemId &&
+                  Math.abs(pin.x - p.x) < 0.01 &&
+                  Math.abs(pin.y - p.y) < 0.01
+              )
+            : undefined
+          const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
+          const category = categoryByItemId?.get(p.itemId)
+          const totalWeight = (p.weight ?? 0) * p.stackedCount
+          const overLoad = loadZones && loadZones.length > 0
+            ? checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, loadZones)
+            : null
+          const placementId = mode === 'manual' ? p.manualId : matchingPin?.id
+          const isMergeTarget = !!mergeTargetId && placementId === mergeTargetId
+          const isBeingDragged =
+            (mode === 'manual' && !!dragState && p.manualId === dragState.id) ||
+            (isInteractiveAuto && !!pinDrag && matchingPin?.id === pinDrag.id)
+          return (
+            <PlacedRect
+              key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
+              item={p}
+              x={toX(p.x)}
+              y={toY(p.y)}
+              w={pw}
+              h={ph}
+              hovered={isHover || isSelected || isPinnedSelected}
+              showLabels={showLabels}
+              fmt={fmt}
+              onHover={onHover}
+              manualMode={mode === 'manual'}
+              pinned={!!matchingPin}
+              pinnedSelected={isPinnedSelected}
+              category={category}
+              overLoad={!!overLoad}
+              overLoadTitle={overLoad ? `Нагрузка ${(overLoad.densityKgPerM2 / 1000).toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              mergeTarget={isMergeTarget}
+              dimmed={isBeingDragged && !!mergeTargetId}
+              onPointerDown={
+                mode === 'manual' && p.manualId
+                  ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
+                  : isInteractiveAuto
+                    ? (e) => handlePinPointerDown(e, p, matchingPin?.id)
+                    : undefined
+              }
+            />
+          )
+        })}
+
         {/* Persisted lashing points — a plain pin, or (if attached to a
             placement) a line from the cargo corner to the deck anchor plus a
-            pass/fail badge from the CSS-Code-style securing check. */}
+            pass/fail badge from the CSS-Code-style securing check. Rendered
+            AFTER placed items so a point/line near or under a cargo box's
+            edge (very common — the corner IS a cargo corner) always paints
+            on top and stays visible/clickable instead of being hidden
+            underneath the cargo's fill. */}
         {lashingPoints?.map((pt) => {
           const px = toX(pt.x)
           const py = toY(pt.y)
@@ -1318,9 +1382,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const interactive = !!onUpdateLashingPoint
           let check: ReturnType<typeof checkLashingBalance> = null
           if (isAttached) {
-            const placement = renderedItems.find((p) =>
-              mode === 'manual' ? p.manualId === pt.placementId : p.itemId === pt.itemId
-            )
+            // Match by the actual placement id, not just itemId — two pinned
+            // placements can share the same cargo type, and matching on
+            // itemId alone would silently grab whichever one happens to come
+            // first, checking the wrong cargo's weight/position.
+            const placement = renderedItems.find((p) => {
+              if (mode === 'manual') return p.manualId === pt.placementId
+              const pin = pinnedPlacements.find(
+                (pn) => pn.itemId === p.itemId && Math.abs(pn.x - p.x) < 0.01 && Math.abs(pn.y - p.y) < 0.01
+              )
+              return pin?.id === pt.placementId
+            })
             if (placement) {
               const attachedHere = (lashingPoints ?? []).filter((l) => l.placementId === pt.placementId)
               check = checkLashingBalance(placement, attachedHere, vesselMotion ?? DEFAULT_VESSEL_MOTION)
@@ -1389,66 +1461,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </text>
               )}
             </g>
-          )
-        })}
-
-        {/* Placed items */}
-        {renderedItems.map((p, idx) => {
-          const pw = p.width * scale
-          const ph = p.length * scale
-          const isHover = hoveredItemId === p.itemId
-          const isSelected =
-            mode === 'manual' &&
-            (selectedManual === p.manualId ||
-              (selectedManualIds?.includes(p.manualId ?? '') ?? false))
-          // Find pinned placement matching this placed item (same position + itemId)
-          const matchingPin = isInteractiveAuto
-            ? pinnedPlacements.find(
-                (pin) =>
-                  pin.itemId === p.itemId &&
-                  Math.abs(pin.x - p.x) < 0.01 &&
-                  Math.abs(pin.y - p.y) < 0.01
-              )
-            : undefined
-          const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
-          const category = categoryByItemId?.get(p.itemId)
-          const totalWeight = (p.weight ?? 0) * p.stackedCount
-          const overLoad = loadZones && loadZones.length > 0
-            ? checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, loadZones)
-            : null
-          const placementId = mode === 'manual' ? p.manualId : matchingPin?.id
-          const isMergeTarget = !!mergeTargetId && placementId === mergeTargetId
-          const isBeingDragged =
-            (mode === 'manual' && !!dragState && p.manualId === dragState.id) ||
-            (isInteractiveAuto && !!pinDrag && matchingPin?.id === pinDrag.id)
-          return (
-            <PlacedRect
-              key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
-              item={p}
-              x={toX(p.x)}
-              y={toY(p.y)}
-              w={pw}
-              h={ph}
-              hovered={isHover || isSelected || isPinnedSelected}
-              showLabels={showLabels}
-              fmt={fmt}
-              onHover={onHover}
-              manualMode={mode === 'manual'}
-              pinned={!!matchingPin}
-              pinnedSelected={isPinnedSelected}
-              category={category}
-              overLoad={!!overLoad}
-              overLoadTitle={overLoad ? `Нагрузка ${(overLoad.densityKgPerM2 / 1000).toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
-              mergeTarget={isMergeTarget}
-              dimmed={isBeingDragged && !!mergeTargetId}
-              onPointerDown={
-                mode === 'manual' && p.manualId
-                  ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
-                  : isInteractiveAuto
-                    ? (e) => handlePinPointerDown(e, p, matchingPin?.id)
-                    : undefined
-              }
-            />
           )
         })}
 

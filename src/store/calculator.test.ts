@@ -262,6 +262,51 @@ describe('calculator store', () => {
     expect(placement.clearanceMargin?.left).toBeCloseTo(100)
   })
 
+  it('drops a lashing point attached to a manual placement when that placement is removed', () => {
+    const s = useCalculator.getState()
+    s.addManualPlacement({
+      id: 'm1', itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000',
+    })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'm1' })
+    s.addLashingPoint({ x: 6, y: 6, placementId: undefined }) // plain, unattached pin
+    s.removeManualPlacement('m1')
+    const points = useCalculator.getState().deck.lashingPoints
+    expect(points).toHaveLength(1)
+    expect(points![0].placementId).toBeUndefined()
+  })
+
+  it('drops a lashing point attached to a pinned placement when that pin is removed', () => {
+    const s = useCalculator.getState()
+    const pinId = s.pinFromPlaced(0, { itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000' })
+    s.addLashingPoint({ x: 5, y: 5, placementId: pinId })
+    s.removePinned(0, pinId)
+    const points = useCalculator.getState().deck.lashingPoints
+    expect(points).toHaveLength(0)
+  })
+
+  it('drops attached lashing points on clearManualPlacements but keeps points tied to live pins', () => {
+    const s = useCalculator.getState()
+    s.addManualPlacement({
+      id: 'm1', itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000',
+    })
+    const pinId = s.pinFromPlaced(0, { itemId: 'a', name: 'Box', x: 3, y: 3, width: 2, length: 1, layers: 1, rotated: false, color: '#000' })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'm1' })
+    s.addLashingPoint({ x: 6, y: 6, placementId: pinId })
+    s.clearManualPlacements()
+    const points = useCalculator.getState().deck.lashingPoints
+    expect(points).toHaveLength(1)
+    expect(points![0].placementId).toBe(pinId)
+  })
+
+  it('drops all attached lashing points on clearPinned() for every trip', () => {
+    const s = useCalculator.getState()
+    const pinId = s.pinFromPlaced(0, { itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000' })
+    s.addLashingPoint({ x: 5, y: 5, placementId: pinId })
+    s.clearPinned()
+    const points = useCalculator.getState().deck.lashingPoints
+    expect(points).toHaveLength(0)
+  })
+
   it('adds and removes a separation rule', () => {
     const s = useCalculator.getState()
     s.addSeparationRule({ categoryA: 'hazard', categoryB: 'standard', minDistance: 5 })
