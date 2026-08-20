@@ -1534,7 +1534,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             top of computeFreeRects already excluding the cut area: a
             hand-drawn polygon can have edges close enough together that the
             scanline exclusion leaves a sliver, so the visible hatching is
-            also hard-clipped to never poke outside the deck's true shape). */}
+            also hard-clipped to never poke outside the deck's true shape).
+
+            A sloped outline edge is approximated by many narrow rects (see
+            deckOutlineExclusionRects) so the hatching itself hugs the real
+            boundary — necessary for data accuracy, but individually
+            bordering/labeling dozens of slivers reads as visual noise
+            (worse at higher zoom, where more of them cross the size
+            threshold below). Borders are dropped entirely — the shared
+            hatch pattern already reads as one continuous region without
+            them — and a dimension label is shown only for the handful of
+            largest rects, not every one that happens to be big enough. */}
         {showFreeSpace && (
           <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
             {freeRects.map((fr, i) => {
@@ -1542,33 +1552,38 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               const fh = fr.height * scale
               if (fw < 2 || fh < 2) return null
               return (
-                <g key={`free-${i}`}>
-                  <rect
-                    x={toX(fr.x)}
-                    y={toY(fr.y)}
-                    width={fw}
-                    height={fh}
-                    fill="url(#free-hatch)"
-                    stroke="rgba(16,185,129,0.45)"
-                    strokeWidth={0.75}
-                    strokeDasharray="4 3"
-                  />
-                  {fw > 40 && fh > 24 && (
-                    <text
-                      x={toX(fr.x) + fw / 2}
-                      y={toY(fr.y) + fh / 2}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      className="select-none"
-                      fontSize={11}
-                      fill="rgba(5,150,105,0.9)"
-                    >
-                      {fmt(fr.width)}×{fmt(fr.height)}
-                    </text>
-                  )}
-                </g>
+                <rect
+                  key={`free-${i}`}
+                  x={toX(fr.x)}
+                  y={toY(fr.y)}
+                  width={fw}
+                  height={fh}
+                  fill="url(#free-hatch)"
+                />
               )
             })}
+            {[...freeRects]
+              .sort((a, b) => b.width * b.height - a.width * a.height)
+              .slice(0, 3)
+              .map((fr, i) => {
+                const fw = fr.width * scale
+                const fh = fr.height * scale
+                if (fw <= 40 || fh <= 24) return null
+                return (
+                  <text
+                    key={`free-label-${i}`}
+                    x={toX(fr.x) + fw / 2}
+                    y={toY(fr.y) + fh / 2}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="select-none pointer-events-none"
+                    fontSize={11}
+                    fill="rgba(5,150,105,0.9)"
+                  >
+                    {fmt(fr.width)}×{fmt(fr.height)}
+                  </text>
+                )
+              })}
           </g>
         )}
 
