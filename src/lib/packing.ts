@@ -1755,6 +1755,15 @@ export function rotatePlacement(
 ): { x: number; y: number; width: number; length: number } | null {
   const newWidth = current.length
   const newLength = current.width
+  // clampToDeck only pulls a placement's position back inside the deck — it
+  // never shrinks width/length, so a rotated footprint that's simply too
+  // big for the deck in one axis (e.g. a long pipe rotated on a deck
+  // shorter than it) would silently clamp to the edge and still poke out
+  // the opposite side instead of being rejected. Guard for that explicitly
+  // before clamping.
+  if (newWidth > deckWidth - 2 * edgePadding + 1e-9 || newLength > deckLength - 2 * edgePadding + 1e-9) {
+    return null
+  }
   const cx = current.x + current.width / 2
   const cy = current.y + current.length / 2
   const clamped = clampToDeck(

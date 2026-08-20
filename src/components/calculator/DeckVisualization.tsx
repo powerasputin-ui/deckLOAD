@@ -2433,10 +2433,10 @@ function PlacedRect({
           gets its own schematic "bundle of circles" glyph instead — see
           below — since a rectangular ghost-outline reads wrong for round
           stock, and a thin pipe's real w/h is often sub-pixel anyway. */}
-      {item.layers > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
+      {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <g className="pointer-events-none" opacity={0.5}>
           <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
-          {item.layers > 2 && (
+          {item.stackedCount > 2 && (
             <rect x={x - 6} y={y - 6} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
           )}
         </g>
@@ -2493,22 +2493,28 @@ function PlacedRect({
           </text>
         </>
       )}
-      {item.layers > 1 && item.shape === 'cylinder' && (() => {
+      {item.stackedCount > 1 && item.shape === 'cylinder' && (() => {
         // Schematic "bundle of pipes" glyph — a row of small circles (one
-        // per unit, up to however many fit) instead of a numeric badge, so
-        // "several round items are stacked here" reads at a glance even
-        // when the item itself renders far too thin on screen to show its
-        // real cross-section (a 0.15m pipe is sub-pixel at deck scale).
-        // Anchored to a minimum on-screen span so it doesn't collapse for
-        // hairline-thin footprints, same reasoning as controlAnchors above.
+        // per unit ACTUALLY stacked here, up to however many fit) instead
+        // of a numeric badge, so "several round items are stacked here"
+        // reads at a glance even when the item itself renders far too thin
+        // on screen to show its real cross-section (a 0.15m pipe is
+        // sub-pixel at deck scale). Uses stackedCount, not the theoretical
+        // per-footprint capacity (item.layers, derived from deck clearance
+        // / item height) — that capacity can be far larger than what's
+        // actually placed (e.g. 34 for a thin pipe under a tall clearance
+        // setting) and would otherwise draw a misleading "+N" overflow
+        // badge for units that were never placed. Anchored to a minimum
+        // on-screen span so it doesn't collapse for hairline-thin
+        // footprints, same reasoning as controlAnchors above.
         const dia = 7
         const gap = 2
         const glyphW = Math.max(w, 30)
         const cx = x + w / 2
         const cy = y + h / 2
         const maxFit = Math.max(1, Math.floor((glyphW + gap) / (dia + gap)))
-        const overflow = item.layers > maxFit
-        const circleCount = overflow ? maxFit - 1 : item.layers
+        const overflow = item.stackedCount > maxFit
+        const circleCount = overflow ? maxFit - 1 : item.stackedCount
         const startX = cx - ((circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap) / 2 + dia / 2
         return (
           <g className="pointer-events-none">
@@ -2518,21 +2524,21 @@ function PlacedRect({
             ))}
             {overflow && (
               <text x={startX + circleCount * (dia + gap)} y={cy + 3} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                +{item.layers - circleCount}
+                +{item.stackedCount - circleCount}
               </text>
             )}
           </g>
         )
       })()}
-      {item.layers > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
+      {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <g className="pointer-events-none">
           <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
           <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-            ×{item.layers}
+            ×{item.stackedCount}
           </text>
         </g>
       )}
-      {item.rotated && item.layers <= 1 && w >= 16 && h >= 16 && (
+      {item.rotated && item.stackedCount <= 1 && w >= 16 && h >= 16 && (
         <text x={x + w - 6} y={y + 12} fontSize={10} textAnchor="end" fill="rgba(255,255,255,0.9)" className="select-none pointer-events-none">
           ↻
         </text>

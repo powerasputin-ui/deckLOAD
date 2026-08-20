@@ -187,7 +187,12 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
                 <thead className="bg-muted/50">
                   <tr className="text-left">
                     <th className="px-2 py-1.5 font-medium">Груз</th>
-                    <th className="px-1.5 py-1.5 font-medium text-right">Ярусы</th>
+                    <th
+                      className="px-1.5 py-1.5 font-medium text-right"
+                      title="Сколько ярусов ЭТОГО груза максимум влезает в одну стопку по высоте (зазор палубы ÷ высота груза) — не то же самое, что фактически размещённое количество (см. «Ед.»)"
+                    >
+                      Ярусы
+                    </th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Стопки</th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Ед.</th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Площадь</th>

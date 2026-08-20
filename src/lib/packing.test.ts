@@ -873,6 +873,22 @@ describe('rotatePlacement', () => {
     // With gap 1, the same rotation now needs clearance and should be rejected.
     expect(rotatePlacement({ x: 0.5, y: 2, width: 4, length: 1 }, 5, 5, 0, 1, others)).toBeNull()
   })
+
+  it('rejects a rotation whose new footprint is simply too big for the deck in one axis (regression: used to silently clamp and poke past the opposite edge)', () => {
+    // A 9.5x0.15 pipe on a deck only 8m deep — rotating swaps to 0.15x9.5,
+    // which cannot fit in an 8m length no matter where it's positioned.
+    // clampToDeck alone can't detect this (it only repositions, never
+    // rejects), so rotatePlacement must guard for it explicitly.
+    const result = rotatePlacement({ x: 5, y: 0.2, width: 9.5, length: 0.15 }, 20, 8, 0.2, 0.1, [])
+    expect(result).toBeNull()
+  })
+
+  it('still rotates fine when the new footprint fits exactly within the padded deck', () => {
+    const result = rotatePlacement({ x: 5, y: 0.2, width: 4, length: 0.15 }, 20, 8, 0.2, 0.1, [])
+    expect(result).not.toBeNull()
+    expect(result!.width).toBe(0.15)
+    expect(result!.length).toBe(4)
+  })
 })
 
 describe('resolveSnappedDragPosition', () => {
