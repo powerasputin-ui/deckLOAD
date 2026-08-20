@@ -1530,62 +1530,84 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             />
           ))}
 
-        {/* Free space — clipped to the real outline (belt-and-suspenders on
-            top of computeFreeRects already excluding the cut area: a
-            hand-drawn polygon can have edges close enough together that the
-            scanline exclusion leaves a sliver, so the visible hatching is
-            also hard-clipped to never poke outside the deck's true shape).
+        {/* Free space — a SINGLE filled path (outer boundary minus each
+            placed item as a hole, fill-rule="evenodd"), not one <rect> per
+            freeRects entry. freeRects itself stays rect-based (it's real
+            data other logic — findFreeSpotForItem in page.tsx — depends on),
+            and on a sloped outline edge it's necessarily many narrow
+            adjacent rects (see deckOutlineExclusionRects). Rendering that
+            many separately-filled/anti-aliased rects side by side is what
+            produced the "thick, coarse" hatching and overlapping labels on
+            a hand-drawn shape: adjacent rect edges don't tile the pattern
+            seamlessly, so abutting rects visibly double up. A single path
+            has no seams and needs only one label, exactly like the plain
+            rectangle case always has. */}
+        {showFreeSpace && (() => {
+          const halfGap = gap / 2
+          const outerPts =
+            deckOutline && deckOutline.length >= 3
+              ? erodePolygon(deckOutline, Math.max(0, edgePad - halfGap))
+              : (() => {
+                  const ux = Math.max(0, edgePad - halfGap)
+                  const uy = Math.max(0, edgePad - halfGap)
+                  const uw = Math.max(0, deckWidth - edgePad * 2 + gap)
+                  const ul = Math.max(0, deckLength - edgePad * 2 + gap)
+                  return [
+                    { x: ux, y: uy },
+                    { x: ux + uw, y: uy },
+                    { x: ux + uw, y: uy + ul },
+                    { x: ux, y: uy + ul },
+                  ]
+                })()
+          if (outerPts.length < 3) return null
 
-            A sloped outline edge is approximated by many narrow rects (see
-            deckOutlineExclusionRects) so the hatching itself hugs the real
-            boundary — necessary for data accuracy, but individually
-            bordering/labeling dozens of slivers reads as visual noise
-            (worse at higher zoom, where more of them cross the size
-            threshold below). Borders are dropped entirely — the shared
-            hatch pattern already reads as one continuous region without
-            them — and a dimension label is shown only for the handful of
-            largest rects, not every one that happens to be big enough. */}
-        {showFreeSpace && (
-          <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
-            {freeRects.map((fr, i) => {
-              const fw = fr.width * scale
-              const fh = fr.height * scale
-              if (fw < 2 || fh < 2) return null
-              return (
-                <rect
-                  key={`free-${i}`}
-                  x={toX(fr.x)}
-                  y={toY(fr.y)}
-                  width={fw}
-                  height={fh}
-                  fill="url(#free-hatch)"
-                />
-              )
-            })}
-            {[...freeRects]
-              .sort((a, b) => b.width * b.height - a.width * a.height)
-              .slice(0, 3)
-              .map((fr, i) => {
-                const fw = fr.width * scale
-                const fh = fr.height * scale
-                if (fw <= 40 || fh <= 24) return null
-                return (
-                  <text
-                    key={`free-label-${i}`}
-                    x={toX(fr.x) + fw / 2}
-                    y={toY(fr.y) + fh / 2}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    className="select-none pointer-events-none"
-                    fontSize={11}
-                    fill="rgba(5,150,105,0.9)"
-                  >
-                    {fmt(fr.width)}×{fmt(fr.height)}
-                  </text>
-                )
-              })}
-          </g>
-        )}
+          const holes = renderedItems
+            .map((p) => ({
+              x: p.x - halfGap,
+              y: p.y - halfGap,
+              width: p.width + gap,
+              length: p.length + gap,
+            }))
+            .filter((r) => r.width > 0 && r.length > 0)
+
+          const outerPath = `M ${outerPts.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' L ')} Z`
+          const holePath = holes
+            .map((r) => {
+              const x0 = toX(r.x)
+              const y0 = toY(r.y)
+              const x1 = toX(r.x + r.width)
+              const y1 = toY(r.y + r.length)
+              return `M ${x0},${y0} L ${x1},${y0} L ${x1},${y1} L ${x0},${y1} Z`
+            })
+            .join(' ')
+
+          // Reuse the already-computed freeRects purely to pick where (and
+          // whether) to show one dimension label, matching the single clean
+          // "WxH" label the plain-rectangle case has always shown.
+          const largest = [...freeRects].sort((a, b) => b.width * b.height - a.width * a.height)[0]
+          const lw = largest ? largest.width * scale : 0
+          const lh = largest ? largest.height * scale : 0
+          const showLabel = largest && lw > 40 && lh > 24
+
+          return (
+            <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
+              <path d={`${outerPath} ${holePath}`} fillRule="evenodd" fill="url(#free-hatch)" />
+              {showLabel && (
+                <text
+                  x={toX(largest.x) + lw / 2}
+                  y={toY(largest.y) + lh / 2}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="select-none pointer-events-none"
+                  fontSize={11}
+                  fill="rgba(5,150,105,0.9)"
+                >
+                  {fmt(largest.width)}×{fmt(largest.height)}
+                </text>
+              )}
+            </g>
+          )
+        })()}
 
         {/* Load zones (deck load capacity per m²) */}
         {loadZones?.map((z) => {
