@@ -10,7 +10,8 @@ import {
   clampToDeck,
   rotatePlacement,
   resolveSnappedDragPosition,
-  checkLoadDensity,
+  checkZoneLoads,
+  zoneIdsOverlapping,
   checkLashingBalance,
   violatesSeparation,
   rotateOutline90,
@@ -952,44 +953,101 @@ describe('resolveSnappedDragPosition', () => {
   })
 })
 
-describe('checkLoadDensity', () => {
+describe('checkZoneLoads', () => {
+  const zone = (partial: Partial<LoadZone> & { id: string }): LoadZone => ({
+    x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 5, ...partial,
+  })
+  const placement = (partial: { x: number; y: number; width: number; length: number; totalWeightKg: number }) => partial
+
+  it('returns an empty array when no zones are configured', () => {
+    const p = [placement({ x: 0, y: 0, width: 2, length: 2, totalWeightKg: 100000 })]
+    expect(checkZoneLoads(p, undefined)).toEqual([])
+    expect(checkZoneLoads(p, [])).toEqual([])
+  })
+
+  it('does not flag a zone no placement overlaps', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 2, length: 2, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 5, y: 5, width: 1, length: 1, totalWeightKg: 100000 })]
+    expect(checkZoneLoads(p, zones)).toEqual([])
+  })
+
+  it('does not flag a zone exactly at the limit (boundary is not a violation)', () => {
+    // 1t over the zone's own 1m² area == 1 t/m², limit is exactly 1 t/m²
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 1, length: 1, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1000 })]
+    expect(checkZoneLoads(p, zones)).toEqual([])
+  })
+
+  it('divides by the ZONE area, not the item footprint area — a small item in a big zone is not flagged just because its own local density is high', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 1 })]
+    // 2000kg over a tiny 1x1 footprint = 2 t/m² locally, but over the zone's
+    // 100m² it's only 0.02 t/m² — well under the 1 t/m² limit.
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 2000 })]
+    expect(checkZoneLoads(p, zones)).toEqual([])
+  })
+
+  it('flags a zone whose aggregate density exceeds its limit', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 1, length: 1, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 2000 })]
+    const result = checkZoneLoads(p, zones)
+    expect(result).toHaveLength(1)
+    expect(result[0].zoneId).toBe('z1')
+    expect(result[0].limitTPerM2).toBe(1)
+    expect(result[0].densityTPerM2).toBe(2)
+    expect(result[0].totalWeightKg).toBe(2000)
+  })
+
+  it('sums the weight of MULTIPLE placements sharing a zone — two individually-fine items can collectively overload it', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 2, length: 1, maxLoadPerArea: 1 })]
+    // Zone area = 2m², limit = 1 t/m² -> 2000kg total allowed.
+    // Two 900kg items each sit well under any per-item threshold, but
+    // together (1800kg... still under) — push to 1200kg each = 2400kg total,
+    // which exceeds the zone's 2000kg capacity even though neither item
+    // alone would ever trip a per-item check.
+    const p = [
+      placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1200 }),
+      placement({ x: 1, y: 0, width: 1, length: 1, totalWeightKg: 1200 }),
+    ]
+    const result = checkZoneLoads(p, zones)
+    expect(result).toHaveLength(1)
+    expect(result[0].totalWeightKg).toBe(2400)
+    expect(result[0].densityTPerM2).toBeCloseTo(1.2, 9)
+  })
+
+  it('a placement overlapping two zones contributes its full weight to both, independently', () => {
+    const zones = [
+      zone({ id: 'a', x: 0, y: 0, width: 1, length: 1, maxLoadPerArea: 1 }),
+      zone({ id: 'b', x: 0.5, y: 0, width: 1, length: 1, maxLoadPerArea: 1 }),
+    ]
+    const p = [placement({ x: 0, y: 0, width: 1.5, length: 1, totalWeightKg: 2000 })]
+    const result = checkZoneLoads(p, zones)
+    expect(result.map((r) => r.zoneId).sort()).toEqual(['a', 'b'])
+    for (const r of result) expect(r.totalWeightKg).toBe(2000)
+  })
+
+  it('guards against a zero-area zone', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 0, length: 5, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 100000 })]
+    expect(checkZoneLoads(p, zones)).toEqual([])
+  })
+})
+
+describe('zoneIdsOverlapping', () => {
   const zone = (partial: Partial<LoadZone> & { id: string }): LoadZone => ({
     x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 5, ...partial,
   })
 
-  it('returns null when no zones are configured', () => {
-    expect(checkLoadDensity({ x: 0, y: 0, width: 2, length: 2 }, 100000, undefined)).toBeNull()
-    expect(checkLoadDensity({ x: 0, y: 0, width: 2, length: 2 }, 100000, [])).toBeNull()
-  })
-
-  it('returns null when the footprint does not overlap any zone', () => {
-    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 2, length: 2, maxLoadPerArea: 1 })]
-    expect(checkLoadDensity({ x: 5, y: 5, width: 1, length: 1 }, 100000, zones)).toBeNull()
-  })
-
-  it('returns null exactly at the limit (boundary is not a violation)', () => {
-    // 1t over 1m² == 1 t/m², limit is exactly 1 t/m²
-    const zones = [zone({ id: 'z1', maxLoadPerArea: 1 })]
-    expect(checkLoadDensity({ x: 0, y: 0, width: 1, length: 1 }, 1000, zones)).toBeNull()
-  })
-
-  it('flags a footprint whose density exceeds the zone limit', () => {
-    const zones = [zone({ id: 'z1', maxLoadPerArea: 1 })]
-    const result = checkLoadDensity({ x: 0, y: 0, width: 1, length: 1 }, 2000, zones)
-    expect(result).not.toBeNull()
-    expect(result!.zoneId).toBe('z1')
-    expect(result!.limitTPerM2).toBe(1)
-    expect(result!.densityKgPerM2).toBe(2000)
-  })
-
-  it('uses the most restrictive limit when overlapping multiple zones', () => {
+  it('returns every zone id a footprint overlaps', () => {
     const zones = [
-      zone({ id: 'loose', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 10 }),
-      zone({ id: 'strict', x: 0, y: 0, width: 5, length: 5, maxLoadPerArea: 1 }),
+      zone({ id: 'a', x: 0, y: 0, width: 1, length: 1 }),
+      zone({ id: 'b', x: 0.5, y: 0, width: 1, length: 1 }),
+      zone({ id: 'c', x: 5, y: 5, width: 1, length: 1 }),
     ]
-    // 1x1 footprint at origin overlaps both zones; strict zone (1 t/m²) should govern.
-    const result = checkLoadDensity({ x: 0, y: 0, width: 1, length: 1 }, 2000, zones)
-    expect(result!.zoneId).toBe('strict')
+    expect(zoneIdsOverlapping({ x: 0, y: 0, width: 1.5, length: 1 }, zones).sort()).toEqual(['a', 'b'])
+  })
+
+  it('returns an empty array with no zones', () => {
+    expect(zoneIdsOverlapping({ x: 0, y: 0, width: 1, length: 1 }, undefined)).toEqual([])
   })
 })
 

@@ -43,7 +43,7 @@ import {
   erodePolygon,
   withClearanceFootprint,
   lashingPointExclusionRects,
-  checkLoadDensity,
+  checkZoneLoads,
   LASHING_DEVICES,
   type ManualPlacement,
   type PackVariant,
@@ -214,7 +214,7 @@ export default function Home() {
   // "reset to example"), so opening a project that already has overloaded
   // cargo doesn't itself fire the toast; only a NEW overload caused by the
   // user's own next action does.
-  const prevOverloadCountRef = useRef(0)
+  const prevOverloadedZoneCountRef = useRef(0)
 
   // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) for undo/redo of cargo & deck-layout
   // history. Skipped while focus is inside a text input/textarea/contentEditable
@@ -295,7 +295,7 @@ export default function Home() {
     // Ctrl+Z right after switching would otherwise silently jump back to the
     // previous project's data instead of doing nothing.
     clearCalculatorHistory()
-    prevOverloadCountRef.current = 0
+    prevOverloadedZoneCountRef.current = 0
     loadedProjectId.current = activeId
   }, [hydrated, activeId, projects])
 
@@ -373,32 +373,35 @@ export default function Home() {
   }
 
   // Warn (once) when moving/adding cargo or resizing a load zone pushes a
-  // NEW placement over its zone's density limit. The overload is already
-  // shown on the deck itself (red outline + "!" badge + hover tooltip on
-  // each over-limit box, see DeckVisualization) — this toast is just a
-  // proactive nudge for the moment it happens, so it isn't missed if the
-  // affected box is scrolled out of view or the deck is busy. Only fires
-  // when the overloaded count goes UP; fixing an overload (or just removing
-  // cargo) stays silent.
+  // zone's AGGREGATE weight (every placement overlapping it, summed) over
+  // its density limit. The overload is already shown on the deck itself
+  // (red outline + "!" badge + hover tooltip on each affected box, see
+  // DeckVisualization) — this toast is just a proactive nudge for the
+  // moment it happens, so it isn't missed if the affected box is scrolled
+  // out of view or the deck is busy. Only fires when the overloaded ZONE
+  // count goes UP; fixing an overload (or just removing cargo) stays silent.
   useEffect(() => {
     const zones = deck.loadZones
     if (!zones || zones.length === 0) {
-      prevOverloadCountRef.current = 0
+      prevOverloadedZoneCountRef.current = 0
       return
     }
-    const overloadedCount = result.placed.reduce((count, p) => {
-      const totalWeight = (p.weight ?? 0) * p.stackedCount
-      const check = checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, zones)
-      return check ? count + 1 : count
-    }, 0)
-    if (overloadedCount > prevOverloadCountRef.current) {
+    const placements = result.placed.map((p) => ({
+      x: p.x,
+      y: p.y,
+      width: p.width,
+      length: p.length,
+      totalWeightKg: (p.weight ?? 0) * p.stackedCount,
+    }))
+    const overloadedZones = checkZoneLoads(placements, zones)
+    if (overloadedZones.length > prevOverloadedZoneCountRef.current) {
       toast.warning(
-        overloadedCount === 1
-          ? 'Перегрузка: 1 место груза превышает нагрузку зоны'
-          : `Перегрузка: ${overloadedCount} мест груза превышают нагрузку зоны`
+        overloadedZones.length === 1
+          ? 'Перегрузка: превышена нагрузка одной зоны'
+          : `Перегрузка: превышена нагрузка ${overloadedZones.length} зон`
       )
     }
-    prevOverloadCountRef.current = overloadedCount
+    prevOverloadedZoneCountRef.current = overloadedZones.length
   }, [result.placed, deck.loadZones])
 
   const categoryByItemId = useMemo(
@@ -464,7 +467,7 @@ export default function Home() {
       stampRotated: false,
     })
     clearCalculatorHistory()
-    prevOverloadCountRef.current = 0
+    prevOverloadedZoneCountRef.current = 0
     toast.success('Текущий расчёт очищен')
   }
 
@@ -487,7 +490,7 @@ export default function Home() {
       activePresetCategory: null,
     })
     clearCalculatorHistory()
-    prevOverloadCountRef.current = 0
+    prevOverloadedZoneCountRef.current = 0
     toast.info('Восстановлен демонстрационный пример')
   }
 

@@ -51,46 +51,56 @@ export interface LoadZone {
   maxLoadPerArea: number // t/m²
 }
 
-export interface LoadCheck {
-  densityKgPerM2: number
-  limitTPerM2: number
+export interface ZoneLoadCheck {
   zoneId: string
+  totalWeightKg: number
+  areaM2: number
+  densityTPerM2: number
+  limitTPerM2: number
 }
 
-// Checks a footprint's LOCAL load density (its own weight over its own area —
-// not a deck-wide sum) against every load zone it overlaps. If it straddles
-// several zones, it's checked against the most restrictive (lowest) limit,
-// since the whole footprint bears on every zone it touches. Returns null when
-// there's no violation (no zone overlap, or density within every overlapping
-// zone's limit) — callers treat this as informational/non-blocking.
-export function checkLoadDensity(
-  footprint: { x: number; y: number; width: number; length: number },
-  totalWeightKg: number,
+function overlapsZone(f: { x: number; y: number; width: number; length: number }, z: LoadZone): boolean {
+  return f.x < z.x + z.width && f.x + f.width > z.x && f.y < z.y + z.length && f.y + f.length > z.y
+}
+
+// Aggregates the full weight of every placement that overlaps a zone at all
+// (no proration by overlap area — a conservative, physically-safe
+// approximation: a box straddling a zone edge counts fully toward it) and
+// divides by the ZONE's own area. This is what a load zone's t/m² limit
+// actually means (structural capacity of that patch of deck) — not any
+// single item's own footprint density. A placement overlapping two zones
+// contributes its full weight to both independently. Returns only zones
+// that exceed their limit.
+export function checkZoneLoads(
+  placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
   zones: LoadZone[] | undefined
-): LoadCheck | null {
-  if (!zones || zones.length === 0) return null
-  const area = footprint.width * footprint.length
-  if (area <= 0) return null
-  let minLimit: number | null = null
-  let minZoneId = ''
+): ZoneLoadCheck[] {
+  if (!zones || zones.length === 0) return []
+  const results: ZoneLoadCheck[] = []
+  const eps = 1e-9
   for (const z of zones) {
-    const overlaps =
-      footprint.x < z.x + z.width &&
-      footprint.x + footprint.width > z.x &&
-      footprint.y < z.y + z.length &&
-      footprint.y + footprint.length > z.y
-    if (!overlaps) continue
-    if (minLimit === null || z.maxLoadPerArea < minLimit) {
-      minLimit = z.maxLoadPerArea
-      minZoneId = z.id
+    const areaM2 = z.width * z.length
+    if (areaM2 <= 0) continue
+    let totalWeightKg = 0
+    for (const p of placements) {
+      if (overlapsZone(p, z)) totalWeightKg += p.totalWeightKg
+    }
+    const densityTPerM2 = totalWeightKg / 1000 / areaM2
+    if (densityTPerM2 > z.maxLoadPerArea + eps) {
+      results.push({ zoneId: z.id, totalWeightKg, areaM2, densityTPerM2, limitTPerM2: z.maxLoadPerArea })
     }
   }
-  if (minLimit === null) return null
-  const densityKgPerM2 = totalWeightKg / area
-  const densityTPerM2 = densityKgPerM2 / 1000
-  const eps = 1e-9
-  if (densityTPerM2 <= minLimit + eps) return null
-  return { densityKgPerM2, limitTPerM2: minLimit, zoneId: minZoneId }
+  return results
+}
+
+// Every zone id a single footprint overlaps — used to look up whether an
+// individual placed item sits inside a zone that checkZoneLoads flagged.
+export function zoneIdsOverlapping(
+  footprint: { x: number; y: number; width: number; length: number },
+  zones: LoadZone[] | undefined
+): string[] {
+  if (!zones || zones.length === 0) return []
+  return zones.filter((z) => overlapsZone(footprint, z)).map((z) => z.id)
 }
 
 // A lashing/securing device running from one corner of a placed cargo unit
@@ -162,7 +172,7 @@ const G = 9.80665
 // direction, the weight's own inertial force under the vessel's motion
 // coefficient must be resisted by friction plus every attached lashing's
 // component in that direction. Non-blocking — same contract as
-// checkLoadDensity: pure function, returns a descriptive struct, never
+// checkZoneLoads: pure function, returns a descriptive struct, never
 // mutates, caller decides how (or whether) to surface it. Returns null when
 // there's nothing attached to check (an unsecured item isn't a "failure",
 // it's just not evaluated — callers should track that separately).

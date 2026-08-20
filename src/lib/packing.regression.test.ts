@@ -3,7 +3,7 @@ import {
   packDeck,
   packMultiTrip,
   clampToDeck,
-  checkLoadDensity,
+  checkZoneLoads,
   violatesSeparation,
   type CargoItem,
   type PinnedPlacement,
@@ -41,16 +41,22 @@ describe('REGRESSION: combined scenario (categories + zones + multi-trip)', () =
     expect(totalPlaced + lastTripUnplacedUnits).toBe(totalRequested)
     expect(totalPlaced).toBeGreaterThan(0)
 
-    // Load zones never block placement (soft warning only) — every placed
-    // item should still be checkable via checkLoadDensity without affecting
-    // whether it got placed.
+    // Load zones never block placement (soft warning only) — the aggregate
+    // zone check should still run cleanly against every trip without
+    // affecting whether anything got placed.
     for (const trip of trips) {
-      for (const p of trip.placed) {
-        const density = checkLoadDensity(p, (p.weight ?? 0) * p.stackedCount, zones)
-        // With maxLoadPerArea=0.001 t/m2, essentially everything should be flagged —
-        // confirms the check function runs without throwing / returning inconsistent data.
-        expect(density === null || density.densityKgPerM2 > 0).toBe(true)
-      }
+      const placements = trip.placed.map((p) => ({
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        totalWeightKg: (p.weight ?? 0) * p.stackedCount,
+      }))
+      const overloaded = checkZoneLoads(placements, zones)
+      // With maxLoadPerArea=0.001 t/m2, the zone should be flagged the moment
+      // anything is placed in it — confirms the check runs without throwing
+      // / returning inconsistent data.
+      expect(overloaded.length === 0 || overloaded[0].densityTPerM2 > 0).toBe(true)
     }
   })
 

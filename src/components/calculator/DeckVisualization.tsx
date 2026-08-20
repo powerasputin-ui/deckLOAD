@@ -16,7 +16,8 @@ import {
   lashingPointExclusionRects,
   rotateOutline90,
   resolveSnappedDragPosition,
-  checkLoadDensity,
+  checkZoneLoads,
+  zoneIdsOverlapping,
   checkLashingBalance,
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
@@ -1294,6 +1295,25 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       ? result.placed.map((p) => ({ ...p, manualId: manualPlacements[p.index]?.id }))
       : result.placed
 
+  // Aggregate weight per zone (every placement overlapping it, summed) —
+  // NOT any single item's own footprint density. Computed once per render,
+  // not per item, since it needs the whole rendered set.
+  const overloadedZonesById =
+    loadZones && loadZones.length > 0
+      ? new Map(
+          checkZoneLoads(
+            renderedItems.map((p) => ({
+              x: p.x,
+              y: p.y,
+              width: p.width,
+              length: p.length,
+              totalWeightKg: (p.weight ?? 0) * p.stackedCount,
+            })),
+            loadZones
+          ).map((z) => [z.zoneId, z])
+        )
+      : new Map<string, ReturnType<typeof checkZoneLoads>[number]>()
+
   const backgroundCursor = panDrag
     ? 'grabbing'
     : zoom > 1
@@ -1844,10 +1864,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             : undefined
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
           const category = categoryByItemId?.get(p.itemId)
-          const totalWeight = (p.weight ?? 0) * p.stackedCount
-          const overLoad = loadZones && loadZones.length > 0
-            ? checkLoadDensity({ x: p.x, y: p.y, width: p.width, length: p.length }, totalWeight, loadZones)
-            : null
+          const overlappingOverloadedZones =
+            overloadedZonesById.size > 0
+              ? zoneIdsOverlapping({ x: p.x, y: p.y, width: p.width, length: p.length }, loadZones)
+                  .map((id) => overloadedZonesById.get(id))
+                  .filter((z): z is NonNullable<typeof z> => !!z)
+              : []
+          const overLoad =
+            overlappingOverloadedZones.length > 0
+              ? overlappingOverloadedZones.reduce((worst, z) =>
+                  z.densityTPerM2 / z.limitTPerM2 > worst.densityTPerM2 / worst.limitTPerM2 ? z : worst
+                )
+              : null
           const placementId = mode === 'manual' ? p.manualId : matchingPin?.id
           const isMergeTarget = !!mergeTargetId && placementId === mergeTargetId
           const isBeingDragged =
@@ -1871,7 +1899,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               pinnedSelected={isPinnedSelected}
               category={category}
               overLoad={!!overLoad}
-              overLoadTitle={overLoad ? `Нагрузка ${(overLoad.densityKgPerM2 / 1000).toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
               mergeTarget={isMergeTarget}
               dimmed={isBeingDragged && !!mergeTargetId}
               onPointerDown={
