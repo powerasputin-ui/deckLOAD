@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PhotoCropDialog } from './PhotoCropDialog'
 import {
-  computeFreeRects,
   computeGridStep,
   clampToDeck,
   collidesPrecisely,
@@ -395,11 +394,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
 
   const edgePad = boardOffset
-
-  const freeRects = useMemo(
-    () => computeFreeRects(deckWidth, deckLength, result.placed, gap, boardOffset, deckOutline),
-    [deckWidth, deckLength, result.placed, gap, boardOffset, deckOutline]
-  )
 
   // Board offset along the real contour, not the bounding box — see
   // erodePolygon's own comment in packing.ts. Used everywhere a placement
@@ -1532,16 +1526,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
         {/* Free space — a SINGLE filled path (outer boundary minus each
             placed item as a hole, fill-rule="evenodd"), not one <rect> per
-            freeRects entry. freeRects itself stays rect-based (it's real
-            data other logic — findFreeSpotForItem in page.tsx — depends on),
-            and on a sloped outline edge it's necessarily many narrow
-            adjacent rects (see deckOutlineExclusionRects). Rendering that
-            many separately-filled/anti-aliased rects side by side is what
-            produced the "thick, coarse" hatching and overlapping labels on
-            a hand-drawn shape: adjacent rect edges don't tile the pattern
-            seamlessly, so abutting rects visibly double up. A single path
-            has no seams and needs only one label, exactly like the plain
-            rectangle case always has. */}
+            freeRects-style entry — on a sloped outline edge that would be
+            many narrow adjacent rects (see deckOutlineExclusionRects), and
+            rendering that many separately-filled/anti-aliased rects side by
+            side produced visibly "thick, coarse" hatching where they met.
+            A single path has no seams. No dimension label — it only ever
+            described whichever one sub-rect happened to be largest, not the
+            free area as a whole, so it wasn't a meaningful number. */}
         {showFreeSpace && (() => {
           const halfGap = gap / 2
           const outerPts =
@@ -1581,30 +1572,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             })
             .join(' ')
 
-          // Reuse the already-computed freeRects purely to pick where (and
-          // whether) to show one dimension label, matching the single clean
-          // "WxH" label the plain-rectangle case has always shown.
-          const largest = [...freeRects].sort((a, b) => b.width * b.height - a.width * a.height)[0]
-          const lw = largest ? largest.width * scale : 0
-          const lh = largest ? largest.height * scale : 0
-          const showLabel = largest && lw > 40 && lh > 24
-
           return (
             <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
               <path d={`${outerPath} ${holePath}`} fillRule="evenodd" fill="url(#free-hatch)" />
-              {showLabel && (
-                <text
-                  x={toX(largest.x) + lw / 2}
-                  y={toY(largest.y) + lh / 2}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  className="select-none pointer-events-none"
-                  fontSize={11}
-                  fill="rgba(5,150,105,0.9)"
-                >
-                  {fmt(largest.width)}×{fmt(largest.height)}
-                </text>
-              )}
             </g>
           )
         })()}

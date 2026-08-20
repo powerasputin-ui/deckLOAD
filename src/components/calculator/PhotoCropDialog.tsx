@@ -18,9 +18,12 @@ interface PhotoCropDialogProps {
 
 // Fixed on-screen viewport size for the crop frame, capped so it comfortably
 // fits the dialog regardless of the deck's aspect ratio (a near-square deck
-// and a very elongated one both need a sane frame size).
-const MAX_VIEWPORT_W = 480
-const MAX_VIEWPORT_H = 360
+// and a very elongated one both need a sane frame size). Must stay under the
+// dialog's own inner content width — DialogContent is `sm:max-w-md` (28rem =
+// 448px) with `p-6` (24px) padding on each side, leaving ~400px; 480 (the
+// previous value) overflowed past the dialog's right edge.
+const MAX_VIEWPORT_W = 380
+const MAX_VIEWPORT_H = 280
 
 export function PhotoCropDialog({ open, bitmap, aspectRatio, onConfirm, onCancel }: PhotoCropDialogProps) {
   const viewport = useMemo(() => {
