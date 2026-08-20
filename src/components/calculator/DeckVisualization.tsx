@@ -2198,6 +2198,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         open={!!cropBitmap}
         bitmap={cropBitmap}
         aspectRatio={deckWidth / deckLength}
+        deckWidth={deckWidth}
+        deckLength={deckLength}
+        unit={unit}
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
       />

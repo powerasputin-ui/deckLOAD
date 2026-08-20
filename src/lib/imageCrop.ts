@@ -47,6 +47,40 @@ export function clampCrop(
   return { offsetX, offsetY, zoom }
 }
 
+export interface CalibrationResult {
+  zoom: number
+  // True when the requested zoom was below minZoomForCover — the typed
+  // real distance implies the photo doesn't cover the full deck at the
+  // correct scale, so the result is clamped to the largest zoom that still
+  // shows a gap-free frame instead of the (physically impossible) ideal.
+  clampedToMinCover: boolean
+}
+
+// Two-point scale calibration: given the on-screen distance between two
+// clicked points (already converted to bitmap-space px) and the real-world
+// distance the user says that represents, compute the zoom that makes the
+// deck's own real width span exactly the viewport. Only deckRealWidth (not
+// length) is used — the crop frame's aspect ratio is locked to
+// deckWidth/deckLength, so deriving from width alone is self-consistent.
+export function computeCalibratedZoom(
+  bitmapPxDistance: number,
+  realDistance: number,
+  deckRealWidth: number,
+  bitmapW: number,
+  bitmapH: number,
+  viewportW: number,
+  viewportH: number
+): CalibrationResult {
+  const minZoom = minZoomForCover(bitmapW, bitmapH, viewportW, viewportH)
+  if (bitmapPxDistance <= 0 || realDistance <= 0 || deckRealWidth <= 0) {
+    return { zoom: minZoom, clampedToMinCover: true }
+  }
+  const bitmapPxPerRealUnit = bitmapPxDistance / realDistance
+  const idealZoom = viewportW / (deckRealWidth * bitmapPxPerRealUnit)
+  if (idealZoom < minZoom) return { zoom: minZoom, clampedToMinCover: true }
+  return { zoom: idealZoom, clampedToMinCover: false }
+}
+
 // Composites exactly the region visible inside the viewport frame (in
 // source-bitmap coordinates, derived from the current pan/zoom) onto an
 // output canvas sized to the deck's aspect ratio, capped at
