@@ -511,35 +511,55 @@ export function deckOutlineExclusionRects(
   // even if a point sits exactly on/past the edge due to float drift.
   const clampedXs = [0, ...dedupedXs.filter((x) => x > 0 && x < width), width]
 
+  // A strip between two adjacent vertex X's is sampled at ONE midpoint — for
+  // a near-vertical edge that's a fine approximation, but a wide strip with
+  // a shallow-sloped edge (e.g. a hand-drawn diagonal spanning many meters)
+  // gets badly misrepresented as a single flat-topped rect, potentially
+  // excluding real deck area at one end of the strip while leaving too much
+  // at the other. Subdivide each strip into narrower sub-strips so the
+  // staircase actually hugs the real edge; capped so a huge/degenerate
+  // outline can't blow this up.
+  const maxSubWidth = Math.max(width, length, SCANLINE_EPS) / 100
+  const MAX_SUBSTRIPS_PER_STRIP = 64
+
   const out: Rect[] = []
   for (let i = 0; i < clampedXs.length - 1; i++) {
-    const xLo = clampedXs[i]
-    const xHi = clampedXs[i + 1]
-    if (xHi - xLo <= SCANLINE_EPS) continue
-    const xMid = (xLo + xHi) / 2
+    const stripLo = clampedXs[i]
+    const stripHi = clampedXs[i + 1]
+    if (stripHi - stripLo <= SCANLINE_EPS) continue
+    const subCount = Math.min(
+      MAX_SUBSTRIPS_PER_STRIP,
+      Math.max(1, Math.ceil((stripHi - stripLo) / maxSubWidth))
+    )
+    const subWidth = (stripHi - stripLo) / subCount
+    for (let s = 0; s < subCount; s++) {
+      const xLo = stripLo + s * subWidth
+      const xHi = s === subCount - 1 ? stripHi : xLo + subWidth
+      const xMid = (xLo + xHi) / 2
 
-    const ys: number[] = []
-    for (let j = 0; j < outline.length; j++) {
-      const p1 = outline[j]
-      const p2 = outline[(j + 1) % outline.length]
-      if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
-        const t = (xMid - p1.x) / (p2.x - p1.x)
-        ys.push(p1.y + t * (p2.y - p1.y))
+      const ys: number[] = []
+      for (let j = 0; j < outline.length; j++) {
+        const p1 = outline[j]
+        const p2 = outline[(j + 1) % outline.length]
+        if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
+          const t = (xMid - p1.x) / (p2.x - p1.x)
+          ys.push(p1.y + t * (p2.y - p1.y))
+        }
       }
-    }
-    ys.sort((a, b) => a - b)
+      ys.sort((a, b) => a - b)
 
-    let prevY = 0
-    for (let k = 0; k < ys.length; k += 2) {
-      const yLo = ys[k]
-      const yHi = ys[k + 1] ?? length
-      if (yLo - prevY > SCANLINE_EPS) {
-        out.push({ x: xLo, y: prevY, width: xHi - xLo, height: yLo - prevY })
+      let prevY = 0
+      for (let k = 0; k < ys.length; k += 2) {
+        const yLo = ys[k]
+        const yHi = ys[k + 1] ?? length
+        if (yLo - prevY > SCANLINE_EPS) {
+          out.push({ x: xLo, y: prevY, width: xHi - xLo, height: yLo - prevY })
+        }
+        prevY = yHi
       }
-      prevY = yHi
-    }
-    if (length - prevY > SCANLINE_EPS) {
-      out.push({ x: xLo, y: prevY, width: xHi - xLo, height: length - prevY })
+      if (length - prevY > SCANLINE_EPS) {
+        out.push({ x: xLo, y: prevY, width: xHi - xLo, height: length - prevY })
+      }
     }
   }
   return out

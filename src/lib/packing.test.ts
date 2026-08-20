@@ -652,6 +652,34 @@ describe('deckOutlineExclusionRects', () => {
     )
     expect(covered).toBe(true)
   })
+
+  // Regression: a wide "V" notch cut into the top edge (a hand-drawn shape
+  // spanning many meters between vertices) used to be approximated by a
+  // single flat-topped exclusion rect per half — sampled only at each
+  // half's midpoint — so free space near the two top corners was wrongly
+  // excluded far below the real sloped edge (this is exactly what the user
+  // saw: the green hatching stopping well short of the true boundary near
+  // both peaks of a V-shaped deck).
+  it('follows a wide sloped edge closely instead of a single flat midpoint sample', () => {
+    const vShape = [
+      { x: 0, y: 0 }, { x: 10, y: 6 }, { x: 20, y: 0 }, { x: 20, y: 8 }, { x: 0, y: 8 },
+    ]
+    const isExcluded = (pt: { x: number; y: number }) =>
+      deckOutlineExclusionRects(vShape, 20, 8).some(
+        (r) => pt.x >= r.x && pt.x <= r.x + r.width && pt.y >= r.y && pt.y <= r.y + r.height
+      )
+    // At x=1, the true descending edge sits at y=0.6 (10% of the way from
+    // (0,0) to (10,6)). Just above it is genuinely outside the deck...
+    expect(isExcluded({ x: 1, y: 0.3 })).toBe(true)
+    // ...but just below it is real, valid deck area — the old flat
+    // (midpoint-only) approximation wrongly excluded this too, all the way
+    // up to y=3 (the strip midpoint's edge height).
+    expect(isExcluded({ x: 1, y: 0.8 })).toBe(false)
+    // Same check mirrored on the right-hand descending edge (x=19, true
+    // edge at y=0.6 there too).
+    expect(isExcluded({ x: 19, y: 0.3 })).toBe(true)
+    expect(isExcluded({ x: 19, y: 0.8 })).toBe(false)
+  })
 })
 
 describe('dedupePolygonVertices', () => {
