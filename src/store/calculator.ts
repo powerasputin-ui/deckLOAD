@@ -965,22 +965,39 @@ export const useCalculator = create<CalculatorState>()(
   clearManualSelection: () => set({ selectedManualIds: [] }),
 
   addLoadZone: (zone) =>
-    set((s) => ({
-      deck: {
-        ...s.deck,
-        loadZones: [
-          ...(s.deck.loadZones ?? []),
-          {
-            id: uuid(),
-            x: zone?.x ?? 0,
-            y: zone?.y ?? 0,
-            width: zone?.width ?? Math.max(1, s.deck.width / 4),
-            length: zone?.length ?? Math.max(1, s.deck.length / 2),
-            maxLoadPerArea: zone?.maxLoadPerArea ?? 5,
-          },
-        ],
-      },
-    })),
+    set((s) => {
+      const width = zone?.width ?? Math.max(1, s.deck.width / 4)
+      const length = zone?.length ?? Math.max(1, s.deck.length / 2)
+      // On a non-rectangular deck, default to somewhere inside the real
+      // shape instead of the bounding box's (0,0) corner, which can land a
+      // fresh zone entirely outside a custom-cut deck. Cheap vertex-average
+      // centroid — not exact area centroid, but good enough for "somewhere
+      // reasonably inside".
+      let defaultX = 0
+      let defaultY = 0
+      if (s.deck.outline && s.deck.outline.length >= 3) {
+        const cx = s.deck.outline.reduce((sum, p) => sum + p.x, 0) / s.deck.outline.length
+        const cy = s.deck.outline.reduce((sum, p) => sum + p.y, 0) / s.deck.outline.length
+        defaultX = Math.max(0, Math.min(s.deck.width - width, cx - width / 2))
+        defaultY = Math.max(0, Math.min(s.deck.length - length, cy - length / 2))
+      }
+      return {
+        deck: {
+          ...s.deck,
+          loadZones: [
+            ...(s.deck.loadZones ?? []),
+            {
+              id: uuid(),
+              x: zone?.x ?? defaultX,
+              y: zone?.y ?? defaultY,
+              width,
+              length,
+              maxLoadPerArea: zone?.maxLoadPerArea ?? 5,
+            },
+          ],
+        },
+      }
+    }),
   updateLoadZone: (id, patch) =>
     set((s) => ({
       deck: {

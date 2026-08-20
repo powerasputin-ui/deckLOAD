@@ -1061,7 +1061,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const deltaY = pos.y - startDeck.y
         const nx = Math.max(0, Math.min(deckWidth - zoneDrag.startRect.width, zoneDrag.startRect.x + deltaX))
         const ny = Math.max(0, Math.min(deckLength - zoneDrag.startRect.length, zoneDrag.startRect.y + deltaY))
-        onUpdateLoadZone(zoneDrag.id, { x: nx, y: ny })
+        const candidate = { x: nx, y: ny, width: zoneDrag.startRect.width, length: zoneDrag.startRect.length }
+        // On a non-rectangular deck, a zone can't be dragged past the real
+        // contour — same hard boundary cargo dragging already respects
+        // (uses the raw outline, not the board-offset-eroded one: a load
+        // zone is about deck structural capacity, not cargo clearance).
+        if (!deckOutline || deckOutline.length < 3 || rectInsidePolygon(candidate, deckOutline)) {
+          onUpdateLoadZone(zoneDrag.id, { x: nx, y: ny })
+        }
       } else if (zoneDrag.corner) {
         const r = zoneDrag.startRect
         const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
@@ -1083,7 +1090,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               : zoneDrag.corner === 'sw'
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
-        onUpdateLoadZone(zoneDrag.id, patch)
+        if (!deckOutline || deckOutline.length < 3 || rectInsidePolygon(patch, deckOutline)) {
+          onUpdateLoadZone(zoneDrag.id, patch)
+        }
       }
     }
     if (clearanceDrag) {
@@ -1579,7 +1588,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })()}
 
-        {/* Load zones (deck load capacity per m²) */}
+        {/* Load zones (deck load capacity per m²) — clipped to the real
+            outline like every other deck-shape element (grid/background,
+            free-space hatching), so a zone positioned over a cut/excluded
+            area renders following the true contour instead of as a full
+            untouched rectangle. */}
+        <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
         {loadZones?.map((z) => {
           const zw = z.width * scale
           const zh = z.length * scale
@@ -1636,6 +1650,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             </g>
           )
         })}
+        </g>
 
         {/* Hard-blocking clearance zones — the alternative to individual
             lashing points (see clearanceMargin on ManualPlacement/
