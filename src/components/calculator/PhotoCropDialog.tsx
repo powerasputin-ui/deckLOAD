@@ -25,14 +25,11 @@ interface PhotoCropDialogProps {
   onCancel: () => void
 }
 
-// Fixed on-screen viewport size for the crop frame, capped so it comfortably
-// fits the dialog regardless of the deck's aspect ratio (a near-square deck
-// and a very elongated one both need a sane frame size). Must stay under the
-// dialog's own inner content width — DialogContent is `sm:max-w-md` (28rem =
-// 448px) with `p-6` (24px) padding on each side, leaving ~400px; 480 (the
-// previous value) overflowed past the dialog's right edge.
-const MAX_VIEWPORT_W = 380
-const MAX_VIEWPORT_H = 280
+// Fallback viewport-max before the adaptive size (below) has measured the
+// browser window — matches the fixed size this dialog used before it became
+// responsive, so there's no flash of a differently-sized canvas.
+const FALLBACK_MAX_W = 380
+const FALLBACK_MAX_H = 280
 
 type InteractionMode = 'pan' | 'calibrate'
 
@@ -76,15 +73,34 @@ export function PhotoCropDialog({
   onConfirm,
   onCancel,
 }: PhotoCropDialogProps) {
+  // Adaptive viewport cap: sized off the actual browser window (not a fixed
+  // constant) so the crop/calibration canvas is genuinely usable instead of
+  // a cramped fixed box — capped so it doesn't dominate a huge monitor, and
+  // floored so a tiny window still gets a workable size. Recomputed on
+  // resize while the dialog is open.
+  const [maxViewport, setMaxViewport] = useState({ w: FALLBACK_MAX_W, h: FALLBACK_MAX_H })
+  useEffect(() => {
+    if (!open) return
+    const compute = () => {
+      setMaxViewport({
+        w: Math.max(360, Math.min(window.innerWidth * 0.8, 900)),
+        h: Math.max(260, Math.min(window.innerHeight * 0.65, 640)),
+      })
+    }
+    compute()
+    window.addEventListener('resize', compute)
+    return () => window.removeEventListener('resize', compute)
+  }, [open])
+
   const viewport = useMemo(() => {
-    let w = MAX_VIEWPORT_W
+    let w = maxViewport.w
     let h = w / aspectRatio
-    if (h > MAX_VIEWPORT_H) {
-      h = MAX_VIEWPORT_H
+    if (h > maxViewport.h) {
+      h = maxViewport.h
       w = h * aspectRatio
     }
     return { w, h }
-  }, [aspectRatio])
+  }, [aspectRatio, maxViewport])
 
   const [crop, setCrop] = useState<CropState>({ offsetX: 0, offsetY: 0, zoom: 1 })
   const dragRef = useRef<{ startX: number; startY: number; startOffsetX: number; startOffsetY: number } | null>(null)
@@ -105,6 +121,19 @@ export function PhotoCropDialog({
     }
   }
 
+  // The viewport can now change size while the dialog is open (browser
+  // window resize) — re-clamp so `crop` never drifts out of bounds. Same
+  // render-time "compare previous" pattern as the bitmap-load block above,
+  // not a useEffect (this codebase's lint rules forbid synchronous setState
+  // inside effects). Harmless no-op if the bitmap block above already set a
+  // valid crop for the new viewport this same render — clampCrop on an
+  // already-in-bounds crop just returns it unchanged.
+  const [prevViewport, setPrevViewport] = useState(viewport)
+  if ((viewport.w !== prevViewport.w || viewport.h !== prevViewport.h) && bitmap) {
+    setPrevViewport(viewport)
+    setCrop((c) => clampCrop(c, bitmap.width, bitmap.height, viewport.w, viewport.h))
+  }
+
   // Two-point scale calibration: click two points on the photo whose real
   // distance you know, type that distance, and the dialog computes the
   // zoom that makes the deck's real width span the viewport exactly —
@@ -112,8 +141,19 @@ export function PhotoCropDialog({
   // panning/zooming manually keeps working exactly as before.
   const [mode, setMode] = useState<InteractionMode>('pan')
   const [calPoints, setCalPoints] = useState<{ x: number; y: number }[]>([])
-  const [calZoomAtClick, setCalZoomAtClick] = useState<number | null>(null)
   const [calDistanceText, setCalDistanceText] = useState('')
+  // Whole-photo "contain" view used only while calibrating — independent of
+  // `crop` (which stays aspect-locked to the deck and may not show the
+  // whole photo at once). A stable computed value for as long as bitmap/
+  // viewport don't change, so calibration math never needs to guess what
+  // transform was in effect when a point was clicked.
+  const calibrationView = useMemo(() => {
+    if (!bitmap) return null
+    const zoom = Math.min(viewport.w / bitmap.width, viewport.h / bitmap.height)
+    const scaledW = bitmap.width * zoom
+    const scaledH = bitmap.height * zoom
+    return { zoom, offsetX: (viewport.w - scaledW) / 2, offsetY: (viewport.h - scaledH) / 2 }
+  }, [bitmap, viewport])
   // The manual slider's ceiling (minZoom * 6) is a heuristic for eyeballing
   // by hand — a calibration result is a deliberate, math-derived target the
   // user explicitly asked for, so it must never be silently clamped to that
@@ -129,7 +169,20 @@ export function PhotoCropDialog({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, viewport.w, viewport.h)
-    ctx.drawImage(bitmap, crop.offsetX, crop.offsetY, bitmap.width * crop.zoom, bitmap.height * crop.zoom)
+    if (mode === 'calibrate' && calibrationView) {
+      // Whole photo, letterboxed to fit — not the deck-aspect-locked crop
+      // frame — so any two reference points are reachable regardless of
+      // the current pan/zoom state.
+      ctx.drawImage(
+        bitmap,
+        calibrationView.offsetX,
+        calibrationView.offsetY,
+        bitmap.width * calibrationView.zoom,
+        bitmap.height * calibrationView.zoom
+      )
+    } else {
+      ctx.drawImage(bitmap, crop.offsetX, crop.offsetY, bitmap.width * crop.zoom, bitmap.height * crop.zoom)
+    }
 
     if (mode === 'calibrate' && calPoints.length > 0) {
       ctx.save()
@@ -149,7 +202,7 @@ export function PhotoCropDialog({
       }
       ctx.restore()
     }
-  }, [bitmap, crop, viewport, mode, calPoints])
+  }, [bitmap, crop, viewport, mode, calPoints, calibrationView])
 
   if (!bitmap) return null
 
@@ -168,11 +221,7 @@ export function PhotoCropDialog({
       const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
-      setCalPoints((pts) => {
-        const next = [...pts, { x, y }]
-        if (next.length === 1) setCalZoomAtClick(crop.zoom)
-        return next
-      })
+      setCalPoints((pts) => [...pts, { x, y }])
       return
     }
     dragRef.current = { startX: e.clientX, startY: e.clientY, startOffsetX: crop.offsetX, startOffsetY: crop.offsetY }
@@ -210,12 +259,22 @@ export function PhotoCropDialog({
   }
 
   const handleApplyCalibration = () => {
-    if (!bitmap || calPoints.length !== 2 || calZoomAtClick === null) return
+    if (!bitmap || calPoints.length !== 2 || !calibrationView) return
     const realDistance = Number(calDistanceText.replace(',', '.'))
     if (isNaN(realDistance) || realDistance <= 0) return
 
-    const canvasPxDistance = Math.hypot(calPoints[1].x - calPoints[0].x, calPoints[1].y - calPoints[0].y)
-    const bitmapPxDistance = canvasPxDistance / calZoomAtClick
+    // Calibration points were clicked against the whole-photo "contain"
+    // view, not `crop` — convert via calibrationView, which is stable for
+    // as long as calibration mode has been active (no zoom/pan possible
+    // while calibrating), unlike the old approach of snapshotting crop.zoom
+    // at click time.
+    const bitmapPointFor = (p: { x: number; y: number }) => ({
+      x: (p.x - calibrationView.offsetX) / calibrationView.zoom,
+      y: (p.y - calibrationView.offsetY) / calibrationView.zoom,
+    })
+    const b0 = bitmapPointFor(calPoints[0])
+    const b1 = bitmapPointFor(calPoints[1])
+    const bitmapPxDistance = Math.hypot(b1.x - b0.x, b1.y - b0.y)
 
     const { zoom: newZoom, clampedToMinCover } = computeCalibratedZoom(
       bitmapPxDistance,
@@ -233,15 +292,12 @@ export function PhotoCropDialog({
       setCalibratedMaxZoom(newZoom)
     }
 
-    // Re-center on the calibration points' midpoint so the just-measured
-    // feature stays visually put as the zoom changes, then clamp back
-    // in-bounds as usual.
-    const midX = (calPoints[0].x + calPoints[1].x) / 2
-    const midY = (calPoints[0].y + calPoints[1].y) / 2
-    const bitmapMidX = (midX - crop.offsetX) / crop.zoom
-    const bitmapMidY = (midY - crop.offsetY) / crop.zoom
-    const nextOffsetX = midX - bitmapMidX * newZoom
-    const nextOffsetY = midY - bitmapMidY * newZoom
+    // Center the resulting pan/crop view on the calibration midpoint (in
+    // bitmap space, already derived above), then clamp back in-bounds.
+    const bitmapMidX = (b0.x + b1.x) / 2
+    const bitmapMidY = (b0.y + b1.y) / 2
+    const nextOffsetX = viewport.w / 2 - bitmapMidX * newZoom
+    const nextOffsetY = viewport.h / 2 - bitmapMidY * newZoom
 
     setCrop(clampCrop({ offsetX: nextOffsetX, offsetY: nextOffsetY, zoom: newZoom }, bitmap.width, bitmap.height, viewport.w, viewport.h))
     resetCalibration()
@@ -254,7 +310,7 @@ export function PhotoCropDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onCancel() }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-[min(94vw,940px)]">
         <DialogHeader>
           <DialogTitle>Настройте фото палубы</DialogTitle>
         </DialogHeader>
@@ -301,7 +357,7 @@ export function PhotoCropDialog({
             <div className="w-full space-y-2 rounded-md border p-2">
               <p className="text-xs text-muted-foreground">
                 {calPoints.length < 2
-                  ? `Отметьте на фото две точки известного расстояния (${calPoints.length}/2)`
+                  ? `Показано всё фото — отметьте на нём две точки известного расстояния (${calPoints.length}/2)`
                   : 'Введите реальное расстояние между точками'}
               </p>
               {calPoints.length === 2 && (

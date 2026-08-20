@@ -23,7 +23,7 @@ test.describe('Photo scale calibration', () => {
     await openCropDialogWithPhoto(page)
 
     await page.getByRole('button', { name: 'Откалибровать по известному расстоянию' }).click()
-    await expect(page.getByText(/Отметьте на фото две точки/)).toBeVisible()
+    await expect(page.getByText(/отметьте на нём две точки/)).toBeVisible()
 
     const canvas = page.locator('canvas')
     await canvas.click({ position: { x: 50, y: 50 } })
