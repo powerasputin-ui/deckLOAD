@@ -668,10 +668,14 @@ export function packDeck(
   // Non-rectangular deck: board offset is an inset along the real contour
   // (erodePolygon), not the bounding box — otherwise a cut/diagonal edge
   // would get zero clearance while the deck's straight sides got the normal
-  // margin. Seed the free-rect list at the full bounding box and let the
-  // eroded-outline exclusion carve out both "outside the deck" AND "inside
-  // the deck but within boardOffset of its edge" in one pass.
+  // margin. Two erosions, mirroring the rectangle path above exactly:
+  // `usableOutline` (full boardOffset) validates pins/manual placements,
+  // which sit at an exact user-chosen position; `packingOutline` (boardOffset
+  // - gap/2) seeds the auto-packer's free cells, so an auto-placed item's
+  // cell origin + gap/2 also lands exactly on boardOffset, not
+  // boardOffset + gap/2.
   const usableOutline = hasOutline ? erodePolygon(outline!, boardOffset) : undefined
+  const packingOutline = hasOutline ? erodePolygon(outline!, Math.max(0, boardOffset - halfGap)) : undefined
   const freeRects: FreeRect[] = hasOutline
     ? [{ x: 0, y: 0, width: safeDeckWidth, height: safeDeckLength }]
     : [{ x: ux, y: uy, width: uw, height: ul }]
@@ -683,7 +687,7 @@ export function packDeck(
   // more rectangle to route around, via the exact same placeRect mechanism
   // already used for pins below.
   if (hasOutline) {
-    for (const rect of deckOutlineExclusionRects(usableOutline!, safeDeckWidth, safeDeckLength)) {
+    for (const rect of deckOutlineExclusionRects(packingOutline!, safeDeckWidth, safeDeckLength)) {
       placeRect(rect, freeRects)
     }
   }
@@ -1243,8 +1247,8 @@ export function computeFreeRects(
     ? [{ x: 0, y: 0, width: dw, height: dl }]
     : [{ x: ux, y: uy, width: uw, height: ul }]
   if (hasOutline) {
-    const usableOutline = erodePolygon(outline!, off)
-    for (const rect of deckOutlineExclusionRects(usableOutline, dw, dl)) {
+    const packingOutline = erodePolygon(outline!, Math.max(0, off - halfGap))
+    for (const rect of deckOutlineExclusionRects(packingOutline, dw, dl)) {
       placeRect(rect, free)
     }
   }
@@ -1510,6 +1514,43 @@ export function rectInsidePolygon(
   return true
 }
 
+// Removes consecutive near-duplicate vertices — cheap insurance against a
+// hand-drawn or dragged point landing right on top of (or a couple
+// centimeters from) a neighbor, which would otherwise leave a near-zero-
+// length edge in the outline. Most polygon math here (area, point-in-
+// polygon, exclusion rects) tolerates a tiny edge fine, but erodePolygon's
+// per-edge normal offset is numerically unstable around one — a stray
+// duplicate vertex can send that corner's erosion wildly off and corrupt
+// the whole shape (confirmed: a real drag interaction occasionally drops an
+// extra point within a few cm of the one being moved). The threshold is
+// relative to the polygon's own bounding-box diagonal, not a fixed
+// distance, so it behaves the same regardless of the deck's display unit
+// (m/cm/ft) or size.
+export function dedupePolygonVertices(
+  poly: { x: number; y: number }[]
+): { x: number; y: number }[] {
+  if (poly.length < 3) return poly
+  const xs = poly.map((p) => p.x)
+  const ys = poly.map((p) => p.y)
+  const diag = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+  // 1% of the polygon's own diagonal — generous enough to catch a stray
+  // vertex a drag interaction drops a few cm from its neighbor on a
+  // multi-meter deck (the real case this exists for), while still being far
+  // below any deliberately-drawn feature on a deck-scale outline.
+  const eps = Math.max(1e-9, diag * 0.01)
+  const out: { x: number; y: number }[] = []
+  for (const p of poly) {
+    const prev = out[out.length - 1]
+    if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > eps) out.push(p)
+  }
+  if (out.length > 1) {
+    const first = out[0]
+    const last = out[out.length - 1]
+    if (Math.hypot(last.x - first.x, last.y - first.y) <= eps) out.pop()
+  }
+  return out.length >= 3 ? out : poly
+}
+
 // Shrinks a simple polygon inward by `margin` along its real contour — used
 // so "board offset" (margin from the ship's board) applies to a
 // non-rectangular deck the same way it already applies to a rectangular one,
@@ -1522,10 +1563,11 @@ export function rectInsidePolygon(
 // edges with no intersection, or a shrunken shape that didn't actually
 // shrink) — better to give too little inset than a broken shape.
 export function erodePolygon(
-  poly: { x: number; y: number }[],
+  rawPoly: { x: number; y: number }[],
   margin: number
 ): { x: number; y: number }[] {
-  if (margin <= 0 || poly.length < 3) return poly
+  if (margin <= 0 || rawPoly.length < 3) return rawPoly
+  const poly = dedupePolygonVertices(rawPoly)
   const n = poly.length
   const offsetLines: { p: { x: number; y: number }; d: { x: number; y: number } }[] = []
   for (let i = 0; i < n; i++) {

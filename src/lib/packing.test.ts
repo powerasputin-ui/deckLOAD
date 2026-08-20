@@ -22,6 +22,7 @@ import {
   rectInsidePolygon,
   deckOutlineExclusionRects,
   erodePolygon,
+  dedupePolygonVertices,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   type CargoItem,
@@ -295,6 +296,46 @@ describe('packDeck', () => {
     ], { boardOffset: 0.5, gap: 0.3 })
     expect(res.placed[0].x).toBeCloseTo(0.5, 9)
     expect(res.placed[0].y).toBeCloseTo(0.5, 9)
+  })
+
+  it('keeps board offset, gap, and clearance/stacking all working together on a non-rectangular deck', () => {
+    // A 10x10 deck with the top-right corner cut off, well past x=6/y=6.
+    const outline = [
+      { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 6, y: 6 }, { x: 6, y: 10 }, { x: 0, y: 10 },
+    ]
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 3, height: 1 })], {
+      boardOffset: 0.5,
+      gap: 0.5,
+      clearance: 5, // >= 3 units * 1m height -> all 3 stack in one footprint
+      outline,
+    })
+    expect(res.placed).toHaveLength(1)
+    const p = res.placed[0]
+    // Board offset still applies exactly on the deck's straight edges.
+    expect(p.x).toBeCloseTo(0.5, 9)
+    expect(p.y).toBeCloseTo(0.5, 9)
+    // Clearance/stacking is unaffected by the outline — all 3 units stack.
+    expect(p.stackedCount).toBe(3)
+    // True (shoelace) area is reported, not the plain bounding-box area.
+    expect(res.totalArea).toBeCloseTo(polygonArea(outline))
+  })
+
+  it('still enforces gap between two pinned placements on a non-rectangular deck', () => {
+    const outline = [
+      { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 6, y: 6 }, { x: 6, y: 10 }, { x: 0, y: 10 },
+    ]
+    const pinA: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 2, layers: 1, rotated: false, color: '#0ea5e9',
+    }
+    const tooClose: PinnedPlacement = {
+      id: 'p2', itemId: 'a', name: 'B', x: 2.05, y: 0, width: 2, length: 2, layers: 1, rotated: false, color: '#0ea5e9',
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 2 })], {
+      gap: 0.5,
+      outline,
+      pinned: [pinA, tooClose],
+    })
+    expect(res.unplaced.some((u) => u.reason.includes('пересекается'))).toBe(true)
   })
 
   it('rejects two pinned placements closer than the configured gap', () => {
@@ -613,6 +654,30 @@ describe('deckOutlineExclusionRects', () => {
   })
 })
 
+describe('dedupePolygonVertices', () => {
+  it('drops a vertex sitting a few cm from its neighbor on a multi-meter deck', () => {
+    const withStrayPoint = [
+      { x: 0, y: 0 }, { x: 14.44, y: 5.51 }, { x: 14.47, y: 5.53 }, { x: 20, y: 8 }, { x: 0, y: 8 },
+    ]
+    const cleaned = dedupePolygonVertices(withStrayPoint)
+    expect(cleaned).toEqual([
+      { x: 0, y: 0 }, { x: 14.44, y: 5.51 }, { x: 20, y: 8 }, { x: 0, y: 8 },
+    ])
+  })
+
+  it('leaves a normal polygon with well-separated vertices untouched', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }]
+    expect(dedupePolygonVertices(rect)).toEqual(rect)
+  })
+
+  it('drops a closing point that collapses back onto the first vertex', () => {
+    const closed = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }, { x: 0.001, y: 0.001 }]
+    expect(dedupePolygonVertices(closed)).toEqual([
+      { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 },
+    ])
+  })
+})
+
 describe('erodePolygon', () => {
   it('shrinks a rectangle to the same result as a plain bounding-box inset', () => {
     const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }]
@@ -642,6 +707,19 @@ describe('erodePolygon', () => {
     const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 }]
     expect(erodePolygon(rect, 0)).toEqual(rect)
     expect(erodePolygon(rect, -1)).toEqual(rect)
+  })
+
+  it('is not thrown off by a stray near-duplicate vertex (regression: a real drag interaction can drop one)', () => {
+    // Same shape (dart with a deep concave notch) and near-duplicate vertex
+    // pair that a real editor drag produced and broke board offset on.
+    const withStrayPoint = [
+      { x: 0, y: 0 }, { x: 14.44, y: 5.51 }, { x: 14.47, y: 5.53 }, { x: 20, y: 8 }, { x: 0, y: 8 },
+    ]
+    const eroded = erodePolygon(withStrayPoint, 1)
+    // A point comfortably away from every edge (>1m from each) must stay
+    // inside — before the dedupe fix this was wrongly rejected because the
+    // near-zero-length edge sent that corner's offset in a bad direction.
+    expect(rectInsidePolygon({ x: 3, y: 4, width: 2, length: 1.2 }, eroded)).toBe(true)
   })
 })
 

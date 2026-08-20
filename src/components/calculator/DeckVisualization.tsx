@@ -12,6 +12,7 @@ import {
   collidesPrecisely,
   rectInsidePolygon,
   erodePolygon,
+  dedupePolygonVertices,
   withClearanceFootprint,
   lashingPointExclusionRects,
   rotateOutline90,
@@ -730,7 +731,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   }
 
   const handleOutlineConfirm = () => {
-    onSetDeckOutline?.(editingOutline)
+    // Cleans up any near-duplicate vertex a drag/insert interaction may have
+    // left behind (see dedupePolygonVertices) before it ever reaches the
+    // store — every downstream consumer (erosion, exclusion rects, area,
+    // 3D extrusion) then always works with a well-formed polygon.
+    onSetDeckOutline?.(dedupePolygonVertices(editingOutline))
     onSetEditingDeckOutline?.(false)
   }
   const handleOutlineCancel = () => {

@@ -52,4 +52,45 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByRole('radio', { name: '3D' }).click()
     await expect(page.locator('canvas')).toBeVisible()
   })
+
+  test('board offset is still enforced near the deck\'s straight edges after drawing a custom outline', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+
+    const inputs = page.locator('input[type="number"]')
+    await inputs.nth(3).fill('1') // board offset = 1m
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
+    await page.getByRole('button', { name: 'Редактировать' }).click()
+
+    const handle = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]').nth(1)
+    await handle.hover()
+    await page.mouse.down()
+    const box = await handle.boundingBox()
+    if (!box) throw new Error('vertex handle not found')
+    const startX = box.x + box.width / 2
+    const startY = box.y + box.height / 2
+    await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
+    await page.mouse.up()
+    await page.getByRole('button', { name: 'Сохранить' }).click()
+
+    await page.getByText('Ручной').first().click()
+    await page.getByRole('button', { name: 'Добавить груз' }).click()
+    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
+    await itemCard.locator('label:has-text("Кол-во") + input').fill('3')
+    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+
+    const bgBox = await background.boundingBox()
+    if (!bgBox) throw new Error('deck background not found')
+
+    // Right against the left/bottom edges (straight, unaffected by the
+    // top-right cut) — inside the 1m board-offset zone. Must be rejected.
+    await background.click({ position: { x: 3, y: bgBox.height - 3 }, force: true })
+    await expect(page.getByText(/Размещено 0 из 3/)).toBeVisible()
+
+    // Well past the offset on both axes — must succeed.
+    await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.7 }, force: true })
+    await expect(page.getByText(/Размещено 1 из 3/)).toBeVisible()
+  })
 })
