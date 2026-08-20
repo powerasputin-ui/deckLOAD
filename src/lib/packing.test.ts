@@ -876,11 +876,12 @@ describe('rotatePlacement', () => {
 })
 
 describe('resolveSnappedDragPosition', () => {
-  it('snaps to the grid in open space', () => {
+  it('tracks the raw cursor exactly in open space — no grid snapping', () => {
     const result = resolveSnappedDragPosition(
       6.62, 4.42, 1.5, 1, 0.2, 6.36, [], 20, 8, 0.2, 0.1, 1
     )
-    expect(result).toEqual({ x: 7, y: 4 })
+    expect(result.x).toBeCloseTo(6.62, 9)
+    expect(result.y).toBeCloseTo(4.42, 9)
   })
 
   it('locks flush against a neighbour within the magnetic threshold', () => {

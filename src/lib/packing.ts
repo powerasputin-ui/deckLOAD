@@ -1803,23 +1803,17 @@ export function resolveSnappedDragPosition(
     return null
   }
 
-  const snap = (v: number) => (gridStep > 0 ? Math.round(v / gridStep) * gridStep : v)
-  const snappedX = snap(targetX)
-  const snappedY = snap(targetY)
-
   const minX = edgePadding
   const minY = edgePadding
   const maxX = deckWidth - edgePadding - width
   const maxY = deckLength - edgePadding - length
 
-  // Only the fully-open-space candidate snaps to the grid — that's what gives
-  // the tetris-like grid lock when nothing is nearby. Edge/neighbour "flush"
-  // candidates below use the raw (unsnapped) cursor position: gridStep is
-  // typically much coarser than gap (e.g. a 1m grid vs a 0.1m gap), so
-  // rounding to it here would either miss a legitimate gap-adjacent spot
-  // entirely or land the free axis several grid-steps away from the cursor.
-  const candidates: { x: number; y: number }[] = [
-    { x: snappedX, y: snappedY },
+  // Lock candidates: flush against the deck margin or a neighbour. These
+  // compete only against each other for "closest to the cursor, within
+  // maxMagnetDistance" — the raw cursor position itself is deliberately
+  // NOT one of these candidates (see below), since it would trivially win
+  // every time (distance 0) and the neighbour/edge magnet would never fire.
+  const lockCandidates: { x: number; y: number }[] = [
     { x: minX, y: targetY },
     { x: maxX, y: targetY },
     { x: targetX, y: minY },
@@ -1831,23 +1825,23 @@ export function resolveSnappedDragPosition(
     // vertically adjacent (span overlap) — otherwise you'd get a nonsensical
     // snap to a neighbour clear across the deck. Uses the raw target so a
     // small item dragged near a large neighbour is correctly detected as
-    // adjacent even when the grid-rounded position would fall outside the
-    // neighbour's span.
+    // adjacent even when a grid-rounded position would have fallen outside
+    // the neighbour's span.
     const vOverlap = targetY < o.y + o.length && targetY + length > o.y
     if (vOverlap) {
-      candidates.push({ x: o.x - gap - width, y: targetY })
-      candidates.push({ x: o.x + o.width + gap, y: targetY })
+      lockCandidates.push({ x: o.x - gap - width, y: targetY })
+      lockCandidates.push({ x: o.x + o.width + gap, y: targetY })
     }
     const hOverlap = targetX < o.x + o.width && targetX + width > o.x
     if (hOverlap) {
-      candidates.push({ x: targetX, y: o.y - gap - length })
-      candidates.push({ x: targetX, y: o.y + o.length + gap })
+      lockCandidates.push({ x: targetX, y: o.y - gap - length })
+      lockCandidates.push({ x: targetX, y: o.y + o.length + gap })
     }
   }
 
   let best: { x: number; y: number } | null = null
   let bestDist = Infinity
-  for (const c of candidates) {
+  for (const c of lockCandidates) {
     const res = tryPos(c.x, c.y)
     if (!res) continue
     const dist = Math.hypot(res.x - targetX, res.y - targetY)
@@ -1858,12 +1852,19 @@ export function resolveSnappedDragPosition(
   }
   if (best) return best
 
-  // Fallback: vector-slide (full delta -> X-only -> Y-only) then binary search
-  // along the movement vector, same behaviour as before snapping existed.
+  // Nothing to lock onto nearby — track the cursor exactly. Dragging over
+  // open deck space should feel 100% free, not teleport between grid cells.
+  const free = tryPos(targetX, targetY)
+  if (free) return free
+
+  // Fallback: X-only / Y-only, then binary search along the movement vector
+  // toward the raw cursor target (not a grid-rounded point), same behaviour
+  // as before snapping existed — a blocked drag eases up to exactly where
+  // the cursor is once the path clears rather than resting on a grid line
+  // short of it. (The exact target itself was already tried above as `free`.)
   const fallbackCandidates: { x: number; y: number }[] = [
-    { x: snappedX, y: snappedY },
-    { x: snappedX, y: currentY },
-    { x: currentX, y: snappedY },
+    { x: targetX, y: currentY },
+    { x: currentX, y: targetY },
   ]
   for (const c of fallbackCandidates) {
     const res = tryPos(c.x, c.y)
@@ -1875,8 +1876,8 @@ export function resolveSnappedDragPosition(
   let bestSlide: { x: number; y: number } | null = null
   for (let i = 0; i < 10; i++) {
     const mid = (lo + hi) / 2
-    const x = currentX + (snappedX - currentX) * mid
-    const y = currentY + (snappedY - currentY) * mid
+    const x = currentX + (targetX - currentX) * mid
+    const y = currentY + (targetY - currentY) * mid
     const res = tryPos(x, y)
     if (res) {
       bestSlide = res
