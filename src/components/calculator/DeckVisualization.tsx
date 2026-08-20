@@ -1054,6 +1054,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
       const minSize = 0.3
+      // Deliberately only clamped to the bounding box here, not hard-
+      // gated against the deck outline like cargo dragging is — a load
+      // zone can be sized larger than the polygon's extent at some point
+      // (e.g. a wide zone on a deck with a corner cut), and requiring full
+      // containment on every move made dragging/resizing freeze solid the
+      // moment no position satisfied it. The zone's visible extent already
+      // clips to the real contour on render (see the load-zone <g>
+      // wrapped in deck-outline-clip below); a zone rect is a soft-warning
+      // area anyway, unlike a hard-blocked cargo footprint.
       if (zoneDrag.kind === 'move') {
         const startDeck = screenToDeck(zoneDrag.startMouse.x, zoneDrag.startMouse.y)
         if (!startDeck) return
@@ -1061,14 +1070,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const deltaY = pos.y - startDeck.y
         const nx = Math.max(0, Math.min(deckWidth - zoneDrag.startRect.width, zoneDrag.startRect.x + deltaX))
         const ny = Math.max(0, Math.min(deckLength - zoneDrag.startRect.length, zoneDrag.startRect.y + deltaY))
-        const candidate = { x: nx, y: ny, width: zoneDrag.startRect.width, length: zoneDrag.startRect.length }
-        // On a non-rectangular deck, a zone can't be dragged past the real
-        // contour — same hard boundary cargo dragging already respects
-        // (uses the raw outline, not the board-offset-eroded one: a load
-        // zone is about deck structural capacity, not cargo clearance).
-        if (!deckOutline || deckOutline.length < 3 || rectInsidePolygon(candidate, deckOutline)) {
-          onUpdateLoadZone(zoneDrag.id, { x: nx, y: ny })
-        }
+        onUpdateLoadZone(zoneDrag.id, { x: nx, y: ny })
       } else if (zoneDrag.corner) {
         const r = zoneDrag.startRect
         const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
@@ -1090,9 +1092,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               : zoneDrag.corner === 'sw'
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
-        if (!deckOutline || deckOutline.length < 3 || rectInsidePolygon(patch, deckOutline)) {
-          onUpdateLoadZone(zoneDrag.id, patch)
-        }
+        onUpdateLoadZone(zoneDrag.id, patch)
       }
     }
     if (clearanceDrag) {

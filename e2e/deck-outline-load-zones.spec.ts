@@ -49,7 +49,13 @@ test.describe('Load zones on a non-rectangular deck', () => {
     await expect(zoneRectInClippedGroup.first()).toBeAttached()
   })
 
-  test('dragging a zone toward the cut corner stops at the deck boundary', async ({ page }) => {
+  test('a zone can still be freely dragged and resized on a non-rectangular deck (regression: used to freeze solid)', async ({ page }) => {
+    // A load zone is only clipped visually to the outline on render — it is
+    // NOT hard-gated against the polygon on drag/resize, because a zone can
+    // be sized larger than the polygon's extent at some point (e.g. a wide
+    // zone alongside a corner cut), and requiring every drag step to land
+    // fully inside the polygon made dragging/resizing freeze solid the
+    // moment no position satisfied it.
     await page.goto('/')
     await page.getByRole('button', { name: 'Очистить' }).click()
     await cutTopRightCorner(page)
@@ -58,9 +64,11 @@ test.describe('Load zones on a non-rectangular deck', () => {
     await page.getByRole('button', { name: 'Добавить зону' }).click()
 
     const xInput = page.locator('label:has-text("X (") + input, label:has-text("X (") ~ input').first()
+    const widthInput = page.locator('label:has-text("Шир. (") + input, label:has-text("Шир. (") ~ input').first()
     const startX = Number(await xInput.inputValue())
+    const startWidth = Number(await widthInput.inputValue())
 
-    // Drag the zone rect a large distance toward the cut corner (up/right).
+    // Move it — should actually move, not freeze.
     const zoneRect = page.locator('svg rect[stroke-dasharray="6 3"]').first()
     const box = await zoneRect.boundingBox()
     if (!box) throw new Error('zone rect not found')
@@ -68,16 +76,22 @@ test.describe('Load zones on a non-rectangular deck', () => {
     const fromY = box.y + box.height / 2
     await page.mouse.move(fromX, fromY)
     await page.mouse.down()
-    await page.mouse.move(fromX + 400, fromY - 400, { steps: 15 })
+    await page.mouse.move(fromX - 60, fromY - 40, { steps: 10 })
     await page.mouse.up()
+    const afterMoveX = Number(await xInput.inputValue())
+    expect(afterMoveX).not.toBeCloseTo(startX, 1)
 
-    const endX = Number(await xInput.inputValue())
-    // If the drag were unconstrained (old bounding-box-only clamp), a 400px
-    // rightward drag on a ~20m-wide deck would move X by several meters.
-    // With the polygon gate, the move is rejected once it would cross the
-    // real contour, so the change must be far smaller than the raw drag
-    // implies (rather than asserting an exact stopping point, which depends
-    // on the precise cut geometry from the drag above).
-    expect(endX - startX).toBeLessThan(3)
+    // Resize it via a corner handle — should also actually resize.
+    const corner = page.locator('svg circle[fill="#2563eb"]').first()
+    const cBox = await corner.boundingBox()
+    if (!cBox) throw new Error('resize handle not found')
+    const cx = cBox.x + cBox.width / 2
+    const cy = cBox.y + cBox.height / 2
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(cx - 30, cy - 20, { steps: 10 })
+    await page.mouse.up()
+    const afterResizeWidth = Number(await widthInput.inputValue())
+    expect(afterResizeWidth).not.toBeCloseTo(startWidth, 1)
   })
 })
