@@ -393,7 +393,7 @@ export default function Home() {
       length: p.length,
       totalWeightKg: (p.weight ?? 0) * p.stackedCount,
     }))
-    const overloadedZones = checkZoneLoads(placements, zones)
+    const overloadedZones = checkZoneLoads(placements, zones, deck.outline)
     if (overloadedZones.length > prevOverloadedZoneCountRef.current) {
       toast.warning(
         overloadedZones.length === 1
@@ -402,7 +402,7 @@ export default function Home() {
       )
     }
     prevOverloadedZoneCountRef.current = overloadedZones.length
-  }, [result.placed, deck.loadZones])
+  }, [result.placed, deck.loadZones, deck.outline])
 
   const categoryByItemId = useMemo(
     () => new Map(items.map((it) => [it.id, it.category])),
@@ -1504,7 +1504,7 @@ export default function Home() {
                 internal scroll), Грузы keeps its own fixed-height scroll
                 list as before. Not height-matched to each other. */}
             <div className="xl:col-span-8 self-start">
-              <StatsPanel result={result} unit={deck.unit} loadZones={deck.loadZones} />
+              <StatsPanel result={result} unit={deck.unit} loadZones={deck.loadZones} deckOutline={deck.outline} />
             </div>
             <div className="xl:col-span-4 self-start">
               <ItemList

@@ -11,6 +11,7 @@ import {
   rotatePlacement,
   resolveSnappedDragPosition,
   checkZoneLoads,
+  zoneAreaWithinOutline,
   zoneIdsOverlapping,
   checkLashingBalance,
   violatesSeparation,
@@ -1029,6 +1030,82 @@ describe('checkZoneLoads', () => {
     const zones = [zone({ id: 'z1', x: 0, y: 0, width: 0, length: 5, maxLoadPerArea: 1 })]
     const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 100000 })]
     expect(checkZoneLoads(p, zones)).toEqual([])
+  })
+
+  it('uses the zone rectangle area unchanged when no deck outline is set', () => {
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 2, length: 2, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 4000 })]
+    // 4000kg / 4m^2 = 1 t/m^2, exactly at the limit -> not flagged.
+    expect(checkZoneLoads(p, zones, undefined)).toEqual([])
+  })
+
+  it('clips the zone area to the deck outline — a zone overhanging a cut corner has less real area than its bare rectangle', () => {
+    // A 2x2 zone (4m^2 bare), but the deck outline only covers the left
+    // half (x: 0..1) — a triangular-ish cut removes the rest. Real area
+    // within the outline is exactly 2m^2 (the left half rectangle).
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 2 },
+      { x: 0, y: 2 },
+    ]
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 2, length: 2, maxLoadPerArea: 1 })]
+    // 1500kg over the bare 4m^2 rectangle = 0.375 t/m^2 (would pass against
+    // the bare rectangle), but over the real 2m^2 area it's 0.75 t/m^2 —
+    // still under the 1 t/m^2 limit, so not yet flagged.
+    const under = checkZoneLoads([placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1500 })], zones, outline)
+    expect(under).toEqual([])
+
+    // 2500kg: bare-rectangle density would be 0.625 t/m^2 (still under the
+    // limit) but the real clipped area gives 1.25 t/m^2 — this MUST be
+    // flagged, and would be silently missed without outline-aware area.
+    const over = checkZoneLoads([placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 2500 })], zones, outline)
+    expect(over).toHaveLength(1)
+    expect(over[0].areaM2).toBeCloseTo(2, 9)
+    expect(over[0].densityTPerM2).toBeCloseTo(1.25, 9)
+  })
+
+  it('treats a zone entirely outside the deck outline as zero real area (no divide-by-zero, just skipped)', () => {
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]
+    const zones = [zone({ id: 'z1', x: 5, y: 5, width: 2, length: 2, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 5, y: 5, width: 1, length: 1, totalWeightKg: 100000 })]
+    expect(checkZoneLoads(p, zones, outline)).toEqual([])
+  })
+})
+
+describe('zoneAreaWithinOutline', () => {
+  it('returns the bare rectangle area when no outline is given', () => {
+    expect(zoneAreaWithinOutline({ x: 0, y: 0, width: 3, length: 4 }, undefined)).toBe(12)
+  })
+
+  it('returns the full rectangle area when the zone is entirely inside the outline', () => {
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 },
+    ]
+    expect(zoneAreaWithinOutline({ x: 1, y: 1, width: 2, length: 2 }, outline)).toBeCloseTo(4, 9)
+  })
+
+  it('clips correctly against a concave (L-shaped) outline', () => {
+    // L-shape: full 4x4 square minus the top-right 2x2 quadrant.
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 4, y: 2 },
+      { x: 2, y: 2 },
+      { x: 2, y: 4 },
+      { x: 0, y: 4 },
+    ]
+    // Zone spans the full bounding box (0..4, 0..4) = 16m^2 bare, but only
+    // the L's 12m^2 is real deck.
+    expect(zoneAreaWithinOutline({ x: 0, y: 0, width: 4, length: 4 }, outline)).toBeCloseTo(12, 9)
   })
 })
 

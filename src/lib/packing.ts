@@ -63,23 +63,87 @@ function overlapsZone(f: { x: number; y: number; width: number; length: number }
   return f.x < z.x + z.width && f.x + f.width > z.x && f.y < z.y + z.length && f.y + f.length > z.y
 }
 
+// Sutherland-Hodgman: clips `poly` (subject, may be concave — the deck
+// outline) against the 4 half-planes of an axis-aligned rectangle (clip
+// window, always convex — a load zone). Concave-subject/convex-clip is
+// exactly what this algorithm supports, so a cut-corner deck outline works
+// with no extra handling.
+function clipPolygonToRect(
+  poly: { x: number; y: number }[],
+  rect: { x: number; y: number; width: number; length: number }
+): { x: number; y: number }[] {
+  const x0 = rect.x
+  const x1 = rect.x + rect.width
+  const y0 = rect.y
+  const y1 = rect.y + rect.length
+  const edges: {
+    inside: (p: { x: number; y: number }) => boolean
+    intersect: (a: { x: number; y: number }, b: { x: number; y: number }) => { x: number; y: number }
+  }[] = [
+    { inside: (p) => p.x >= x0, intersect: (a, b) => ({ x: x0, y: a.y + ((b.y - a.y) * (x0 - a.x)) / (b.x - a.x) }) },
+    { inside: (p) => p.x <= x1, intersect: (a, b) => ({ x: x1, y: a.y + ((b.y - a.y) * (x1 - a.x)) / (b.x - a.x) }) },
+    { inside: (p) => p.y >= y0, intersect: (a, b) => ({ y: y0, x: a.x + ((b.x - a.x) * (y0 - a.y)) / (b.y - a.y) }) },
+    { inside: (p) => p.y <= y1, intersect: (a, b) => ({ y: y1, x: a.x + ((b.x - a.x) * (y1 - a.y)) / (b.y - a.y) }) },
+  ]
+  let output = poly
+  for (const edge of edges) {
+    const input = output
+    output = []
+    if (input.length === 0) break
+    for (let i = 0; i < input.length; i++) {
+      const curr = input[i]
+      const prev = input[(i - 1 + input.length) % input.length]
+      const currIn = edge.inside(curr)
+      const prevIn = edge.inside(prev)
+      if (currIn) {
+        if (!prevIn) output.push(edge.intersect(prev, curr))
+        output.push(curr)
+      } else if (prevIn) {
+        output.push(edge.intersect(prev, curr))
+      }
+    }
+  }
+  return output
+}
+
+// A zone's real usable area for load-density purposes: the part of its
+// rectangle that actually lies within the deck's real outline, not the
+// bare width*length. Without this, a zone straddling a cut corner would
+// have its density diluted by "area" that isn't real deck at all —
+// understating the true load on the real portion, which is the wrong
+// direction for a structural safety check. No outline (rectangular deck,
+// the default) -> unchanged bare rectangle area.
+export function zoneAreaWithinOutline(
+  zone: { x: number; y: number; width: number; length: number },
+  outline: { x: number; y: number }[] | undefined
+): number {
+  const rectArea = zone.width * zone.length
+  if (!outline || outline.length < 3) return rectArea
+  const clipped = clipPolygonToRect(outline, zone)
+  if (clipped.length < 3) return 0
+  return Math.min(rectArea, polygonArea(clipped))
+}
+
 // Aggregates the full weight of every placement that overlaps a zone at all
 // (no proration by overlap area — a conservative, physically-safe
 // approximation: a box straddling a zone edge counts fully toward it) and
-// divides by the ZONE's own area. This is what a load zone's t/m² limit
+// divides by the ZONE's REAL area (clipped to the deck outline when one is
+// set — see zoneAreaWithinOutline). This is what a load zone's t/m² limit
 // actually means (structural capacity of that patch of deck) — not any
-// single item's own footprint density. A placement overlapping two zones
+// single item's own footprint density, and not the zone's bare rectangle
+// if part of it overhangs a cut corner. A placement overlapping two zones
 // contributes its full weight to both independently. Returns only zones
 // that exceed their limit.
 export function checkZoneLoads(
   placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
-  zones: LoadZone[] | undefined
+  zones: LoadZone[] | undefined,
+  deckOutline?: { x: number; y: number }[]
 ): ZoneLoadCheck[] {
   if (!zones || zones.length === 0) return []
   const results: ZoneLoadCheck[] = []
   const eps = 1e-9
   for (const z of zones) {
-    const areaM2 = z.width * z.length
+    const areaM2 = zoneAreaWithinOutline(z, deckOutline)
     if (areaM2 <= 0) continue
     let totalWeightKg = 0
     for (const p of placements) {

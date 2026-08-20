@@ -17,9 +17,10 @@ interface StatsPanelProps {
   result: PackingResult
   unit: Unit
   loadZones?: LoadZone[]
+  deckOutline?: { x: number; y: number }[]
 }
 
-export function StatsPanel({ result, unit, loadZones }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -46,7 +47,8 @@ export function StatsPanel({ result, unit, loadZones }: StatsPanelProps) {
             length: p.length,
             totalWeightKg: (p.weight ?? 0) * p.stackedCount,
           })),
-          loadZones
+          loadZones,
+          deckOutline
         ).length
       : 0
 
