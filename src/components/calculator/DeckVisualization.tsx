@@ -1525,40 +1525,47 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             />
           ))}
 
-        {/* Free space */}
-        {showFreeSpace &&
-          freeRects.map((fr, i) => {
-            const fw = fr.width * scale
-            const fh = fr.height * scale
-            if (fw < 2 || fh < 2) return null
-            return (
-              <g key={`free-${i}`}>
-                <rect
-                  x={toX(fr.x)}
-                  y={toY(fr.y)}
-                  width={fw}
-                  height={fh}
-                  fill="url(#free-hatch)"
-                  stroke="rgba(16,185,129,0.45)"
-                  strokeWidth={0.75}
-                  strokeDasharray="4 3"
-                />
-                {fw > 40 && fh > 24 && (
-                  <text
-                    x={toX(fr.x) + fw / 2}
-                    y={toY(fr.y) + fh / 2}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    className="select-none"
-                    fontSize={11}
-                    fill="rgba(5,150,105,0.9)"
-                  >
-                    {fmt(fr.width)}×{fmt(fr.height)}
-                  </text>
-                )}
-              </g>
-            )
-          })}
+        {/* Free space — clipped to the real outline (belt-and-suspenders on
+            top of computeFreeRects already excluding the cut area: a
+            hand-drawn polygon can have edges close enough together that the
+            scanline exclusion leaves a sliver, so the visible hatching is
+            also hard-clipped to never poke outside the deck's true shape). */}
+        {showFreeSpace && (
+          <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
+            {freeRects.map((fr, i) => {
+              const fw = fr.width * scale
+              const fh = fr.height * scale
+              if (fw < 2 || fh < 2) return null
+              return (
+                <g key={`free-${i}`}>
+                  <rect
+                    x={toX(fr.x)}
+                    y={toY(fr.y)}
+                    width={fw}
+                    height={fh}
+                    fill="url(#free-hatch)"
+                    stroke="rgba(16,185,129,0.45)"
+                    strokeWidth={0.75}
+                    strokeDasharray="4 3"
+                  />
+                  {fw > 40 && fh > 24 && (
+                    <text
+                      x={toX(fr.x) + fw / 2}
+                      y={toY(fr.y) + fh / 2}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="select-none"
+                      fontSize={11}
+                      fill="rgba(5,150,105,0.9)"
+                    >
+                      {fmt(fr.width)}×{fmt(fr.height)}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+          </g>
+        )}
 
         {/* Load zones (deck load capacity per m²) */}
         {loadZones?.map((z) => {
@@ -2174,7 +2181,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         >
           {fmt(deckLength)} {UNIT_LABEL[unit]}
         </text>
-        <circle cx={offX} cy={offY} r={3} fill="#0f172a" />
       </svg>
       <PhotoCropDialog
         open={!!cropBitmap}
