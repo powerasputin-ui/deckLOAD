@@ -249,6 +249,65 @@ describe('packDeck', () => {
     expect(res.placedCount).toBe(2) // Still places remaining units
   })
 
+  // Regression: a pin the packer itself placed flush against a slanted
+  // (non-rectangular) cut edge — using the packer's own, deliberately more
+  // permissive `packingOutline` (boardOffset - gap/2) — used to get
+  // rejected as "outside deck" on the very next repack, because pin
+  // re-validation compared it against the stricter `usableOutline` (full
+  // boardOffset) instead. Real-world data from a user report: a slanted
+  // cut-corner outline, boardOffset 0.2, gap 0.1, three 1.5x2m boxes
+  // pinned near the cut edge, all genuinely on deck.
+  it('does not reject a pin flush against a slanted deck-outline edge (real-world regression)', () => {
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 14.106982655502394, y: 0.12440191387559782 },
+      { x: 17.623729066985646, y: 2.2535885167464116 },
+      { x: 20, y: 5.076555023923445 },
+      { x: 17.575882177033495, y: 6.392344497607656 },
+      { x: 14.537604665071772, y: 6.84688995215311 },
+      { x: 0, y: 8 },
+    ]
+    const pins: PinnedPlacement[] = [
+      { id: 'p1', itemId: 'box', name: 'Ящик L', x: 0.2, y: 0.2, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
+      { id: 'p2', itemId: 'box', name: 'Ящик L', x: 0.2, y: 2.3, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
+      { id: 'p3', itemId: 'box', name: 'Ящик L', x: 0.2, y: 4.4, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
+    ]
+    const res = packDeck(20, 8, [item({ id: 'box', width: 2, length: 1.5, quantity: 3 })], {
+      gap: 0.1,
+      boardOffset: 0.2,
+      pinned: pins,
+      outline,
+    })
+    expect(res.unplaced).toHaveLength(0)
+    for (const pin of pins) {
+      expect(res.placed.some((p) => p.x === pin.x && p.y === pin.y)).toBe(true)
+    }
+  })
+
+  it('still rejects a pin genuinely outside the deck outline, even the more permissive packingOutline (fix does not make validation toothless)', () => {
+    // Same slanted outline as above, but this pin sits well into the
+    // excluded cut-off corner -- nowhere close to a boundary hair.
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 14.106982655502394, y: 0.12440191387559782 },
+      { x: 17.623729066985646, y: 2.2535885167464116 },
+      { x: 20, y: 5.076555023923445 },
+      { x: 17.575882177033495, y: 6.392344497607656 },
+      { x: 14.537604665071772, y: 6.84688995215311 },
+      { x: 0, y: 8 },
+    ]
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'box', name: 'Ящик L', x: 18, y: 0.3, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4',
+    }
+    const res = packDeck(20, 8, [item({ id: 'box', width: 2, length: 1.5, quantity: 1 })], {
+      gap: 0.1,
+      boardOffset: 0.2,
+      pinned: [pin],
+      outline,
+    })
+    expect(res.unplaced.some((u) => u.reason.includes('вне палубы'))).toBe(true)
+  })
+
   it('does not let NaN quantities poison aggregates', () => {
     const res = packDeck(10, 10, [
       item({ id: 'a', width: 1, length: 1, quantity: NaN }),

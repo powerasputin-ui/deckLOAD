@@ -762,13 +762,24 @@ export function packDeck(
   // Non-rectangular deck: board offset is an inset along the real contour
   // (erodePolygon), not the bounding box — otherwise a cut/diagonal edge
   // would get zero clearance while the deck's straight sides got the normal
-  // margin. Two erosions, mirroring the rectangle path above exactly:
-  // `usableOutline` (full boardOffset) validates pins/manual placements,
-  // which sit at an exact user-chosen position; `packingOutline` (boardOffset
-  // - gap/2) seeds the auto-packer's free cells, so an auto-placed item's
-  // cell origin + gap/2 also lands exactly on boardOffset, not
-  // boardOffset + gap/2.
-  const usableOutline = hasOutline ? erodePolygon(outline!, boardOffset) : undefined
+  // margin. `packingOutline` (boardOffset - gap/2) seeds the auto-packer's
+  // free cells, so an auto-placed item's cell origin + gap/2 also lands
+  // exactly on boardOffset, not boardOffset + gap/2 — and pin re-validation
+  // below deliberately uses this SAME, more permissive boundary, not a
+  // stricter full-boardOffset one: a pin sitting flush against a slanted cut
+  // edge, placed there by the packer's own free-cell search (which already
+  // trusts packingOutline), must not get judged against a stricter boundary
+  // on the next repack. On a rectangular deck, clampToDeck's simple
+  // axis-aligned clamp happens to enforce the strict boardOffset at the
+  // deck's own edges for free; a non-rectangular deck has no equivalent
+  // step, so validating pins against a stricter boundary here used to
+  // falsely reject the packer's own placements near a sloped edge
+  // (confirmed: up to gap/2, several cm — a real, systematic gap, not
+  // float noise). Fresh manual placements (DeckVisualization.tsx's
+  // click-time check) still validate against the full, stricter boardOffset
+  // via their own separately-computed `usableOutline` — only re-validating
+  // an already-accepted pin here is relaxed to match the packer's own
+  // boundary.
   const packingOutline = hasOutline ? erodePolygon(outline!, Math.max(0, boardOffset - halfGap)) : undefined
   const freeRects: FreeRect[] = hasOutline
     ? [{ x: 0, y: 0, width: safeDeckWidth, height: safeDeckLength }]
@@ -800,7 +811,7 @@ export function packDeck(
   for (const pin of pinned) {
     const layers = toLayers(pin.layers, 1)
     const inside = hasOutline
-      ? rectInsidePolygon(pin, usableOutline!)
+      ? rectInsidePolygon(pin, packingOutline!)
       : pin.x >= boardOffset - 1e-6 &&
         pin.y >= boardOffset - 1e-6 &&
         pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
