@@ -333,6 +333,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startPlace: { x: number; y: number }
     moved: boolean
   } | null>(null)
+  // Purely visual, updated on every pointermove (unthrottled) so the
+  // dragged box tracks the cursor smoothly — the store commit below stays
+  // throttled (it triggers a full auto-packer recompute), but nothing
+  // stopped the RENDER from reflecting the already-computed, already
+  // collision-resolved position on every move too. Without this, the
+  // rendered item only moved once per throttled commit (~every 50ms),
+  // which reads as stutter/lag against a real mouse's much higher event
+  // rate — the numbers were always right, they just arrived in visible
+  // steps instead of continuously.
+  const [dragPreviewPos, setDragPreviewPos] = useState<{ x: number; y: number } | null>(null)
   // Single-selection for manual mode uses selectedManualIds[0] from store (single source of truth)
   const selectedManual = selectedManualIds?.[0] ?? null
 
@@ -1046,6 +1056,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline }
           const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
           if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+            setDragPreviewPos({ x: resolved.x, y: resolved.y })
             scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
           }
         }
@@ -1158,6 +1169,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline }
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
         if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+          setDragPreviewPos({ x: resolved.x, y: resolved.y })
           scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
         }
       }
@@ -1175,6 +1187,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       setMergeTargetId(null)
       setDragState(null)
       setPinDrag(null)
+      setDragPreviewPos(null)
       setZoneDrag(null)
       setClearanceDrag(null)
       setPanDrag(null)
@@ -1200,6 +1213,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     setDragState(null)
     setPinDrag(null)
+    setDragPreviewPos(null)
     setZoneDrag(null)
     setClearanceDrag(null)
     setPanDrag(null)
@@ -1219,6 +1233,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     setDragState(null)
     setPinDrag(null)
+    setDragPreviewPos(null)
     setZoneDrag(null)
     setClearanceDrag(null)
     setPanDrag(null)
@@ -1882,12 +1897,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const isBeingDragged =
             (mode === 'manual' && !!dragState && p.manualId === dragState.id) ||
             (isInteractiveAuto && !!pinDrag && matchingPin?.id === pinDrag.id)
+          // While this exact item is mid-drag, render at the live preview
+          // position (updated every pointermove) instead of p.x/p.y (which
+          // only reflects the throttled store commit) — see dragPreviewPos.
+          const renderX = isBeingDragged && dragPreviewPos ? dragPreviewPos.x : p.x
+          const renderY = isBeingDragged && dragPreviewPos ? dragPreviewPos.y : p.y
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
               item={p}
-              x={toX(p.x)}
-              y={toY(p.y)}
+              x={toX(renderX)}
+              y={toY(renderY)}
               w={pw}
               h={ph}
               scale={scale}
