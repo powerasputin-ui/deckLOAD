@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset } from '@/lib/packing'
 import type { DeckConfig, Mode, Unit } from './calculator'
 
 export interface Project {
@@ -120,6 +120,29 @@ function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
       }
     })
   return zones.length > 0 ? zones : undefined
+}
+
+const VALID_VESSEL_MOTION_PRESETS = new Set<VesselMotionPreset>(['open-sea', 'coastal', 'sheltered', 'custom'])
+
+// Coerce persisted vessel motion (acceleration coefficients + friction used
+// by the lashing check) — was never added to this allowlist, so it silently
+// vanished on the very next project reload even though the feature itself
+// worked fine in the same session (same bug class as loadZones/outline
+// above before those were fixed).
+function normalizeVesselMotion(value: unknown): DeckConfig['vesselMotion'] {
+  if (!value || typeof value !== 'object') return undefined
+  const vm = value as Record<string, unknown>
+  const preset =
+    typeof vm.preset === 'string' && VALID_VESSEL_MOTION_PRESETS.has(vm.preset as VesselMotionPreset)
+      ? (vm.preset as VesselMotionPreset)
+      : 'coastal'
+  return {
+    ax: toFiniteNonNegative(vm.ax, 0.2),
+    ay: toFiniteNonNegative(vm.ay, 0.35),
+    az: toFiniteNonNegative(vm.az, 0.2),
+    friction: toFiniteNonNegative(vm.friction, 0.3),
+    preset,
+  }
 }
 
 function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
@@ -246,6 +269,7 @@ function normalizeProject(p: Partial<Project>): Project {
       backgroundImage: toOptionalString(p.deck?.backgroundImage),
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
       outline: normalizeOutline(p.deck?.outline),
+      vesselMotion: normalizeVesselMotion(p.deck?.vesselMotion),
     },
     items: Array.isArray(p.items)
       ? p.items.map((it) => ({

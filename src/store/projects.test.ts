@@ -164,8 +164,9 @@ describe('projects store', () => {
 
   // Regression: loadZones/lashingPoints/category/separationRules were being
   // silently dropped by normalizeProject on every reload (and then the next
-  // autosave would permanently erase them from storage too).
-  it('round-trips loadZones, lashingPoints, item category, and separationRules through a reload', () => {
+  // autosave would permanently erase them from storage too). vesselMotion
+  // had the exact same bug — never added to this allowlist at all.
+  it('round-trips loadZones, lashingPoints, item category, separationRules, and vesselMotion through a reload', () => {
     useProjects.getState().hydrate()
     const project = useProjects.getState().projects[0]
     useProjects.getState().saveSnapshot({
@@ -179,6 +180,7 @@ describe('projects store', () => {
         clearance: 0,
         loadZones: [{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }],
         lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
+        vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
       },
       items: [
         { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, category: 'hazard' },
@@ -204,6 +206,29 @@ describe('projects store', () => {
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
     expect(reloaded.items[0].category).toBe('hazard')
     expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
+    expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
+  })
+
+  it('falls back to a valid default when vesselMotion is absent or malformed', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    expect(useProjects.getState().projects[0].deck.vesselMotion).toBeUndefined()
   })
 
   it('migrates legacy flat pinnedPlacements to pinnedPlacementsByTrip on hydrate', () => {
