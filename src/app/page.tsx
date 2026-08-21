@@ -1071,6 +1071,7 @@ export default function Home() {
         boardOffset: deck.boardOffset,
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
+        outline: deck.outline,
       },
       3
     )

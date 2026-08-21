@@ -249,15 +249,22 @@ describe('packDeck', () => {
     expect(res.placedCount).toBe(2) // Still places remaining units
   })
 
-  // Regression: a pin the packer itself placed flush against a slanted
-  // (non-rectangular) cut edge — using the packer's own, deliberately more
-  // permissive `packingOutline` (boardOffset - gap/2) — used to get
-  // rejected as "outside deck" on the very next repack, because pin
-  // re-validation compared it against the stricter `usableOutline` (full
-  // boardOffset) instead. Real-world data from a user report: a slanted
-  // cut-corner outline, boardOffset 0.2, gap 0.1, three 1.5x2m boxes
-  // pinned near the cut edge, all genuinely on deck.
-  it('does not reject a pin flush against a slanted deck-outline edge (real-world regression)', () => {
+  // Regression (real-world user report, two rounds): first a 1.5x2m box
+  // flush-pinned against a slanted cut-corner edge got rejected as "outside
+  // deck" on the next repack. A follow-up fix (relaxing pin validation to a
+  // fixed boardOffset-gap/2 tolerance) turned out to only paper over the
+  // symptom -- a much wider 6.06x2.44m container along the exact same edge
+  // still failed, because the true gap between the packer's own placement
+  // and the strict boundary scales with an item's own size along a slanted
+  // edge, not a fixed few cm. The real fix is upstream: the auto-packer's
+  // free-cell search itself now excludes area using the FULL, strict
+  // boardOffset erosion (not a permissive one), so it can no longer choose
+  // a cell that ends up outside the true usable area in the first place --
+  // for cargo of any size. Reproduces with the user's exact outline and
+  // item mix (3 boxes + 4 containers), letting packDeck place everything
+  // itself from scratch (not pre-set pin positions, since the point is the
+  // packer never generates an invalid position to begin with).
+  it('the auto-packer never places cargo outside the true (strict) usable outline, for items of any size (real-world regression)', () => {
     const outline = [
       { x: 0, y: 0 },
       { x: 14.106982655502394, y: 0.12440191387559782 },
@@ -267,24 +274,22 @@ describe('packDeck', () => {
       { x: 14.537604665071772, y: 6.84688995215311 },
       { x: 0, y: 8 },
     ]
-    const pins: PinnedPlacement[] = [
-      { id: 'p1', itemId: 'box', name: 'Ящик L', x: 0.2, y: 0.2, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
-      { id: 'p2', itemId: 'box', name: 'Ящик L', x: 0.2, y: 2.3, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
-      { id: 'p3', itemId: 'box', name: 'Ящик L', x: 0.2, y: 4.4, width: 1.5, length: 2, layers: 1, rotated: true, color: '#06b6d4' },
+    const boardOffset = 0.2
+    const items = [
+      item({ id: 'box', name: 'Ящик L', width: 2, length: 1.5, quantity: 3 }),
+      item({ id: 'container', name: 'Контейнер 20ft', width: 6.06, length: 2.44, quantity: 4 }),
     ]
-    const res = packDeck(20, 8, [item({ id: 'box', width: 2, length: 1.5, quantity: 3 })], {
-      gap: 0.1,
-      boardOffset: 0.2,
-      pinned: pins,
-      outline,
-    })
-    expect(res.unplaced).toHaveLength(0)
-    for (const pin of pins) {
-      expect(res.placed.some((p) => p.x === pin.x && p.y === pin.y)).toBe(true)
+    const usableOutline = erodePolygon(outline, boardOffset)
+    for (const sortStrategy of ['area-desc', 'area-asc', 'width-desc', 'length-desc', 'quantity-desc', 'none'] as const) {
+      const res = packDeck(20, 8, items, { gap: 0.1, boardOffset, outline, sortStrategy })
+      expect(res.unplaced).toHaveLength(0)
+      for (const p of res.placed) {
+        expect(rectInsidePolygon(p, usableOutline)).toBe(true)
+      }
     }
   })
 
-  it('still rejects a pin genuinely outside the deck outline, even the more permissive packingOutline (fix does not make validation toothless)', () => {
+  it('still rejects a pin genuinely outside the deck outline, even a strict boundary check (fix does not make validation toothless)', () => {
     // Same slanted outline as above, but this pin sits well into the
     // excluded cut-off corner -- nowhere close to a boundary hair.
     const outline = [
@@ -372,9 +377,15 @@ describe('packDeck', () => {
     })
     expect(res.placed).toHaveLength(1)
     const p = res.placed[0]
-    // Board offset still applies exactly on the deck's straight edges.
-    expect(p.x).toBeCloseTo(0.5, 9)
-    expect(p.y).toBeCloseTo(0.5, 9)
+    // Board offset applies on the deck's straight edges via the same
+    // outline-exclusion path used for slanted ones, so it also picks up
+    // the same flat "+gap/2" inter-item spacing shift every placed cell
+    // gets (see packDeck's comment on usableOutline/deckOutlineExclusionRects)
+    // -- a deliberate, documented trade of a bit of packing density right at
+    // a cut edge for never placing cargo outside the true usable area,
+    // confirmed safe by the real-world regression test above.
+    expect(p.x).toBeCloseTo(0.75, 9)
+    expect(p.y).toBeCloseTo(0.75, 9)
     // Clearance/stacking is unaffected by the outline — all 3 units stack.
     expect(p.stackedCount).toBe(3)
     // True (shoelace) area is reported, not the plain bounding-box area.

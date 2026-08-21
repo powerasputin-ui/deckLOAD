@@ -762,25 +762,34 @@ export function packDeck(
   // Non-rectangular deck: board offset is an inset along the real contour
   // (erodePolygon), not the bounding box — otherwise a cut/diagonal edge
   // would get zero clearance while the deck's straight sides got the normal
-  // margin. `packingOutline` (boardOffset - gap/2) seeds the auto-packer's
-  // free cells, so an auto-placed item's cell origin + gap/2 also lands
-  // exactly on boardOffset, not boardOffset + gap/2 — and pin re-validation
-  // below deliberately uses this SAME, more permissive boundary, not a
-  // stricter full-boardOffset one: a pin sitting flush against a slanted cut
-  // edge, placed there by the packer's own free-cell search (which already
-  // trusts packingOutline), must not get judged against a stricter boundary
-  // on the next repack. On a rectangular deck, clampToDeck's simple
-  // axis-aligned clamp happens to enforce the strict boardOffset at the
-  // deck's own edges for free; a non-rectangular deck has no equivalent
-  // step, so validating pins against a stricter boundary here used to
-  // falsely reject the packer's own placements near a sloped edge
-  // (confirmed: up to gap/2, several cm — a real, systematic gap, not
-  // float noise). Fresh manual placements (DeckVisualization.tsx's
-  // click-time check) still validate against the full, stricter boardOffset
-  // via their own separately-computed `usableOutline` — only re-validating
-  // an already-accepted pin here is relaxed to match the packer's own
-  // boundary.
-  const packingOutline = hasOutline ? erodePolygon(outline!, Math.max(0, boardOffset - halfGap)) : undefined
+  // margin.
+  //
+  // Two earlier versions of this fix both proved insufficient on real user
+  // data: (1) seeding the outline exclusion from a permissive
+  // `boardOffset - gap/2` erosion (so the flat "+gap/2" per-cell shift
+  // below compensates back to exactly `boardOffset`, mirroring the
+  // rectangular-deck seed rect) left a gap that scaled with an item's own
+  // width along a slanted edge — fine for a 1.5m box, not for a 6.06m
+  // container on the very same edge; (2) switching to a strict, full
+  // `boardOffset` erosion for the exclusion rects shrank that gap but
+  // didn't eliminate it, because `deckOutlineExclusionRects`'s own
+  // rectangular-slab approximation of a continuously sloped edge and
+  // `rectInsidePolygon`'s exact polygon-corner-containment test are two
+  // DIFFERENT geometric methods that will never perfectly agree, no matter
+  // how strict either one's erosion amount is.
+  //
+  // The actual fix: stop comparing against a second, independently-computed
+  // method at all. A pin is valid here iff it does not overlap any of the
+  // SAME exclusion rects the free-cell search itself is built from — the
+  // literal computation that already determines what the packer considers
+  // placeable. Since a pin the packer's own free-rect search would offer
+  // can, by construction, never overlap those rects, this can no longer
+  // disagree with the packer's own placement decisions, for cargo of any
+  // size or any outline shape.
+  const usableOutline = hasOutline ? erodePolygon(outline!, boardOffset) : undefined
+  const outlineExclusionRects = hasOutline
+    ? deckOutlineExclusionRects(usableOutline!, safeDeckWidth, safeDeckLength)
+    : undefined
   const freeRects: FreeRect[] = hasOutline
     ? [{ x: 0, y: 0, width: safeDeckWidth, height: safeDeckLength }]
     : [{ x: ux, y: uy, width: uw, height: ul }]
@@ -792,7 +801,7 @@ export function packDeck(
   // more rectangle to route around, via the exact same placeRect mechanism
   // already used for pins below.
   if (hasOutline) {
-    for (const rect of deckOutlineExclusionRects(packingOutline!, safeDeckWidth, safeDeckLength)) {
+    for (const rect of outlineExclusionRects!) {
       placeRect(rect, freeRects)
     }
   }
@@ -811,7 +820,7 @@ export function packDeck(
   for (const pin of pinned) {
     const layers = toLayers(pin.layers, 1)
     const inside = hasOutline
-      ? rectInsidePolygon(pin, packingOutline!)
+      ? !outlineExclusionRects!.some((ex) => intersects({ x: pin.x, y: pin.y, width: pin.width, height: pin.length }, ex))
       : pin.x >= boardOffset - 1e-6 &&
         pin.y >= boardOffset - 1e-6 &&
         pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
@@ -1347,13 +1356,18 @@ export function computeFreeRects(
   const uw = Math.max(0, dw - off * 2 + g)
   const ul = Math.max(0, dl - off * 2 + g)
   // Non-rectangular deck: same contour-following board-offset inset as
-  // packDeck (erodePolygon), not a bounding-box inset — see packDeck for why.
+  // packDeck (erodePolygon), not a bounding-box inset — and, like packDeck,
+  // the FULL strict boardOffset erosion (not the gap/2-permissive one used
+  // for the rectangular seed rect above) — see packDeck for why: a flat
+  // "+gap/2" compensation only correctly cancels a permissive erosion along
+  // an axis-aligned edge, not a slanted outline edge, so this overlay
+  // stayed strict to match what's actually placeable.
   const free: FreeRect[] = hasOutline
     ? [{ x: 0, y: 0, width: dw, height: dl }]
     : [{ x: ux, y: uy, width: uw, height: ul }]
   if (hasOutline) {
-    const packingOutline = erodePolygon(outline!, Math.max(0, off - halfGap))
-    for (const rect of deckOutlineExclusionRects(packingOutline, dw, dl)) {
+    const usableOutline = erodePolygon(outline!, off)
+    for (const rect of deckOutlineExclusionRects(usableOutline, dw, dl)) {
       placeRect(rect, free)
     }
   }

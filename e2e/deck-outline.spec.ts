@@ -93,4 +93,47 @@ test.describe('Non-rectangular deck outline', () => {
     await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.7 }, force: true })
     await expect(page.getByText(/Размещено 1 из 3/)).toBeVisible()
   })
+
+  // Regression: handleAutoRedistribute (page.tsx) built packDeckVariants'
+  // options without `outline`, so "Автораспределение" on a non-rectangular
+  // deck generated candidate layouts as if the deck were still the full
+  // rectangle -- items could land in the cut-off area, and the live
+  // (correctly outline-aware) recompute right after then flagged those same
+  // freshly-created pins as "Закреплённая позиция вне палубы", even though
+  // nothing about the deck or cargo was actually invalid -- the variant
+  // generator itself had silently ignored the outline.
+  test('"Автораспределение" on a non-rectangular deck does not flag its own placements as outside the deck', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
+    await page.getByRole('button', { name: 'Редактировать' }).click()
+
+    const handle = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]').nth(1)
+    await handle.hover()
+    await page.mouse.down()
+    const box = await handle.boundingBox()
+    if (!box) throw new Error('vertex handle not found')
+    const startX = box.x + box.width / 2
+    const startY = box.y + box.height / 2
+    await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
+    await page.mouse.up()
+    await page.getByRole('button', { name: 'Сохранить' }).click()
+
+    // Auto mode (default) — a sizeable item comfortably below deck capacity
+    // (matches the real user report: containers of this size, well under
+    // what the deck can hold), so a "doesn't fit" report here can only mean
+    // the outline-blind bug, not a genuine capacity shortfall.
+    await page.getByRole('button', { name: 'Добавить груз' }).click()
+    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
+    await itemCard.locator('label:has-text("Кол-во") + input').fill('2')
+    await itemCard.locator('label:has-text("Шир. (m)") + input').fill('6')
+    await itemCard.locator('label:has-text("Длин. (m)") + input').fill('2.4')
+
+    await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
+    await page.getByText(/Вариант 1/).click()
+
+    await expect(page.getByText(/Не поместилось/)).not.toBeVisible()
+  })
 })
