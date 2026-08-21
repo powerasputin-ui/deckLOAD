@@ -240,7 +240,7 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 flex flex-col min-h-0 px-3 py-3">
-      <div className="thin-scrollbar min-h-0 overflow-y-auto space-y-4 pr-0.5">
+      <div className="thin-scrollbar min-h-[360px] overflow-y-auto space-y-4 pr-0.5">
         {/* Quick actions */}
         <div className="grid grid-cols-2 gap-2">
           <Button size="sm" onClick={handleCreate} className="h-8">
