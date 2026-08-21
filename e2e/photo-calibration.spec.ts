@@ -34,8 +34,12 @@ test.describe('Photo scale calibration', () => {
     await distanceInput.fill('2')
     await page.getByRole('button', { name: 'Применить калибровку' }).click()
 
-    // Back to pan mode, no crash, zoom slider visible again.
-    await expect(page.getByText('Масштаб')).toBeVisible()
+    // Back to pan mode, no crash, zoom slider visible again. Exact match:
+    // a 1x1 test photo means computeCalibratedZoom's min-cover clamp always
+    // fires here (see plan/commit history), and that warning toast's own
+    // text contains "масштаб" as a substring, which a non-exact getByText
+    // would ambiguously match too.
+    await expect(page.getByText('Масштаб', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Откалибровать по известному расстоянию' })).toBeVisible()
 
     // Confirm still works and produces a background image.
