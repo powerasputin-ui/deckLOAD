@@ -197,6 +197,72 @@ export interface PowerSocket {
   label?: string
 }
 
+// A hard-blocking obstacle zone (crane, bulwark, superstructure, etc.) —
+// cargo can never be placed/dragged/rotated into it, in manual OR auto mode.
+// The outline polygon is never stored — it's derived on demand from
+// shapeType+bbox via restrictionZonePolygon(), so a resize can never leave a
+// stale outline behind.
+export type RestrictionZoneShape = 'rect' | 'triangle' | 'oval' | 'diamond'
+
+export interface RestrictionZone {
+  id: string
+  name: string
+  shapeType: RestrictionZoneShape
+  x: number
+  y: number
+  width: number
+  length: number
+}
+
+// The zone's silhouette in world (deck) coordinates, derived fresh from its
+// bounding box every time — same reasoning as CargoItem.outline being the
+// only source of truth for 'custom' shape cargo (see above).
+export function restrictionZonePolygon(zone: {
+  shapeType: RestrictionZoneShape
+  x: number
+  y: number
+  width: number
+  length: number
+}): { x: number; y: number }[] {
+  const { shapeType, x, y, width, length } = zone
+  switch (shapeType) {
+    case 'triangle':
+      return [
+        { x: x + width / 2, y },
+        { x: x + width, y: y + length },
+        { x, y: y + length },
+      ]
+    case 'diamond':
+      return [
+        { x: x + width / 2, y },
+        { x: x + width, y: y + length / 2 },
+        { x: x + width / 2, y: y + length },
+        { x, y: y + length / 2 },
+      ]
+    case 'oval': {
+      const segments = 24
+      const cx = x + width / 2
+      const cy = y + length / 2
+      const rx = width / 2
+      const ry = length / 2
+      const pts: { x: number; y: number }[] = []
+      for (let i = 0; i < segments; i++) {
+        const angle = (i / segments) * Math.PI * 2
+        pts.push({ x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) })
+      }
+      return pts
+    }
+    case 'rect':
+    default:
+      return [
+        { x, y },
+        { x: x + width, y },
+        { x: x + width, y: y + length },
+        { x, y: y + length },
+      ]
+  }
+}
+
 // Typical securing devices with their rated MSL (kg) — selecting one
 // auto-fills mslKg, which stays freely editable afterwards (custom gear).
 export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: number }> = {
@@ -649,6 +715,66 @@ export function deckOutlineExclusionRects(
   return out
 }
 
+// Symmetric to deckOutlineExclusionRects, but emits the INSIDE spans of the
+// polygon directly (not their complement) — used to reserve a restriction
+// zone's own footprint as excluded free-rect cells, via the same scanline
+// decomposition (so any shape, including a hand-derived triangle/oval/
+// diamond, decomposes correctly, not just axis-aligned rectangles). For a
+// plain 'rect' zone this degenerates to exactly one rect: the bbox itself.
+export function polygonInsideRects(
+  polygon: { x: number; y: number }[],
+  width: number,
+  length: number
+): Rect[] {
+  if (polygon.length < 3) return []
+  const xs = Array.from(new Set(polygon.map((p) => p.x))).sort((a, b) => a - b)
+  const dedupedXs: number[] = []
+  for (const x of xs) {
+    if (dedupedXs.length === 0 || x - dedupedXs[dedupedXs.length - 1] > SCANLINE_EPS) dedupedXs.push(x)
+  }
+  if (dedupedXs.length < 2) return []
+  const maxSubWidth = Math.max(width, length, SCANLINE_EPS) / 100
+  const MAX_SUBSTRIPS_PER_STRIP = 64
+
+  const out: Rect[] = []
+  for (let i = 0; i < dedupedXs.length - 1; i++) {
+    const stripLo = dedupedXs[i]
+    const stripHi = dedupedXs[i + 1]
+    if (stripHi - stripLo <= SCANLINE_EPS) continue
+    const subCount = Math.min(
+      MAX_SUBSTRIPS_PER_STRIP,
+      Math.max(1, Math.ceil((stripHi - stripLo) / maxSubWidth))
+    )
+    const subWidth = (stripHi - stripLo) / subCount
+    for (let s = 0; s < subCount; s++) {
+      const xLo = stripLo + s * subWidth
+      const xHi = s === subCount - 1 ? stripHi : xLo + subWidth
+      const xMid = (xLo + xHi) / 2
+
+      const ys: number[] = []
+      for (let j = 0; j < polygon.length; j++) {
+        const p1 = polygon[j]
+        const p2 = polygon[(j + 1) % polygon.length]
+        if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
+          const t = (xMid - p1.x) / (p2.x - p1.x)
+          ys.push(p1.y + t * (p2.y - p1.y))
+        }
+      }
+      ys.sort((a, b) => a - b)
+
+      for (let k = 0; k < ys.length; k += 2) {
+        const yLo = ys[k]
+        const yHi = ys[k + 1]
+        if (yHi === undefined) break
+        if (yHi - yLo > SCANLINE_EPS) {
+          out.push({ x: xLo, y: yLo, width: xHi - xLo, height: yHi - yLo })
+        }
+      }
+    }
+  }
+  return out
+}
+
 export interface PackOptions {
   sortStrategy?: SortStrategy
   gap?: number // spacing between items
@@ -657,6 +783,7 @@ export interface PackOptions {
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
   outline?: { x: number; y: number }[] // non-rectangular deck silhouette, see deckOutlineExclusionRects
+  restrictionZones?: RestrictionZone[] // hard-blocked obstacle zones (crane, bulwark, etc.)
 }
 
 export interface PinnedPlacement {
@@ -709,6 +836,7 @@ export function packDeck(
   const pinned = typeof options === 'string' ? [] : options.pinned ?? []
   const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
   const outline = typeof options === 'string' ? undefined : options.outline
+  const restrictionZones = typeof options === 'string' ? [] : options.restrictionZones ?? []
 
   // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
   const safeDeckWidth = toFinite(deckWidth, 0)
@@ -816,6 +944,17 @@ export function packDeck(
     }
   }
 
+  // Restriction zones (crane, bulwark, etc.) are structural obstacles, same
+  // tier as the deck outline itself — reserved before pinned stacks, via the
+  // exact same placeRect mechanism, so the free-cell search never offers
+  // that space to algorithmically-placed cargo either.
+  const zoneExclusionRects: Rect[] = restrictionZones.flatMap((z) =>
+    polygonInsideRects(restrictionZonePolygon(z), safeDeckWidth, safeDeckLength)
+  )
+  for (const rect of zoneExclusionRects) {
+    placeRect(rect, freeRects)
+  }
+
   // Account for units already placed in pinned stacks: reduce the quantity to pack.
   // IMPORTANT: only subtract for ACCEPTED pins (validated below), otherwise rejected
   // pins silently consume units that then vanish from both placed and unplaced.
@@ -829,19 +968,32 @@ export function packDeck(
   const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
     const layers = toLayers(pin.layers, 1)
-    const inside = hasOutline
+    const insideOutline = hasOutline
       ? !outlineExclusionRects!.some((ex) => intersects({ x: pin.x, y: pin.y, width: pin.width, height: pin.length }, ex))
       : pin.x >= boardOffset - 1e-6 &&
         pin.y >= boardOffset - 1e-6 &&
         pin.x + pin.width <= safeDeckWidth - boardOffset + 1e-6 &&
         pin.y + pin.length <= safeDeckLength - boardOffset + 1e-6
-    if (!inside) {
+    if (!insideOutline) {
       result.unplaced.push({
         itemId: pin.itemId,
         name: pin.name,
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция вне палубы',
+      })
+      continue
+    }
+    const hitsZone = zoneExclusionRects.some((ex) =>
+      intersects({ x: pin.x, y: pin.y, width: pin.width, height: pin.length }, ex)
+    )
+    if (hitsZone) {
+      result.unplaced.push({
+        itemId: pin.itemId,
+        name: pin.name,
+        width: pin.width,
+        length: pin.length,
+        reason: 'Закреплённая позиция попадает в зону ограничения',
       })
       continue
     }
@@ -1475,6 +1627,24 @@ export function lashingPointExclusionRects(
 ): { x: number; y: number; width: number; length: number }[] {
   const r = Math.max(LASHING_POINT_MIN_EXCLUSION, gap)
   return points.map((p) => ({ x: p.x - r, y: p.y - r, width: r * 2, length: r * 2 }))
+}
+
+// Restriction zones as collidesPrecisely-ready "others" — bbox + a LOCAL
+// (0,0)-origin outline (same convention as CargoItem.outline), so a
+// non-rectangular zone (triangle/oval/diamond) blocks by its true silhouette,
+// not just its bounding box.
+export function restrictionZoneExclusions(
+  zones: RestrictionZone[]
+): { id: string; name: string; x: number; y: number; width: number; length: number; outline: { x: number; y: number }[] }[] {
+  return zones.map((z) => ({
+    id: z.id,
+    name: z.name,
+    x: z.x,
+    y: z.y,
+    width: z.width,
+    length: z.length,
+    outline: restrictionZonePolygon(z).map((p) => ({ x: p.x - z.x, y: p.y - z.y })),
+  }))
 }
 
 // Check whether a manual placement collides with any existing one.

@@ -43,6 +43,7 @@ import {
   collidesWithClearance,
   type ClearanceMargin,
   lashingPointExclusionRects,
+  restrictionZoneExclusions,
   checkZoneLoads,
   LASHING_DEVICES,
   type ManualPlacement,
@@ -131,6 +132,11 @@ export default function Home() {
   const addLashingPoint = useCalculator((s) => s.addLashingPoint)
   const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
+  const drawingRestrictionShape = useCalculator((s) => s.drawingRestrictionShape)
+  const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
+  const addRestrictionZone = useCalculator((s) => s.addRestrictionZone)
+  const updateRestrictionZone = useCalculator((s) => s.updateRestrictionZone)
+  const removeRestrictionZone = useCalculator((s) => s.removeRestrictionZone)
 
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -251,7 +257,7 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline) return
+    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
@@ -261,10 +267,11 @@ export default function Home() {
       if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
       if (pendingCustomShape) useCalculator.getState().setPendingCustomShape(null)
       if (editingDeckOutline) setEditingDeckOutline(false)
+      if (drawingRestrictionShape) setDrawingRestrictionShape(null)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -355,11 +362,12 @@ export default function Home() {
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
         outline: deck.outline,
+        restrictionZones: deck.restrictionZones,
       },
       10,
       pinnedPlacementsByTrip
     )
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
@@ -513,7 +521,8 @@ export default function Home() {
       .filter((p) => p.id !== id)
       .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, clearanceMargin: p.clearanceMargin }))
     const lashingRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-    const rawOthers = [...placementRects, ...lashingRects]
+    const zoneRects = restrictionZoneExclusions(deck.restrictionZones ?? [])
+    const rawOthers = [...placementRects, ...lashingRects, ...zoneRects]
     const others = rawOthers.map((p) => withClearanceFootprint(p))
     const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
@@ -531,9 +540,12 @@ export default function Home() {
     // concave) outlines too — rotatePlacement is bbox-only and unchanged;
     // this only rejects a bbox-approved rotation that a real outline-vs-
     // outline check finds actually overlapping.
-    const preciseOthers = result.placed
-      .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
-      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+    const preciseOthers = [
+      ...result.placed
+        .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin })),
+      ...zoneRects,
+    ]
     const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline, clearanceMargin: pin.clearanceMargin }
     if (collidesWithClearance(target, preciseOthers, deck.gap)) {
       toast.warning('Невозможно повернуть: нет места')
@@ -560,7 +572,8 @@ export default function Home() {
       .filter((m) => m.id !== id)
       .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, clearanceMargin: m.clearanceMargin }))
     const lashingRects2: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-    const rawOthers = [...manualRects, ...lashingRects2]
+    const zoneRects2 = restrictionZoneExclusions(deck.restrictionZones ?? [])
+    const rawOthers = [...manualRects, ...lashingRects2, ...zoneRects2]
     const others = rawOthers.map((m) => withClearanceFootprint(m))
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
@@ -572,9 +585,12 @@ export default function Home() {
       return
     }
     // Same own-zone-after-rotation check as handleRotatePinned above.
-    const preciseOthers = result.placed
-      .filter((p) => manualPlacements[p.index]?.id !== id)
-      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+    const preciseOthers = [
+      ...result.placed
+        .filter((p) => manualPlacements[p.index]?.id !== id)
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin })),
+      ...zoneRects2,
+    ]
     const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline, clearanceMargin: mp.clearanceMargin }
     if (collidesWithClearance(target, preciseOthers, deck.gap)) {
       toast.warning('Невозможно повернуть: нет места')
@@ -722,7 +738,8 @@ export default function Home() {
               .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
               .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
       const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-      const preciseOthers = [...placedRects, ...lashingRects3]
+      const zoneRects3: CollisionCandidate[] = restrictionZoneExclusions(deck.restrictionZones ?? [])
+      const preciseOthers = [...placedRects, ...lashingRects3, ...zoneRects3]
       const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin }
       if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
       if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
@@ -730,7 +747,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned, items, result])
+  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, deck.restrictionZones, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned, items, result])
 
   // Check whether a layer change is allowed for a placement.
   // - maxPhys: physical ceiling from clearance / item.height
@@ -1129,6 +1146,7 @@ export default function Home() {
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
         outline: deck.outline,
+        restrictionZones: deck.restrictionZones,
         pinned: frozenPinned,
       },
       3
@@ -1574,6 +1592,11 @@ export default function Home() {
                       addPowerSocket({ x, y, label: `Розетка ${count}` })
                     }}
                     onUpdatePowerSocket={updatePowerSocket}
+                    restrictionZones={deck.restrictionZones}
+                    drawingRestrictionShape={drawingRestrictionShape}
+                    onAddRestrictionZone={addRestrictionZone}
+                    onUpdateRestrictionZone={updateRestrictionZone}
+                    onRemoveRestrictionZone={removeRestrictionZone}
                   />
                   )}
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

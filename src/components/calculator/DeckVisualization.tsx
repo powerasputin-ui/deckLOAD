@@ -33,6 +33,10 @@ import {
   nearestPointOnPolygon,
   type VesselMotion,
   type ClearanceMargin,
+  type RestrictionZone,
+  type RestrictionZoneShape,
+  restrictionZoneExclusions,
+  restrictionZonePolygon,
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber } from '@/lib/utils'
@@ -117,6 +121,13 @@ interface DeckVisualizationProps {
   // local-origin outline happens in page.tsx, keeping this component "dumb".
   drawingCustomShape?: boolean
   onFinishDrawing?: (points: { x: number; y: number }[]) => void
+  // Restriction (obstacle) zones — hard-blocked everywhere (manual + auto).
+  // Drawn PPT-style: pick a shape, drag on the deck to size its bbox.
+  restrictionZones?: RestrictionZone[]
+  drawingRestrictionShape?: RestrictionZoneShape | null
+  onAddRestrictionZone?: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number }) => void
+  onUpdateRestrictionZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number; name?: string }) => void
+  onRemoveRestrictionZone?: (id: string) => void
 }
 
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
@@ -178,6 +189,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   placingPowerSocket,
   onPlacePowerSocket,
   onUpdatePowerSocket,
+  restrictionZones,
+  drawingRestrictionShape,
+  onAddRestrictionZone,
+  onUpdateRestrictionZone,
+  onRemoveRestrictionZone,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -330,6 +346,28 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startRect: { x: number; y: number; width: number; length: number }
   }
   const [zoneDrag, setZoneDrag] = useState<ZoneDrag | null>(null)
+  // Restriction zones: created PPT-style (pick a shape, drag on the deck to
+  // size its bbox, then a small name form), edited via the same
+  // move/corner-resize pattern as LoadZone (zoneDrag above), kept as its own
+  // parallel state so editing a load zone can never interfere with editing
+  // a restriction zone.
+  const [zoneDrawDrag, setZoneDrawDrag] = useState<{
+    shapeType: RestrictionZoneShape
+    startX: number
+    startY: number
+    curX: number
+    curY: number
+  } | null>(null)
+  const [pendingZoneDraft, setPendingZoneDraft] = useState<{
+    shapeType: RestrictionZoneShape
+    x: number
+    y: number
+    width: number
+    length: number
+  } | null>(null)
+  const [zoneDraftName, setZoneDraftName] = useState('')
+  const [selectedRestrictionZoneId, setSelectedRestrictionZoneId] = useState<string | null>(null)
+  const [rzDrag, setRzDrag] = useState<ZoneDrag | null>(null)
   // Dragging a clearance-zone corner handle changes 1-2 adjacent margin
   // sides at once (not a freestanding rect move/resize like LoadZone —
   // the rect is always cargo footprint + margin, so the handle edits the
@@ -573,9 +611,26 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const panMovedRef = useRef(false)
 
   const handleBackgroundPointerDown = (e: React.PointerEvent) => {
-    if (zoom <= 1) return
+    // While armed, every non-interactive descendant (grid, free-space
+    // hatch, outline stroke) is fair game to start the drag-to-create on —
+    // every REAL interactive element (cargo, zone handles, markers) already
+    // calls e.stopPropagation() in its own onPointerDown, so this handler
+    // never even fires for those. Unlike the pan-drag branch below, this one
+    // deliberately does NOT restrict to svgRef.current/data-deck-background
+    // only, since the free-space hatch path (drawn on top, pointer-events
+    // not disabled) would otherwise swallow most clicks over open deck.
+    if (drawingRestrictionShape) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const x = Math.max(0, Math.min(deckWidth, pos.x))
+      const y = Math.max(0, Math.min(deckLength, pos.y))
+      setZoneDrawDrag({ shapeType: drawingRestrictionShape, startX: x, startY: y, curX: x, curY: y })
+      ;(e.target as Element).setPointerCapture?.(e.pointerId)
+      return
+    }
     const target = e.target as Element
     if (!(target === svgRef.current || target.hasAttribute('data-deck-background'))) return
+    if (zoom <= 1) return
     panMovedRef.current = false
     setPanDrag({ startMouse: { x: e.clientX, y: e.clientY }, startPan: pan })
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -821,6 +876,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       panMovedRef.current = false
       return
     }
+    if (drawingRestrictionShape) return // handled entirely via pointerdown/up drag-to-create
     if (handleDrawClick(e)) return
     if (handleOutlineEditClick(e)) return
     if (handleLashingClick(e)) return
@@ -871,6 +927,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const lashingExclusions = lashingPointExclusionRects(lashingPoints, gap)
       if (collidesPrecisely(target, lashingExclusions, gap)) {
         toast.warning('Здесь нельзя разместить — рядом точка крепления')
+        return
+      }
+    }
+    if (restrictionZones && restrictionZones.length > 0) {
+      const zoneExclusions = restrictionZoneExclusions(restrictionZones)
+      const hit = zoneExclusions.find((z) => collidesPrecisely(target, [z], gap))
+      if (hit) {
+        toast.warning(`Здесь нельзя — зона ограничения «${hit.name}»`)
         return
       }
     }
@@ -1105,9 +1169,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // (resolved fresh from the source CargoItem) does.
           const draggedRendered = renderedItems.find((m) => m.manualId === dragState.id)
           const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
+          const zoneExclusions = restrictionZones?.length ? restrictionZoneExclusions(restrictionZones) : []
           const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
             ...renderedItems.filter((m) => m.manualId !== dragState.id),
             ...lashingExclusions,
+            ...zoneExclusions,
           ]
           const others = preciseOthers.map((m) => withClearanceFootprint(m))
           const resolved = resolveDragPosition(
@@ -1165,6 +1231,49 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
         onUpdateLoadZone(zoneDrag.id, patch)
+      }
+    }
+    if (zoneDrawDrag) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const x = Math.max(0, Math.min(deckWidth, pos.x))
+      const y = Math.max(0, Math.min(deckLength, pos.y))
+      setZoneDrawDrag((d) => (d ? { ...d, curX: x, curY: y } : d))
+    }
+    if (rzDrag && onUpdateRestrictionZone) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const minSize = 0.3
+      if (rzDrag.kind === 'move') {
+        const startDeck = screenToDeck(rzDrag.startMouse.x, rzDrag.startMouse.y)
+        if (!startDeck) return
+        const deltaX = pos.x - startDeck.x
+        const deltaY = pos.y - startDeck.y
+        const nx = Math.max(0, Math.min(deckWidth - rzDrag.startRect.width, rzDrag.startRect.x + deltaX))
+        const ny = Math.max(0, Math.min(deckLength - rzDrag.startRect.length, rzDrag.startRect.y + deltaY))
+        onUpdateRestrictionZone(rzDrag.id, { x: nx, y: ny })
+      } else if (rzDrag.corner) {
+        const r = rzDrag.startRect
+        const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
+        const clampedY = Math.max(0, Math.min(deckLength, pos.y))
+        let opp: { x: number; y: number }
+        switch (rzDrag.corner) {
+          case 'nw': opp = { x: r.x + r.width, y: r.y + r.length }; break
+          case 'ne': opp = { x: r.x, y: r.y + r.length }; break
+          case 'sw': opp = { x: r.x + r.width, y: r.y }; break
+          case 'se': opp = { x: r.x, y: r.y }; break
+        }
+        const newX = Math.min(clampedX, opp.x - minSize)
+        const newY = Math.min(clampedY, opp.y - minSize)
+        const patch =
+          rzDrag.corner === 'nw'
+            ? { x: Math.max(0, newX), y: Math.max(0, newY), width: opp.x - Math.max(0, newX), length: opp.y - Math.max(0, newY) }
+            : rzDrag.corner === 'ne'
+              ? { x: opp.x, y: Math.max(0, newY), width: Math.max(minSize, clampedX - opp.x), length: opp.y - Math.max(0, newY) }
+              : rzDrag.corner === 'sw'
+                ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
+                : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
+        onUpdateRestrictionZone(rzDrag.id, patch)
       }
     }
     if (clearanceDrag) {
@@ -1230,9 +1339,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           (p2) => p2.itemId === pin.itemId && Math.abs(p2.x - pin.x) < 0.01 && Math.abs(p2.y - pin.y) < 0.01
         )
         const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
+        const zoneExclusions = restrictionZones?.length ? restrictionZoneExclusions(restrictionZones) : []
         const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
           ...renderedItems.filter((p2) => p2 !== draggedRendered),
           ...lashingExclusions,
+          ...zoneExclusions,
         ]
         const others = preciseOthers.map((p2) => withClearanceFootprint(p2))
         const resolved = resolveDragPosition(
@@ -1261,8 +1372,24 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       setPinDrag(null)
       setDragPreviewPos(null)
       setZoneDrag(null)
+      setRzDrag(null)
       setClearanceDrag(null)
       setPanDrag(null)
+      return
+    }
+    // Drag-to-create a restriction zone: finalize the bbox and open the
+    // name-confirmation form (below, near pendingZoneDraft). A near-zero
+    // drag (accidental click, not a deliberate drag) is discarded silently.
+    if (zoneDrawDrag) {
+      const x = Math.min(zoneDrawDrag.startX, zoneDrawDrag.curX)
+      const y = Math.min(zoneDrawDrag.startY, zoneDrawDrag.curY)
+      const width = Math.abs(zoneDrawDrag.curX - zoneDrawDrag.startX)
+      const length = Math.abs(zoneDrawDrag.curY - zoneDrawDrag.startY)
+      setZoneDrawDrag(null)
+      if (width > 0.2 && length > 0.2) {
+        setZoneDraftName('')
+        setPendingZoneDraft({ shapeType: zoneDrawDrag.shapeType, x, y, width, length })
+      }
       return
     }
     // Always flush any pending drag position before releasing the pointer
@@ -1273,7 +1400,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // first (pointerup fires before the click that actually places the item)
     // made the sidebar's lashing panel lose track of whichever placement the
     // user had just been configuring, even when the new item landed cleanly.
-    if (!pinDrag && !dragState && !zoneDrag && !clearanceDrag && !panDrag && !activeStamp) {
+    if (!pinDrag && !dragState && !zoneDrag && !rzDrag && !clearanceDrag && !panDrag && !activeStamp) {
       const target = e.target as Element
       // Only clear if clicked directly on the deck background (marked via a
       // data attribute) or the SVG root itself — not coupled to fill colors,
@@ -1281,12 +1408,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (target === svgRef.current || target.hasAttribute('data-deck-background')) {
         if (isInteractiveAuto) onClearSelection?.()
         setSelectedZoneId(null)
+        setSelectedRestrictionZoneId(null)
       }
     }
     setDragState(null)
     setPinDrag(null)
     setDragPreviewPos(null)
     setZoneDrag(null)
+    setRzDrag(null)
     setClearanceDrag(null)
     setPanDrag(null)
     setLashingAnchorDrag(null)
@@ -1308,6 +1437,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPinDrag(null)
     setDragPreviewPos(null)
     setZoneDrag(null)
+    setRzDrag(null)
+    setZoneDrawDrag(null)
     setClearanceDrag(null)
     setPanDrag(null)
     setMergeTargetId(null)
@@ -1831,6 +1962,134 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               </g>
             )
           })}
+
+        {/* Restriction (obstacle) zones — hard-blocked everywhere, same red
+            "hard block" visual language as the clearance-zone rect above
+            (not blue/soft like LoadZone). Shape follows shapeType via
+            restrictionZonePolygon, so a triangle/oval/diamond zone renders
+            its true silhouette, matching exactly what actually blocks
+            placement. Corner handles (bbox-based, same as LoadZone) appear
+            only on the selected zone. */}
+        {restrictionZones?.map((z) => {
+          const poly = restrictionZonePolygon(z)
+          const points = poly.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')
+          const zx = toX(z.x)
+          const zy = toY(z.y)
+          const zw = z.width * scale
+          const zh = z.length * scale
+          const isSelected = selectedRestrictionZoneId === z.id
+          const interactive = !!onUpdateRestrictionZone
+          const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
+            { key: 'nw', cx: zx, cy: zy },
+            { key: 'ne', cx: zx + zw, cy: zy },
+            { key: 'sw', cx: zx, cy: zy + zh },
+            { key: 'se', cx: zx + zw, cy: zy + zh },
+          ]
+          return (
+            <g key={`rzone-${z.id}`}>
+              <polygon
+                points={points}
+                fill="rgba(220,38,38,0.12)"
+                stroke={isSelected ? '#dc2626' : 'rgba(220,38,38,0.7)'}
+                strokeWidth={isSelected ? 2 : 1.5}
+                strokeDasharray="5 3"
+                style={{ cursor: interactive ? 'move' : 'default' }}
+                onPointerDown={
+                  interactive
+                    ? (e) => {
+                        e.stopPropagation()
+                        setSelectedRestrictionZoneId(z.id)
+                        setRzDrag({
+                          id: z.id,
+                          kind: 'move',
+                          startMouse: { x: e.clientX, y: e.clientY },
+                          startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
+                        })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }
+                    : undefined
+                }
+              />
+              {zw > 24 && zh > 14 && (
+                <text
+                  x={zx + zw / 2}
+                  y={zy + zh / 2}
+                  fontSize={10}
+                  fontWeight={600}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="#991b1b"
+                  className="select-none pointer-events-none"
+                >
+                  {z.name}
+                </text>
+              )}
+              {interactive && isSelected && (
+                <>
+                  {corners.map((c) => (
+                    <rect
+                      key={c.key}
+                      x={c.cx - 5}
+                      y={c.cy - 5}
+                      width={10}
+                      height={10}
+                      fill="#fff"
+                      stroke="#dc2626"
+                      strokeWidth={1.5}
+                      style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        setSelectedRestrictionZoneId(z.id)
+                        setRzDrag({
+                          id: z.id,
+                          kind: 'resize',
+                          corner: c.key,
+                          startMouse: { x: e.clientX, y: e.clientY },
+                          startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
+                        })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }}
+                    />
+                  ))}
+                  <text
+                    x={zx + zw - 2}
+                    y={zy - 4}
+                    fontSize={12}
+                    textAnchor="end"
+                    fill="#dc2626"
+                    style={{ cursor: 'pointer' }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      onRemoveRestrictionZone?.(z.id)
+                      setSelectedRestrictionZoneId(null)
+                    }}
+                  >
+                    ✕ удалить
+                  </text>
+                </>
+              )}
+            </g>
+          )
+        })}
+
+        {/* Drag-to-create preview for a new restriction zone */}
+        {zoneDrawDrag && (() => {
+          const x = Math.min(zoneDrawDrag.startX, zoneDrawDrag.curX)
+          const y = Math.min(zoneDrawDrag.startY, zoneDrawDrag.curY)
+          const width = Math.abs(zoneDrawDrag.curX - zoneDrawDrag.startX)
+          const length = Math.abs(zoneDrawDrag.curY - zoneDrawDrag.startY)
+          const poly = restrictionZonePolygon({ shapeType: zoneDrawDrag.shapeType, x, y, width, length })
+          return (
+            <polygon
+              points={poly.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              fill="rgba(220,38,38,0.15)"
+              stroke="#dc2626"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              className="pointer-events-none"
+            />
+          )
+        })()}
 
         {/* Lashing-point placement preview (follows cursor while armed) */}
         {placingLashingPoint && lashingHoverPos && (
@@ -2446,6 +2705,62 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           >
             Загрузить фото
           </button>
+        </div>
+      )}
+      {pendingZoneDraft && (
+        <div
+          className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-wrap gap-1">
+            {['Кран', 'Фальшборт', 'Надстройка', 'Трап', 'Другое'].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className="rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-accent"
+                onClick={() => setZoneDraftName(preset === 'Другое' ? '' : preset)}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={zoneDraftName}
+              onChange={(e) => setZoneDraftName(e.target.value)}
+              placeholder="Название зоны"
+              className="h-7 w-40 rounded-md border bg-background px-2 text-xs"
+              autoFocus
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setPendingZoneDraft(null)}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                onAddRestrictionZone?.({
+                  shapeType: pendingZoneDraft.shapeType,
+                  name: zoneDraftName.trim() || 'Зона ограничения',
+                  x: pendingZoneDraft.x,
+                  y: pendingZoneDraft.y,
+                  width: pendingZoneDraft.width,
+                  length: pendingZoneDraft.length,
+                })
+                setPendingZoneDraft(null)
+              }}
+            >
+              Добавить
+            </Button>
+          </div>
         </div>
       )}
       {editingDeckOutline && (

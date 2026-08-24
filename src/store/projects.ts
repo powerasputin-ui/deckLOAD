@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape } from '@/lib/packing'
 import type { DeckConfig, Mode, Unit } from './calculator'
 
 export interface Project {
@@ -173,6 +173,25 @@ function normalizePowerSockets(value: unknown): DeckConfig['powerSockets'] {
   return sockets.length > 0 ? sockets : undefined
 }
 
+const RESTRICTION_ZONE_SHAPES = new Set(['rect', 'triangle', 'oval', 'diamond'])
+
+function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones'] {
+  if (!Array.isArray(value)) return undefined
+  const zones = value.map((z) => {
+    const zone = z as Record<string, unknown>
+    return {
+      id: typeof zone.id === 'string' && zone.id ? zone.id : uuid(),
+      name: typeof zone.name === 'string' && zone.name ? zone.name : 'Зона ограничения',
+      shapeType: (typeof zone.shapeType === 'string' && RESTRICTION_ZONE_SHAPES.has(zone.shapeType) ? zone.shapeType : 'rect') as RestrictionZoneShape,
+      x: toFiniteNonNegative(zone.x, 0),
+      y: toFiniteNonNegative(zone.y, 0),
+      width: toFinitePositive(zone.width, 1),
+      length: toFinitePositive(zone.length, 1),
+    }
+  })
+  return zones.length > 0 ? zones : undefined
+}
+
 function normalizePinnedList(value: unknown): PinnedPlacement[] {
   if (!Array.isArray(value)) return []
   return value.map((pp) => {
@@ -281,6 +300,7 @@ function normalizeProject(p: Partial<Project>): Project {
       loadZones: normalizeLoadZones(p.deck?.loadZones),
       lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
       powerSockets: normalizePowerSockets(p.deck?.powerSockets),
+      restrictionZones: normalizeRestrictionZones(p.deck?.restrictionZones),
       backgroundImage: toOptionalString(p.deck?.backgroundImage),
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
       outline: normalizeOutline(p.deck?.outline),

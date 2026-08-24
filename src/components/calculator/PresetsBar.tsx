@@ -1,18 +1,26 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Square, Triangle, Circle, Diamond, Ban } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store/calculator'
-import { type CargoShape } from '@/lib/packing'
+import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
 import { cn } from '@/lib/utils'
 
 // Stable empty-array reference — see the same pattern's comment in
 // Sidebar.tsx (a fresh `[] ` every selector call looks like "the snapshot
 // changed" to useSyncExternalStore and re-renders forever).
 const EMPTY_POWER_SOCKETS: never[] = []
+const EMPTY_RESTRICTION_ZONES: never[] = []
+
+const RESTRICTION_ZONE_SHAPES: { shapeType: RestrictionZoneShape; label: string; Icon: typeof Square }[] = [
+  { shapeType: 'rect', label: 'Прямоугольник', Icon: Square },
+  { shapeType: 'triangle', label: 'Треугольник', Icon: Triangle },
+  { shapeType: 'oval', label: 'Овал', Icon: Circle },
+  { shapeType: 'diamond', label: 'Ромб', Icon: Diamond },
+]
 
 // Same store/logic PresetsSection used inside the Sidebar (moved here
 // unchanged) — only the layout is horizontal now, to fit a bar under the
@@ -37,6 +45,12 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
   const removePowerSocket = useCalculator((s) => s.removePowerSocket)
   const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
   const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
+  // Restriction (obstacle) zones — drawn PPT-style: pick a shape, drag on the
+  // deck to size it. drawingRestrictionShape holds WHICH shape (null = off).
+  const restrictionZones = useCalculator((s) => s.deck.restrictionZones ?? EMPTY_RESTRICTION_ZONES)
+  const removeRestrictionZone = useCalculator((s) => s.removeRestrictionZone)
+  const drawingRestrictionShape = useCalculator((s) => s.drawingRestrictionShape)
+  const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
   const [drawName, setDrawName] = useState('')
   const [drawWeight, setDrawWeight] = useState('')
   // Reset the finalize form's fields once the pending shape is cleared
@@ -188,6 +202,46 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                       ))}
                     </>
                   )}
+                  <div className="basis-full w-0" aria-hidden="true" />
+                  <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
+                    <span className="px-0.5 text-[10px] text-muted-foreground">Зона ограничения:</span>
+                    {RESTRICTION_ZONE_SHAPES.map(({ shapeType, label, Icon }) => (
+                      <button
+                        key={shapeType}
+                        title={label}
+                        onClick={() => setDrawingRestrictionShape(drawingRestrictionShape === shapeType ? null : shapeType)}
+                        className={cn(
+                          'h-6 w-6 flex items-center justify-center rounded-md border',
+                          drawingRestrictionShape === shapeType
+                            ? 'border-red-400 bg-red-50 text-red-700 ring-1 ring-red-300 dark:bg-red-950/30 dark:text-red-400 dark:ring-red-700'
+                            : 'border-border hover:bg-accent'
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </button>
+                    ))}
+                    {restrictionZones.length > 0 && (
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">{restrictionZones.length}</Badge>
+                    )}
+                  </div>
+                  {restrictionZones.length > 0 && (
+                    <>
+                      <div className="basis-full w-0" aria-hidden="true" />
+                      {restrictionZones.map((z) => (
+                        <div key={z.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
+                          <Ban className="h-3 w-3 text-red-600" />
+                          <span className="max-w-[80px] truncate">{z.name}</span>
+                          <button
+                            onClick={() => removeRestrictionZone(z.id)}
+                            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                            title="Удалить зону"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -206,6 +260,12 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             <p className="text-[10px] text-muted-foreground leading-tight">
               Кликните у края палубы — розетка встанет на ближайшую точку контура. Только визуальная метка,
               груз можно ставить рядом.
+            </p>
+          )}
+          {drawingRestrictionShape && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              Потяните на палубе, чтобы задать размер зоны. Груз нельзя будет поставить/перетащить туда — ни
+              вручную, ни автоматически.
             </p>
           )}
           {pendingCustomShape && (

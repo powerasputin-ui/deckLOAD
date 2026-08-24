@@ -20,6 +20,8 @@ import {
   type PowerSocket,
   type ClearanceMargin,
   type VesselMotion,
+  type RestrictionZone,
+  type RestrictionZoneShape,
 } from '@/lib/packing'
 
 export type Unit = 'm' | 'cm' | 'ft'
@@ -59,6 +61,7 @@ export interface DeckConfig {
   loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
   lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
   powerSockets?: PowerSocket[] // visual-only markers showing where deck electrical outlets are
+  restrictionZones?: RestrictionZone[] // hard-blocked obstacle zones (crane, bulwark, etc.) — never placeable
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
   backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
   backgroundImageOpacity?: number // 0..1, seeded to 0.5 the first time a photo is attached
@@ -145,6 +148,12 @@ interface CalculatorState {
   // The in-progress point list is local component state in
   // DeckVisualization, same split as the other armed-drawing modes.
   editingDeckOutline: boolean
+  // Armed "draw a restriction (obstacle) zone" mode — same mutual-exclusion
+  // web as the other armed-drawing modes. Holds WHICH shape is being drawn
+  // (null = not armed); the drag-in-progress rect and the just-closed
+  // draft-awaiting-a-name are local component state in DeckVisualization,
+  // same split as pendingCustomShape/drawingCustomShape.
+  drawingRestrictionShape: RestrictionZoneShape | null
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -205,6 +214,12 @@ interface CalculatorState {
   setDrawingCustomShape: (v: boolean) => void
   setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
   setEditingDeckOutline: (v: boolean) => void
+
+  // Restriction (obstacle) zones — hard-blocked everywhere (manual + auto).
+  addRestrictionZone: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number }) => void
+  updateRestrictionZone: (id: string, patch: Partial<Omit<RestrictionZone, 'id'>>) => void
+  removeRestrictionZone: (id: string) => void
+  setDrawingRestrictionShape: (shape: RestrictionZoneShape | null) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
   // Lashing points and a clearance-margin exclusion zone are mutually
   // exclusive per placement (see clearanceMargin on ManualPlacement/
@@ -512,6 +527,7 @@ export const useCalculator = create<CalculatorState>()(
   drawingCustomShape: false,
   pendingCustomShape: null,
   editingDeckOutline: false,
+  drawingRestrictionShape: null,
 
   setDeck: (patch) =>
     set((s) => {
@@ -691,6 +707,13 @@ export const useCalculator = create<CalculatorState>()(
             cornerX: p.cornerX === undefined ? undefined : conv(p.cornerX),
             cornerY: p.cornerY === undefined ? undefined : conv(p.cornerY),
           })),
+          restrictionZones: s.deck.restrictionZones?.map((z) => ({
+            ...z,
+            x: conv(z.x),
+            y: conv(z.y),
+            width: conv(z.width),
+            length: conv(z.length),
+          })),
         },
         items: s.items.map((it) => ({
           ...it,
@@ -852,6 +875,7 @@ export const useCalculator = create<CalculatorState>()(
       editingDeckOutline: false,
       placingLashingPoint: false,
       placingPowerSocket: false,
+      drawingRestrictionShape: null,
     }),
   setPendingPresetStamp: (template) =>
     set({
@@ -861,6 +885,7 @@ export const useCalculator = create<CalculatorState>()(
       editingDeckOutline: false,
       placingLashingPoint: false,
       placingPowerSocket: false,
+      drawingRestrictionShape: null,
     }),
   setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
@@ -1138,18 +1163,18 @@ export const useCalculator = create<CalculatorState>()(
   setPlacingLashingPoint: (v) =>
     set({
       placingLashingPoint: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, drawingRestrictionShape: null } : {}),
     }),
   setPlacingPowerSocket: (v) =>
     set({
       placingPowerSocket: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, drawingRestrictionShape: null } : {}),
     }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false, drawingRestrictionShape: null }
         : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
@@ -1157,9 +1182,37 @@ export const useCalculator = create<CalculatorState>()(
     set({
       editingDeckOutline: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, drawingRestrictionShape: null }
         : {}),
     }),
+  setDrawingRestrictionShape: (shape) =>
+    set({
+      drawingRestrictionShape: shape,
+      ...(shape
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, editingDeckOutline: false }
+        : {}),
+    }),
+  addRestrictionZone: (zone) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        restrictionZones: [...(s.deck.restrictionZones ?? []), { id: uuid(), ...zone }],
+      },
+    })),
+  updateRestrictionZone: (id, patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        restrictionZones: (s.deck.restrictionZones ?? []).map((z) => (z.id === id ? { ...z, ...patch } : z)),
+      },
+    })),
+  removeRestrictionZone: (id) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        restrictionZones: (s.deck.restrictionZones ?? []).filter((z) => z.id !== id),
+      },
+    })),
   setVesselMotion: (patch) =>
     set((s) => ({
       deck: {

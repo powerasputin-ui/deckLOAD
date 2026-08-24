@@ -26,6 +26,9 @@ import {
   nearestPointOnPolygon,
   rectInsidePolygon,
   deckOutlineExclusionRects,
+  polygonInsideRects,
+  restrictionZonePolygon,
+  restrictionZoneExclusions,
   erodePolygon,
   dedupePolygonVertices,
   DEFAULT_VESSEL_MOTION,
@@ -862,6 +865,66 @@ describe('deckOutlineExclusionRects', () => {
     // edge at y=0.6 there too).
     expect(isExcluded({ x: 19, y: 0.3 })).toBe(true)
     expect(isExcluded({ x: 19, y: 0.8 })).toBe(false)
+  })
+})
+
+describe('polygonInsideRects', () => {
+  it('decomposes a plain rectangle into exactly its own bbox', () => {
+    const rect = restrictionZonePolygon({ shapeType: 'rect', x: 2, y: 1, width: 3, length: 2 })
+    const rects = polygonInsideRects(rect, 20, 8)
+    const area = rects.reduce((s, r) => s + r.width * r.height, 0)
+    expect(area).toBeCloseTo(6)
+    expect(rects.every((r) => r.x >= 2 - 1e-6 && r.y >= 1 - 1e-6 && r.x + r.width <= 5 + 1e-6 && r.y + r.height <= 3 + 1e-6)).toBe(true)
+  })
+
+  it('decomposes a triangle to roughly half its bbox area', () => {
+    const tri = restrictionZonePolygon({ shapeType: 'triangle', x: 0, y: 0, width: 4, length: 4 })
+    const rects = polygonInsideRects(tri, 4, 4)
+    const area = rects.reduce((s, r) => s + r.width * r.height, 0)
+    expect(area).toBeCloseTo(8, 0)
+  })
+
+  it('decomposes an oval to roughly pi/4 of its bbox area', () => {
+    const oval = restrictionZonePolygon({ shapeType: 'oval', x: 0, y: 0, width: 4, length: 4 })
+    const rects = polygonInsideRects(oval, 4, 4)
+    const area = rects.reduce((s, r) => s + r.width * r.height, 0)
+    expect(area).toBeCloseTo(4 * 4 * (Math.PI / 4), 0)
+  })
+})
+
+describe('restrictionZoneExclusions', () => {
+  it('carries the zone name and a local-frame outline usable by collidesPrecisely', () => {
+    const [ex] = restrictionZoneExclusions([{ id: 'z1', name: 'Кран', shapeType: 'rect', x: 5, y: 3, width: 2, length: 1 }])
+    expect(ex.name).toBe('Кран')
+    expect(ex.x).toBe(5)
+    expect(ex.y).toBe(3)
+    // Local outline spans [0,width]x[0,length], not world coords.
+    expect(ex.outline.every((p) => p.x >= -1e-9 && p.x <= 2 + 1e-9 && p.y >= -1e-9 && p.y <= 1 + 1e-9)).toBe(true)
+  })
+})
+
+describe('packDeck restriction zones (auto mode)', () => {
+  it('never places algorithmically-packed cargo inside a restriction zone', () => {
+    const items: CargoItem[] = [
+      { id: 'a', name: 'Box', width: 1, length: 1, height: 1, quantity: 40, color: '#000', allowRotation: true },
+    ]
+    const zone = { id: 'z1', name: 'Кран', shapeType: 'rect' as const, x: 2, y: 0, width: 2, length: 4 }
+    const result = packDeck(6, 4, items, { restrictionZones: [zone] })
+    for (const p of result.placed) {
+      const overlaps = p.x < zone.x + zone.width && p.x + p.width > zone.x && p.y < zone.y + zone.length && p.y + p.length > zone.y
+      expect(overlaps).toBe(false)
+    }
+  })
+
+  it('rejects a pin that falls inside a restriction zone', () => {
+    const items: CargoItem[] = [
+      { id: 'a', name: 'Box', width: 1, length: 1, height: 1, quantity: 1, color: '#000', allowRotation: true },
+    ]
+    const zone = { id: 'z1', name: 'Кран', shapeType: 'rect' as const, x: 0, y: 0, width: 2, length: 2 }
+    const pin = { id: 'p1', itemId: 'a', name: 'Box', x: 0.5, y: 0.5, width: 1, length: 1, layers: 1, rotated: false, color: '#000' }
+    const result = packDeck(6, 4, items, { restrictionZones: [zone], pinned: [pin] })
+    expect(result.placed.find((p) => p.itemId === 'a' && Math.abs(p.x - 0.5) < 0.01)).toBeUndefined()
+    expect(result.unplaced.some((u) => u.reason === 'Закреплённая позиция попадает в зону ограничения')).toBe(true)
   })
 })
 
