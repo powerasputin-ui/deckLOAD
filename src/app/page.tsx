@@ -1074,9 +1074,17 @@ export default function Home() {
     // drawn. Pass it through as `pinned` (the only mechanism packDeck has
     // for "exclude this rectangle for everyone else"), which freezes it at
     // its exact position while everything else still reshuffles normally.
+    // A lashing point is the same situation: its cornerX/cornerY and the
+    // anchor's own x/y are only ever carried over by translating them by
+    // the placement's own move delta (remapLashingPointsForRedistribute) —
+    // that's a best-effort geometric guess, not a guarantee the rigging
+    // still makes physical sense afterward. Freezing the placement in
+    // place is what actually keeps a lashing setup valid across a
+    // redistribute, so a lashed placement gets the same treatment.
     const sourcePlacements = mode === 'manual' ? manualPlacements : pinnedPlacements
-    const zonedPinned: PinnedPlacement[] = sourcePlacements
-      .filter((p) => !!p.clearanceMargin)
+    const attachedIds = new Set((deck.lashingPoints ?? []).map((lp) => lp.placementId).filter(Boolean))
+    const frozenPinned: PinnedPlacement[] = sourcePlacements
+      .filter((p) => !!p.clearanceMargin || attachedIds.has(p.id))
       .map((p) => ({
         id: p.id,
         itemId: p.itemId,
@@ -1092,17 +1100,17 @@ export default function Home() {
         clearanceMargin: p.clearanceMargin,
       }))
     // Warn user if pinned placements (across all trips) will be cleared —
-    // excluding the zoned ones above, which specifically will NOT be reset
+    // excluding the frozen ones above, which specifically will NOT be reset
     // (in auto mode they're a subset of pinnedPlacementsByTrip; in manual
     // mode they come from manualPlacements, which was never part of this
     // count to begin with, so no adjustment needed there).
     const totalPinnedAllTrips = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
-    const totalPinned = mode === 'auto' ? totalPinnedAllTrips - zonedPinned.length : totalPinnedAllTrips
+    const totalPinned = mode === 'auto' ? totalPinnedAllTrips - frozenPinned.length : totalPinnedAllTrips
     if (totalPinned > 0) {
       toast.warning(`Закрепления (${totalPinned}) будут сброшены`)
     }
-    if (zonedPinned.length > 0) {
-      toast.info(`Груз с зоной отступа (${zonedPinned.length}) останется на месте`)
+    if (frozenPinned.length > 0) {
+      toast.info(`Груз с зоной отступа/точками крепления (${frozenPinned.length}) останется на месте`)
     }
     const newVariants = packDeckVariants(
       deck.width,
@@ -1115,7 +1123,7 @@ export default function Home() {
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
         outline: deck.outline,
-        pinned: zonedPinned,
+        pinned: frozenPinned,
       },
       3
     )

@@ -56,11 +56,8 @@ import { useProjects } from '@/store/projects'
 import { useCalculator, UNIT_LABEL, type Unit, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store/calculator'
 import {
   LASHING_DEVICES,
-  VESSEL_MOTION_PRESETS,
-  DEFAULT_VESSEL_MOTION,
   type SortStrategy,
   type LashingDeviceType,
-  type VesselMotionPreset,
   type PinnedPlacement,
   type ClearanceMargin,
   type CargoShape,
@@ -737,8 +734,6 @@ function LashingPointsSection() {
   const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
-  const vesselMotion = useCalculator((s) => s.deck.vesselMotion ?? DEFAULT_VESSEL_MOTION)
-  const setVesselMotion = useCalculator((s) => s.setVesselMotion)
   const unit = useCalculator((s) => s.deck.unit)
   const mode = useCalculator((s) => s.mode)
   const selectedManualIds = useCalculator((s) => s.selectedManualIds)
@@ -880,38 +875,6 @@ function LashingPointsSection() {
             )}
           </div>
         )}
-
-        {/* Vessel motion / friction */}
-        <div className="rounded-md border p-2 space-y-1.5">
-          <div className="text-[10px] font-medium text-muted-foreground">Условия качки</div>
-          <Select
-            value={vesselMotion.preset}
-            onValueChange={(v) => {
-              const preset = v as VesselMotionPreset
-              if (preset === 'custom') {
-                setVesselMotion({ preset })
-              } else {
-                setVesselMotion({ ...VESSEL_MOTION_PRESETS[preset], preset })
-              }
-            }}
-          >
-            <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="open-sea">Открытое море</SelectItem>
-              <SelectItem value="coastal">Прибрежное плавание</SelectItem>
-              <SelectItem value="sheltered">Защищённые воды</SelectItem>
-              <SelectItem value="custom">Свои значения</SelectItem>
-            </SelectContent>
-          </Select>
-          {vesselMotion.preset === 'custom' && (
-            <div className="grid grid-cols-4 gap-1">
-              <MiniNumField label="ax" value={vesselMotion.ax} unit="g" onChange={(v) => setVesselMotion({ ax: v })} />
-              <MiniNumField label="ay" value={vesselMotion.ay} unit="g" onChange={(v) => setVesselMotion({ ay: v })} />
-              <MiniNumField label="az" value={vesselMotion.az} unit="g" onChange={(v) => setVesselMotion({ az: v })} />
-              <MiniNumField label="μ" value={vesselMotion.friction} unit="" onChange={(v) => setVesselMotion({ friction: v })} />
-            </div>
-          )}
-        </div>
 
         {points.map((p, i) => {
           const item = p.itemId ? items.find((it) => it.id === p.itemId) : undefined
