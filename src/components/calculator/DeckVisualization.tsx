@@ -349,6 +349,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     corner?: 'nw' | 'ne' | 'sw' | 'se'
     startMouse: { x: number; y: number }
     startRect: { x: number; y: number; width: number; length: number }
+    // Restriction zones only ('custom' shapeType): the outline as it was
+    // AT DRAG START, so every pointermove recomputes the translation from
+    // this fixed reference (nx - startRect.x) instead of re-reading the
+    // zone's CURRENT (already-shifted-by-a-previous-frame) outline — the
+    // latter compounds the same delta on every single pointermove event,
+    // sending the polygon drifting far away from where x/y says it is
+    // (looked like the zone "flying off the deck and vanishing").
+    startOutline?: { x: number; y: number }[]
   }
   const [zoneDrag, setZoneDrag] = useState<ZoneDrag | null>(null)
   // Restriction zones: created PPT-style (pick a shape, drag on the deck to
@@ -1320,13 +1328,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const nx = Math.max(0, Math.min(deckWidth - rzDrag.startRect.width, rzDrag.startRect.x + deltaX))
         const ny = Math.max(0, Math.min(deckLength - rzDrag.startRect.length, rzDrag.startRect.y + deltaY))
         // A 'custom' (hand-drawn outline) zone's polygon is the source of
-        // truth, not its bbox — the stored outline never gets patched mid-
-        // drag, so re-deriving the translation from the drag-START bbox to
-        // the CURRENT bbox each frame (not incrementally) keeps it exact,
-        // with no drift accumulation.
-        const draggedZone = restrictionZones?.find((z) => z.id === rzDrag.id)
-        const outline = draggedZone?.outline
-          ? draggedZone.outline.map((p) => ({
+        // truth, not its bbox. Translate from rzDrag.startOutline — a fixed
+        // snapshot taken once at drag-start — never from the zone's CURRENT
+        // (already-patched-by-a-previous-frame) outline: re-reading the
+        // live outline here would apply the same start->now delta on top of
+        // an already-shifted polygon on every single pointermove, compounding
+        // across frames and sending it drifting far from where x/y says it
+        // is (this is what made a dragged zone appear to "fly off the deck
+        // and vanish" after enough mouse movement).
+        const outline = rzDrag.startOutline
+          ? rzDrag.startOutline.map((p) => ({
               x: p.x + (nx - rzDrag.startRect.x),
               y: p.y + (ny - rzDrag.startRect.y),
             }))
@@ -2084,6 +2095,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                           kind: 'move',
                           startMouse: { x: e.clientX, y: e.clientY },
                           startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
+                          startOutline: z.outline,
                         })
                         ;(e.target as Element).setPointerCapture?.(e.pointerId)
                       }
@@ -2573,34 +2585,30 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
                 }
               />
-              <foreignObject
-                x={labelX - 13}
-                y={labelY - 8}
-                width={26}
-                height={16}
-                style={{ overflow: 'visible', pointerEvents: 'none' }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 2,
-                    width: 26,
-                    height: 16,
-                    background: '#fff',
-                    border: '1px solid #f59e0b',
-                    borderRadius: 4,
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: '#92400e',
-                    lineHeight: 1,
-                  }}
-                >
-                  <Plug size={9} strokeWidth={2.5} />
-                  <span>{i + 1}</span>
-                </div>
-              </foreignObject>
+              {/* Pure-SVG label (icon + number) — deliberately NOT a
+                  foreignObject. A foreignObject anywhere in this SVG taints
+                  the canvas the PDF exporter rasterizes it onto (browsers
+                  block toDataURL on a canvas that ever drew embedded HTML,
+                  regardless of same-origin), which silently broke "Скачать
+                  PDF" for any project with a power socket. lucide-react
+                  icons are themselves plain <svg>/<path> markup, so nesting
+                  one directly is just as valid SVG as everything else here. */}
+              <g className="pointer-events-none">
+                <rect
+                  x={labelX - 13}
+                  y={labelY - 8}
+                  width={26}
+                  height={16}
+                  rx={4}
+                  fill="#fff"
+                  stroke="#f59e0b"
+                  strokeWidth={1}
+                />
+                <Plug x={labelX - 10} y={labelY - 4.5} width={9} height={9} stroke="#92400e" strokeWidth={2.5} />
+                <text x={labelX + 3} y={labelY + 3} fontSize={9} fontWeight={700} fill="#92400e" textAnchor="start">
+                  {i + 1}
+                </text>
+              </g>
             </g>
           )
         })}

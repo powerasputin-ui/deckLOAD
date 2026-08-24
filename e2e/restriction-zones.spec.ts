@@ -118,6 +118,57 @@ test.describe('Restriction (obstacle) zones', () => {
     await expect(page.getByText(/Размещено 0 из 0/)).toBeVisible()
   })
 
+  test('dragging a freeform zone across many pointer-move steps keeps its outline in sync with its position (regression: used to drift off the deck)', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await page.getByRole('button', { name: /произвольная область/ }).click()
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.scrollIntoViewIfNeeded()
+    const points: [number, number][] = [
+      [40, 40],
+      [140, 40],
+      [140, 110],
+      [40, 110],
+    ]
+    for (const [x, y] of points) {
+      await background.click({ position: { x, y }, force: true })
+    }
+    await background.click({ position: { x: points[0][0], y: points[0][1] }, force: true })
+    const zoneNameInput = page.getByPlaceholder('Название зоны')
+    const zoneForm = zoneNameInput.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
+    await zoneForm.getByRole('button', { name: 'Кран' }).click()
+    await zoneForm.getByRole('button', { name: 'Добавить' }).click()
+    await expect(zoneNameInput).toBeHidden()
+
+    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const before = await zonePolygon.boundingBox()
+    if (!before) throw new Error('zone polygon not found')
+
+    // A real drag fires many intermediate pointermove events — this is
+    // exactly what exposed the bug (a one-shot programmatic move did not).
+    const startX = before.x + before.width / 2
+    const startY = before.y + before.height / 2
+    await page.mouse.move(startX, startY)
+    await page.mouse.down()
+    await page.mouse.move(startX + 80, startY + 30, { steps: 25 })
+    await page.mouse.up()
+
+    const after = await zonePolygon.boundingBox()
+    if (!after) throw new Error('zone polygon vanished after drag')
+    // The shape must keep its own size — a desynced outline would stretch,
+    // shrink, or displace the polygon relative to its own bbox, or in the
+    // worst case push it far outside the visible deck area entirely.
+    expect(Math.abs(after.width - before.width)).toBeLessThan(10)
+    expect(Math.abs(after.height - before.height)).toBeLessThan(10)
+    const deckBox = await background.boundingBox()
+    if (!deckBox) throw new Error('deck background not found')
+    expect(after.x).toBeGreaterThan(deckBox.x - 20)
+    expect(after.x).toBeLessThan(deckBox.x + deckBox.width + 20)
+  })
+
   test('zone chip width/length fields resize the zone, and the round delete button removes it', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('button', { name: 'Очистить' }).click()

@@ -488,10 +488,10 @@ function ZoneChip({
       )}
       <button
         onClick={onRemove}
-        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 shrink-0"
+        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
         title="Удалить зону"
       >
-        <Trash2 className="h-2.5 w-2.5" />
+        <Trash2 className="h-3 w-3" />
       </button>
     </div>
   )
