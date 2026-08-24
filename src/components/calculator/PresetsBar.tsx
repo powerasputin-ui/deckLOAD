@@ -15,6 +15,12 @@ import { cn } from '@/lib/utils'
 const EMPTY_POWER_SOCKETS: never[] = []
 const EMPTY_RESTRICTION_ZONES: never[] = []
 
+// Restriction zones aren't a cargo-template category (no CargoItem-shaped
+// entries), so they get their own pseudo-key alongside PRESETS' real
+// category keys rather than living inside one of those categories' item
+// lists — a separate top-level button, not nested under "Объекты".
+const RESTRICTION_ZONE_CATEGORY_KEY = '__restriction_zones__'
+
 const RESTRICTION_ZONE_SHAPES: { shapeType: RestrictionZoneShape; label: string; Icon: typeof Square }[] = [
   { shapeType: 'rect', label: 'Прямоугольник', Icon: Square },
   { shapeType: 'triangle', label: 'Треугольник', Icon: Triangle },
@@ -51,6 +57,8 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
   const removeRestrictionZone = useCalculator((s) => s.removeRestrictionZone)
   const drawingRestrictionShape = useCalculator((s) => s.drawingRestrictionShape)
   const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
+  const drawingRestrictionZoneFreeform = useCalculator((s) => s.drawingRestrictionZoneFreeform)
+  const setDrawingRestrictionZoneFreeform = useCalculator((s) => s.setDrawingRestrictionZoneFreeform)
   const [drawName, setDrawName] = useState('')
   const [drawWeight, setDrawWeight] = useState('')
   // Reset the finalize form's fields once the pending shape is cleared
@@ -119,8 +127,22 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 {cat.label}
               </Button>
             ))}
+            <Button
+              variant={activePresetCategory === RESTRICTION_ZONE_CATEGORY_KEY ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onMouseEnter={() => {
+                if (!activePresetCategory) setActivePresetCategory(RESTRICTION_ZONE_CATEGORY_KEY)
+              }}
+              onClick={() => setActivePresetCategory(RESTRICTION_ZONE_CATEGORY_KEY)}
+            >
+              Зоны ограничений
+              {restrictionZones.length > 0 && (
+                <Badge variant="secondary" className="ml-1 text-[10px]">{restrictionZones.length}</Badge>
+              )}
+            </Button>
           </div>
-          {activePresetCategory && (
+          {activePresetCategory && activePresetCategory !== RESTRICTION_ZONE_CATEGORY_KEY && (
             <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
               {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
                 // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
@@ -202,46 +224,64 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                       ))}
                     </>
                   )}
-                  <div className="basis-full w-0" aria-hidden="true" />
-                  <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
-                    <span className="px-0.5 text-[10px] text-muted-foreground">Зона ограничения:</span>
-                    {RESTRICTION_ZONE_SHAPES.map(({ shapeType, label, Icon }) => (
-                      <button
-                        key={shapeType}
-                        title={label}
-                        onClick={() => setDrawingRestrictionShape(drawingRestrictionShape === shapeType ? null : shapeType)}
-                        className={cn(
-                          'h-6 w-6 flex items-center justify-center rounded-md border',
-                          drawingRestrictionShape === shapeType
-                            ? 'border-red-400 bg-red-50 text-red-700 ring-1 ring-red-300 dark:bg-red-950/30 dark:text-red-400 dark:ring-red-700'
-                            : 'border-border hover:bg-accent'
-                        )}
-                      >
-                        <Icon className="h-3.5 w-3.5" />
-                      </button>
-                    ))}
-                    {restrictionZones.length > 0 && (
-                      <Badge variant="secondary" className="shrink-0 text-[10px]">{restrictionZones.length}</Badge>
+                </>
+              )}
+            </div>
+          )}
+          {activePresetCategory === RESTRICTION_ZONE_CATEGORY_KEY && (
+            <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
+                <span className="px-0.5 text-[10px] text-muted-foreground">Фигура:</span>
+                {RESTRICTION_ZONE_SHAPES.map(({ shapeType, label, Icon }) => (
+                  <button
+                    key={shapeType}
+                    title={label}
+                    onClick={() => setDrawingRestrictionShape(drawingRestrictionShape === shapeType ? null : shapeType)}
+                    className={cn(
+                      'h-6 w-6 flex items-center justify-center rounded-md border',
+                      drawingRestrictionShape === shapeType
+                        ? 'border-red-400 bg-red-50 text-red-700 ring-1 ring-red-300 dark:bg-red-950/30 dark:text-red-400 dark:ring-red-700'
+                        : 'border-border hover:bg-accent'
                     )}
-                  </div>
-                  {restrictionZones.length > 0 && (
-                    <>
-                      <div className="basis-full w-0" aria-hidden="true" />
-                      {restrictionZones.map((z) => (
-                        <div key={z.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
-                          <Ban className="h-3 w-3 text-red-600" />
-                          <span className="max-w-[80px] truncate">{z.name}</span>
-                          <button
-                            onClick={() => removeRestrictionZone(z.id)}
-                            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-                            title="Удалить зону"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </>
-                  )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setDrawingRestrictionZoneFreeform(!drawingRestrictionZoneFreeform)}
+                title="Произвольная область"
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border p-2 text-left transition-all shrink-0',
+                  drawingRestrictionZoneFreeform
+                    ? 'border-red-400 bg-red-50 ring-1 ring-red-300 dark:bg-red-950/30 dark:ring-red-700'
+                    : 'border-border hover:bg-accent'
+                )}
+              >
+                <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-red-600">
+                  <Pencil className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium truncate">Нарисовать</span>
+                  <span className="block text-[10px] text-muted-foreground">произвольная область по точкам</span>
+                </span>
+              </button>
+              {restrictionZones.length > 0 && (
+                <>
+                  <div className="basis-full w-0" aria-hidden="true" />
+                  {restrictionZones.map((z) => (
+                    <div key={z.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
+                      <Ban className="h-3 w-3 text-red-600" />
+                      <span className="max-w-[80px] truncate">{z.name}</span>
+                      <button
+                        onClick={() => removeRestrictionZone(z.id)}
+                        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                        title="Удалить зону"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
                 </>
               )}
             </div>
@@ -266,6 +306,12 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             <p className="text-[10px] text-muted-foreground leading-tight">
               Потяните на палубе, чтобы задать размер зоны. Груз нельзя будет поставить/перетащить туда — ни
               вручную, ни автоматически.
+            </p>
+          )}
+          {drawingRestrictionZoneFreeform && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              Кликайте по палубе, чтобы поставить точки контура зоны (минимум 3), затем кликните рядом с первой
+              точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
             </p>
           )}
           {pendingCustomShape && (

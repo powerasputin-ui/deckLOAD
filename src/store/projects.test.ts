@@ -86,6 +86,32 @@ describe('projects store', () => {
     expect(copy!.items[0].id).not.toBe(original.items[0].id)
   })
 
+  it('skips a single throwing/malformed project instead of wiping the whole list (regression)', () => {
+    // A project entry that isn't even an object (e.g. `null`) makes
+    // normalizeProject's own `p.deck?.width` etc. field accesses throw —
+    // before this fix, that one bad entry made the entire
+    // `.map(normalizeProject)` call throw, which the outer catch treated as
+    // "storage totally unreadable", silently discarding every OTHER valid
+    // project and reseeding a fresh demo on the next hydrate.
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        null,
+        {
+          id: 'good-1',
+          name: 'Survives',
+          deck: { width: 10, length: 5, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+          items: [],
+        },
+      ],
+      activeId: 'good-1',
+    })
+    useProjects.getState().hydrate()
+    const state = useProjects.getState()
+    expect(state.projects).toHaveLength(1)
+    expect(state.projects[0].name).toBe('Survives')
+    expect(state.activeId).toBe('good-1')
+  })
+
   it('normalizes corrupted data on hydrate', () => {
     storage['deckload-projects'] = JSON.stringify({
       projects: [

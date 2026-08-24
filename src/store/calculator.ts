@@ -154,6 +154,10 @@ interface CalculatorState {
   // draft-awaiting-a-name are local component state in DeckVisualization,
   // same split as pendingCustomShape/drawingCustomShape.
   drawingRestrictionShape: RestrictionZoneShape | null
+  // Armed "draw a restriction zone freehand, point by point" mode — same
+  // mutual-exclusion web, same split as drawingCustomShape/drawingPoints
+  // (in-progress points are local component state in DeckVisualization).
+  drawingRestrictionZoneFreeform: boolean
 
   setDeck: (patch: Partial<DeckConfig>) => void
   setUnit: (u: Unit) => void
@@ -216,10 +220,11 @@ interface CalculatorState {
   setEditingDeckOutline: (v: boolean) => void
 
   // Restriction (obstacle) zones — hard-blocked everywhere (manual + auto).
-  addRestrictionZone: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number }) => void
+  addRestrictionZone: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number; outline?: { x: number; y: number }[] }) => void
   updateRestrictionZone: (id: string, patch: Partial<Omit<RestrictionZone, 'id'>>) => void
   removeRestrictionZone: (id: string) => void
   setDrawingRestrictionShape: (shape: RestrictionZoneShape | null) => void
+  setDrawingRestrictionZoneFreeform: (v: boolean) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
   // Lashing points and a clearance-margin exclusion zone are mutually
   // exclusive per placement (see clearanceMargin on ManualPlacement/
@@ -528,6 +533,7 @@ export const useCalculator = create<CalculatorState>()(
   pendingCustomShape: null,
   editingDeckOutline: false,
   drawingRestrictionShape: null,
+  drawingRestrictionZoneFreeform: false,
 
   setDeck: (patch) =>
     set((s) => {
@@ -713,6 +719,7 @@ export const useCalculator = create<CalculatorState>()(
             y: conv(z.y),
             width: conv(z.width),
             length: conv(z.length),
+            outline: z.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
           })),
         },
         items: s.items.map((it) => ({
@@ -876,6 +883,7 @@ export const useCalculator = create<CalculatorState>()(
       placingLashingPoint: false,
       placingPowerSocket: false,
       drawingRestrictionShape: null,
+      drawingRestrictionZoneFreeform: false,
     }),
   setPendingPresetStamp: (template) =>
     set({
@@ -886,6 +894,7 @@ export const useCalculator = create<CalculatorState>()(
       placingLashingPoint: false,
       placingPowerSocket: false,
       drawingRestrictionShape: null,
+      drawingRestrictionZoneFreeform: false,
     }),
   setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
@@ -1163,18 +1172,18 @@ export const useCalculator = create<CalculatorState>()(
   setPlacingLashingPoint: (v) =>
     set({
       placingLashingPoint: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, drawingRestrictionShape: null } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setPlacingPowerSocket: (v) =>
     set({
       placingPowerSocket: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, drawingRestrictionShape: null } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false, drawingRestrictionShape: null }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
@@ -1182,13 +1191,22 @@ export const useCalculator = create<CalculatorState>()(
     set({
       editingDeckOutline: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, drawingRestrictionShape: null }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setDrawingRestrictionShape: (shape) =>
     set({
       drawingRestrictionShape: shape,
+      drawingRestrictionZoneFreeform: false,
       ...(shape
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, editingDeckOutline: false }
+        : {}),
+    }),
+  setDrawingRestrictionZoneFreeform: (v) =>
+    set({
+      drawingRestrictionZoneFreeform: v,
+      drawingRestrictionShape: null,
+      ...(v
         ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, editingDeckOutline: false }
         : {}),
     }),

@@ -125,9 +125,13 @@ interface DeckVisualizationProps {
   // Drawn PPT-style: pick a shape, drag on the deck to size its bbox.
   restrictionZones?: RestrictionZone[]
   drawingRestrictionShape?: RestrictionZoneShape | null
-  onAddRestrictionZone?: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number }) => void
-  onUpdateRestrictionZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number; name?: string }) => void
+  onAddRestrictionZone?: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number; outline?: { x: number; y: number }[] }) => void
+  onUpdateRestrictionZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number; name?: string; outline?: { x: number; y: number }[] }) => void
   onRemoveRestrictionZone?: (id: string) => void
+  // Point-by-point freehand drawing of a restriction zone — same click-to-
+  // append/close-loop mechanics as drawingCustomShape/onFinishDrawing above,
+  // just producing a zone instead of a cargo item.
+  drawingRestrictionZoneFreeform?: boolean
 }
 
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
@@ -194,6 +198,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onAddRestrictionZone,
   onUpdateRestrictionZone,
   onRemoveRestrictionZone,
+  drawingRestrictionZoneFreeform,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -364,10 +369,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     y: number
     width: number
     length: number
+    outline?: { x: number; y: number }[]
   } | null>(null)
   const [zoneDraftName, setZoneDraftName] = useState('')
   const [selectedRestrictionZoneId, setSelectedRestrictionZoneId] = useState<string | null>(null)
   const [rzDrag, setRzDrag] = useState<ZoneDrag | null>(null)
+  // Freehand point-by-point zone drawing — same click-to-append/close-loop
+  // mechanics as drawingCustomShape/drawingPoints above, producing a
+  // pendingZoneDraft with shapeType 'custom' + an explicit outline instead
+  // of a bbox-derived shape.
+  const [zoneFreeformPoints, setZoneFreeformPoints] = useState<{ x: number; y: number }[]>([])
+  const [prevDrawingRestrictionZoneFreeform, setPrevDrawingRestrictionZoneFreeform] = useState(drawingRestrictionZoneFreeform)
+  if (drawingRestrictionZoneFreeform !== prevDrawingRestrictionZoneFreeform) {
+    setPrevDrawingRestrictionZoneFreeform(drawingRestrictionZoneFreeform)
+    if (!drawingRestrictionZoneFreeform && zoneFreeformPoints.length) setZoneFreeformPoints([])
+  }
   // Dragging a clearance-zone corner handle changes 1-2 adjacent margin
   // sides at once (not a freestanding rect move/resize like LoadZone —
   // the rect is always cargo footprint + margin, so the handle edits the
@@ -795,6 +811,43 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return true
   }
 
+  // Point-by-point freehand zone drawing — same close-loop mechanics as
+  // handleDrawClick above, but produces a pendingZoneDraft with an explicit
+  // world-space outline (shapeType 'custom') instead of handing raw points
+  // to a cargo-shape callback.
+  const handleZoneFreeformClick = (e: React.MouseEvent): boolean => {
+    if (!drawingRestrictionZoneFreeform) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    if (zoneFreeformPoints.length >= 3) {
+      const first = zoneFreeformPoints[0]
+      const distPx = Math.hypot(toX(x) - toX(first.x), toY(y) - toY(first.y))
+      if (distPx <= CLOSE_LOOP_PIXEL_RADIUS) {
+        const xs = zoneFreeformPoints.map((p) => p.x)
+        const ys = zoneFreeformPoints.map((p) => p.y)
+        const minX = Math.min(...xs)
+        const minY = Math.min(...ys)
+        const maxX = Math.max(...xs)
+        const maxY = Math.max(...ys)
+        setZoneDraftName('')
+        setPendingZoneDraft({
+          shapeType: 'custom',
+          x: minX,
+          y: minY,
+          width: Math.max(0.2, maxX - minX),
+          length: Math.max(0.2, maxY - minY),
+          outline: zoneFreeformPoints,
+        })
+        setZoneFreeformPoints([])
+        return true
+      }
+    }
+    setZoneFreeformPoints((pts) => [...pts, { x, y }])
+    return true
+  }
+
   const EDGE_INSERT_PIXEL_RADIUS = 10
 
   // Editor click: clicking near an existing vertex handle is handled by
@@ -871,12 +924,26 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [drawingCustomShape])
 
+  useEffect(() => {
+    if (!drawingRestrictionZoneFreeform) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      e.preventDefault()
+      setZoneFreeformPoints((pts) => pts.slice(0, -1))
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [drawingRestrictionZoneFreeform])
+
   const handleDeckClick = (e: React.MouseEvent) => {
     if (panMovedRef.current) {
       panMovedRef.current = false
       return
     }
     if (drawingRestrictionShape) return // handled entirely via pointerdown/up drag-to-create
+    if (handleZoneFreeformClick(e)) return
     if (handleDrawClick(e)) return
     if (handleOutlineEditClick(e)) return
     if (handleLashingClick(e)) return
@@ -1118,7 +1185,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setSocketHoverPos(pos ? nearestPointOnPolygon(pos, deckPerimeter) : null)
     }
-    if (drawingCustomShape) {
+    if (drawingCustomShape || drawingRestrictionZoneFreeform) {
       const pos = screenToDeck(e.clientX, e.clientY)
       setDrawHoverPos(pos)
     }
@@ -1251,7 +1318,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const deltaY = pos.y - startDeck.y
         const nx = Math.max(0, Math.min(deckWidth - rzDrag.startRect.width, rzDrag.startRect.x + deltaX))
         const ny = Math.max(0, Math.min(deckLength - rzDrag.startRect.length, rzDrag.startRect.y + deltaY))
-        onUpdateRestrictionZone(rzDrag.id, { x: nx, y: ny })
+        // A 'custom' (hand-drawn outline) zone's polygon is the source of
+        // truth, not its bbox — the stored outline never gets patched mid-
+        // drag, so re-deriving the translation from the drag-START bbox to
+        // the CURRENT bbox each frame (not incrementally) keeps it exact,
+        // with no drift accumulation.
+        const draggedZone = restrictionZones?.find((z) => z.id === rzDrag.id)
+        const outline = draggedZone?.outline
+          ? draggedZone.outline.map((p) => ({
+              x: p.x + (nx - rzDrag.startRect.x),
+              y: p.y + (ny - rzDrag.startRect.y),
+            }))
+          : undefined
+        onUpdateRestrictionZone(rzDrag.id, { x: nx, y: ny, ...(outline ? { outline } : {}) })
       } else if (rzDrag.corner) {
         const r = rzDrag.startRect
         const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
@@ -1654,7 +1733,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2024,33 +2103,40 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   {z.name}
                 </text>
               )}
+              {/* Corner resize handles only for the 4 bbox-derived shapes —
+                  a 'custom' hand-drawn outline has no meaningful "resize
+                  the bbox" operation (the polygon wouldn't scale with it),
+                  so it only supports whole-zone move (the polygon itself is
+                  still draggable via the onPointerDown above). The delete
+                  label, however, applies to every shape regardless. */}
               {interactive && isSelected && (
                 <>
-                  {corners.map((c) => (
-                    <rect
-                      key={c.key}
-                      x={c.cx - 5}
-                      y={c.cy - 5}
-                      width={10}
-                      height={10}
-                      fill="#fff"
-                      stroke="#dc2626"
-                      strokeWidth={1.5}
-                      style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        setSelectedRestrictionZoneId(z.id)
-                        setRzDrag({
-                          id: z.id,
-                          kind: 'resize',
-                          corner: c.key,
-                          startMouse: { x: e.clientX, y: e.clientY },
-                          startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
-                        })
-                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                      }}
-                    />
-                  ))}
+                  {z.shapeType !== 'custom' &&
+                    corners.map((c) => (
+                      <rect
+                        key={c.key}
+                        x={c.cx - 5}
+                        y={c.cy - 5}
+                        width={10}
+                        height={10}
+                        fill="#fff"
+                        stroke="#dc2626"
+                        strokeWidth={1.5}
+                        style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation()
+                          setSelectedRestrictionZoneId(z.id)
+                          setRzDrag({
+                            id: z.id,
+                            kind: 'resize',
+                            corner: c.key,
+                            startMouse: { x: e.clientX, y: e.clientY },
+                            startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
+                          })
+                          ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                        }}
+                      />
+                    ))}
                   <text
                     x={zx + zw - 2}
                     y={zy - 4}
@@ -2072,7 +2158,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {/* Drag-to-create preview for a new restriction zone */}
+        {/* Drag-to-create preview for a new restriction zone, while still
+            actively dragging its bbox */}
         {zoneDrawDrag && (() => {
           const x = Math.min(zoneDrawDrag.startX, zoneDrawDrag.curX)
           const y = Math.min(zoneDrawDrag.startY, zoneDrawDrag.curY)
@@ -2090,6 +2177,57 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             />
           )
         })()}
+
+        {/* The just-drawn shape, kept visible on the deck between drag-
+            release/loop-close and confirming the name form — without this,
+            the zone appeared to "vanish" the moment the drag ended, only to
+            reappear once "Добавить" was clicked, which read as broken. */}
+        {pendingZoneDraft && (
+          <polygon
+            points={restrictionZonePolygon(pendingZoneDraft).map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+            fill="rgba(220,38,38,0.15)"
+            stroke="#dc2626"
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            className="pointer-events-none"
+          />
+        )}
+
+        {/* Freehand zone-outline drawing preview — same visual language as
+            the custom-cargo-shape drawing preview below, in red to match
+            every other restriction-zone element. */}
+        {drawingRestrictionZoneFreeform && zoneFreeformPoints.length > 0 && (
+          <g className="pointer-events-none" opacity={0.85}>
+            <polyline
+              points={zoneFreeformPoints.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              fill="none"
+              stroke="#dc2626"
+              strokeWidth={1.5}
+            />
+            {drawHoverPos && (
+              <line
+                x1={toX(zoneFreeformPoints[zoneFreeformPoints.length - 1].x)}
+                y1={toY(zoneFreeformPoints[zoneFreeformPoints.length - 1].y)}
+                x2={toX(drawHoverPos.x)}
+                y2={toY(drawHoverPos.y)}
+                stroke="#dc2626"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+            )}
+            {zoneFreeformPoints.map((p, i) => (
+              <circle
+                key={i}
+                cx={toX(p.x)}
+                cy={toY(p.y)}
+                r={i === 0 && zoneFreeformPoints.length >= 3 ? 7 : 4}
+                fill={i === 0 && zoneFreeformPoints.length >= 3 ? 'rgba(34,197,94,0.9)' : '#dc2626'}
+                stroke="#fff"
+                strokeWidth={1.2}
+              />
+            ))}
+          </g>
+        )}
 
         {/* Lashing-point placement preview (follows cursor while armed) */}
         {placingLashingPoint && lashingHoverPos && (
@@ -2754,6 +2892,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   y: pendingZoneDraft.y,
                   width: pendingZoneDraft.width,
                   length: pendingZoneDraft.length,
+                  outline: pendingZoneDraft.outline,
                 })
                 setPendingZoneDraft(null)
               }}

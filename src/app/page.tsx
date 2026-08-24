@@ -134,6 +134,8 @@ export default function Home() {
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
   const drawingRestrictionShape = useCalculator((s) => s.drawingRestrictionShape)
   const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
+  const drawingRestrictionZoneFreeform = useCalculator((s) => s.drawingRestrictionZoneFreeform)
+  const setDrawingRestrictionZoneFreeform = useCalculator((s) => s.setDrawingRestrictionZoneFreeform)
   const addRestrictionZone = useCalculator((s) => s.addRestrictionZone)
   const updateRestrictionZone = useCalculator((s) => s.updateRestrictionZone)
   const removeRestrictionZone = useCalculator((s) => s.removeRestrictionZone)
@@ -257,7 +259,7 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape) return
+    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
@@ -268,10 +270,11 @@ export default function Home() {
       if (pendingCustomShape) useCalculator.getState().setPendingCustomShape(null)
       if (editingDeckOutline) setEditingDeckOutline(false)
       if (drawingRestrictionShape) setDrawingRestrictionShape(null)
+      if (drawingRestrictionZoneFreeform) setDrawingRestrictionZoneFreeform(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -1597,6 +1600,7 @@ export default function Home() {
                     onAddRestrictionZone={addRestrictionZone}
                     onUpdateRestrictionZone={updateRestrictionZone}
                     onRemoveRestrictionZone={removeRestrictionZone}
+                    drawingRestrictionZoneFreeform={drawingRestrictionZoneFreeform}
                   />
                   )}
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

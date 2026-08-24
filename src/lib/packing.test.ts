@@ -892,6 +892,24 @@ describe('polygonInsideRects', () => {
   })
 })
 
+describe('restrictionZonePolygon custom outline', () => {
+  it('uses the stored world-space outline for a custom zone instead of deriving from bbox', () => {
+    const outline = [{ x: 1, y: 1 }, { x: 4, y: 1 }, { x: 4, y: 3 }, { x: 2, y: 5 }, { x: 1, y: 3 }]
+    const poly = restrictionZonePolygon({ shapeType: 'custom', x: 1, y: 1, width: 3, length: 4, outline })
+    expect(poly).toBe(outline)
+  })
+
+  it('falls back to a plain rect when shapeType is custom but no outline is stored', () => {
+    const poly = restrictionZonePolygon({ shapeType: 'custom', x: 1, y: 1, width: 3, length: 4 })
+    expect(poly).toEqual([
+      { x: 1, y: 1 },
+      { x: 4, y: 1 },
+      { x: 4, y: 5 },
+      { x: 1, y: 5 },
+    ])
+  })
+})
+
 describe('restrictionZoneExclusions', () => {
   it('carries the zone name and a local-frame outline usable by collidesPrecisely', () => {
     const [ex] = restrictionZoneExclusions([{ id: 'z1', name: 'Кран', shapeType: 'rect', x: 5, y: 3, width: 2, length: 1 }])

@@ -199,10 +199,17 @@ export interface PowerSocket {
 
 // A hard-blocking obstacle zone (crane, bulwark, superstructure, etc.) —
 // cargo can never be placed/dragged/rotated into it, in manual OR auto mode.
-// The outline polygon is never stored — it's derived on demand from
-// shapeType+bbox via restrictionZonePolygon(), so a resize can never leave a
-// stale outline behind.
-export type RestrictionZoneShape = 'rect' | 'triangle' | 'oval' | 'diamond'
+// For the 4 basic PPT-style shapes the outline polygon is never stored —
+// it's derived on demand from shapeType+bbox via restrictionZonePolygon(),
+// so a resize can never leave a stale outline behind. 'custom' is the one
+// exception: a hand-drawn point-by-point polygon has no bbox-derivable
+// shape, so its vertices ARE the stored source of truth (world/deck
+// coordinates, same convention as CargoItem.outline but absolute rather
+// than local-frame, since zones never rotate) — x/y/width/length are still
+// kept in sync as its bounding box, for the drag-to-move interaction and as
+// a cheap pre-filter, but restrictionZonePolygon() always prefers `outline`
+// over deriving from the bbox when one is present.
+export type RestrictionZoneShape = 'rect' | 'triangle' | 'oval' | 'diamond' | 'custom'
 
 export interface RestrictionZone {
   id: string
@@ -212,19 +219,24 @@ export interface RestrictionZone {
   y: number
   width: number
   length: number
+  outline?: { x: number; y: number }[] // world coords, only for shapeType 'custom'
 }
 
-// The zone's silhouette in world (deck) coordinates, derived fresh from its
-// bounding box every time — same reasoning as CargoItem.outline being the
-// only source of truth for 'custom' shape cargo (see above).
+// The zone's silhouette in world (deck) coordinates. For 'custom' zones with
+// a stored outline, that outline IS the polygon (already world-space); every
+// other shape derives fresh from its bounding box every time — same
+// reasoning as CargoItem.outline being the only source of truth for
+// 'custom' shape cargo (see above).
 export function restrictionZonePolygon(zone: {
   shapeType: RestrictionZoneShape
   x: number
   y: number
   width: number
   length: number
+  outline?: { x: number; y: number }[]
 }): { x: number; y: number }[] {
   const { shapeType, x, y, width, length } = zone
+  if (shapeType === 'custom' && zone.outline && zone.outline.length >= 3) return zone.outline
   switch (shapeType) {
     case 'triangle':
       return [

@@ -173,7 +173,7 @@ function normalizePowerSockets(value: unknown): DeckConfig['powerSockets'] {
   return sockets.length > 0 ? sockets : undefined
 }
 
-const RESTRICTION_ZONE_SHAPES = new Set(['rect', 'triangle', 'oval', 'diamond'])
+const RESTRICTION_ZONE_SHAPES = new Set(['rect', 'triangle', 'oval', 'diamond', 'custom'])
 
 function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones'] {
   if (!Array.isArray(value)) return undefined
@@ -187,6 +187,7 @@ function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones
       y: toFiniteNonNegative(zone.y, 0),
       width: toFinitePositive(zone.width, 1),
       length: toFinitePositive(zone.length, 1),
+      outline: normalizeOutline(zone.outline),
     }
   })
   return zones.length > 0 ? zones : undefined
@@ -359,9 +360,22 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null; hasS
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return { projects: [], activeId: null, hasStoredData: false }
     const parsed = JSON.parse(raw)
-    const projects = Array.isArray(parsed.projects)
-      ? parsed.projects.map(normalizeProject)
-      : []
+    // Normalize each project independently — a single malformed/corrupted
+    // entry (e.g. from a future field this build doesn't know about yet)
+    // must not throw away every OTHER perfectly good project. Before this
+    // fix, one bad `.map(normalizeProject)` call threw, the outer catch
+    // caught it, and hydrate() then treated the whole thing as "first
+    // visit" and silently reseeded a fresh demo — indistinguishable from
+    // "everything got reset".
+    const rawProjects: unknown[] = Array.isArray(parsed.projects) ? parsed.projects : []
+    const projects: Project[] = []
+    for (const p of rawProjects) {
+      try {
+        projects.push(normalizeProject(p as Partial<Project>))
+      } catch {
+        // skip this one malformed project, keep the rest
+      }
+    }
     return {
       projects,
       activeId: parsed.activeId ?? null,
