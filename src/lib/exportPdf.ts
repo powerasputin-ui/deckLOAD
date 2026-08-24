@@ -199,7 +199,7 @@ export async function exportDeckPlanToPdf({
   autoTable(pdf, {
     startY: y,
     margin: { left: margin, right: margin, bottom: 36 },
-    head: [['Груз', 'Ярусы', 'Стопки', 'Ед.', 'Площадь', 'Вес']],
+    head: [['Груз', 'Ярусы', 'Типов груза', 'Ед.', 'Площадь', 'Вес']],
     body: result.breakdown.map((b) => [
       b.name,
       b.layers > 1 ? `×${b.layers}` : '1',

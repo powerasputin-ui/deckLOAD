@@ -193,7 +193,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
                     >
                       Ярусы
                     </th>
-                    <th className="px-1.5 py-1.5 font-medium text-right">Стопки</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Типов груза</th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Ед.</th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Площадь</th>
                     <th className="px-2 py-1.5 font-medium text-right">Вес</th>
