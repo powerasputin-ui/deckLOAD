@@ -1073,6 +1073,29 @@ describe('resolveSnappedDragPosition', () => {
     expect(result.x).toBeCloseTo(0.2, 9)
   })
 
+  // Regression: a 20ft container (6.06m) laid along an 8m deck's length
+  // axis leaves only ~1.54m of free-slide room there. maxMagnetDistance
+  // defaults to 1m for this deck size, so BOTH edges' magnet zones used to
+  // cover the entire usable range at once — every drag target fell within
+  // range of at least one edge, so the item could only ever be released
+  // flush against the top or bottom margin, never anywhere in the middle,
+  // no matter where the cursor actually was. Reported live as "can only
+  // drag edge-to-edge, can't drop it in the center with the mouse."
+  it('still tracks the cursor in the middle of a tight axis, not just its own two edges', () => {
+    const width = 2.44
+    const length = 6.06
+    const deckWidth = 20
+    const deckLength = 8
+    const boardOffset = 0.2
+    const minY = boardOffset
+    const maxY = deckLength - boardOffset - length // 1.74
+    const midY = (minY + maxY) / 2 // ~0.97 — equidistant from both edges
+    const result = resolveSnappedDragPosition(
+      10, midY, width, length, 10, minY, [], deckWidth, deckLength, boardOffset, 0.1, 1
+    )
+    expect(result.y).toBeCloseTo(midY, 9)
+  })
+
   it('falls back to a vector slide when nothing is within the magnetic threshold', () => {
     // Dense cluster of neighbours directly on the path; snap/lock candidates all
     // collide, so it must fall back toward the last collision-free point along

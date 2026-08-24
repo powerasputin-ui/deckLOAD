@@ -1888,16 +1888,33 @@ export function resolveSnappedDragPosition(
   const maxX = deckWidth - edgePadding - width
   const maxY = deckLength - edgePadding - length
 
+  // A margin's magnet zone reaches maxMagnetDistance from EACH edge — fine
+  // for a normal item with plenty of free-slide room, but when the item's
+  // own size leaves only a small usable range on an axis (e.g. a 6m
+  // container's length on an 8m deck, leaving ~1.5m of room), both edges'
+  // zones can cover that entire range at once. Every drag target then falls
+  // within range of at least one edge, so the item can only ever be
+  // released flush against a margin — never anywhere in between, no matter
+  // where the cursor is. Capping each margin candidate's own radius to at
+  // most a third of that axis's free-slide room guarantees a real free
+  // (cursor-tracking) zone always survives in the middle; neighbour-flush
+  // candidates below are unaffected, since two placed items being nearly as
+  // large as the whole deck isn't the scenario this is guarding against.
+  const xRoom = Math.max(0, maxX - minX)
+  const yRoom = Math.max(0, maxY - minY)
+  const marginMagnetX = Math.min(maxMagnetDistance, xRoom / 3)
+  const marginMagnetY = Math.min(maxMagnetDistance, yRoom / 3)
+
   // Lock candidates: flush against the deck margin or a neighbour. These
   // compete only against each other for "closest to the cursor, within
-  // maxMagnetDistance" — the raw cursor position itself is deliberately
-  // NOT one of these candidates (see below), since it would trivially win
-  // every time (distance 0) and the neighbour/edge magnet would never fire.
-  const lockCandidates: { x: number; y: number }[] = [
-    { x: minX, y: targetY },
-    { x: maxX, y: targetY },
-    { x: targetX, y: minY },
-    { x: targetX, y: maxY },
+  // maxDist" — the raw cursor position itself is deliberately NOT one of
+  // these candidates (see below), since it would trivially win every time
+  // (distance 0) and the neighbour/edge magnet would never fire.
+  const lockCandidates: { x: number; y: number; maxDist: number }[] = [
+    { x: minX, y: targetY, maxDist: marginMagnetX },
+    { x: maxX, y: targetY, maxDist: marginMagnetX },
+    { x: targetX, y: minY, maxDist: marginMagnetY },
+    { x: targetX, y: maxY, maxDist: marginMagnetY },
   ]
 
   for (const o of others) {
@@ -1909,13 +1926,13 @@ export function resolveSnappedDragPosition(
     // the neighbour's span.
     const vOverlap = targetY < o.y + o.length && targetY + length > o.y
     if (vOverlap) {
-      lockCandidates.push({ x: o.x - gap - width, y: targetY })
-      lockCandidates.push({ x: o.x + o.width + gap, y: targetY })
+      lockCandidates.push({ x: o.x - gap - width, y: targetY, maxDist: maxMagnetDistance })
+      lockCandidates.push({ x: o.x + o.width + gap, y: targetY, maxDist: maxMagnetDistance })
     }
     const hOverlap = targetX < o.x + o.width && targetX + width > o.x
     if (hOverlap) {
-      lockCandidates.push({ x: targetX, y: o.y - gap - length })
-      lockCandidates.push({ x: targetX, y: o.y + o.length + gap })
+      lockCandidates.push({ x: targetX, y: o.y - gap - length, maxDist: maxMagnetDistance })
+      lockCandidates.push({ x: targetX, y: o.y + o.length + gap, maxDist: maxMagnetDistance })
     }
   }
 
@@ -1925,7 +1942,7 @@ export function resolveSnappedDragPosition(
     const res = tryPos(c.x, c.y)
     if (!res) continue
     const dist = Math.hypot(res.x - targetX, res.y - targetY)
-    if (dist <= maxMagnetDistance && dist < bestDist) {
+    if (dist <= c.maxDist && dist < bestDist) {
       best = res
       bestDist = dist
     }
