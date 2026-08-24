@@ -92,16 +92,16 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
         {/* Area grid */}
         <div className="grid grid-cols-2 gap-2.5">
           <StatTile
-            icon={<LayoutGrid className="h-4 w-4" />}
-            label="Площадь палубы"
-            value={`${fmt(totalArea)} ${unitSym}²`}
-            tone="muted"
-          />
-          <StatTile
             icon={<Square className="h-4 w-4" />}
             label="Занято"
             value={`${fmt(usedArea)} ${unitSym}²`}
             tone="primary"
+          />
+          <StatTile
+            icon={<LayoutGrid className="h-4 w-4" />}
+            label="Площадь палубы"
+            value={`${fmt(totalArea)} ${unitSym}²`}
+            tone="muted"
           />
           <StatTile
             icon={<Square className="h-4 w-4" />}
@@ -132,7 +132,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
           <div className="rounded-lg border bg-blue-50/50 dark:bg-blue-950/20 p-3">
             <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400">
               <LayoutGrid className="h-4 w-4" />
-              <span className="text-xs font-medium">Стопок</span>
+              <span className="text-xs font-medium">Типов груза</span>
             </div>
             <div className="text-xl font-bold tabular-nums mt-1">
               {placed.length}
