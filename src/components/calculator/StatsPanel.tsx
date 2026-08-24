@@ -135,7 +135,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
               <span className="text-xs font-medium">Типов груза</span>
             </div>
             <div className="text-xl font-bold tabular-nums mt-1">
-              {placed.length}
+              {breakdown.length}
             </div>
             <div className="text-[10px] text-muted-foreground">на палубе</div>
           </div>
@@ -189,12 +189,12 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
                     <th className="px-2 py-1.5 font-medium">Груз</th>
                     <th
                       className="px-1.5 py-1.5 font-medium text-right"
-                      title="Сколько ярусов ЭТОГО груза максимум влезает в одну стопку по высоте (зазор палубы ÷ высота груза) — не то же самое, что фактически размещённое количество (см. «Ед.»)"
+                      title="Сколько ярусов ЭТОГО груза максимум влезает в одну стопку по высоте (зазор палубы ÷ высота груза) — не то же самое, что фактически размещённое количество (см. «Всего ед.»)"
                     >
                       Ярусы
                     </th>
-                    <th className="px-1.5 py-1.5 font-medium text-right">Типов груза</th>
-                    <th className="px-1.5 py-1.5 font-medium text-right">Ед.</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Размещено</th>
+                    <th className="px-1.5 py-1.5 font-medium text-right">Всего ед.</th>
                     <th className="px-1.5 py-1.5 font-medium text-right">Площадь</th>
                     <th className="px-2 py-1.5 font-medium text-right">Вес</th>
                   </tr>
