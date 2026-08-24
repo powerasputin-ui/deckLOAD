@@ -37,11 +37,11 @@ import {
   computeFreeRects,
   computeGridStep,
   clampToDeck,
-  collidesWith,
-  collidesPrecisely,
   rectInsidePolygon,
   erodePolygon,
   withClearanceFootprint,
+  collidesWithClearance,
+  type ClearanceMargin,
   lashingPointExclusionRects,
   checkZoneLoads,
   LASHING_DEVICES,
@@ -502,10 +502,12 @@ export default function Home() {
       toast.warning(`Груз «${pin.name}» не разрешает поворот`)
       return
     }
-    const others = pinnedPlacements
+    const placementRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = pinnedPlacements
       .filter((p) => p.id !== id)
-      .map((p) => withClearanceFootprint(p))
-      .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, clearanceMargin: p.clearanceMargin }))
+    const lashingRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
+    const rawOthers = [...placementRects, ...lashingRects]
+    const others = rawOthers.map((p) => withClearanceFootprint(p))
     const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -515,19 +517,20 @@ export default function Home() {
       toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
-    // Additive precision check for custom (possibly concave) outlines —
-    // rotatePlacement above is bbox-only and unchanged; this only rejects a
-    // bbox-approved rotation that a real outline-vs-outline check finds
-    // actually overlapping.
-    if (item.outline) {
-      const preciseOthers = result.placed
-        .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
-      const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline }
-      if (collidesPrecisely(target, preciseOthers, deck.gap)) {
-        toast.warning('Невозможно повернуть: нет места')
-        return
-      }
+    // rotatePlacement above only inflates the OTHER side's clearance zones —
+    // swapping width/length here can newly overlap a neighbour that was
+    // clear before the rotation, if it's this placement's OWN zone that's
+    // now in the way. Additive precision check for custom (possibly
+    // concave) outlines too — rotatePlacement is bbox-only and unchanged;
+    // this only rejects a bbox-approved rotation that a real outline-vs-
+    // outline check finds actually overlapping.
+    const preciseOthers = result.placed
+      .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline, clearanceMargin: pin.clearanceMargin }
+    if (collidesWithClearance(target, preciseOthers, deck.gap)) {
+      toast.warning('Невозможно повернуть: нет места')
+      return
     }
     updatePinned(clampedTripIndex, id, {
       x: rotated.x,
@@ -546,10 +549,12 @@ export default function Home() {
       toast.warning(`Груз «${mp.name}» не разрешает поворот`)
       return
     }
-    const others = manualPlacements
+    const manualRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = manualPlacements
       .filter((m) => m.id !== id)
-      .map((m) => withClearanceFootprint(m))
-      .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
+      .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, clearanceMargin: m.clearanceMargin }))
+    const lashingRects2: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
+    const rawOthers = [...manualRects, ...lashingRects2]
+    const others = rawOthers.map((m) => withClearanceFootprint(m))
     const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
@@ -559,15 +564,14 @@ export default function Home() {
       toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
-    if (item.outline) {
-      const preciseOthers = result.placed
-        .filter((p) => manualPlacements[p.index]?.id !== id)
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
-      const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline }
-      if (collidesPrecisely(target, preciseOthers, deck.gap)) {
-        toast.warning('Невозможно повернуть: нет места')
-        return
-      }
+    // Same own-zone-after-rotation check as handleRotatePinned above.
+    const preciseOthers = result.placed
+      .filter((p) => manualPlacements[p.index]?.id !== id)
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline, clearanceMargin: mp.clearanceMargin }
+    if (collidesWithClearance(target, preciseOthers, deck.gap)) {
+      toast.warning('Невозможно повернуть: нет места')
+      return
     }
     updateManualPlacement(id, {
       x: rotated.x,
@@ -689,10 +693,6 @@ export default function Home() {
       const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
       const current = placements.find((p) => p.id === selectedId)
       if (!current) return
-      const others = placements
-        .filter((p) => p.id !== selectedId)
-        .map((p) => withClearanceFootprint(p))
-        .concat(lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap))
       const target2 = {
         x: current.x + dx * step,
         y: current.y + dy * step,
@@ -700,21 +700,24 @@ export default function Home() {
         length: current.length,
       }
       const clamped = clampToDeck(target2, deck.width, deck.length, deck.boardOffset)
-      if (collidesWith({ ...clamped, width: current.width, length: current.length }, others, deck.gap)) return
       if (usableOutline && !rectInsidePolygon({ ...clamped, width: current.width, length: current.length }, usableOutline)) return
       const nudgedItem = items.find((it) => it.id === current.itemId)
-      if (nudgedItem?.outline) {
-        const preciseOthers =
-          mode === 'manual'
-            ? result.placed
-                .filter((p) => manualPlacements[p.index]?.id !== selectedId)
-                .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
-            : result.placed
-                .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
-                .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline }))
-        const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem.outline }
-        if (collidesPrecisely(target3, preciseOthers, deck.gap)) return
-      }
+      // Single check (bbox + outline + both-direction clearance margin) —
+      // sourced from result.placed like the rotate handlers above, since
+      // raw ManualPlacement/PinnedPlacement never carry outline data.
+      type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }
+      const placedRects: CollisionCandidate[] =
+        mode === 'manual'
+          ? result.placed
+              .filter((p) => manualPlacements[p.index]?.id !== selectedId)
+              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+          : result.placed
+              .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
+              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+      const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
+      const preciseOthers = [...placedRects, ...lashingRects3]
+      const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin }
+      if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
       if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
       else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y })
     }
@@ -1009,6 +1012,11 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
       }))
+      // Lashing points only ever attach to a real placement id (pinned or
+      // manual) — auto-mode's non-pinned, algorithm-placed slots never have
+      // one, so only pinnedPlacements (not the full result.placed) can be a
+      // carryover source here.
+      const matches = matchLashingCarryover(pinnedPlacements, newManual)
       useCalculator.setState({
         mode: 'manual',
         manualPlacements: newManual,
@@ -1018,7 +1026,7 @@ export default function Home() {
         pendingPresetStamp: null,
         activePresetCategory: null,
       })
-      useCalculator.getState().pruneStaleLashingPoints()
+      useCalculator.getState().remapLashingPointsForRedistribute(matches)
       toast.info('Ручной режим — размещения сохранены')
     } else {
       // Convert manual placements into pinned placements, preserving layers.
@@ -1035,6 +1043,7 @@ export default function Home() {
         color: m.color,
         weight: m.weight,
       }))
+      const matches = matchLashingCarryover(manualPlacements, newPinned)
       useCalculator.setState({
         mode: 'auto',
         // Manual mode has no trip concept — everything becomes trip 0's pins.
@@ -1045,7 +1054,7 @@ export default function Home() {
         pendingPresetStamp: null,
         activePresetCategory: null,
       })
-      useCalculator.getState().pruneStaleLashingPoints()
+      useCalculator.getState().remapLashingPointsForRedistribute(matches)
       toast.info('Авто-режим — размещения сохранены как закреплённые')
     }
   }
@@ -1098,6 +1107,42 @@ export default function Home() {
   // Pinning the variant's own placements locks in exactly what was shown in
   // the preview, the same way switching manual -> auto mode already converts
   // placements into pins elsewhere in this file.
+  // Auto-redistribute hands every placement a brand-new id (it's a full
+  // repack, not a move), so a lashing point's old placementId never matches
+  // anything afterward. Match each old placement that actually has lashing
+  // points against the nearest same-itemId placement in the new layout
+  // (greedy, one new placement claimed per old one) so those points survive
+  // onto "the same cargo, repacked" instead of being pruned as orphans.
+  const matchLashingCarryover = (
+    oldPlacements: { id: string; itemId: string; x: number; y: number }[],
+    newPlacements: { id: string; itemId: string; x: number; y: number }[]
+  ) => {
+    const attachedOldIds = new Set(
+      (useCalculator.getState().deck.lashingPoints ?? []).map((lp) => lp.placementId).filter(Boolean)
+    )
+    const oldWithLashing = oldPlacements.filter((p) => attachedOldIds.has(p.id))
+    if (oldWithLashing.length === 0) return []
+    const usedNewIds = new Set<string>()
+    const matches: { oldId: string; newId: string; dx: number; dy: number }[] = []
+    for (const old of oldWithLashing) {
+      let best: { id: string; itemId: string; x: number; y: number } | undefined
+      let bestDist = Infinity
+      for (const cand of newPlacements) {
+        if (usedNewIds.has(cand.id) || cand.itemId !== old.itemId) continue
+        const d = Math.hypot(cand.x - old.x, cand.y - old.y)
+        if (d < bestDist) {
+          bestDist = d
+          best = cand
+        }
+      }
+      if (best) {
+        usedNewIds.add(best.id)
+        matches.push({ oldId: old.id, newId: best.id, dx: best.x - old.x, dy: best.y - old.y })
+      }
+    }
+    return matches
+  }
+
   const applyVariant = (variant: PackVariant) => {
     const s = useCalculator.getState()
     if (s.mode === 'manual') {
@@ -1114,12 +1159,13 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
       }))
+      const matches = matchLashingCarryover(s.manualPlacements, newManual)
       useCalculator.setState({
         manualPlacements: newManual,
         pinnedPlacementsByTrip: {},
         selectedPinIds: [],
       })
-      useCalculator.getState().pruneStaleLashingPoints()
+      useCalculator.getState().remapLashingPointsForRedistribute(matches)
     } else {
       const newPinned = variant.result.placed.map((p) => ({
         id: crypto.randomUUID(),
@@ -1134,12 +1180,13 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
       }))
+      const matches = matchLashingCarryover(s.pinnedPlacementsByTrip[clampedTripIndex] ?? [], newPinned)
       useCalculator.setState({
         pinnedPlacementsByTrip: { [clampedTripIndex]: newPinned },
         manualPlacements: [],
         selectedPinIds: [],
       })
-      useCalculator.getState().pruneStaleLashingPoints()
+      useCalculator.getState().remapLashingPointsForRedistribute(matches)
     }
   }
 

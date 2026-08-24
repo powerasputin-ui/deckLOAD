@@ -7,6 +7,7 @@ import {
   maxLayersFor,
   collidesWith,
   withClearanceFootprint,
+  collidesWithClearance,
   clampToDeck,
   rotatePlacement,
   resolveSnappedDragPosition,
@@ -592,6 +593,40 @@ describe('withClearanceFootprint', () => {
     // Far enough outside the 1m margin.
     const farAway = { x: 8, y: 5, width: 1, length: 1 }
     expect(collidesWith(farAway, [withClearanceFootprint(guarded)])).toBe(false)
+  })
+})
+
+describe('collidesWithClearance', () => {
+  // Regression: withClearanceFootprint on its own only inflates whichever
+  // side appears in `others` — a bare collidesPrecisely(target, others.map
+  // (withClearanceFootprint)) call blocks a plain item from entering a
+  // zoned neighbour's margin, but never stops the ZONED item itself from
+  // being moved right up against a plain neighbour, since nothing ever
+  // inflated `target` by its own margin. collidesWithClearance must reject
+  // in both directions.
+  const zoned = { x: 5, y: 5, width: 1, length: 1, clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 } }
+  // 0.5m from the zoned item's right edge — inside its 1m margin either way.
+  const nearby = { x: 6.5, y: 5, width: 1, length: 1 }
+  const farAway = { x: 9, y: 5, width: 1, length: 1 }
+
+  it('blocks a plain item from moving into a zoned neighbour\'s margin', () => {
+    expect(collidesWithClearance(nearby, [zoned])).toBe(true)
+    expect(collidesWithClearance(farAway, [zoned])).toBe(false)
+  })
+
+  it('blocks the zoned item itself from moving into a plain neighbour\'s space (the actual bug)', () => {
+    const plain = { x: 6.5, y: 5, width: 1, length: 1 }
+    expect(collidesWithClearance(zoned, [plain])).toBe(true)
+    const plainFar = { x: 9, y: 5, width: 1, length: 1 }
+    expect(collidesWithClearance(zoned, [plainFar])).toBe(false)
+  })
+
+  it('two plain items with no margin at all only collide on genuine overlap', () => {
+    const a = { x: 0, y: 0, width: 1, length: 1 }
+    const b = { x: 0.9, y: 0, width: 1, length: 1 }
+    const c = { x: 2, y: 0, width: 1, length: 1 }
+    expect(collidesWithClearance(a, [b])).toBe(true)
+    expect(collidesWithClearance(a, [c])).toBe(false)
   })
 })
 

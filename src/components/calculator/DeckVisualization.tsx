@@ -9,6 +9,7 @@ import {
   computeGridStep,
   clampToDeck,
   collidesPrecisely,
+  collidesWithClearance,
   rectInsidePolygon,
   erodePolygon,
   dedupePolygonVertices,
@@ -807,8 +808,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // collidesWith here would treat every custom-shaped neighbour's full
     // bounding box as solid even with zero margin, falsely blocking clicks
     // into its notch right after the precise pass above just allowed it.
-    const clearanceOthers = renderedItems.map((m) => withClearanceFootprint(m))
-    if (collidesPrecisely(target, clearanceOthers, gap)) {
+    if (collidesWithClearance(target, renderedItems, gap)) {
       toast.warning('Здесь нельзя разместить — зона отступа другого груза')
       return
     }
@@ -1053,9 +1053,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const resolved = resolveDragPosition(
             nx, ny, mp.width, mp.length, mp.x, mp.y, others
           )
-          const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline }
+          const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline, clearanceMargin: mp.clearanceMargin }
           const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
-          if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+          if (insideDeck && !collidesWithClearance(resolvedTarget, preciseOthers, gap)) {
             setDragPreviewPos({ x: resolved.x, y: resolved.y })
             scheduleDragCommit(dragState.id, resolved.x, resolved.y, 'manual')
           }
@@ -1166,9 +1166,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const resolved = resolveDragPosition(
           nx, ny, pin.width, pin.length, pin.x, pin.y, others
         )
-        const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline }
+        const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline, clearanceMargin: pin.clearanceMargin }
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
-        if (insideDeck && !collidesPrecisely(resolvedTarget, preciseOthers, gap)) {
+        if (insideDeck && !collidesWithClearance(resolvedTarget, preciseOthers, gap)) {
           setDragPreviewPos({ x: resolved.x, y: resolved.y })
           scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
         }

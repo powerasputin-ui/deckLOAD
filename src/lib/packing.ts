@@ -1743,6 +1743,34 @@ export function collidesPrecisely(
   return false
 }
 
+// Every interactive site (click-place, drag, rotate, nudge) that enforces
+// a clearance zone does so by inflating the OTHER placements in `others` via
+// withClearanceFootprint before testing `target` against them — which makes
+// a zoned placement repel its neighbours, but never stops the zoned
+// placement ITSELF from being moved right up against a neighbour that has
+// no zone of its own (nothing ever inflated `target` by its own margin).
+// Checks both directions — same bidirectional pattern packDeck's own
+// pin-vs-pin validation already uses — so a hard-block zone excludes other
+// cargo no matter which of the two placements is the one actually moving.
+type ClearanceCollisionCandidate = {
+  x: number
+  y: number
+  width: number
+  length: number
+  rotated?: boolean
+  outline?: { x: number; y: number }[]
+  clearanceMargin?: ClearanceMargin
+}
+export function collidesWithClearance(
+  target: ClearanceCollisionCandidate,
+  others: ClearanceCollisionCandidate[],
+  gap = 0
+): boolean {
+  if (collidesPrecisely(target, others.map(withClearanceFootprint), gap)) return true
+  if (target.clearanceMargin && collidesPrecisely(withClearanceFootprint(target), others, gap)) return true
+  return false
+}
+
 // Clamp a placement so it stays fully inside the deck.
 export function clampToDeck(
   placement: { x: number; y: number; width: number; length: number },

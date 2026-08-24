@@ -237,6 +237,45 @@ describe('calculator store', () => {
     expect(points![0].placementId).toBe('p2')
   })
 
+  // Regression: a full placement replace (auto-redistribute, or switching
+  // manual<->auto mode) hands every placement a brand-new id, so a lashing
+  // point's old placementId never matches anything afterward. Without a
+  // carryover step, pruneStaleLashingPoints alone silently deletes every
+  // point on every redistribute — remapLashingPointsForRedistribute must
+  // carry them onto their matched new placement instead.
+  it('carries lashing points onto their new placement id after a full redistribute', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    // Simulates the post-redistribute store state: the new placement (with
+    // its brand-new id) is already in place before the remap action runs,
+    // exactly like applyVariant's real call order (setState, then remap).
+    s.addManualPlacement({
+      id: 'new-1',
+      itemId: item.id,
+      name: 'Box',
+      x: 3,
+      y: -2,
+      width: 2,
+      length: 1,
+      layers: 1,
+      rotated: false,
+      color: item.color,
+    })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'old-1', cornerX: 2, cornerY: 1 })
+    s.addLashingPoint({ x: 10, y: 10, placementId: 'old-orphan' }) // no match provided below
+    s.remapLashingPointsForRedistribute([{ oldId: 'old-1', newId: 'new-1', dx: 3, dy: -2 }])
+    const points = useCalculator.getState().deck.lashingPoints
+    // The unmatched point (old-orphan) has no live placement id at all in
+    // this test's store, so pruneOrphanLashingPoints drops it too — only
+    // the successfully-carried-over point should remain.
+    expect(points).toHaveLength(1)
+    expect(points![0].placementId).toBe('new-1')
+    // Corner shifted by the same delta the matched placement moved.
+    expect(points![0].cornerX).toBeCloseTo(5)
+    expect(points![0].cornerY).toBeCloseTo(-1)
+  })
+
   it('converts a placement clearanceMargin when switching units', () => {
     const s = useCalculator.getState()
     s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })

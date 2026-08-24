@@ -207,6 +207,15 @@ interface CalculatorState {
   // (e.g. applying an auto-redistribute variant) that doesn't go through
   // the normal remove/clear actions, which already do this internally.
   pruneStaleLashingPoints: () => void
+  // A full replace of the placement list (auto-redistribute) assigns every
+  // placement a brand-new id, even for cargo that's conceptually "the same
+  // item, just repacked" — pruneStaleLashingPoints alone would silently
+  // delete every lashing point on every redistribute. This carries points
+  // over onto their best-matching surviving placement (same itemId, nearest
+  // position) instead, translating cornerX/cornerY by the same delta
+  // dragLashingCorners already uses for a plain move; anything left
+  // unmatched (item no longer fits at all) still gets pruned.
+  remapLashingPointsForRedistribute: (matches: { oldId: string; newId: string; dx: number; dy: number }[]) => void
 
   // Cargo category separation rules
   addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
@@ -1040,6 +1049,30 @@ export const useCalculator = create<CalculatorState>()(
     })),
   pruneStaleLashingPoints: () =>
     set((s) => ({ deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, s.pinnedPlacementsByTrip) })),
+  remapLashingPointsForRedistribute: (matches) =>
+    set((s) => {
+      const points = s.deck.lashingPoints
+      if (!points || points.length === 0) return {}
+      const byOldId = new Map(matches.map((m) => [m.oldId, m]))
+      const remapped = points.map((lp) => {
+        if (!lp.placementId) return lp
+        const m = byOldId.get(lp.placementId)
+        if (!m) return lp
+        return {
+          ...lp,
+          placementId: m.newId,
+          cornerX: lp.cornerX !== undefined ? lp.cornerX + m.dx : lp.cornerX,
+          cornerY: lp.cornerY !== undefined ? lp.cornerY + m.dy : lp.cornerY,
+        }
+      })
+      return {
+        deck: pruneOrphanLashingPoints(
+          { ...s.deck, lashingPoints: remapped },
+          s.manualPlacements,
+          s.pinnedPlacementsByTrip
+        ),
+      }
+    }),
   setPlacingLashingPoint: (v) =>
     set({ placingLashingPoint: v, ...(v ? { drawingCustomShape: false, editingDeckOutline: false } : {}) }),
   setDrawingCustomShape: (v) =>
