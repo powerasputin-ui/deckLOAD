@@ -187,6 +187,16 @@ export interface LashingPoint {
   deviceType?: LashingDeviceType
 }
 
+// A purely visual marker showing where a deck electrical outlet is (so the
+// user can see where a reefer container could be plugged in). Deliberately
+// carries no collision/exclusion behavior — never affects placement.
+export interface PowerSocket {
+  id: string
+  x: number
+  y: number
+  label?: string
+}
+
 // Typical securing devices with their rated MSL (kg) — selecting one
 // auto-fills mslKg, which stays freely editable afterwards (custom gear).
 export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: number }> = {

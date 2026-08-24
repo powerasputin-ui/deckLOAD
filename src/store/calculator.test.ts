@@ -237,6 +237,35 @@ describe('calculator store', () => {
     expect(points![0].placementId).toBe('p2')
   })
 
+  it('adds, updates and removes a power socket', () => {
+    const s = useCalculator.getState()
+    s.addPowerSocket({ x: 4, y: 2, label: 'Розетка 1' })
+    let sockets = useCalculator.getState().deck.powerSockets
+    expect(sockets).toHaveLength(1)
+    expect(sockets![0].label).toBe('Розетка 1')
+    const id = sockets![0].id
+    s.updatePowerSocket(id, { x: 6, y: 3 })
+    sockets = useCalculator.getState().deck.powerSockets
+    expect(sockets![0].x).toBe(6)
+    expect(sockets![0].y).toBe(3)
+    s.removePowerSocket(id)
+    expect(useCalculator.getState().deck.powerSockets).toHaveLength(0)
+  })
+
+  it('arming a cargo stamp or preset disarms placingLashingPoint/placingPowerSocket, and vice versa', () => {
+    const s = useCalculator.getState()
+    s.setPlacingPowerSocket(true)
+    expect(useCalculator.getState().placingPowerSocket).toBe(true)
+    s.setPlacingLashingPoint(true)
+    expect(useCalculator.getState().placingLashingPoint).toBe(true)
+    expect(useCalculator.getState().placingPowerSocket).toBe(false)
+    s.setActiveStamp('some-id')
+    expect(useCalculator.getState().placingLashingPoint).toBe(false)
+    s.setPlacingPowerSocket(true)
+    s.setPendingPresetStamp({ name: 'X' })
+    expect(useCalculator.getState().placingPowerSocket).toBe(false)
+  })
+
   // Regression: a full placement replace (auto-redistribute, or switching
   // manual<->auto mode) hands every placement a brand-new id, so a lashing
   // point's old placementId never matches anything afterward. Without a

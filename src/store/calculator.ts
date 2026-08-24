@@ -17,6 +17,7 @@ import {
   type LoadZone,
   type SeparationRule,
   type LashingPoint,
+  type PowerSocket,
   type ClearanceMargin,
   type VesselMotion,
 } from '@/lib/packing'
@@ -57,6 +58,7 @@ export interface DeckConfig {
   clearance: number // max stack height above deck; 0 or item without height = single tier (no stacking)
   loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
   lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
+  powerSockets?: PowerSocket[] // visual-only markers showing where deck electrical outlets are
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
   backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
   backgroundImageOpacity?: number // 0..1, seeded to 0.5 the first time a photo is attached
@@ -126,6 +128,7 @@ interface CalculatorState {
   activePresetCategory: string | null
   stampRotated: boolean
   placingLashingPoint: boolean
+  placingPowerSocket: boolean
   // Armed "draw a custom cargo outline" mode — mutually exclusive with
   // activeStampId/pendingPresetStamp/placingLashingPoint (arming any of the
   // four disarms the other three). The in-progress point list itself is
@@ -192,6 +195,12 @@ interface CalculatorState {
   addLashingPoint: (point: Omit<LashingPoint, 'id'>) => void
   updateLashingPoint: (id: string, patch: Partial<LashingPoint>) => void
   removeLashingPoint: (id: string) => void
+
+  // Power-socket markers — purely visual, never affect collision/placement.
+  addPowerSocket: (socket: Omit<PowerSocket, 'id'>) => void
+  updatePowerSocket: (id: string, patch: Partial<PowerSocket>) => void
+  removePowerSocket: (id: string) => void
+  setPlacingPowerSocket: (v: boolean) => void
   setPlacingLashingPoint: (v: boolean) => void
   setDrawingCustomShape: (v: boolean) => void
   setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
@@ -499,6 +508,7 @@ export const useCalculator = create<CalculatorState>()(
   activePresetCategory: null,
   stampRotated: false,
   placingLashingPoint: false,
+  placingPowerSocket: false,
   drawingCustomShape: false,
   pendingCustomShape: null,
   editingDeckOutline: false,
@@ -830,8 +840,28 @@ export const useCalculator = create<CalculatorState>()(
       selectedPinIds: [],
       selectedManualIds: [],
     })),
-  setActiveStamp: (id) => set({ activeStampId: id, pendingPresetStamp: null, drawingCustomShape: false, editingDeckOutline: false }),
-  setPendingPresetStamp: (template) => set({ pendingPresetStamp: template, activeStampId: null, drawingCustomShape: false, editingDeckOutline: false }),
+  // Also clears placingLashingPoint/placingPowerSocket, not just the other
+  // two armed modes — a pre-existing gap where arming a cargo stamp left a
+  // placing-tool silently still active (same bug class the Sidebar already
+  // has a comment about for switching a placement to zone mode).
+  setActiveStamp: (id) =>
+    set({
+      activeStampId: id,
+      pendingPresetStamp: null,
+      drawingCustomShape: false,
+      editingDeckOutline: false,
+      placingLashingPoint: false,
+      placingPowerSocket: false,
+    }),
+  setPendingPresetStamp: (template) =>
+    set({
+      pendingPresetStamp: template,
+      activeStampId: null,
+      drawingCustomShape: false,
+      editingDeckOutline: false,
+      placingLashingPoint: false,
+      placingPowerSocket: false,
+    }),
   setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
     let id = ''
@@ -1040,6 +1070,27 @@ export const useCalculator = create<CalculatorState>()(
         lashingPoints: (s.deck.lashingPoints ?? []).filter((p) => p.id !== id),
       },
     })),
+  addPowerSocket: (socket) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        powerSockets: [...(s.deck.powerSockets ?? []), { id: uuid(), ...socket }],
+      },
+    })),
+  updatePowerSocket: (id, patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        powerSockets: (s.deck.powerSockets ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p)),
+      },
+    })),
+  removePowerSocket: (id) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        powerSockets: (s.deck.powerSockets ?? []).filter((p) => p.id !== id),
+      },
+    })),
   clearLashingPointsFor: (placementId) =>
     set((s) => ({
       deck: {
@@ -1085,17 +1136,29 @@ export const useCalculator = create<CalculatorState>()(
       }
     }),
   setPlacingLashingPoint: (v) =>
-    set({ placingLashingPoint: v, ...(v ? { drawingCustomShape: false, editingDeckOutline: false } : {}) }),
+    set({
+      placingLashingPoint: v,
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false } : {}),
+    }),
+  setPlacingPowerSocket: (v) =>
+    set({
+      placingPowerSocket: v,
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false } : {}),
+    }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
-      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, editingDeckOutline: false } : {}),
+      ...(v
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false }
+        : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
   setEditingDeckOutline: (v) =>
     set({
       editingDeckOutline: v,
-      ...(v ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, drawingCustomShape: false } : {}),
+      ...(v
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false }
+        : {}),
     }),
   setVesselMotion: (patch) =>
     set((s) => ({

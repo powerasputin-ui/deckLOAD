@@ -166,7 +166,9 @@ describe('projects store', () => {
   // silently dropped by normalizeProject on every reload (and then the next
   // autosave would permanently erase them from storage too). vesselMotion
   // had the exact same bug — never added to this allowlist at all.
-  it('round-trips loadZones, lashingPoints, item category, separationRules, and vesselMotion through a reload', () => {
+  // powerSockets is added preemptively, following the same normalizeLoadZones
+  // pattern from day one, so it never hits this bug class in the first place.
+  it('round-trips loadZones, lashingPoints, powerSockets, item category, separationRules, and vesselMotion through a reload', () => {
     useProjects.getState().hydrate()
     const project = useProjects.getState().projects[0]
     useProjects.getState().saveSnapshot({
@@ -180,6 +182,7 @@ describe('projects store', () => {
         clearance: 0,
         loadZones: [{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }],
         lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
+        powerSockets: [{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }],
         vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
       },
       items: [
@@ -204,6 +207,7 @@ describe('projects store', () => {
     const reloaded = useProjects.getState().projects[0]
     expect(reloaded.deck.loadZones).toEqual([{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }])
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
+    expect(reloaded.deck.powerSockets).toEqual([{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }])
     expect(reloaded.items[0].category).toBe('hazard')
     expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })

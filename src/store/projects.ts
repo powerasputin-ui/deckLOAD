@@ -159,6 +159,20 @@ function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
   return points.length > 0 ? points : undefined
 }
 
+function normalizePowerSockets(value: unknown): DeckConfig['powerSockets'] {
+  if (!Array.isArray(value)) return undefined
+  const sockets = value.map((s) => {
+    const socket = s as Record<string, unknown>
+    return {
+      id: typeof socket.id === 'string' && socket.id ? socket.id : uuid(),
+      x: toFiniteNonNegative(socket.x, 0),
+      y: toFiniteNonNegative(socket.y, 0),
+      label: toOptionalString(socket.label),
+    }
+  })
+  return sockets.length > 0 ? sockets : undefined
+}
+
 function normalizePinnedList(value: unknown): PinnedPlacement[] {
   if (!Array.isArray(value)) return []
   return value.map((pp) => {
@@ -266,6 +280,7 @@ function normalizeProject(p: Partial<Project>): Project {
       clearance: toFiniteNonNegative(p.deck?.clearance, 0),
       loadZones: normalizeLoadZones(p.deck?.loadZones),
       lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
+      powerSockets: normalizePowerSockets(p.deck?.powerSockets),
       backgroundImage: toOptionalString(p.deck?.backgroundImage),
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
       outline: normalizeOutline(p.deck?.outline),

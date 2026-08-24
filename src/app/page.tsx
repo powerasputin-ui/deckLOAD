@@ -63,6 +63,7 @@ import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
 import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
+import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { toast } from 'sonner'
 
@@ -123,6 +124,10 @@ export default function Home() {
   )
   const placingLashingPoint = useCalculator((s) => s.placingLashingPoint)
   const setPlacingLashingPoint = useCalculator((s) => s.setPlacingLashingPoint)
+  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
+  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
+  const addPowerSocket = useCalculator((s) => s.addPowerSocket)
+  const updatePowerSocket = useCalculator((s) => s.updatePowerSocket)
   const addLashingPoint = useCalculator((s) => s.addLashingPoint)
   const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
@@ -246,10 +251,11 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline) return
+    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
+      if (placingPowerSocket) setPlacingPowerSocket(false)
       if (activeStampId) setActiveStamp(null)
       if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
       if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
@@ -258,7 +264,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -1344,7 +1350,6 @@ export default function Home() {
           canRedo={canRedo}
           onUndo={() => useCalculator.temporal.getState().undo()}
           onRedo={() => useCalculator.temporal.getState().redo()}
-          onPlaceCustomShape={handlePlaceCustomShape}
         />
 
         {/* Main content */}
@@ -1562,6 +1567,13 @@ export default function Home() {
                     onUpdateLashingPoint={updateLashingPoint}
                     vesselMotion={deck.vesselMotion}
                     onUpdateLoadZone={updateLoadZone}
+                    powerSockets={deck.powerSockets}
+                    placingPowerSocket={placingPowerSocket}
+                    onPlacePowerSocket={(x, y) => {
+                      const count = (deck.powerSockets?.length ?? 0) + 1
+                      addPowerSocket({ x, y, label: `Розетка ${count}` })
+                    }}
+                    onUpdatePowerSocket={updatePowerSocket}
                   />
                   )}
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
@@ -1575,6 +1587,7 @@ export default function Home() {
                       </span>
                     </span>
                   </div>
+                  <PresetsBar onPlaceCustomShape={handlePlaceCustomShape} />
                 </CardContent>
               </Card>
             </div>

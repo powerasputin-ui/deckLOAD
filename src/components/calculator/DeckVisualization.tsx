@@ -29,6 +29,7 @@ import {
   type LoadZone,
   type SeparationRule,
   type LashingPoint,
+  type PowerSocket,
   type VesselMotion,
   type ClearanceMargin,
 } from '@/lib/packing'
@@ -103,6 +104,11 @@ interface DeckVisualizationProps {
   ) => void
   onUpdateLashingPoint?: (id: string, patch: { x?: number; y?: number }) => void
   vesselMotion?: VesselMotion
+  // Power-socket markers — visual only, never affect collision/placement.
+  powerSockets?: PowerSocket[]
+  placingPowerSocket?: boolean
+  onPlacePowerSocket?: (x: number, y: number) => void
+  onUpdatePowerSocket?: (id: string, patch: { x?: number; y?: number }) => void
   onUpdateLoadZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number }) => void
   // Custom hand-drawn cargo outline ("Нарисовать"): armed boolean + finish
   // callback, mirroring placingLashingPoint/onPlaceLashingPoint. Points are
@@ -167,6 +173,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onUpdateLoadZone,
   drawingCustomShape,
   onFinishDrawing,
+  powerSockets,
+  placingPowerSocket,
+  onPlacePowerSocket,
+  onUpdatePowerSocket,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -264,6 +274,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPrevPlacingLashingPoint(placingLashingPoint)
     if (!placingLashingPoint && pendingLashingCorner) setPendingLashingCorner(null)
   }
+  // Power-socket marker: always a single click (no corner-attach step), so
+  // it only needs a cursor-follow hover position and drag state for
+  // repositioning an already-placed marker — no "pending" step to reset.
+  const [socketHoverPos, setSocketHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [selectedSocketId, setSelectedSocketId] = useState<string | null>(null)
+  const [socketDrag, setSocketDrag] = useState<{
+    id: string
+    startMouse: { x: number; y: number }
+    startPos: { x: number; y: number }
+  } | null>(null)
   // Custom-shape drawing: confirmed points + live cursor position, same
   // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
   // disarm via the same "compare against previous prop" render-time pattern
@@ -664,6 +684,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return true
   }
 
+  // Power-socket placement — always a single click, no corner/attach step.
+  const handlePowerSocketClick = (e: React.MouseEvent): boolean => {
+    if (!placingPowerSocket || !onPlacePowerSocket) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    onPlacePowerSocket(x, y)
+    return true
+  }
+
   const CLOSE_LOOP_PIXEL_RADIUS = 10
 
   // Point-by-point outline drawing: each click appends a vertex; clicking
@@ -772,6 +803,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (handleDrawClick(e)) return
     if (handleOutlineEditClick(e)) return
     if (handleLashingClick(e)) return
+    if (handlePowerSocketClick(e)) return
     if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return
@@ -997,6 +1029,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setLashingHoverPos(pos)
     }
+    if (placingPowerSocket) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      setSocketHoverPos(pos)
+    }
     if (drawingCustomShape) {
       const pos = screenToDeck(e.clientX, e.clientY)
       setDrawHoverPos(pos)
@@ -1137,6 +1173,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const ny = Math.max(0, Math.min(deckLength, lashingAnchorDrag.startPos.y + deltaY))
       onUpdateLashingPoint(lashingAnchorDrag.id, { x: nx, y: ny })
     }
+    if (socketDrag && onUpdatePowerSocket) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const startDeck = screenToDeck(socketDrag.startMouse.x, socketDrag.startMouse.y)
+      if (!startDeck) return
+      const deltaX = pos.x - startDeck.x
+      const deltaY = pos.y - startDeck.y
+      const nx = Math.max(0, Math.min(deckWidth, socketDrag.startPos.x + deltaX))
+      const ny = Math.max(0, Math.min(deckLength, socketDrag.startPos.y + deltaY))
+      onUpdatePowerSocket(socketDrag.id, { x: nx, y: ny })
+    }
     if (pinDrag && onUpdatePinned) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
@@ -1221,6 +1268,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setClearanceDrag(null)
     setPanDrag(null)
     setLashingAnchorDrag(null)
+    setSocketDrag(null)
     setDraggingVertexIndex(null)
   }
 
@@ -1242,6 +1290,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPanDrag(null)
     setMergeTargetId(null)
     setLashingAnchorDrag(null)
+    setSocketDrag(null)
     setDraggingVertexIndex(null)
   }
 
@@ -1337,7 +1386,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || activeStamp || drawingCustomShape || editingDeckOutline
+      : placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline
         ? 'crosshair'
         : 'default'
 
@@ -1452,7 +1501,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || activeStamp || drawingCustomShape || editingDeckOutline ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1781,6 +1830,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </g>
         )}
 
+        {/* Power-socket placement preview (follows cursor while armed) */}
+        {placingPowerSocket && socketHoverPos && (
+          <g className="pointer-events-none" opacity={0.55}>
+            <PowerSocketGlyph x={toX(socketHoverPos.x)} y={toY(socketHoverPos.y)} />
+          </g>
+        )}
+
         {/* Custom-shape drawing preview: confirmed points + a dashed segment
             to the cursor, with the first vertex highlighted once the loop
             can be closed (>=3 points placed). */}
@@ -2036,6 +2092,39 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               {pt.label && (
                 <text x={px + 8} y={py + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none pointer-events-none">
                   {pt.label}
+                </text>
+              )}
+            </g>
+          )
+        })}
+
+        {powerSockets?.map((s) => {
+          const sx = toX(s.x)
+          const sy = toY(s.y)
+          const interactive = !!onUpdatePowerSocket
+          return (
+            <g key={`socket-${s.id}`}>
+              {selectedSocketId === s.id && (
+                <circle cx={sx} cy={sy} r={10} fill="none" stroke="#f59e0b" strokeWidth={1.2} strokeDasharray="2 2" />
+              )}
+              <PowerSocketGlyph
+                x={sx}
+                y={sy}
+                interactive={interactive}
+                onPointerDown={
+                  interactive
+                    ? (e) => {
+                        e.stopPropagation()
+                        setSelectedSocketId(s.id)
+                        setSocketDrag({ id: s.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: s.x, y: s.y } })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }
+                    : undefined
+                }
+              />
+              {s.label && (
+                <text x={sx + 9} y={sy + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none pointer-events-none">
+                  {s.label}
                 </text>
               )}
             </g>
@@ -2566,6 +2655,28 @@ function PlacedRect({
           ↻
         </text>
       )}
+    </g>
+  )
+}
+
+// Hand-drawn plug glyph for power-socket markers — this file has no
+// precedent for embedding a lucide icon inside the SVG deck canvas
+// (every marker here, e.g. lashing points, is plain SVG primitives), so
+// this stays consistent: a small amber rounded body with two short prong
+// lines, distinct in color from the dark lashing pin / zone strokes so it
+// reads as "electrical" at a glance.
+function PowerSocketGlyph({ x, y, interactive, onPointerDown }: {
+  x: number
+  y: number
+  interactive?: boolean
+  onPointerDown?: (e: React.PointerEvent) => void
+}) {
+  return (
+    <g style={interactive ? { cursor: 'move' } : undefined} onPointerDown={onPointerDown}>
+      {interactive && <circle cx={x} cy={y} r={9} fill="transparent" />}
+      <rect x={x - 6} y={y - 5} width={12} height={10} rx={2.5} fill="#f59e0b" stroke="#fff" strokeWidth={1.2} />
+      <line x1={x - 2.5} y1={y - 5} x2={x - 2.5} y2={y - 8} stroke="#fff" strokeWidth={1.4} />
+      <line x1={x + 2.5} y1={y - 5} x2={x + 2.5} y2={y - 8} stroke="#fff" strokeWidth={1.4} />
     </g>
   )
 }

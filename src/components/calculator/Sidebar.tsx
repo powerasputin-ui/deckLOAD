@@ -6,6 +6,7 @@ import { useState } from 'react'
 // as "the snapshot changed" and re-renders forever.
 const EMPTY_ZONES: never[] = []
 const EMPTY_POINTS: never[] = []
+const EMPTY_POWER_SOCKETS: never[] = []
 import {
   FolderOpen,
   Plus,
@@ -28,7 +29,7 @@ import {
   Box,
   Undo2,
   Redo2,
-  Sparkles,
+  Plug,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -53,14 +54,13 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
   type ClearanceMargin,
-  type CargoShape,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn } from '@/lib/utils'
@@ -93,10 +93,6 @@ interface SidebarProps {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
-  // Places one instance of a just-finalized drawn shape at the point it was
-  // drawn — mode-aware (manual vs auto), lives in page.tsx since that's the
-  // only place trip-index/mode context is available.
-  onPlaceCustomShape: (name: string, weight?: number) => void
 }
 
 export function Sidebar({
@@ -110,7 +106,6 @@ export function Sidebar({
   canRedo,
   onUndo,
   onRedo,
-  onPlaceCustomShape,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -356,16 +351,9 @@ export function Sidebar({
 
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
-      </div>
 
-      {/* Presets — pick a category, the deck panel on the right shows
-          that category's catalog for click-to-place. This is the one
-          section allowed to grow and fill the remaining space down to
-          the Settings footer, scrolling internally if its list is too
-          tall — everything above stays at natural height so the rest of
-          the sidebar never scrolls as a whole. */}
-      <div className="flex-1 min-h-[180px] flex flex-col mt-4">
-        <PresetsSection onPlaceCustomShape={onPlaceCustomShape} />
+        {/* Power-socket markers (visual only) */}
+        <PowerSocketsSection />
       </div>
       </div>
 
@@ -953,213 +941,42 @@ function LashingPointsSection() {
   )
 }
 
-function PresetsSection({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
-  const [open, setOpen] = useState(false)
-  const activePresetCategory = useCalculator((s) => s.activePresetCategory)
-  const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
-  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
-  const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
-  const drawingCustomShape = useCalculator((s) => s.drawingCustomShape)
-  const setDrawingCustomShape = useCalculator((s) => s.setDrawingCustomShape)
-  const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
-  const setPendingCustomShape = useCalculator((s) => s.setPendingCustomShape)
-  const [drawName, setDrawName] = useState('')
-  const [drawWeight, setDrawWeight] = useState('')
-  // Reset the finalize form's fields once the pending shape is cleared
-  // (placed, or cancelled via Escape) — same render-time "compare previous
-  // prop" pattern used elsewhere in this app instead of a useEffect.
-  const [prevPendingCustomShape, setPrevPendingCustomShape] = useState(pendingCustomShape)
-  if (pendingCustomShape !== prevPendingCustomShape) {
-    setPrevPendingCustomShape(pendingCustomShape)
-    if (!pendingCustomShape) {
-      setDrawName('')
-      setDrawWeight('')
-    }
-  }
+function PowerSocketsSection() {
+  const sockets = useCalculator((s) => s.deck.powerSockets ?? EMPTY_POWER_SOCKETS)
+  const removePowerSocket = useCalculator((s) => s.removePowerSocket)
+  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
+  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
 
-  // Custom collapsible header (not the generic `Section`) because this is
-  // the one section that needs to grow/shrink and scroll internally — the
-  // expanded item list fills whatever space is left down to the Settings
-  // footer, and only that list scrolls, not the rest of the sidebar.
-  const growing = open && !!activePresetCategory
   return (
-    <div className={cn('flex flex-col min-h-0', growing ? 'flex-1' : 'shrink-0')}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left mb-1.5 group shrink-0"
-      >
-        {open ? (
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-        )}
-        <span className="text-muted-foreground group-hover:text-foreground transition-colors">
-          <Sparkles className="h-4 w-4" />
-        </span>
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Пресеты
-        </span>
-      </button>
-      {open && (
-        <div className={cn('pl-1 flex flex-col min-h-0', growing && 'flex-1')}>
-          <p className="text-[10px] text-muted-foreground leading-tight shrink-0">
-            Выберите категорию, затем тип груза — он вооружится для клика по палубе.
-          </p>
-          <div className="grid grid-cols-2 gap-1.5 mt-1.5 shrink-0">
-            {(() => {
-              const entries = Object.entries(PRESETS)
-              const isLastAlone = entries.length % 2 === 1
-              return entries.map(([key, cat], i) => (
-                <Button
-                  key={key}
-                  variant={activePresetCategory === key ? 'secondary' : 'outline'}
-                  size="sm"
-                  className={cn('h-7 text-xs', isLastAlone && i === entries.length - 1 && 'col-span-2')}
-                  onClick={() => setActivePresetCategory(activePresetCategory === key ? null : key)}
-                >
-                  {cat.label}
-                </Button>
-              ))
-            })()}
+    <Section icon={<Plug className="h-4 w-4" />} title="Розетки" badge={sockets.length} defaultOpen={false}>
+      <div className="space-y-3">
+        <p className="text-[10px] text-muted-foreground">
+          Отметьте на палубе, где есть электрические розетки — например, чтобы показать, где можно ставить
+          рефрижераторные контейнеры. Только визуальная метка — груз можно ставить поверх неё.
+        </p>
+        {sockets.map((s, i) => (
+          <div key={s.id} className="flex items-center gap-1.5 rounded-md border p-2">
+            <span className="truncate flex-1 text-xs">{s.label || `Розетка ${i + 1}`}</span>
+            <button
+              onClick={() => removePowerSocket(s.id)}
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+              title="Удалить розетку"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
           </div>
-          {activePresetCategory && (
-            <div className="thin-scrollbar space-y-1 mt-1.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
-              {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
-                // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
-                // not per row position — so the same type always shows the
-                // same color regardless of which category list it's viewed
-                // from, and the real item created on placement keeps this
-                // exact color (see addOrIncrementCargoFromTemplate).
-                const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
-                const active = pendingPresetStamp?.name === tpl.name
-                return (
-                  <PresetTemplateRow
-                    key={i}
-                    template={tpl}
-                    color={color}
-                    active={active}
-                    onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
-                  />
-                )
-              })}
-              {activePresetCategory === 'objects' && (
-                <button
-                  onClick={() => setDrawingCustomShape(!drawingCustomShape)}
-                  className={cn(
-                    'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
-                    drawingCustomShape
-                      ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
-                      : 'border-border hover:bg-accent'
-                  )}
-                >
-                  <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-muted-foreground">
-                    <Pencil className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-xs font-medium truncate">Нарисовать</span>
-                    <span className="block text-[10px] text-muted-foreground">свой контур по точкам</span>
-                  </span>
-                </button>
-              )}
-            </div>
-          )}
-          {pendingPresetStamp && (
-            <p className="text-[10px] text-muted-foreground leading-tight mt-1.5 shrink-0">
-              «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
-            </p>
-          )}
-          {drawingCustomShape && (
-            <p className="text-[10px] text-muted-foreground leading-tight mt-1.5 shrink-0">
-              Кликайте по палубе, чтобы поставить точки контура (минимум 3), затем кликните рядом с первой точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
-            </p>
-          )}
-          {pendingCustomShape && (
-            <div className="mt-1.5 shrink-0 space-y-1.5 rounded-lg border p-2">
-              <p className="text-[10px] text-muted-foreground leading-tight">
-                Контур готов — задайте имя, затем разместите.
-              </p>
-              <Input
-                value={drawName}
-                onChange={(e) => setDrawName(e.target.value)}
-                placeholder="Название груза"
-                className="h-7 text-xs"
-              />
-              <Input
-                value={drawWeight}
-                onChange={(e) => setDrawWeight(e.target.value)}
-                placeholder="Вес, кг (необязательно)"
-                inputMode="decimal"
-                className="h-7 text-xs"
-              />
-              <div className="flex gap-1.5">
-                <Button
-                  size="sm"
-                  className="h-7 text-xs flex-1"
-                  disabled={!drawName.trim()}
-                  onClick={() => {
-                    const w = parseFloat(drawWeight)
-                    onPlaceCustomShape(drawName.trim(), Number.isFinite(w) && w > 0 ? w : undefined)
-                  }}
-                >
-                  Разместить
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={() => setPendingCustomShape(null)}
-                >
-                  Отмена
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function PresetTemplateRow({
-  template,
-  color,
-  active,
-  onSelect,
-}: {
-  template: { name?: string; width?: number; length?: number; shape?: CargoShape }
-  color: string
-  active: boolean
-  onSelect: () => void
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={cn(
-        'w-full flex items-center gap-2.5 rounded-lg border p-2 text-left transition-all',
-        active
-          ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
-          : 'border-border hover:bg-accent'
-      )}
-    >
-      <span
-        className={cn(
-          'h-7 w-7 shrink-0 border border-black/10',
-          template.shape === 'circle' || template.shape === 'oval' ? 'rounded-full' : 'rounded-md',
-          template.shape === 'diamond' && 'rotate-45'
-        )}
-        style={{
-          backgroundColor: color,
-          clipPath: template.shape === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' : undefined,
-        }}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium truncate">{template.name}</div>
-        <div className="text-[10px] text-muted-foreground">
-          {template.width}×{template.length}
-        </div>
+        ))}
+        <Button
+          size="sm"
+          variant={placingPowerSocket ? 'default' : 'outline'}
+          className="h-7 text-xs w-full"
+          onClick={() => setPlacingPowerSocket(!placingPowerSocket)}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          {placingPowerSocket ? 'Кликните по палубе… (Готово)' : 'Добавить розетку'}
+        </Button>
       </div>
-      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
-    </button>
+    </Section>
   )
 }
 
