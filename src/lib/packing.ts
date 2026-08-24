@@ -1604,6 +1604,46 @@ export function polygonsOverlap(
   return pointInPolygon(polyA[0], polyB) || pointInPolygon(polyB[0], polyA)
 }
 
+// Nearest point on a closed polygon's own edges (not its interior) to a
+// given point, plus the unit normal of that edge pointing AWAY from the
+// polygon's interior. Used to snap a power-socket marker onto the deck's
+// true perimeter (rectangle or custom outline, both are just polygons here)
+// and to know which way is "outside" for placing its label clear of the
+// deck. Works for any simple polygon, convex or concave.
+export function nearestPointOnPolygon(
+  pt: { x: number; y: number },
+  poly: { x: number; y: number }[]
+): { x: number; y: number; normalX: number; normalY: number } {
+  let bestDist = Infinity
+  let best = { x: poly[0].x, y: poly[0].y, normalX: 0, normalY: -1 }
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const lenSq = dx * dx + dy * dy
+    let t = lenSq > 0 ? ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / lenSq : 0
+    t = Math.max(0, Math.min(1, t))
+    const px = a.x + t * dx
+    const py = a.y + t * dy
+    const dist = Math.hypot(pt.x - px, pt.y - py)
+    if (dist < bestDist) {
+      const len = Math.hypot(dx, dy) || 1
+      let nx = -dy / len
+      let ny = dx / len
+      // Two perpendiculars exist; nudge a hair along each candidate and
+      // keep whichever lands outside the polygon (points away from it).
+      if (pointInPolygon({ x: px + nx * 0.01, y: py + ny * 0.01 }, poly)) {
+        nx = -nx
+        ny = -ny
+      }
+      bestDist = dist
+      best = { x: px, y: py, normalX: nx, normalY: ny }
+    }
+  }
+  return best
+}
+
 // Standard shoelace formula — used for the deck's true area when it has a
 // non-rectangular outline (replaces width*length).
 export function polygonArea(poly: { x: number; y: number }[]): number {

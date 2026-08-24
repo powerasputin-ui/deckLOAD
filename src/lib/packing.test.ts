@@ -23,6 +23,7 @@ import {
   worldPolygon,
   lashingPointExclusionRects,
   polygonArea,
+  nearestPointOnPolygon,
   rectInsidePolygon,
   deckOutlineExclusionRects,
   erodePolygon,
@@ -726,6 +727,30 @@ describe('polygonsOverlap', () => {
     ]
     const inSolidPart = [{ x: 0.5, y: 0.5 }, { x: 1.5, y: 0.5 }, { x: 1.5, y: 1.5 }, { x: 0.5, y: 1.5 }]
     expect(polygonsOverlap(lShape, inSolidPart)).toBe(true)
+  })
+})
+
+describe('nearestPointOnPolygon', () => {
+  const rect = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 4 }, { x: 0, y: 4 }]
+
+  it('snaps an interior click onto the nearest edge, normal pointing outward', () => {
+    // Closer to the top edge (y=0) than any other side.
+    const res = nearestPointOnPolygon({ x: 3, y: 1 }, rect)
+    expect(res.y).toBeCloseTo(0, 9)
+    expect(res.x).toBeCloseTo(3, 9)
+    expect(res.normalY).toBeLessThan(0) // outward = away from the rectangle, i.e. upward (negative y)
+  })
+
+  it('snaps to a side edge with the correct outward normal', () => {
+    const res = nearestPointOnPolygon({ x: 9, y: 2 }, rect)
+    expect(res.x).toBeCloseTo(10, 9)
+    expect(res.normalX).toBeGreaterThan(0)
+  })
+
+  it('a point already on the boundary stays put', () => {
+    const res = nearestPointOnPolygon({ x: 5, y: 0 }, rect)
+    expect(res.x).toBeCloseTo(5, 9)
+    expect(res.y).toBeCloseTo(0, 9)
   })
 })
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
-import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PhotoCropDialog } from './PhotoCropDialog'
@@ -30,6 +30,7 @@ import {
   type SeparationRule,
   type LashingPoint,
   type PowerSocket,
+  nearestPointOnPolygon,
   type VesselMotion,
   type ClearanceMargin,
 } from '@/lib/packing'
@@ -437,6 +438,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     [deckOutline, boardOffset]
   )
 
+  // The deck's TRUE physical perimeter (not board-offset-eroded) — a
+  // rectangle when there's no custom outline. Power sockets are a fixed
+  // installation on the real deck edge, not cargo, so they snap onto this
+  // rather than the cargo-clearance usableOutline above.
+  const deckPerimeter = useMemo(
+    () =>
+      deckOutline && deckOutline.length >= 3
+        ? deckOutline
+        : [
+            { x: 0, y: 0 },
+            { x: deckWidth, y: 0 },
+            { x: deckWidth, y: deckLength },
+            { x: 0, y: deckLength },
+          ],
+    [deckOutline, deckWidth, deckLength]
+  )
+
   // Layout geometry
   const maxW = 900
   const maxH = 560
@@ -685,13 +703,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   }
 
   // Power-socket placement — always a single click, no corner/attach step.
+  // A power socket is a fixed deck installation — it only ever sits on the
+  // ship's real edge, never out on open deck. Every click snaps to the
+  // nearest point on the true perimeter (deckPerimeter), wherever it was
+  // actually clicked.
   const handlePowerSocketClick = (e: React.MouseEvent): boolean => {
     if (!placingPowerSocket || !onPlacePowerSocket) return false
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return true
-    const x = Math.max(0, Math.min(deckWidth, pos.x))
-    const y = Math.max(0, Math.min(deckLength, pos.y))
-    onPlacePowerSocket(x, y)
+    const snapped = nearestPointOnPolygon(pos, deckPerimeter)
+    onPlacePowerSocket(snapped.x, snapped.y)
     return true
   }
 
@@ -1031,7 +1052,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     if (placingPowerSocket) {
       const pos = screenToDeck(e.clientX, e.clientY)
-      setSocketHoverPos(pos)
+      setSocketHoverPos(pos ? nearestPointOnPolygon(pos, deckPerimeter) : null)
     }
     if (drawingCustomShape) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -1182,7 +1203,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const deltaY = pos.y - startDeck.y
       const nx = Math.max(0, Math.min(deckWidth, socketDrag.startPos.x + deltaX))
       const ny = Math.max(0, Math.min(deckLength, socketDrag.startPos.y + deltaY))
-      onUpdatePowerSocket(socketDrag.id, { x: nx, y: ny })
+      const snapped = nearestPointOnPolygon({ x: nx, y: ny }, deckPerimeter)
+      onUpdatePowerSocket(socketDrag.id, { x: snapped.x, y: snapped.y })
     }
     if (pinDrag && onUpdatePinned) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -2098,10 +2120,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {powerSockets?.map((s) => {
+        {powerSockets?.map((s, i) => {
           const sx = toX(s.x)
           const sy = toY(s.y)
           const interactive = !!onUpdatePowerSocket
+          // The number/icon label must sit OUTSIDE the deck, never overlap
+          // it — nudge a hair further out along the perimeter's own outward
+          // normal (deck-space), then convert that offset to screen space
+          // (handles any axis flip/scale correctly) and place the label a
+          // fixed pixel distance out along that same screen direction.
+          const outward = nearestPointOnPolygon(s, deckPerimeter)
+          const nudged = { x: s.x + outward.normalX * 0.5, y: s.y + outward.normalY * 0.5 }
+          const dirX = toX(nudged.x) - sx
+          const dirY = toY(nudged.y) - sy
+          const dirLen = Math.hypot(dirX, dirY) || 1
+          const labelX = sx + (dirX / dirLen) * 16
+          const labelY = sy + (dirY / dirLen) * 16
           return (
             <g key={`socket-${s.id}`}>
               {selectedSocketId === s.id && (
@@ -2122,11 +2156,34 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
                 }
               />
-              {s.label && (
-                <text x={sx + 9} y={sy + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none pointer-events-none">
-                  {s.label}
-                </text>
-              )}
+              <foreignObject
+                x={labelX - 13}
+                y={labelY - 8}
+                width={26}
+                height={16}
+                style={{ overflow: 'visible', pointerEvents: 'none' }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 2,
+                    width: 26,
+                    height: 16,
+                    background: '#fff',
+                    border: '1px solid #f59e0b',
+                    borderRadius: 4,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: '#92400e',
+                    lineHeight: 1,
+                  }}
+                >
+                  <Plug size={9} strokeWidth={2.5} />
+                  <span>{i + 1}</span>
+                </div>
+              </foreignObject>
             </g>
           )
         })}

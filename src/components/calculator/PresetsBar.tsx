@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -9,12 +9,26 @@ import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store
 import { type CargoShape } from '@/lib/packing'
 import { cn } from '@/lib/utils'
 
+// Stable empty-array reference — see the same pattern's comment in
+// Sidebar.tsx (a fresh `[] ` every selector call looks like "the snapshot
+// changed" to useSyncExternalStore and re-renders forever).
+const EMPTY_POWER_SOCKETS: never[] = []
+
 // Same store/logic PresetsSection used inside the Sidebar (moved here
 // unchanged) — only the layout is horizontal now, to fit a bar under the
 // deck instead of a vertical column in the sidebar. Category buttons open
 // on click (toggle) OR on hover (purely additive — never changes the
 // underlying activePresetCategory model, just an extra way to trigger it).
 export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
+  return (
+    <>
+      <PresetsPicker onPlaceCustomShape={onPlaceCustomShape} />
+      <PowerSocketsBar />
+    </>
+  )
+}
+
+function PresetsPicker({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
   const [open, setOpen] = useState(false)
   const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
@@ -231,5 +245,75 @@ function PresetTemplateChip({
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
     </button>
+  )
+}
+
+// Visual-only markers for deck electrical outlets — placed by clicking
+// anywhere near the deck; DeckVisualization snaps the click onto the real
+// perimeter (rectangle or custom outline), since a socket is a fixed
+// installation on the ship's edge, never open deck.
+function PowerSocketsBar() {
+  const [open, setOpen] = useState(false)
+  const sockets = useCalculator((s) => s.deck.powerSockets ?? EMPTY_POWER_SOCKETS)
+  const removePowerSocket = useCalculator((s) => s.removePowerSocket)
+  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
+  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
+
+  return (
+    <div className="border-t pt-2.5 mt-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-left mb-1.5 group"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+        )}
+        <span className="text-muted-foreground group-hover:text-foreground transition-colors">
+          <Plug className="h-4 w-4" />
+        </span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Розетки
+        </span>
+        {sockets.length > 0 && (
+          <span className="text-[10px] text-muted-foreground">({sockets.length})</span>
+        )}
+      </button>
+      {open && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-muted-foreground leading-tight">
+            Отметьте на контуре палубы, где есть электрические розетки — например, чтобы показать, где
+            можно ставить рефрижераторные контейнеры. Только визуальная метка — груз можно ставить рядом.
+          </p>
+          {sockets.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {sockets.map((s, i) => (
+                <div key={s.id} className="flex items-center gap-1 rounded-md border px-1.5 py-1 text-xs">
+                  <Plug className="h-3 w-3 text-amber-600" />
+                  <span>{i + 1}</span>
+                  <button
+                    onClick={() => removePowerSocket(s.id)}
+                    className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                    title="Удалить розетку"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Button
+            size="sm"
+            variant={placingPowerSocket ? 'default' : 'outline'}
+            className="h-7 text-xs"
+            onClick={() => setPlacingPowerSocket(!placingPowerSocket)}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {placingPowerSocket ? 'Кликните у края палубы… (Готово)' : 'Добавить розетку'}
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }

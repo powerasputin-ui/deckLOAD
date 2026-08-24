@@ -6,7 +6,6 @@ import { useState } from 'react'
 // as "the snapshot changed" and re-renders forever.
 const EMPTY_ZONES: never[] = []
 const EMPTY_POINTS: never[] = []
-const EMPTY_POWER_SOCKETS: never[] = []
 import {
   FolderOpen,
   Plus,
@@ -29,7 +28,6 @@ import {
   Box,
   Undo2,
   Redo2,
-  Plug,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -351,9 +349,6 @@ export function Sidebar({
 
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
-
-        {/* Power-socket markers (visual only) */}
-        <PowerSocketsSection />
       </div>
       </div>
 
@@ -936,45 +931,6 @@ function LashingPointsSection() {
             {' '}точек с расчётом: {attachedCount}
           </p>
         )}
-      </div>
-    </Section>
-  )
-}
-
-function PowerSocketsSection() {
-  const sockets = useCalculator((s) => s.deck.powerSockets ?? EMPTY_POWER_SOCKETS)
-  const removePowerSocket = useCalculator((s) => s.removePowerSocket)
-  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
-  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
-
-  return (
-    <Section icon={<Plug className="h-4 w-4" />} title="Розетки" badge={sockets.length} defaultOpen={false}>
-      <div className="space-y-3">
-        <p className="text-[10px] text-muted-foreground">
-          Отметьте на палубе, где есть электрические розетки — например, чтобы показать, где можно ставить
-          рефрижераторные контейнеры. Только визуальная метка — груз можно ставить поверх неё.
-        </p>
-        {sockets.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-1.5 rounded-md border p-2">
-            <span className="truncate flex-1 text-xs">{s.label || `Розетка ${i + 1}`}</span>
-            <button
-              onClick={() => removePowerSocket(s.id)}
-              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-              title="Удалить розетку"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
-        <Button
-          size="sm"
-          variant={placingPowerSocket ? 'default' : 'outline'}
-          className="h-7 text-xs w-full"
-          onClick={() => setPlacingPowerSocket(!placingPowerSocket)}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          {placingPowerSocket ? 'Кликните по палубе… (Готово)' : 'Добавить розетку'}
-        </Button>
       </div>
     </Section>
   )
