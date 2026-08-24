@@ -5,9 +5,9 @@ import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Square, Tria
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS } from '@/store/calculator'
+import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL } from '@/store/calculator'
 import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
-import { cn } from '@/lib/utils'
+import { cn, fmtNumber } from '@/lib/utils'
 
 // Stable empty-array reference — see the same pattern's comment in
 // Sidebar.tsx (a fresh `[] ` every selector call looks like "the snapshot
@@ -55,6 +55,8 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
   // deck to size it. drawingRestrictionShape holds WHICH shape (null = off).
   const restrictionZones = useCalculator((s) => s.deck.restrictionZones ?? EMPTY_RESTRICTION_ZONES)
   const removeRestrictionZone = useCalculator((s) => s.removeRestrictionZone)
+  const updateRestrictionZone = useCalculator((s) => s.updateRestrictionZone)
+  const unit = useCalculator((s) => s.deck.unit)
   const drawingRestrictionShape = useCalculator((s) => s.drawingRestrictionShape)
   const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
   const drawingRestrictionZoneFreeform = useCalculator((s) => s.drawingRestrictionZoneFreeform)
@@ -270,17 +272,16 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 <>
                   <div className="basis-full w-0" aria-hidden="true" />
                   {restrictionZones.map((z) => (
-                    <div key={z.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
-                      <Ban className="h-3 w-3 text-red-600" />
-                      <span className="max-w-[80px] truncate">{z.name}</span>
-                      <button
-                        onClick={() => removeRestrictionZone(z.id)}
-                        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-                        title="Удалить зону"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
+                    <ZoneChip
+                      key={z.id}
+                      name={z.name}
+                      width={z.width}
+                      length={z.length}
+                      editableSize={z.shapeType !== 'custom'}
+                      unitLabel={UNIT_LABEL[unit]}
+                      onResize={(patch) => updateRestrictionZone(z.id, patch)}
+                      onRemove={() => removeRestrictionZone(z.id)}
+                    />
                   ))}
                 </>
               )}
@@ -401,5 +402,97 @@ function PresetTemplateChip({
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
     </button>
+  )
+}
+
+// A placed restriction zone's chip — name, editable width/length (so the
+// user can type exact dimensions instead of only eyeballing a drag-resize
+// on the tiny deck view), and the same round red delete control used
+// on-deck. 'custom' (freehand-outline) zones show their bbox as read-only
+// text instead of editable fields — scaling a hand-drawn outline from two
+// numbers isn't a well-defined operation, same reasoning as hiding their
+// corner-resize handles on the deck.
+function ZoneChip({
+  name,
+  width,
+  length,
+  editableSize,
+  unitLabel,
+  onResize,
+  onRemove,
+}: {
+  name: string
+  width: number
+  length: number
+  editableSize: boolean
+  unitLabel: string
+  onResize: (patch: { width?: number; length?: number }) => void
+  onRemove: () => void
+}) {
+  const [widthText, setWidthText] = useState(fmtNumber(width))
+  const [lengthText, setLengthText] = useState(fmtNumber(length))
+  // Keep the text buffers in sync when the size changes from OUTSIDE this
+  // input (drag-resize on the deck) — same "compare against previous prop"
+  // render-time pattern used throughout this file, not a useEffect.
+  const [prevWidth, setPrevWidth] = useState(width)
+  const [prevLength, setPrevLength] = useState(length)
+  if (width !== prevWidth) {
+    setPrevWidth(width)
+    setWidthText(fmtNumber(width))
+  }
+  if (length !== prevLength) {
+    setPrevLength(length)
+    setLengthText(fmtNumber(length))
+  }
+  const commitWidth = () => {
+    const v = parseFloat(widthText.replace(',', '.'))
+    if (Number.isFinite(v) && v > 0) onResize({ width: v })
+    else setWidthText(fmtNumber(width))
+  }
+  const commitLength = () => {
+    const v = parseFloat(lengthText.replace(',', '.'))
+    if (Number.isFinite(v) && v > 0) onResize({ length: v })
+    else setLengthText(fmtNumber(length))
+  }
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 rounded-lg border px-1.5 py-1 text-xs">
+      <Ban className="h-3 w-3 text-red-600 shrink-0" />
+      <span className="max-w-[70px] truncate">{name}</span>
+      {editableSize ? (
+        <>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={widthText}
+            onChange={(e) => setWidthText(e.target.value)}
+            onBlur={commitWidth}
+            onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+            className="h-5 w-10 rounded border bg-background px-1 text-[10px]"
+            title={`Ширина, ${unitLabel}`}
+          />
+          <span className="text-muted-foreground">×</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={lengthText}
+            onChange={(e) => setLengthText(e.target.value)}
+            onBlur={commitLength}
+            onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+            className="h-5 w-10 rounded border bg-background px-1 text-[10px]"
+            title={`Длина, ${unitLabel}`}
+          />
+          <span className="text-[10px] text-muted-foreground">{unitLabel}</span>
+        </>
+      ) : (
+        <span className="text-[10px] text-muted-foreground">своя форма</span>
+      )}
+      <button
+        onClick={onRemove}
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 shrink-0"
+        title="Удалить зону"
+      >
+        <Trash2 className="h-2.5 w-2.5" />
+      </button>
+    </div>
   )
 }

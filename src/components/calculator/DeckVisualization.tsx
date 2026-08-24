@@ -39,7 +39,7 @@ import {
   restrictionZonePolygon,
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
-import { fmtNumber } from '@/lib/utils'
+import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 
@@ -372,6 +372,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     outline?: { x: number; y: number }[]
   } | null>(null)
   const [zoneDraftName, setZoneDraftName] = useState('')
+  const zoneDraftNameInputRef = useRef<HTMLInputElement>(null)
   const [selectedRestrictionZoneId, setSelectedRestrictionZoneId] = useState<string | null>(null)
   const [rzDrag, setRzDrag] = useState<ZoneDrag | null>(null)
   // Freehand point-by-point zone drawing — same click-to-append/close-loop
@@ -2092,7 +2093,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               {zw > 24 && zh > 14 && (
                 <text
                   x={zx + zw / 2}
-                  y={zy + zh / 2}
+                  y={zy + zh / 2 - (isSelected ? 6 : 0)}
                   fontSize={10}
                   fontWeight={600}
                   textAnchor="middle"
@@ -2101,6 +2102,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   className="select-none pointer-events-none"
                 >
                   {z.name}
+                </text>
+              )}
+              {/* Live size readout — only while selected, so it doesn't
+                  clutter the deck for every zone at once. Exact editing
+                  happens via the width/length fields in the Presets bar's
+                  zone chip; this is a "what am I looking at" readout. */}
+              {isSelected && zw > 24 && zh > 14 && (
+                <text
+                  x={zx + zw / 2}
+                  y={zy + zh / 2 + 8}
+                  fontSize={9}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="#991b1b"
+                  className="select-none pointer-events-none"
+                >
+                  {fmt(z.width)} × {fmt(z.length)} {UNIT_LABEL[unit]}
                 </text>
               )}
               {/* Corner resize handles only for the 4 bbox-derived shapes —
@@ -2137,21 +2155,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                         }}
                       />
                     ))}
-                  <text
-                    x={zx + zw - 2}
-                    y={zy - 4}
-                    fontSize={12}
-                    textAnchor="end"
-                    fill="#dc2626"
+                  {/* Same round red delete control as placed cargo
+                      (onRemovePinned/onRemoveManual below) — a bigger
+                      transparent hit circle around a smaller solid one, so
+                      it's a real target on a small zone too. */}
+                  <g
                     style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => {
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
                       e.stopPropagation()
                       onRemoveRestrictionZone?.(z.id)
                       setSelectedRestrictionZoneId(null)
                     }}
                   >
-                    ✕ удалить
-                  </text>
+                    <circle cx={zx + zw} cy={zy} r={16} fill="transparent" />
+                    <circle cx={zx + zw} cy={zy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={zx + zw} y={zy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
+                  </g>
                 </>
               )}
             </g>
@@ -2851,19 +2871,36 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="flex flex-wrap gap-1">
-            {['Кран', 'Фальшборт', 'Надстройка', 'Трап', 'Другое'].map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                className="rounded-md border px-1.5 py-0.5 text-[10px] hover:bg-accent"
-                onClick={() => setZoneDraftName(preset === 'Другое' ? '' : preset)}
-              >
-                {preset}
-              </button>
-            ))}
+            {['Кран', 'Фальшборт', 'Надстройка', 'Трап', 'Другое'].map((preset) => {
+              // "Другое" reads as active whenever the name isn't one of the
+              // other 4 quick picks (including empty, or freely typed text)
+              // — clicking it also focuses the input, since clearing an
+              // already-empty field gave no visible feedback before this.
+              const isOther = preset === 'Другое'
+              const active = isOther
+                ? !['Кран', 'Фальшборт', 'Надстройка', 'Трап'].includes(zoneDraftName)
+                : zoneDraftName === preset
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  className={cn(
+                    'rounded-md border px-1.5 py-0.5 text-[10px]',
+                    active ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : 'hover:bg-accent'
+                  )}
+                  onClick={() => {
+                    setZoneDraftName(isOther ? '' : preset)
+                    if (isOther) zoneDraftNameInputRef.current?.focus()
+                  }}
+                >
+                  {preset}
+                </button>
+              )
+            })}
           </div>
           <div className="flex items-center gap-1.5">
             <input
+              ref={zoneDraftNameInputRef}
               type="text"
               value={zoneDraftName}
               onChange={(e) => setZoneDraftName(e.target.value)}

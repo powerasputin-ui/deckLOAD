@@ -117,4 +117,43 @@ test.describe('Restriction (obstacle) zones', () => {
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
     await expect(page.getByText(/Размещено 0 из 0/)).toBeVisible()
   })
+
+  test('zone chip width/length fields resize the zone, and the round delete button removes it', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await page.getByRole('button', { name: 'Прямоугольник' }).click()
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.scrollIntoViewIfNeeded()
+    const box = await background.boundingBox()
+    if (!box) throw new Error('deck background not found')
+    await page.mouse.move(box.x + 40, box.y + 40)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 160, box.y + 120, { steps: 10 })
+    await page.mouse.up()
+    const zoneNameInput = page.getByPlaceholder('Название зоны')
+    const zoneForm = zoneNameInput.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
+    await zoneForm.getByRole('button', { name: 'Кран' }).click()
+    await zoneForm.getByRole('button', { name: 'Добавить' }).click()
+    await expect(zoneNameInput).toBeHidden()
+
+    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const before = await zonePolygon.boundingBox()
+    if (!before) throw new Error('zone polygon not found')
+
+    const widthField = page.getByTitle(/^Ширина/)
+    await widthField.fill('3')
+    await widthField.blur()
+    await expect(async () => {
+      const after = await zonePolygon.boundingBox()
+      expect(after?.width).toBeLessThan(before.width - 20)
+    }).toPass()
+
+    // The round red delete button (matching the one used on placed cargo)
+    // removes the zone.
+    await page.getByTitle('Удалить зону').click()
+    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(0)
+  })
 })
