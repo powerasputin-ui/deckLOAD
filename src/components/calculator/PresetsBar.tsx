@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -20,15 +20,6 @@ const EMPTY_POWER_SOCKETS: never[] = []
 // on click (toggle) OR on hover (purely additive — never changes the
 // underlying activePresetCategory model, just an extra way to trigger it).
 export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
-  return (
-    <>
-      <PresetsPicker onPlaceCustomShape={onPlaceCustomShape} />
-      <PowerSocketsBar />
-    </>
-  )
-}
-
-function PresetsPicker({ onPlaceCustomShape }: { onPlaceCustomShape: (name: string, weight?: number) => void }) {
   const [open, setOpen] = useState(false)
   const activePresetCategory = useCalculator((s) => s.activePresetCategory)
   const setActivePresetCategory = useCalculator((s) => s.setActivePresetCategory)
@@ -38,6 +29,14 @@ function PresetsPicker({ onPlaceCustomShape }: { onPlaceCustomShape: (name: stri
   const setDrawingCustomShape = useCalculator((s) => s.setDrawingCustomShape)
   const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
   const setPendingCustomShape = useCalculator((s) => s.setPendingCustomShape)
+  // Power-socket markers live under "Объекты" too — visual-only, so they
+  // don't fit the CargoItem-template shape every other entry here has, but
+  // the armed-toggle-then-click-the-deck flow is the same shape as
+  // "Нарисовать" right next to it.
+  const sockets = useCalculator((s) => s.deck.powerSockets ?? EMPTY_POWER_SOCKETS)
+  const removePowerSocket = useCalculator((s) => s.removePowerSocket)
+  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
+  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
   const [drawName, setDrawName] = useState('')
   const [drawWeight, setDrawWeight] = useState('')
   // Reset the finalize form's fields once the pending shape is cleared
@@ -128,23 +127,58 @@ function PresetsPicker({ onPlaceCustomShape }: { onPlaceCustomShape: (name: stri
                 )
               })}
               {activePresetCategory === 'objects' && (
-                <button
-                  onClick={() => setDrawingCustomShape(!drawingCustomShape)}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg border p-2 text-left transition-all shrink-0',
-                    drawingCustomShape
-                      ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
-                      : 'border-border hover:bg-accent'
-                  )}
-                >
-                  <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-muted-foreground">
-                    <Pencil className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-xs font-medium truncate">Нарисовать</span>
-                    <span className="block text-[10px] text-muted-foreground">свой контур по точкам</span>
-                  </span>
-                </button>
+                <>
+                  <button
+                    onClick={() => setDrawingCustomShape(!drawingCustomShape)}
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg border p-2 text-left transition-all shrink-0',
+                      drawingCustomShape
+                        ? 'border-slate-400 bg-slate-100 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:ring-slate-600'
+                        : 'border-border hover:bg-accent'
+                    )}
+                  >
+                    <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-muted-foreground">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium truncate">Нарисовать</span>
+                      <span className="block text-[10px] text-muted-foreground">свой контур по точкам</span>
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setPlacingPowerSocket(!placingPowerSocket)}
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg border p-2 text-left transition-all shrink-0',
+                      placingPowerSocket
+                        ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700'
+                        : 'border-border hover:bg-accent'
+                    )}
+                  >
+                    <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-amber-600">
+                      <Plug className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium truncate">Розетка</span>
+                      <span className="block text-[10px] text-muted-foreground">по контуру палубы</span>
+                    </span>
+                    {sockets.length > 0 && (
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">{sockets.length}</Badge>
+                    )}
+                  </button>
+                  {sockets.map((s, i) => (
+                    <div key={s.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
+                      <Plug className="h-3 w-3 text-amber-600" />
+                      <span>{i + 1}</span>
+                      <button
+                        onClick={() => removePowerSocket(s.id)}
+                        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                        title="Удалить розетку"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           )}
@@ -156,6 +190,12 @@ function PresetsPicker({ onPlaceCustomShape }: { onPlaceCustomShape: (name: stri
           {drawingCustomShape && (
             <p className="text-[10px] text-muted-foreground leading-tight">
               Кликайте по палубе, чтобы поставить точки контура (минимум 3), затем кликните рядом с первой точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
+            </p>
+          )}
+          {placingPowerSocket && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              Кликните у края палубы — розетка встанет на ближайшую точку контура. Только визуальная метка,
+              груз можно ставить рядом.
             </p>
           )}
           {pendingCustomShape && (
@@ -245,75 +285,5 @@ function PresetTemplateChip({
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
     </button>
-  )
-}
-
-// Visual-only markers for deck electrical outlets — placed by clicking
-// anywhere near the deck; DeckVisualization snaps the click onto the real
-// perimeter (rectangle or custom outline), since a socket is a fixed
-// installation on the ship's edge, never open deck.
-function PowerSocketsBar() {
-  const [open, setOpen] = useState(false)
-  const sockets = useCalculator((s) => s.deck.powerSockets ?? EMPTY_POWER_SOCKETS)
-  const removePowerSocket = useCalculator((s) => s.removePowerSocket)
-  const placingPowerSocket = useCalculator((s) => s.placingPowerSocket)
-  const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
-
-  return (
-    <div className="border-t pt-2.5 mt-3">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-left mb-1.5 group"
-      >
-        {open ? (
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-        )}
-        <span className="text-muted-foreground group-hover:text-foreground transition-colors">
-          <Plug className="h-4 w-4" />
-        </span>
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Розетки
-        </span>
-        {sockets.length > 0 && (
-          <span className="text-[10px] text-muted-foreground">({sockets.length})</span>
-        )}
-      </button>
-      {open && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] text-muted-foreground leading-tight">
-            Отметьте на контуре палубы, где есть электрические розетки — например, чтобы показать, где
-            можно ставить рефрижераторные контейнеры. Только визуальная метка — груз можно ставить рядом.
-          </p>
-          {sockets.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {sockets.map((s, i) => (
-                <div key={s.id} className="flex items-center gap-1 rounded-md border px-1.5 py-1 text-xs">
-                  <Plug className="h-3 w-3 text-amber-600" />
-                  <span>{i + 1}</span>
-                  <button
-                    onClick={() => removePowerSocket(s.id)}
-                    className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-                    title="Удалить розетку"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <Button
-            size="sm"
-            variant={placingPowerSocket ? 'default' : 'outline'}
-            className="h-7 text-xs"
-            onClick={() => setPlacingPowerSocket(!placingPowerSocket)}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            {placingPowerSocket ? 'Кликните у края палубы… (Готово)' : 'Добавить розетку'}
-          </Button>
-        </div>
-      )}
-    </div>
   )
 }
