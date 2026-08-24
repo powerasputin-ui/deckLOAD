@@ -165,19 +165,29 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                       <Badge variant="secondary" className="shrink-0 text-[10px]">{sockets.length}</Badge>
                     )}
                   </button>
-                  {sockets.map((s, i) => (
-                    <div key={s.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
-                      <Plug className="h-3 w-3 text-amber-600" />
-                      <span>{i + 1}</span>
-                      <button
-                        onClick={() => removePowerSocket(s.id)}
-                        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-                        title="Удалить розетку"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
+                  {sockets.length > 0 && (
+                    <>
+                      {/* Forces the flex-wrap row to break here regardless of
+                          how much space is left in the current line — placed
+                          sockets always start their own new row, never
+                          trailing after whatever preset/Нарисовать/Розетка
+                          chips happened to fit before them. */}
+                      <div className="basis-full w-0" aria-hidden="true" />
+                      {sockets.map((s, i) => (
+                        <div key={s.id} className="flex shrink-0 items-center gap-1 rounded-lg border px-1.5 py-1 text-xs">
+                          <Plug className="h-3 w-3 text-amber-600" />
+                          <span>{i + 1}</span>
+                          <button
+                            onClick={() => removePowerSocket(s.id)}
+                            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+                            title="Удалить розетку"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </div>
