@@ -274,6 +274,11 @@ describe('calculator store', () => {
     // Corner shifted by the same delta the matched placement moved.
     expect(points![0].cornerX).toBeCloseTo(5)
     expect(points![0].cornerY).toBeCloseTo(-1)
+    // Regression: the anchor's own x/y must shift by the same delta too —
+    // leaving it behind at (5, 5) would strand it wherever the cargo used
+    // to be, potentially inside some other placement's new footprint.
+    expect(points![0].x).toBeCloseTo(8)
+    expect(points![0].y).toBeCloseTo(3)
   })
 
   it('converts a placement clearanceMargin when switching units', () => {

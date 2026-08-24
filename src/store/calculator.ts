@@ -1061,6 +1061,17 @@ export const useCalculator = create<CalculatorState>()(
         return {
           ...lp,
           placementId: m.newId,
+          // A redistribute can move cargo anywhere on the deck, not just a
+          // few centimeters like a drag — leaving the anchor's own x/y in
+          // place (as dragLashingCorners deliberately does for a plain
+          // move, since THAT anchor is meant to represent a fixed
+          // real-world point) would strand it wherever the cargo used to
+          // be, often now inside some OTHER placement's new footprint,
+          // silently creating a phantom exclusion zone nothing else knows
+          // about. Shifting the anchor by the same delta keeps the whole
+          // point rigidly attached to the cargo's local frame instead.
+          x: lp.x + m.dx,
+          y: lp.y + m.dy,
           cornerX: lp.cornerX !== undefined ? lp.cornerX + m.dx : lp.cornerX,
           cornerY: lp.cornerY !== undefined ? lp.cornerY + m.dy : lp.cornerY,
         }
