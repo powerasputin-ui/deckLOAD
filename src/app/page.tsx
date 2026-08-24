@@ -46,6 +46,7 @@ import {
   checkZoneLoads,
   LASHING_DEVICES,
   type ManualPlacement,
+  type PinnedPlacement,
   type PackVariant,
   type PackingResult,
 } from '@/lib/packing'
@@ -1011,6 +1012,7 @@ export default function Home() {
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
+        clearanceMargin: p.clearanceMargin,
       }))
       // Lashing points only ever attach to a real placement id (pinned or
       // manual) — auto-mode's non-pinned, algorithm-placed slots never have
@@ -1042,6 +1044,7 @@ export default function Home() {
         rotated: m.rotated,
         color: m.color,
         weight: m.weight,
+        clearanceMargin: m.clearanceMargin,
       }))
       const matches = matchLashingCarryover(manualPlacements, newPinned)
       useCalculator.setState({
@@ -1065,10 +1068,41 @@ export default function Home() {
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
-    // Warn user if pinned placements (across all trips) will be cleared
-    const totalPinned = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
+    // A clearance-zoned placement (in the current mode/trip) is an
+    // operational constraint, not just a position — silently letting a
+    // full reshuffle relocate or drop it would defeat the reason it was
+    // drawn. Pass it through as `pinned` (the only mechanism packDeck has
+    // for "exclude this rectangle for everyone else"), which freezes it at
+    // its exact position while everything else still reshuffles normally.
+    const sourcePlacements = mode === 'manual' ? manualPlacements : pinnedPlacements
+    const zonedPinned: PinnedPlacement[] = sourcePlacements
+      .filter((p) => !!p.clearanceMargin)
+      .map((p) => ({
+        id: p.id,
+        itemId: p.itemId,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        length: p.length,
+        layers: p.layers,
+        rotated: p.rotated,
+        color: p.color,
+        weight: p.weight,
+        clearanceMargin: p.clearanceMargin,
+      }))
+    // Warn user if pinned placements (across all trips) will be cleared —
+    // excluding the zoned ones above, which specifically will NOT be reset
+    // (in auto mode they're a subset of pinnedPlacementsByTrip; in manual
+    // mode they come from manualPlacements, which was never part of this
+    // count to begin with, so no adjustment needed there).
+    const totalPinnedAllTrips = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
+    const totalPinned = mode === 'auto' ? totalPinnedAllTrips - zonedPinned.length : totalPinnedAllTrips
     if (totalPinned > 0) {
       toast.warning(`Закрепления (${totalPinned}) будут сброшены`)
+    }
+    if (zonedPinned.length > 0) {
+      toast.info(`Груз с зоной отступа (${zonedPinned.length}) останется на месте`)
     }
     const newVariants = packDeckVariants(
       deck.width,
@@ -1081,6 +1115,7 @@ export default function Home() {
         clearance: deck.clearance,
         separationRules: separationRulesInUnit,
         outline: deck.outline,
+        pinned: zonedPinned,
       },
       3
     )
@@ -1158,6 +1193,7 @@ export default function Home() {
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
+        clearanceMargin: p.clearanceMargin,
       }))
       const matches = matchLashingCarryover(s.manualPlacements, newManual)
       useCalculator.setState({
@@ -1179,6 +1215,7 @@ export default function Home() {
         rotated: p.rotated,
         color: p.color,
         weight: p.weight,
+        clearanceMargin: p.clearanceMargin,
       }))
       const matches = matchLashingCarryover(s.pinnedPlacementsByTrip[clampedTripIndex] ?? [], newPinned)
       useCalculator.setState({

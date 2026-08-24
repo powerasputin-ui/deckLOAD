@@ -1372,16 +1372,20 @@ export function computeFreeRects(
     }
   }
   for (const p of placed) {
-    // Symmetric gap model: cell = (x - gap/2, y - gap/2, w+gap, l+gap)
+    // Symmetric gap model: cell = (x - gap/2, y - gap/2, w+gap, l+gap) —
+    // further inflated by clearanceMargin if set, matching packDeck's own
+    // pin-reservation formula, so this overlay agrees with what the packer
+    // actually treats as occupied instead of showing a zoned-off area as free.
     const pw = toFinite(p.width, 0)
     const pl = toFinite(p.length, 0)
     if (pw <= 0 || pl <= 0) continue
+    const cm = p.clearanceMargin
     placeRect(
       {
-        x: p.x - g / 2,
-        y: p.y - g / 2,
-        width: pw + g,
-        height: pl + g,
+        x: p.x - g / 2 - (cm?.left ?? 0),
+        y: p.y - g / 2 - (cm?.top ?? 0),
+        width: pw + g + (cm?.left ?? 0) + (cm?.right ?? 0),
+        height: pl + g + (cm?.top ?? 0) + (cm?.bottom ?? 0),
       },
       free
     )
@@ -1855,11 +1859,25 @@ export function resolveSnappedDragPosition(
   // reflows (e.g. re-validating placements after a margin change) should pass
   // Infinity, since there is no drag vector to stay close to — the nearest
   // collision-free spot is always the right answer.
-  maxMagnetDistance = Math.max(gridStep, gap + 0.05, 0.3)
+  maxMagnetDistance = Math.max(gridStep, gap + 0.05, 0.3),
+  // The dragged item's own clearance zone, if it has one. `others` above is
+  // already inflated by each NEIGHBOUR's own margin (by the caller), but
+  // without this, the search below has no idea the item being dragged also
+  // needs its own margin kept clear — it could settle on a spot that looks
+  // fine here but then fails collidesWithClearance's self-inflated check at
+  // the caller's final gate, which is a silent no-op there (nothing commits
+  // that frame) and reads as the drag randomly freezing. Inflating the
+  // candidate here too is provably safe: raw ⊆ inflated on both sides, so a
+  // doubly-inflated non-collision guarantees both of that gate's branches
+  // already pass — this can only ever return a position the gate accepts.
+  selfMargin?: ClearanceMargin
 ): { x: number; y: number } {
   const tryPos = (x: number, y: number): { x: number; y: number } | null => {
     const clamped = clampToDeck({ x, y, width, length }, deckWidth, deckLength, edgePadding)
-    if (!collidesWith({ ...clamped, width, length }, others, gap)) {
+    const testRect = selfMargin
+      ? withClearanceFootprint({ x: clamped.x, y: clamped.y, width, length, clearanceMargin: selfMargin })
+      : { ...clamped, width, length }
+    if (!collidesWith(testRect, others, gap)) {
       return { x: clamped.x, y: clamped.y }
     }
     return null

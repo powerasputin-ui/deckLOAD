@@ -3,6 +3,7 @@ import {
   packDeck,
   packDeckVariants,
   packMultiTrip,
+  computeFreeRects,
   packingResultFromManual,
   maxLayersFor,
   collidesWith,
@@ -454,6 +455,56 @@ describe('packDeck', () => {
     expect(res.totalWeight).toBe(999)
     const bd = res.breakdown.find((b) => b.itemId === 'a')
     expect(bd!.weight).toBe(999)
+  })
+
+  // Regression: this is the mechanism handleAutoRedistribute now relies on
+  // to keep a clearance-zoned placement fixed in place through a full
+  // redistribute — passing it as `pinned` must both preserve its exact
+  // position/margin AND actually exclude other cargo from its zone.
+  it('a clearance-zoned pin keeps its exact position and margin, and excludes other cargo from its zone', () => {
+    const zonedPin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'A', x: 5, y: 5, width: 1, length: 1,
+      layers: 1, rotated: false, color: '#000',
+      clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 },
+    }
+    const res = packDeck(20, 20, [
+      item({ id: 'a', width: 1, length: 1, quantity: 1 }),
+      item({ id: 'b', width: 1, length: 1, quantity: 5 }),
+    ], { pinned: [zonedPin], gap: 0.1 })
+    const placedA = res.placed.find((p) => p.itemId === 'a')
+    expect(placedA?.x).toBe(5)
+    expect(placedA?.y).toBe(5)
+    expect(placedA?.clearanceMargin).toEqual(zonedPin.clearanceMargin)
+    // No 'b' placement should land inside A's inflated exclusion rect [4,7]x[4,7].
+    const anyInsideZone = res.placed.some(
+      (p) => p.itemId === 'b' && p.x < 7 && p.x + p.width > 4 && p.y < 7 && p.y + p.length > 4
+    )
+    expect(anyInsideZone).toBe(false)
+  })
+})
+
+describe('computeFreeRects', () => {
+  // Regression: the green free-space overlay only inflated by the flat gap,
+  // never by clearanceMargin — showing a zoned-off area as free even though
+  // packDeck itself refuses to place anything there. Must agree with it.
+  it('excludes the margin-inflated area around a zoned placement, not just the gap-inflated one', () => {
+    const zonedPin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'A', x: 5, y: 5, width: 1, length: 1,
+      layers: 1, rotated: false, color: '#000',
+      clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 },
+    }
+    const res = packDeck(20, 20, [item({ id: 'a', width: 1, length: 1, quantity: 1 })], {
+      pinned: [zonedPin],
+      gap: 0.1,
+    })
+    const free = computeFreeRects(20, 20, res.placed, 0.1, 0)
+    // A point just inside the margin (e.g. (4.5, 5.5), 0.5m left of the item)
+    // must not be reported as free.
+    const coversPoint = (x: number, y: number) =>
+      free.some((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height)
+    expect(coversPoint(4.5, 5.5)).toBe(false)
+    // Well outside the margin should still be free.
+    expect(coversPoint(15, 15)).toBe(true)
   })
 })
 
@@ -1072,6 +1123,30 @@ describe('resolveSnappedDragPosition', () => {
       )
       expect(result.x).toBeCloseTo(neighbour.x + neighbour.width + 0.1, 9)
       expect(result.y).toBeCloseTo(y, 9)
+    }
+  })
+
+  // Regression: dragging an item with its own clearanceMargin used to be
+  // able to freeze mid-drag. The internal search only inflated OTHER items
+  // by their own margin, never the dragged item by ITS margin — so it could
+  // settle on a position that looked fine here but then failed the caller's
+  // final collidesWithClearance gate (which does check the dragged item's
+  // own margin), silently dropping that pointermove frame. Passing
+  // selfMargin must make the search itself margin-aware, so every resolved
+  // position always survives the same gate the caller applies afterward.
+  it('never resolves a position that fails collidesWithClearance for a self-margined item', () => {
+    const selfMargin = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }
+    const neighbour = { x: 6, y: 0, width: 2, length: 2 }
+    for (const [tx, ty] of [
+      [5.4, 0.3],
+      [5.8, 1.0],
+      [5.1, 1.9],
+    ]) {
+      const result = resolveSnappedDragPosition(
+        tx, ty, 1, 1, 0, 0, [neighbour], 20, 8, 0, 0.1, 1, undefined, selfMargin
+      )
+      const resolvedTarget = { x: result.x, y: result.y, width: 1, length: 1, clearanceMargin: selfMargin }
+      expect(collidesWithClearance(resolvedTarget, [neighbour], 0.1)).toBe(false)
     }
   })
 })

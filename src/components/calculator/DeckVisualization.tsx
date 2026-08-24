@@ -959,7 +959,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     length: number,
     currentX: number,
     currentY: number,
-    others: { x: number; y: number; width: number; length: number }[]
+    others: { x: number; y: number; width: number; length: number }[],
+    selfMargin?: ClearanceMargin
   ): { x: number; y: number } =>
     resolveSnappedDragPosition(
       targetX,
@@ -973,7 +974,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       deckLength,
       edgePad,
       gap,
-      gridStep
+      gridStep,
+      undefined,
+      selfMargin
     )
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -1051,7 +1054,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           ]
           const others = preciseOthers.map((m) => withClearanceFootprint(m))
           const resolved = resolveDragPosition(
-            nx, ny, mp.width, mp.length, mp.x, mp.y, others
+            nx, ny, mp.width, mp.length, mp.x, mp.y, others, mp.clearanceMargin
           )
           const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline, clearanceMargin: mp.clearanceMargin }
           const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
@@ -1164,7 +1167,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         ]
         const others = preciseOthers.map((p2) => withClearanceFootprint(p2))
         const resolved = resolveDragPosition(
-          nx, ny, pin.width, pin.length, pin.x, pin.y, others
+          nx, ny, pin.width, pin.length, pin.x, pin.y, others, pin.clearanceMargin
         )
         const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline, clearanceMargin: pin.clearanceMargin }
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)

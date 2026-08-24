@@ -43,6 +43,29 @@ test.describe('Auto / manual modes', () => {
     await expect(page.getByText('Выбрано 1 груз')).not.toBeVisible()
   })
 
+  test('auto redistribute keeps a clearance-zoned placement fixed in place', async ({ page }) => {
+    await page.goto('/')
+    await expect(headerBadge(page)).toContainText('%')
+    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    await expect(async () => {
+      await placedRect.click({ force: true })
+      await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
+    }).toPass({ timeout: 10000 })
+
+    // Give it a clearance zone via the "Крепление груза" sidebar section.
+    await page.getByRole('button', { name: /^Крепление груза/ }).click()
+    await page.getByRole('button', { name: 'Зона отступа' }).click()
+
+    const before = await placedRect.getAttribute('x')
+
+    await page.getByRole('button', { name: 'Автораспределение' }).click()
+    await expect(page.getByText(/зоной отступа.*останется на месте/)).toBeVisible()
+    await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
+
+    const after = await placedRect.getAttribute('x')
+    expect(after).toBe(before)
+  })
+
   test('rotation is blocked when item disallows rotation', async ({ page }) => {
     await page.goto('/')
     // Disable rotation for the first cargo item (retry: same post-navigation
