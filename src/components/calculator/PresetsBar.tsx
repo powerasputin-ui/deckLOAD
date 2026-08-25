@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Square, Tria
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL } from '@/store/calculator'
+import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL, convertLength } from '@/store/calculator'
 import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
 import { cn, fmtNumber } from '@/lib/utils'
 
@@ -154,13 +154,26 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 // exact color (see addOrIncrementCargoFromTemplate).
                 const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[i % PALETTE.length]
                 const active = pendingPresetStamp?.name === tpl.name
+                // PRESETS is authored once, in meters, regardless of the
+                // deck's current unit (e.g. a real 20ft container is always
+                // width: 6.06 there) — convert to the current unit both for
+                // display here AND for the armed stamp actually placed on
+                // the deck, or a preset picked while working in cm/ft would
+                // show/create cargo 30-100x the wrong physical size.
+                const converted = {
+                  ...tpl,
+                  width: tpl.width !== undefined ? convertLength(tpl.width, 'm', unit) : tpl.width,
+                  length: tpl.length !== undefined ? convertLength(tpl.length, 'm', unit) : tpl.length,
+                  height: tpl.height !== undefined ? convertLength(tpl.height, 'm', unit) : tpl.height,
+                }
                 return (
                   <PresetTemplateChip
                     key={i}
-                    template={tpl}
+                    template={converted}
+                    unitLabel={UNIT_LABEL[unit]}
                     color={color}
                     active={active}
-                    onSelect={() => setPendingPresetStamp(active ? null : { ...tpl, color })}
+                    onSelect={() => setPendingPresetStamp(active ? null : { ...converted, color })}
                   />
                 )
               })}
@@ -364,11 +377,13 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
 
 function PresetTemplateChip({
   template,
+  unitLabel,
   color,
   active,
   onSelect,
 }: {
   template: { name?: string; width?: number; length?: number; shape?: CargoShape }
+  unitLabel: string
   color: string
   active: boolean
   onSelect: () => void
@@ -397,7 +412,7 @@ function PresetTemplateChip({
       <div className="min-w-0">
         <div className="text-xs font-medium truncate">{template.name}</div>
         <div className="text-[10px] text-muted-foreground">
-          {template.width}×{template.length}
+          {fmtNumber(template.width ?? 0)}×{fmtNumber(template.length ?? 0)} {unitLabel}
         </div>
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}

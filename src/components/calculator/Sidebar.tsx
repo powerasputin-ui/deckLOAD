@@ -61,7 +61,7 @@ import {
   type ClearanceMargin,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
-import { cn } from '@/lib/utils'
+import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Select,
@@ -283,7 +283,7 @@ export function Sidebar({
                     >
                       <div className="text-xs font-medium truncate">{p.name}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        {p.items.length} гр. · {p.deck.width}×{p.deck.length} {p.deck.unit}
+                        {p.items.length} гр. · {fmtNumber(p.deck.width)}×{fmtNumber(p.deck.length)} {p.deck.unit}
                       </div>
                     </button>
                   )}

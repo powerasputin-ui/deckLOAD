@@ -24,7 +24,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
 import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
 import { rotatePlacement } from '@/lib/packing'
-import { cn } from '@/lib/utils'
+import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface PlacementPanelProps {
@@ -402,7 +402,9 @@ function StampRow({
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium truncate">{item.name}</div>
         <div className="text-[10px] text-muted-foreground">
-          {rotated ? `${item.length}×${item.width} ↻` : `${item.width}×${item.length}`}
+          {rotated
+            ? `${fmtNumber(item.length)}×${fmtNumber(item.width)} ↻`
+            : `${fmtNumber(item.width)}×${fmtNumber(item.length)}`}
         </div>
         <div className={cn('text-[10px]', remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
           Всего: {total} · Не распределено: {remaining}
