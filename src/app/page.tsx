@@ -924,15 +924,12 @@ export default function Home() {
     toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }
 
-  // Returns a pinned placement to the auto-packer's pool WITHOUT touching
-  // item.quantity — the unit stays requested, so the next repack places it
-  // algorithmically again (possibly at a different spot), instead of
-  // disappearing from the deck the way handleRemovePinned's delete does.
-  const handleUnpinPlaced = (id: string) => {
-    const pin = pinnedPlacements.find((p) => p.id === id)
-    if (!pin) return
-    removePinned(clampedTripIndex, id)
-    toast.info(`Груз «${pin.name}» откреплён — алгоритм расставит его автоматически`)
+  // Locks/unlocks a pinned placement — a locked one stops responding to
+  // drag until unlocked via the deck's right-click menu. Purely a drag
+  // gate: unlike handleRemovePinned, it never touches item.quantity or the
+  // placement's existence.
+  const handleTogglePinLock = (id: string, locked: boolean) => {
+    updatePinned(clampedTripIndex, id, { locked })
   }
 
   // Manual-mode equivalent of findMergeSourcePinned — every placement here
@@ -1557,7 +1554,7 @@ export default function Home() {
                     onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
                     onMergePinned={handleMergePinned}
                     onRemovePinned={handleRemovePinned}
-                    onUnpinPlaced={handleUnpinPlaced}
+                    onTogglePinLock={handleTogglePinLock}
                     onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
                     onClearSelection={clearSelection}

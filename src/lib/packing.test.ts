@@ -1352,6 +1352,30 @@ describe('resolveSnappedDragPosition', () => {
       expect(collidesWithClearance(resolvedTarget, [neighbour], 0.1)).toBe(false)
     }
   })
+
+  // Regression: an immediately-adjacent neighbour sitting right on the
+  // straight line from drag-start to the cursor used to freeze the item in
+  // place for the ENTIRE rest of the drag, no matter how far the cursor
+  // moved — every candidate (lock, free, single-axis fallback, vector
+  // binary search) only ever tried points on that one blocked line, so it
+  // could never route around the obstacle to the open space just to the
+  // side. Reported live as "dragging feels stuck/sticky, can't reach an
+  // in-between position."
+  it('escapes a neighbour blocking the direct line to the cursor by finding open space to the side', () => {
+    // Dragged item starts at (0.2, 3), 1x1. A neighbour directly on the path
+    // to the raw target sits at x=[1,2] — blocks any rightward movement at
+    // this exact y. Open space exists just below/above that blocker.
+    const blocker = { x: 1, y: 2.5, width: 1, length: 1 }
+    const result = resolveSnappedDragPosition(
+      5, 3, 1, 1, 0.2, 3, [blocker], 20, 8, 0.2, 0.1, 0.5
+    )
+    // Must not freeze at the start position — some real movement toward the
+    // cursor (or around the blocker) has to happen.
+    expect(Math.hypot(result.x - 0.2, result.y - 3)).toBeGreaterThan(0.3)
+    // And the resolved spot must not collide with the blocker itself.
+    const resolvedRect = { x: result.x, y: result.y, width: 1, length: 1 }
+    expect(collidesWith(resolvedRect, [blocker], 0.1)).toBe(false)
+  })
 })
 
 describe('checkZoneLoads', () => {

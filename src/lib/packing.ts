@@ -823,6 +823,14 @@ export interface PinnedPlacement {
   // combination of both (see clearLashingPointsFor in calculator.ts).
   // Other cargo cannot be placed, dragged, or auto-packed into this margin.
   clearanceMargin?: ClearanceMargin
+  // User-set lock, toggled via the deck's right-click "Закрепить"/
+  // "Открепить" menu — purely a drag gate (a locked placement stops
+  // responding to pointer-drag until unlocked). Unset/false = draggable,
+  // the default the moment a placement is first created (by dragging an
+  // algorithmic item or clicking to place a new one) — locking is always a
+  // separate, deliberate follow-up action, never a side effect of moving
+  // or creating a placement.
+  locked?: boolean
 }
 
 // Compute how many tiers (layers) can be stacked for an item. `item.maxLayers`
@@ -2189,7 +2197,6 @@ export function resolveSnappedDragPosition(
     }
     return null
   }
-
   const minX = edgePadding
   const minY = edgePadding
   const maxX = deckWidth - edgePadding - width
@@ -2291,6 +2298,41 @@ export function resolveSnappedDragPosition(
     }
   }
   if (bestSlide) return bestSlide
+
+  // The straight line from where the drag started to the cursor is fully
+  // blocked end-to-end (typically: an immediately-adjacent neighbour sits
+  // right on that line, so even the smallest step along it collides) —
+  // every candidate above (lock, free, single-axis, vector binary search)
+  // only ever tries points ON that one line, so it can never route AROUND
+  // the obstacle. Without this, the item reads as permanently "stuck": no
+  // matter how far the cursor keeps moving, every subsequent frame's
+  // vector still passes near the same blocking neighbour close to its
+  // start, so the binary search above converges back to ~0 every time.
+  // Break out of the 1-D search here with a bounded local scan CENTRED ON
+  // THE CURSOR (not the blocked vector), so a position just to the side of
+  // the obstacle — which the cursor may already be well past — is found
+  // and the drag can "escape" instead of free-falling to a full freeze.
+  // Measure against the CLAMPED target, not the raw cursor position — the
+  // cursor routinely ends up past the deck edge (dragging toward open
+  // space beyond a small deck is normal), and "closest to an arbitrarily
+  // far-off-deck point" is a meaningless ranking; every in-bounds
+  // candidate would tie on "which direction is off-deck" instead of on
+  // genuine proximity to where the item could actually end up.
+  const clampedTarget = clampToDeck({ x: targetX, y: targetY, width, length }, deckWidth, deckLength, edgePadding)
+  const escapeRadius = Math.max(width, length) * 2
+  const escapeStep = Math.max(gridStep, 0.1)
+  let bestEscape: { x: number; y: number; dist: number } | null = null
+  for (let oy = -escapeRadius; oy <= escapeRadius; oy += escapeStep) {
+    for (let ox = -escapeRadius; ox <= escapeRadius; ox += escapeStep) {
+      if (Math.hypot(ox, oy) > escapeRadius) continue
+      const res = tryPos(clampedTarget.x + ox, clampedTarget.y + oy)
+      if (!res) continue
+      const resDist = Math.hypot(res.x - clampedTarget.x, res.y - clampedTarget.y)
+      if (!bestEscape || resDist < bestEscape.dist) bestEscape = { x: res.x, y: res.y, dist: resDist }
+    }
+  }
+  if (bestEscape) return { x: bestEscape.x, y: bestEscape.y }
+
   // Last resort: never return a position outside the usable margin, even if
   // it still collides — clampToDeck guarantees at least that much validity.
   const clampedCurrent = clampToDeck({ x: currentX, y: currentY, width, length }, deckWidth, deckLength, edgePadding)
