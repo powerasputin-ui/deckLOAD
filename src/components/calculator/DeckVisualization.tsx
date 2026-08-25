@@ -1364,7 +1364,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               : rzDrag.corner === 'sw'
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
-        onUpdateRestrictionZone(rzDrag.id, patch)
+        // A 'custom' (hand-drawn outline) zone's polygon is the source of
+        // truth — resizing its bbox alone would leave the stored outline
+        // pointing at the OLD shape/position. Scale rzDrag.startOutline (a
+        // fixed snapshot from drag-start, same reasoning as the move branch
+        // above) proportionally from the old bbox into the new one, so
+        // corner-resize handles work for freehand zones too, not just the
+        // 4 bbox-derived shapes.
+        const outline = rzDrag.startOutline
+          ? rzDrag.startOutline.map((p) => ({
+              x: patch.x + ((p.x - r.x) / (r.width || 1)) * patch.width,
+              y: patch.y + ((p.y - r.y) / (r.length || 1)) * patch.length,
+            }))
+          : undefined
+        onUpdateRestrictionZone(rzDrag.id, { ...patch, ...(outline ? { outline } : {}) })
       }
     }
     if (clearanceDrag) {
@@ -2133,44 +2146,48 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   {fmt(z.width)} × {fmt(z.length)} {UNIT_LABEL[unit]}
                 </text>
               )}
-              {/* Corner resize handles only for the 4 bbox-derived shapes —
-                  a 'custom' hand-drawn outline has no meaningful "resize
-                  the bbox" operation (the polygon wouldn't scale with it),
-                  so it only supports whole-zone move (the polygon itself is
-                  still draggable via the onPointerDown above). The delete
-                  label, however, applies to every shape regardless. */}
+              {/* Corner resize handles — for the 4 bbox-derived shapes they
+                  resize the bbox directly; for a 'custom' hand-drawn
+                  outline they scale the stored outline proportionally from
+                  its bbox (see the resize branch in handlePointerMove), so
+                  freehand zones get real stretch handles too, not just
+                  whole-zone move. The delete button sits further outside
+                  the NE corner than the resize handle there, so the two
+                  never overlap and both stay separately clickable. */}
               {interactive && isSelected && (
                 <>
-                  {z.shapeType !== 'custom' &&
-                    corners.map((c) => (
-                      <rect
-                        key={c.key}
-                        x={c.cx - 5}
-                        y={c.cy - 5}
-                        width={10}
-                        height={10}
-                        fill="#fff"
-                        stroke="#dc2626"
-                        strokeWidth={1.5}
-                        style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
-                        onPointerDown={(e) => {
-                          e.stopPropagation()
-                          setSelectedRestrictionZoneId(z.id)
-                          setRzDrag({
-                            id: z.id,
-                            kind: 'resize',
-                            corner: c.key,
-                            startMouse: { x: e.clientX, y: e.clientY },
-                            startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
-                          })
-                          ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                        }}
-                      />
-                    ))}
+                  {corners.map((c) => (
+                    <rect
+                      key={c.key}
+                      x={c.cx - 5}
+                      y={c.cy - 5}
+                      width={10}
+                      height={10}
+                      fill="#fff"
+                      stroke="#dc2626"
+                      strokeWidth={1.5}
+                      style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        setSelectedRestrictionZoneId(z.id)
+                        setRzDrag({
+                          id: z.id,
+                          kind: 'resize',
+                          corner: c.key,
+                          startMouse: { x: e.clientX, y: e.clientY },
+                          startRect: { x: z.x, y: z.y, width: z.width, length: z.length },
+                          startOutline: z.outline,
+                        })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }}
+                    />
+                  ))}
                   {/* Same round red delete control as placed cargo
                       (onRemovePinned/onRemoveManual below) — a bigger
                       transparent hit circle around a smaller solid one, so
-                      it's a real target on a small zone too. */}
+                      it's a real target on a small zone too. Offset further
+                      up-and-out from the NE corner than the resize handle
+                      there sits, so the two controls don't overlap. */}
                   <g
                     style={{ cursor: 'pointer' }}
                     onPointerDown={(e) => e.stopPropagation()}
@@ -2180,9 +2197,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                       setSelectedRestrictionZoneId(null)
                     }}
                   >
-                    <circle cx={zx + zw} cy={zy} r={16} fill="transparent" />
-                    <circle cx={zx + zw} cy={zy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={zx + zw} y={zy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
+                    <circle cx={zx + zw + 12} cy={zy - 12} r={16} fill="transparent" />
+                    <circle cx={zx + zw + 12} cy={zy - 12} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                    <text x={zx + zw + 12} y={zy - 11} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
                   </g>
                 </>
               )}

@@ -118,6 +118,69 @@ test.describe('Restriction (obstacle) zones', () => {
     await expect(page.getByText(/Размещено 0 из 0/)).toBeVisible()
   })
 
+  test('a freeform zone gets corner resize handles that scale its outline, and the delete button does not overlap them (regression)', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await page.getByRole('button', { name: /произвольная область/ }).click()
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.scrollIntoViewIfNeeded()
+    const points: [number, number][] = [
+      [40, 40],
+      [140, 40],
+      [140, 110],
+      [40, 110],
+    ]
+    for (const [x, y] of points) {
+      await background.click({ position: { x, y }, force: true })
+    }
+    await background.click({ position: { x: points[0][0], y: points[0][1] }, force: true })
+    const zoneNameInput = page.getByPlaceholder('Название зоны')
+    const zoneForm = zoneNameInput.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
+    await zoneForm.getByRole('button', { name: 'Кран' }).click()
+    await zoneForm.getByRole('button', { name: 'Добавить' }).click()
+    await expect(zoneNameInput).toBeHidden()
+
+    // Select the zone (click its body without moving it).
+    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const before = await zonePolygon.boundingBox()
+    if (!before) throw new Error('zone polygon not found')
+    await page.mouse.click(before.x + before.width / 2, before.y + before.height / 2)
+
+    // A freeform ('custom') zone must now show 4 corner resize handles,
+    // same as the 4 bbox-derived shapes — this used to be entirely absent.
+    const handles = page.locator('svg rect[stroke="#dc2626"]')
+    await expect(handles).toHaveCount(4)
+
+    // Drag the SE handle outward — the outline must scale with the bbox,
+    // not just the bbox numbers, and the zone must not vanish.
+    const seHandle = handles.nth(3)
+    const handleBox = await seHandle.boundingBox()
+    if (!handleBox) throw new Error('resize handle not found')
+    const startX = handleBox.x + handleBox.width / 2
+    const startY = handleBox.y + handleBox.height / 2
+    await page.mouse.move(startX, startY)
+    await page.mouse.down()
+    await page.mouse.move(startX + 60, startY + 40, { steps: 10 })
+    await page.mouse.up()
+
+    const after = await zonePolygon.boundingBox()
+    if (!after) throw new Error('zone polygon vanished after resize')
+    expect(after.width).toBeGreaterThan(before.width + 20)
+    expect(after.height).toBeGreaterThan(before.height + 15)
+
+    // The delete button (round, red, offset outside the NE corner) must
+    // still be independently clickable without triggering a resize.
+    const deleteButton = page.locator('svg circle[fill="#ef4444"]').first()
+    await expect(deleteButton).toBeVisible()
+    const delBox = await deleteButton.boundingBox()
+    if (!delBox) throw new Error('delete button not found')
+    await page.mouse.click(delBox.x + delBox.width / 2, delBox.y + delBox.height / 2)
+    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(0)
+  })
+
   test('dragging a freeform zone across many pointer-move steps keeps its outline in sync with its position (regression: used to drift off the deck)', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('button', { name: 'Очистить' }).click()

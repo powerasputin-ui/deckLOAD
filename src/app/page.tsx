@@ -32,7 +32,7 @@ import {
   packDeckVariants,
   packMultiTrip,
   packingResultFromManual,
-  rotatePlacement,
+  rotatePlacementAnywhere,
   maxLayersFor,
   computeFreeRects,
   computeGridStep,
@@ -527,7 +527,7 @@ export default function Home() {
     const zoneRects = restrictionZoneExclusions(deck.restrictionZones ?? [])
     const rawOthers = [...placementRects, ...lashingRects, ...zoneRects]
     const others = rawOthers.map((p) => withClearanceFootprint(p))
-    const rotated = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
+    const rotated = rotatePlacementAnywhere(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others, usableOutline)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
       return
@@ -536,13 +536,13 @@ export default function Home() {
       toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
       return
     }
-    // rotatePlacement above only inflates the OTHER side's clearance zones —
-    // swapping width/length here can newly overlap a neighbour that was
-    // clear before the rotation, if it's this placement's OWN zone that's
-    // now in the way. Additive precision check for custom (possibly
-    // concave) outlines too — rotatePlacement is bbox-only and unchanged;
-    // this only rejects a bbox-approved rotation that a real outline-vs-
-    // outline check finds actually overlapping.
+    // rotatePlacementAnywhere above only inflates the OTHER side's clearance
+    // zones — swapping width/length here can newly overlap a neighbour that
+    // was clear before the rotation, if it's this placement's OWN zone
+    // that's now in the way. Additive precision check for custom (possibly
+    // concave) outlines too — rotatePlacementAnywhere is bbox-only and
+    // unchanged; this only rejects a bbox-approved rotation that a real
+    // outline-vs-outline check finds actually overlapping.
     const preciseOthers = [
       ...result.placed
         .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
@@ -578,7 +578,7 @@ export default function Home() {
     const zoneRects2 = restrictionZoneExclusions(deck.restrictionZones ?? [])
     const rawOthers = [...manualRects, ...lashingRects2, ...zoneRects2]
     const others = rawOthers.map((m) => withClearanceFootprint(m))
-    const rotated = rotatePlacement(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others)
+    const rotated = rotatePlacementAnywhere(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others, usableOutline)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
       return

@@ -2067,6 +2067,65 @@ export function rotatePlacement(
   return clamped
 }
 
+// rotatePlacement only ever tries ONE spot — rotated in place, centered on
+// the item's current center. That's right for the common case (rotating
+// clears its own neighbours fine), but means a cramped item flatly refuses
+// to rotate even when the deck has plenty of open space a short distance
+// away — the rotate button reads as "broken" in a tight layout even though
+// nothing is actually full. This tries the in-place rotation first
+// (unchanged), and only if that fails, searches a grid of candidate
+// positions across the WHOLE usable deck for the rotated footprint,
+// nearest-to-current-center first, so a rotate that can't happen exactly
+// where the item already sits can still happen a short move away instead
+// of failing outright.
+export function rotatePlacementAnywhere(
+  current: { x: number; y: number; width: number; length: number },
+  deckWidth: number,
+  deckLength: number,
+  edgePadding: number,
+  gap: number,
+  others: { x: number; y: number; width: number; length: number }[],
+  outline?: { x: number; y: number }[]
+): { x: number; y: number; width: number; length: number } | null {
+  const inPlace = rotatePlacement(current, deckWidth, deckLength, edgePadding, gap, others)
+  if (inPlace) return inPlace
+
+  const newWidth = current.length
+  const newLength = current.width
+  if (newWidth > deckWidth - 2 * edgePadding + 1e-9 || newLength > deckLength - 2 * edgePadding + 1e-9) {
+    return null
+  }
+  const hasOutline = !!outline && outline.length >= 3
+  const cx = current.x + current.width / 2
+  const cy = current.y + current.length / 2
+  const minX = edgePadding
+  const minY = edgePadding
+  const maxX = deckWidth - edgePadding - newWidth
+  const maxY = deckLength - edgePadding - newLength
+  if (maxX < minX - 1e-9 || maxY < minY - 1e-9) return null
+
+  // Coarse-to-fine isn't needed at this scale — decks in this app are a
+  // handful of tens of meters, and a sub-meter step keeps the candidate
+  // count in the low thousands at worst, trivial for a single button click.
+  const step = Math.max(0.1, Math.min(newWidth, newLength) / 4)
+  const candidates: { x: number; y: number; dist: number }[] = []
+  for (let y = minY; y <= maxY + 1e-9; y += step) {
+    for (let x = minX; x <= maxX + 1e-9; x += step) {
+      const rectCx = x + newWidth / 2
+      const rectCy = y + newLength / 2
+      candidates.push({ x, y, dist: Math.hypot(rectCx - cx, rectCy - cy) })
+    }
+  }
+  candidates.sort((a, b) => a.dist - b.dist)
+  for (const c of candidates) {
+    const rect = { x: c.x, y: c.y, width: newWidth, length: newLength }
+    if (hasOutline && !rectInsidePolygon(rect, outline!)) continue
+    if (collidesWith(rect, others, gap)) continue
+    return rect
+  }
+  return null
+}
+
 // Tetris-style drag resolution: snaps the dragged rect to the grid, then tries
 // to lock it flush (respecting `gap`) against nearby neighbours or the deck
 // margin when the raw drag target is close enough ("magnetic" threshold).

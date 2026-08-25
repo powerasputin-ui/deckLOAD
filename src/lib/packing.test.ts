@@ -11,6 +11,7 @@ import {
   collidesWithClearance,
   clampToDeck,
   rotatePlacement,
+  rotatePlacementAnywhere,
   resolveSnappedDragPosition,
   checkZoneLoads,
   zoneAreaWithinOutline,
@@ -1150,6 +1151,61 @@ describe('rotatePlacement', () => {
     expect(result).not.toBeNull()
     expect(result!.width).toBe(0.15)
     expect(result!.length).toBe(4)
+  })
+})
+
+describe('rotatePlacementAnywhere', () => {
+  it('rotates in place when nothing blocks it (same result as rotatePlacement)', () => {
+    const result = rotatePlacementAnywhere({ x: 0.5, y: 0.5, width: 4, length: 1 }, 10, 10, 0.5, 0, [])
+    expect(result).not.toBeNull()
+    expect(result!.width).toBe(1)
+    expect(result!.length).toBe(4)
+  })
+
+  it('finds a free spot elsewhere on the deck when the in-place rotation is blocked by a neighbour (the actual bug: this used to just fail)', () => {
+    // A 4x1 item wedged against a neighbour that blocks rotating in place —
+    // but the deck has plenty of open room elsewhere.
+    const others = [{ x: 2, y: 0, width: 1, length: 5 }]
+    const inPlace = rotatePlacement({ x: 0.5, y: 2, width: 4, length: 1 }, 20, 5, 0, 0, others)
+    expect(inPlace).toBeNull() // confirms the scenario really is blocked in place
+    const result = rotatePlacementAnywhere({ x: 0.5, y: 2, width: 4, length: 1 }, 20, 5, 0, 0, others)
+    expect(result).not.toBeNull()
+    expect(result!.width).toBe(1)
+    expect(result!.length).toBe(4)
+    // The found spot must not collide with the neighbour.
+    const collides =
+      result!.x < others[0].x + others[0].width &&
+      result!.x + result!.width > others[0].x &&
+      result!.y < others[0].y + others[0].length &&
+      result!.y + result!.length > others[0].y
+    expect(collides).toBe(false)
+  })
+
+  it('returns null when the whole deck is genuinely full', () => {
+    const others = [{ x: 0, y: 0, width: 5, length: 5 }]
+    const result = rotatePlacementAnywhere({ x: 4.5, y: 4.5, width: 1, length: 0.4 }, 5, 5, 0, 0, others)
+    expect(result).toBeNull()
+  })
+
+  it('rejects a rotated footprint that is simply too big for the deck, same as rotatePlacement', () => {
+    const result = rotatePlacementAnywhere({ x: 5, y: 0.2, width: 9.5, length: 0.15 }, 20, 8, 0.2, 0.1, [])
+    expect(result).toBeNull()
+  })
+
+  it('respects a non-rectangular deck outline when searching for a fallback spot', () => {
+    // A deck with the entire right half excluded — a fallback candidate
+    // there must be rejected even though it would otherwise be free.
+    const outline = [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 5, y: 10 },
+      { x: 0, y: 10 },
+    ]
+    const others = [{ x: 0, y: 4, width: 1, length: 5 }]
+    const result = rotatePlacementAnywhere({ x: 0, y: 0.5, width: 4, length: 1 }, 10, 10, 0, 0, others, outline)
+    if (result) {
+      expect(result.x + result.width).toBeLessThanOrEqual(5 + 1e-6)
+    }
   })
 })
 
