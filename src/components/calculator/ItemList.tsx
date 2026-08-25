@@ -34,6 +34,7 @@ import {
 import {
   useCalculator,
   UNIT_LABEL,
+  roundForDisplay,
   type Unit,
 } from '@/store/calculator'
 import type { CargoItem, PackingResult } from '@/lib/packing'
@@ -475,7 +476,7 @@ function NumField({
         type="number"
         min={min}
         step={integer ? 1 : 0.1}
-        value={value}
+        value={roundForDisplay(value)}
         onChange={(e) => {
           const v = Number(e.target.value)
           if (isNaN(v)) return

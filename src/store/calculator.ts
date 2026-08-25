@@ -42,29 +42,38 @@ const UNIT_PER_METER: Record<Unit, number> = {
   ft: 1 / 0.3048,
 }
 
-// Decimal places kept after converting INTO this unit — chosen well beyond
-// any real cargo-dimension precision (0.1mm for cm, ~0.03mm for ft, 0.1mm
-// for m) so floating-point noise from the conversion math itself always
-// rounds away cleanly instead of showing up as digits like 1999.999999992.
-// A high fixed precision (e.g. round to 1e-9, or even 9 significant figures)
-// isn't enough: chaining conversions through an irrational-ish factor like
-// 1/0.3048 compounds sub-precision noise every hop, and that noise then
-// gets amplified by the next unit's own conversion factor — no fixed
-// precision much finer than real-world tolerance survives every chain.
-const UNIT_DECIMALS: Record<Unit, number> = {
-  m: 4,
-  cm: 2,
-  ft: 4,
-}
-
 function convertLength(value: number, from: Unit, to: Unit): number {
   if (from === to) return value
   // value is in `from` units; convert to meters then to `to` units
   const meters = value / UNIT_PER_METER[from]
   const result = meters * UNIT_PER_METER[to]
-  if (!Number.isFinite(result)) return result
-  const p = 10 ** UNIT_DECIMALS[to]
-  return Math.round(result * p) / p
+  if (result === 0 || !Number.isFinite(result)) return result
+  // Round to 12 significant figures — fine enough (well under 1e-9 relative
+  // error for any realistic deck/cargo size) to stay far below the 1e-6
+  // absolute epsilons packing.ts's geometry checks (rectInsidePolygon,
+  // boardOffset boundary tests, etc.) use, so this never turns a legitimate
+  // boundary-touching placement into a false "doesn't fit" — while still
+  // capping the unbounded drift a bare `meters * UNIT_PER_METER[to]` would
+  // accumulate over many repeated unit switches. This intentionally does
+  // NOT try to produce "clean" round numbers like 2000 instead of
+  // 1999.999999998 — that's a display concern, handled separately by
+  // roundForDisplay() at the UI input layer, not by degrading the value
+  // every downstream geometric calculation actually uses.
+  return Number(result.toPrecision(12))
+}
+
+// Rounds a stored length value for display in an editable number input,
+// without touching the value itself — conversion noise from convertLength()
+// is tiny (≤1e-9 relative) but still shows up as ugly trailing digits like
+// 1999.999999998 when bound directly to an <input value={...}>. Round well
+// below any real cargo/deck precision (6 decimals) so that noise always
+// disappears, while leaving the underlying stored/geometric value untouched
+// — re-typing over the field submits the user's own fresh characters via
+// onChange regardless of what this rounded the displayed value to.
+export function roundForDisplay(value: number): number {
+  if (!Number.isFinite(value)) return value
+  const r = Math.round(value * 1e6) / 1e6
+  return r === 0 ? 0 : r
 }
 
 export interface DeckConfig {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useCalculator, clearCalculatorHistory } from './calculator'
+import { useCalculator, clearCalculatorHistory, roundForDisplay } from './calculator'
 
 describe('calculator store', () => {
   beforeEach(() => {
@@ -100,14 +100,29 @@ describe('calculator store', () => {
     expect(deck.length).toBeCloseTo(8, 6)
   })
 
-  it('produces a clean value switching ft -> cm (regression: used to yield 1999.999999992 instead of 2000)', () => {
+  it('produces a display-clean value switching ft -> cm (regression: used to show 1999.999999992 instead of 2000)', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 20, length: 8 })
     s.setUnit('ft')
     s.setUnit('cm')
     const deck = useCalculator.getState().deck
-    expect(deck.width).toBe(2000)
-    expect(deck.length).toBe(800)
+    // The stored value only needs to stay geometrically precise (very close,
+    // not necessarily bit-exact) — roundForDisplay() is what the UI actually
+    // binds to, and that must come out exactly clean.
+    expect(deck.width).toBeCloseTo(2000, 6)
+    expect(deck.length).toBeCloseTo(800, 6)
+    expect(roundForDisplay(deck.width)).toBe(2000)
+    expect(roundForDisplay(deck.length)).toBe(800)
+  })
+
+  it('does not round the stored value coarsely enough to break geometry epsilons (regression: a prior fix rounded to 4 decimal places in ft, ~1.5e-5m noise, which broke boardOffset boundary checks using 1e-6m epsilons)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 20, length: 8, boardOffset: 0.2, gap: 0.1 })
+    s.setUnit('ft')
+    const deck = useCalculator.getState().deck
+    // boardOffset in ft should be within 1e-6 of the true converted value —
+    // far tighter than the old bug's ~1.5e-5 error.
+    expect(deck.boardOffset).toBeCloseTo(0.2 / 0.3048, 6)
   })
 
   it('does not auto-select a cargo item when switching mode', () => {

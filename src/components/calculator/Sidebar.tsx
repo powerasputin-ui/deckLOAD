@@ -52,7 +52,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, roundForDisplay, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   type SortStrategy,
@@ -468,7 +468,7 @@ function DeckSettings() {
               type="number"
               min={0.1}
               step={0.1}
-              value={deck.width}
+              value={roundForDisplay(deck.width)}
               onChange={(e) => { const v = Number(e.target.value); setDeck({ width: !isNaN(v) && v > 0 ? v : 0.1 }) }}
               className="h-8 text-xs"
             />
@@ -479,7 +479,7 @@ function DeckSettings() {
               type="number"
               min={0.1}
               step={0.1}
-              value={deck.length}
+              value={roundForDisplay(deck.length)}
               onChange={(e) => { const v = Number(e.target.value); setDeck({ length: !isNaN(v) && v > 0 ? v : 0.1 }) }}
               className="h-8 text-xs"
             />
@@ -494,7 +494,7 @@ function DeckSettings() {
               type="number"
               min={0}
               step={0.05}
-              value={deck.gap}
+              value={roundForDisplay(deck.gap)}
               onChange={(e) => { const v = Number(e.target.value); setDeck({ gap: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
@@ -510,7 +510,7 @@ function DeckSettings() {
               type="number"
               min={0}
               step={0.05}
-              value={deck.boardOffset}
+              value={roundForDisplay(deck.boardOffset)}
               onChange={(e) => { const v = Number(e.target.value); setDeck({ boardOffset: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
@@ -526,7 +526,7 @@ function DeckSettings() {
               type="number"
               min={0}
               step={0.1}
-              value={deck.clearance}
+              value={roundForDisplay(deck.clearance)}
               onChange={(e) => { const v = Number(e.target.value); setDeck({ clearance: !isNaN(v) && v >= 0 ? v : 0 }) }}
               className="h-8 text-xs flex-1"
             />
@@ -956,7 +956,7 @@ function MiniNumField({
   // buffer (not just formatting `value` on the fly) so an in-progress
   // entry like "0," or "0." isn't immediately snapped back to "0" by the
   // controlled value before the user finishes typing the decimal part.
-  const [text, setText] = useState(String(value))
+  const [text, setText] = useState(String(roundForDisplay(value)))
   // Resync the text buffer when `value` changes from outside (not from this
   // field's own onChange) — the React-recommended "adjust state during
   // render" pattern instead of an effect, since setState-in-effect here
@@ -964,7 +964,7 @@ function MiniNumField({
   const [prevValue, setPrevValue] = useState(value)
   if (value !== prevValue) {
     setPrevValue(value)
-    setText(String(value))
+    setText(String(roundForDisplay(value)))
   }
 
   return (
