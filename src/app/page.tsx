@@ -924,6 +924,17 @@ export default function Home() {
     toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }
 
+  // Returns a pinned placement to the auto-packer's pool WITHOUT touching
+  // item.quantity — the unit stays requested, so the next repack places it
+  // algorithmically again (possibly at a different spot), instead of
+  // disappearing from the deck the way handleRemovePinned's delete does.
+  const handleUnpinPlaced = (id: string) => {
+    const pin = pinnedPlacements.find((p) => p.id === id)
+    if (!pin) return
+    removePinned(clampedTripIndex, id)
+    toast.info(`Груз «${pin.name}» откреплён — алгоритм расставит его автоматически`)
+  }
+
   // Manual-mode equivalent of findMergeSourcePinned — every placement here
   // is already a manual placement (no separate "still auto-placed" pool to
   // fall back to), so this just looks for another one of the same item.
@@ -1546,6 +1557,7 @@ export default function Home() {
                     onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
                     onMergePinned={handleMergePinned}
                     onRemovePinned={handleRemovePinned}
+                    onUnpinPlaced={handleUnpinPlaced}
                     onRotatePinned={handleRotatePinned}
                     onTogglePinSelection={togglePinSelection}
                     onClearSelection={clearSelection}
@@ -1635,7 +1647,6 @@ export default function Home() {
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}
-                onRemovePinned={handleRemovePinned}
               />
             </div>
 

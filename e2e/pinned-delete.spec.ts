@@ -19,7 +19,10 @@ test.describe('Deleting a pinned cargo item', () => {
     // Pin the first placed item by clicking its colored rect in the SVG.
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
     await expect(async () => {
-      await placedRect.click({ force: true })
+      // A plain click only selects (no pinning) since the interaction
+      // redesign — right-click "Закрепить" is now the explicit pin action.
+      await placedRect.click({ button: 'right', force: true })
+      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 

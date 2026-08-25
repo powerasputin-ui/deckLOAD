@@ -3,7 +3,6 @@
 import {
   Pin,
   RotateCw,
-  Trash2,
   X,
   Unlock,
   Move,
@@ -35,7 +34,6 @@ interface PlacementPanelProps {
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
-  onRemovePinned?: (id: string) => void
 }
 
 export function PlacementPanel({
@@ -45,7 +43,6 @@ export function PlacementPanel({
   onAutoRedistribute,
   variants,
   onSelectVariant,
-  onRemovePinned,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
@@ -126,16 +123,19 @@ export function PlacementPanel({
     }
   }
 
-  const handleDeleteSelected = () => {
+  // Returns the selected pin(s) to the algorithm's pool WITHOUT touching
+  // item.quantity — this button is labeled "Открепить" (unpin), not
+  // "Удалить" (delete), and it used to actually call the destructive
+  // delete-with-quantity-decrement path (a pre-existing label/behavior
+  // mismatch). True deletion is available via the canvas's own red ✕ button
+  // on a pinned item — this one only releases user control, matching
+  // handleClearAll's "Снять все закрепления" (which was already correct).
+  const handleUnpinSelected = () => {
     if (isAuto) {
       for (const id of selectedPinIds) {
-        if (onRemovePinned) {
-          onRemovePinned(id)
-        } else {
-          removePinned(tripIndex, id)
-        }
+        removePinned(tripIndex, id)
       }
-      toast.info(`Удалено: ${selectedPinIds.length} груз(ов)`)
+      toast.info(`Откреплено: ${selectedPinIds.length} груз(ов) — алгоритм расставит их автоматически`)
     }
   }
 
@@ -320,10 +320,9 @@ export function PlacementPanel({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={handleDeleteSelected}
-                  className="text-destructive hover:text-destructive"
+                  onClick={handleUnpinSelected}
                 >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  <Unlock className="h-3.5 w-3.5 mr-1" />
                   Открепить
                 </Button>
               </div>
@@ -353,9 +352,9 @@ export function PlacementPanel({
           {isAuto ? (
             <>
               <div>• Выберите груз слева и кликните по палубе — закрепит его в этой точке</div>
-              <div>• Клик по уже размещённому грузу — закрепить и перетащить</div>
+              <div>• Клик по уже размещённому грузу — выделить; перетащите или ПКМ → «Закрепить»</div>
               <div>• Shift+клик — выбрать несколько</div>
-              <div>• ↻ на грузе — повернуть</div>
+              <div>• ↻ на грузе — повернуть (после закрепления)</div>
             </>
           ) : (
             <>

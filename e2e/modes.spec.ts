@@ -32,7 +32,10 @@ test.describe('Auto / manual modes', () => {
     // hydrated — retry the click+assert pair instead of a single attempt.
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
     await expect(async () => {
-      await placedRect.click({ force: true })
+      // A plain click only selects (no pinning) since the interaction
+      // redesign — right-click "Закрепить" is now the explicit pin action.
+      await placedRect.click({ button: 'right', force: true })
+      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // Redistribute intentionally clears all pins (page.tsx's
@@ -48,7 +51,10 @@ test.describe('Auto / manual modes', () => {
     await expect(headerBadge(page)).toContainText('%')
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
     await expect(async () => {
-      await placedRect.click({ force: true })
+      // A plain click only selects (no pinning) since the interaction
+      // redesign — right-click "Закрепить" is now the explicit pin action.
+      await placedRect.click({ button: 'right', force: true })
+      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
@@ -77,7 +83,10 @@ test.describe('Auto / manual modes', () => {
     // Pin the first placed item by clicking its colored rect
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
     await expect(async () => {
-      await placedRect.click({ force: true })
+      // A plain click only selects (no pinning) since the interaction
+      // redesign — right-click "Закрепить" is now the explicit pin action.
+      await placedRect.click({ button: 'right', force: true })
+      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // Click rotate on the selected pin (purple circle around the ↻ icon)

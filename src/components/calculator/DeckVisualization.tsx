@@ -83,6 +83,9 @@ interface DeckVisualizationProps {
   onUpdatePinnedClearance?: (id: string, margin: ClearanceMargin) => void
   onMergePinned?: (draggedId: string, targetId: string) => void
   onRemovePinned?: (id: string) => void
+  // Returns a pinned placement to the algorithm's pool WITHOUT touching
+  // item.quantity — unlike onRemovePinned, which deletes the unit entirely.
+  onUnpinPlaced?: (id: string) => void
   onRotatePinned?: (id: string) => void
   onTogglePinSelection?: (id: string, additive: boolean) => void
   onClearSelection?: () => void
@@ -177,6 +180,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onUpdatePinnedClearance,
   onMergePinned,
   onRemovePinned,
+  onUnpinPlaced,
   onRotatePinned,
   onTogglePinSelection,
   onClearSelection,
@@ -255,6 +259,53 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     cropBitmap?.close?.()
     setCropBitmap(null)
   }
+  // Lightweight, non-pinning selection for an algorithmically-placed
+  // (not-yet-pinned) auto-mode item — local component state, not the store,
+  // since nothing outside this component needs to know about it (the
+  // Sidebar/PlacementPanel panels that gate on a "selected placement" only
+  // ever apply to pinned/manual placements, which have a real, mutable
+  // position). Keyed by itemId+x+y (rounded) since an unpinned item has no
+  // stable placement id of its own — see unpinnedKeyFor(). A stale key
+  // after a repack simply fails to match anything next render, which is the
+  // desired "selection silently clears" behavior, not a bug to guard against.
+  const [selectedUnpinnedKeys, setSelectedUnpinnedKeys] = useState<string[]>([])
+  const unpinnedKeyFor = (p: { itemId: string; x: number; y: number }) =>
+    `${p.itemId}@${p.x.toFixed(2)},${p.y.toFixed(2)}`
+  // A pointerdown on an unpinned auto item doesn't pin it right away —
+  // pinning is a real, hard-to-casually-undo action (it detaches the item
+  // from the algorithm) and shouldn't fire from a bare tap. This tracks the
+  // candidate between pointerdown and either pointerup (too little movement
+  // -> just toggle selectedUnpinnedKeys, no pin) or a real drag exceeding
+  // the threshold in handlePointerMove (-> promote to an actual pin and
+  // hand off to the normal pinDrag flow). See handlePinPointerDown.
+  const [pendingAutoSelect, setPendingAutoSelect] = useState<{
+    key: string
+    placed: PlacedItem
+    startMouse: { x: number; y: number }
+    additive: boolean
+  } | null>(null)
+  // Right-click menu for an individual cargo item — pin/unpin (auto mode
+  // only; manual placements have no separate "pinned" concept, so a
+  // right-click there just suppresses the deck-background menu instead).
+  const [itemContextMenu, setItemContextMenu] = useState<
+    | { x: number; y: number; kind: 'pinned'; id: string }
+    | { x: number; y: number; kind: 'unpinned'; placed: PlacedItem }
+    | null
+  >(null)
+  useEffect(() => {
+    if (!itemContextMenu) return
+    const close = () => setItemContextMenu(null)
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [itemContextMenu])
   // Right-click deck menu: "Редактировать" (deck outline) / "Загрузить
   // фото" (same upload flow as the toolbar button — reuses the same hidden
   // file input, no duplicate upload logic). Screen-space {x,y}, not deck
@@ -500,6 +551,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   )
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
+
+  // Local, non-store selection state only makes sense while in auto mode —
+  // clear it on any mode switch so a stale unpinned-selection highlight
+  // doesn't linger (or silently resurface) after switching to manual and
+  // back. React-recommended "adjust state during render" pattern instead of
+  // an effect (see MiniNumField in Sidebar.tsx for the same convention) —
+  // an effect here would cause an extra, avoidable render pass.
+  const [prevMode, setPrevMode] = useState(mode)
+  if (mode !== prevMode) {
+    setPrevMode(mode)
+    setSelectedUnpinnedKeys([])
+    setPendingAutoSelect(null)
+  }
 
   const edgePad = boardOffset
 
@@ -1073,6 +1137,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     mp: ManualPlacement
   ) => {
     if (mode !== 'manual') return
+    // Right-click is handled entirely by the item's onContextMenu instead —
+    // don't let it toggle selection or start a drag.
+    if (e.button !== 0) return
     e.stopPropagation()
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (additive) {
@@ -1089,45 +1156,81 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Pin a placed auto-mode item so it becomes user-controlled
+  // Auto-mode click on a placed item. An ALREADY-pinned item behaves as
+  // before (click selects/toggles, drag moves it — pinning already happened
+  // once, this is just ordinary interaction with a user-controlled item).
+  // An UNPINNED (still algorithmically-placed) item must NOT be pinned by a
+  // bare touch — that used to make merely clicking to look at a box detach
+  // it from the auto-packer permanently. Instead this arms a pending
+  // candidate: handlePointerUp resolves it to a lightweight, non-pinning
+  // selection if the pointer never moved meaningfully, while
+  // handlePointerMove promotes it to a real pin (and a normal drag) the
+  // moment the user actually drags it — dragging is a deliberate act of
+  // taking manual control, a plain click is not. Explicit pinning (with no
+  // drag at all) is available via the right-click "Закрепить" menu item —
+  // see handleAutoContextMenu.
   const handlePinPointerDown = (
     e: React.PointerEvent,
     placed: PlacedItem,
     existingPinId?: string
   ) => {
     if (!isInteractiveAuto) return
+    if (e.button !== 0) return
     e.stopPropagation()
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
-    // If clicking an already-pinned item, keep it; otherwise create a pin
-    let pinId = existingPinId
-    if (!pinId) {
-      pinId = onPinPlaced({
-        itemId: placed.itemId,
-        name: placed.name,
-        x: placed.x,
-        y: placed.y,
-        width: placed.width,
-        length: placed.length,
-        layers: placed.layers,
-        rotated: placed.rotated,
-        color: placed.color,
-        weight: placed.weight,
+    if (existingPinId) {
+      if (!additive) {
+        onTogglePinSelection?.(existingPinId, false)
+      } else {
+        onTogglePinSelection?.(existingPinId, true)
+      }
+      const startDeck = screenToDeck(e.clientX, e.clientY)
+      if (!startDeck) return
+      setPinDrag({
+        id: existingPinId,
+        startDeck,
+        startPlace: { x: placed.x, y: placed.y },
+        moved: false,
       })
-    } else if (!additive) {
-      onTogglePinSelection?.(pinId, false)
+      ;(e.target as Element).setPointerCapture?.(e.pointerId)
+      return
     }
-    if (additive && pinId) {
-      onTogglePinSelection?.(pinId, true)
-    }
-    const startDeck = screenToDeck(e.clientX, e.clientY)
-    if (!startDeck || !pinId) return
-    setPinDrag({
-      id: pinId,
-      startDeck,
-      startPlace: { x: placed.x, y: placed.y },
-      moved: false,
+    setPendingAutoSelect({
+      key: unpinnedKeyFor(placed),
+      placed,
+      startMouse: { x: e.clientX, y: e.clientY },
+      additive,
     })
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  // Right-click on an auto-mode item: explicit pin/unpin, without needing a
+  // drag. Stops propagation so this never also opens the deck-background
+  // menu (handleDeckContextMenu) — the two used to fire together, which is
+  // exactly the "right-click pins AND opens the deck menu" bug this whole
+  // interaction pass is fixing.
+  const handleAutoContextMenu = (
+    e: React.MouseEvent,
+    placed: PlacedItem,
+    existingPinId?: string
+  ) => {
+    if (!isInteractiveAuto) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (existingPinId) {
+      setItemContextMenu({ x: e.clientX, y: e.clientY, kind: 'pinned', id: existingPinId })
+    } else {
+      setItemContextMenu({ x: e.clientX, y: e.clientY, kind: 'unpinned', placed })
+    }
+  }
+
+  // Right-click on a manual placement has nothing to pin/unpin — manual
+  // items have no separate "pinned" concept — so this just suppresses the
+  // deck-background menu instead of doing nothing (which would otherwise
+  // pop the deck menu on top of the cargo, same bug as the auto-mode case).
+  const handleManualContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
   }
 
   // Finds another placement of the SAME item substantially overlapped by the
@@ -1200,6 +1303,35 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const dy = (e.clientY - panDrag.startMouse.y) * unitsPerPx
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) panMovedRef.current = true
         setPan(clampPan({ x: panDrag.startPan.x - dx, y: panDrag.startPan.y - dy }, viewBoxW, viewBoxH))
+      }
+      return
+    }
+    if (pendingAutoSelect) {
+      const dx = e.clientX - pendingAutoSelect.startMouse.x
+      const dy = e.clientY - pendingAutoSelect.startMouse.y
+      if (Math.hypot(dx, dy) > 4) {
+        // Exceeded the click/drag threshold — a deliberate drag, not a tap.
+        // Promote to a real pin now and hand off to the ordinary pinDrag
+        // flow (picked up by the `pinDrag` branch below on the NEXT move
+        // event, since this state update is async).
+        const placed = pendingAutoSelect.placed
+        const pinId = onPinPlaced!({
+          itemId: placed.itemId,
+          name: placed.name,
+          x: placed.x,
+          y: placed.y,
+          width: placed.width,
+          length: placed.length,
+          layers: placed.layers,
+          rotated: placed.rotated,
+          color: placed.color,
+          weight: placed.weight,
+        })
+        const startDeck = screenToDeck(pendingAutoSelect.startMouse.x, pendingAutoSelect.startMouse.y)
+        setPendingAutoSelect(null)
+        if (startDeck && pinId) {
+          setPinDrag({ id: pinId, startDeck, startPlace: { x: placed.x, y: placed.y }, moved: true })
+        }
       }
       return
     }
@@ -1491,6 +1623,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       setMergeTargetId(null)
       setDragState(null)
       setPinDrag(null)
+      setPendingAutoSelect(null)
       setDragPreviewPos(null)
       setZoneDrag(null)
       setRzDrag(null)
@@ -1517,13 +1650,31 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       }
       return
     }
+    // Pointer released without exceeding the drag threshold — resolve the
+    // pending candidate as a plain (non-pinning) selection toggle instead.
+    if (pendingAutoSelect) {
+      if (pendingAutoSelect.additive) {
+        setSelectedUnpinnedKeys((keys) =>
+          keys.includes(pendingAutoSelect.key)
+            ? keys.filter((k) => k !== pendingAutoSelect.key)
+            : [...keys, pendingAutoSelect.key]
+        )
+      } else {
+        setSelectedUnpinnedKeys((keys) =>
+          keys.includes(pendingAutoSelect.key) ? [] : [pendingAutoSelect.key]
+        )
+      }
+      setPendingAutoSelect(null)
+      return
+    }
     // Always flush any pending drag position before releasing the pointer
     flushPendingDrag()
-    // Click on empty deck area clears selection (pins in auto mode, load zones always) —
-    // but not while a stamp is armed: that click is about placing a NEW item
-    // elsewhere, not about dismissing the current selection, and clearing it
-    // first (pointerup fires before the click that actually places the item)
-    // made the sidebar's lashing panel lose track of whichever placement the
+    // Click on empty deck area clears selection (pins/unpinned highlight in
+    // auto mode, manual selection, load zones always) — but not while a
+    // stamp is armed: that click is about placing a NEW item elsewhere, not
+    // about dismissing the current selection, and clearing it first
+    // (pointerup fires before the click that actually places the item) made
+    // the sidebar's lashing panel lose track of whichever placement the
     // user had just been configuring, even when the new item landed cleanly.
     if (!pinDrag && !dragState && !zoneDrag && !rzDrag && !clearanceDrag && !panDrag && !activeStamp) {
       const target = e.target as Element
@@ -1531,13 +1682,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       // data attribute) or the SVG root itself — not coupled to fill colors,
       // which can change with theming.
       if (target === svgRef.current || target.hasAttribute('data-deck-background')) {
-        if (isInteractiveAuto) onClearSelection?.()
+        if (isInteractiveAuto) {
+          onClearSelection?.()
+          setSelectedUnpinnedKeys([])
+        } else {
+          onClearManualSelection?.()
+        }
         setSelectedZoneId(null)
         setSelectedRestrictionZoneId(null)
       }
     }
     setDragState(null)
     setPinDrag(null)
+    setPendingAutoSelect(null)
     setDragPreviewPos(null)
     setZoneDrag(null)
     setRzDrag(null)
@@ -1560,6 +1717,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     setDragState(null)
     setPinDrag(null)
+    setPendingAutoSelect(null)
     setDragPreviewPos(null)
     setZoneDrag(null)
     setRzDrag(null)
@@ -2413,7 +2571,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const pw = p.width * scale
           const ph = p.length * scale
           const isHover = hoveredItemId === p.itemId
-          const isSelected =
+          const isManualSelected =
             mode === 'manual' &&
             (selectedManual === p.manualId ||
               (selectedManualIds?.includes(p.manualId ?? '') ?? false))
@@ -2427,6 +2585,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               )
             : undefined
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
+          // Not-yet-pinned auto item, selected via the lightweight local
+          // mechanism (see selectedUnpinnedKeys) — never overlaps with
+          // isPinnedSelected since matchingPin is undefined here.
+          const isUnpinnedSelected =
+            isInteractiveAuto && !matchingPin && selectedUnpinnedKeys.includes(unpinnedKeyFor(p))
+          const isSelected = isManualSelected || isPinnedSelected || isUnpinnedSelected
           const category = categoryByItemId?.get(p.itemId)
           const overlappingOverloadedZones =
             overloadedZonesById.size > 0
@@ -2459,13 +2623,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               w={pw}
               h={ph}
               scale={scale}
-              hovered={isHover || isSelected || isPinnedSelected}
+              hovered={isHover}
+              selected={isSelected}
               showLabels={showLabels}
               fmt={fmt}
               onHover={onHover}
               manualMode={mode === 'manual'}
               pinned={!!matchingPin}
-              pinnedSelected={isPinnedSelected}
               category={category}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
@@ -2478,6 +2642,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
                   : isInteractiveAuto
                     ? (e) => handlePinPointerDown(e, p, matchingPin?.id)
+                    : undefined
+              }
+              onItemContextMenu={
+                mode === 'manual' && p.manualId
+                  ? handleManualContextMenu
+                  : isInteractiveAuto
+                    ? (e) => handleAutoContextMenu(e, p, matchingPin?.id)
                     : undefined
               }
             />
@@ -2925,6 +3096,55 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </button>
         </div>
       )}
+      {itemContextMenu && (
+        <div
+          className="fixed z-50 w-40 rounded-lg border bg-card p-1 shadow-md"
+          style={{
+            left: Math.min(itemContextMenu.x, window.innerWidth - 180),
+            top: Math.min(itemContextMenu.y, window.innerHeight - 80),
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {itemContextMenu.kind === 'unpinned' ? (
+            <button
+              type="button"
+              className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                const placed = itemContextMenu.placed
+                // onPinPlaced (pinFromPlaced in the store) already selects
+                // the freshly-created pin as a side effect — an additional
+                // onTogglePinSelection call here would just flip it back off.
+                onPinPlaced?.({
+                  itemId: placed.itemId,
+                  name: placed.name,
+                  x: placed.x,
+                  y: placed.y,
+                  width: placed.width,
+                  length: placed.length,
+                  layers: placed.layers,
+                  rotated: placed.rotated,
+                  color: placed.color,
+                  weight: placed.weight,
+                })
+                setItemContextMenu(null)
+              }}
+            >
+              Закрепить
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                onUnpinPlaced?.(itemContextMenu.id)
+                setItemContextMenu(null)
+              }}
+            >
+              Открепить
+            </button>
+          )}
+        </div>
+      )}
       {pendingZoneDraft && (
         <div
           className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm"
@@ -3091,8 +3311,9 @@ function PlacedRect({
   onHover,
   manualMode,
   onPointerDown,
+  onItemContextMenu,
   pinned,
-  pinnedSelected,
+  selected,
   category,
   overLoad,
   overLoadTitle,
@@ -3114,8 +3335,17 @@ function PlacedRect({
   onHover: (id: string | null) => void
   manualMode: boolean
   onPointerDown?: (e: React.PointerEvent) => void
+  onItemContextMenu?: (e: React.MouseEvent) => void
+  // Pinned status only drives the subtle dashed outline + small "PIN" badge
+  // below — it deliberately does NOT drive stroke color/width any more (see
+  // `selected`), so a merely-pinned-but-not-selected item doesn't read as
+  // permanently highlighted the way every touched item used to.
   pinned?: boolean
-  pinnedSelected?: boolean
+  // Unified selection — true for a manually-selected placement, a
+  // selected pinned placement, OR a selected-but-not-yet-pinned auto item.
+  // Same bold stroke in every case, consistent between modes (this is the
+  // actual fix for "auto and manual show selection completely differently").
+  selected?: boolean
   category?: string
   overLoad?: boolean
   overLoadTitle?: string
@@ -3131,14 +3361,12 @@ function PlacedRect({
     ? '#16a34a'
     : overLoad
       ? '#dc2626'
-      : pinnedSelected
+      : selected
         ? '#7c3aed'
-        : pinned
-          ? '#0f172a'
-          : hovered
-            ? '#94a3b8'
-            : 'rgba(15,23,42,0.55)'
-  const strokeWidth = mergeTarget ? 4 : overLoad ? 3 : pinnedSelected ? 3 : pinned || hovered ? 2 : 1
+        : hovered
+          ? '#94a3b8'
+          : 'rgba(15,23,42,0.55)'
+  const strokeWidth = mergeTarget ? 4 : overLoad ? 3 : selected ? 3 : hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -3158,6 +3386,7 @@ function PlacedRect({
         if (contentsTitle) onContentsHover?.(null, 0, 0)
       }}
       onPointerDown={onPointerDown}
+      onContextMenu={onItemContextMenu}
       style={{ cursor, opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s' }}
     >
       {/* Stacked-layers cue: faint offset "ghost" outlines behind the main
@@ -3181,7 +3410,7 @@ function PlacedRect({
         w={w}
         h={h}
         fill={item.color}
-        fillOpacity={hovered ? 0.95 : 0.78}
+        fillOpacity={hovered || selected ? 0.95 : 0.78}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
         strokeDasharray={mergeTarget ? '6 3' : pinned ? '4 2' : undefined}

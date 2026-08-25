@@ -37,7 +37,10 @@ test.describe('Multi-trip voyages', () => {
     await page.getByRole('button', { name: /Рейс 2/ }).click()
     const placedRect = page.locator('svg rect[fill="#10b981"]').first() // Паллета EUR's color
     await expect(async () => {
-      await placedRect.click({ force: true })
+      // A plain click only selects (no pinning) since the interaction
+      // redesign — right-click "Закрепить" is now the explicit pin action.
+      await placedRect.click({ button: 'right', force: true })
+      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
