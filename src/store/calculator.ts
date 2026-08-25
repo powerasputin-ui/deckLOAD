@@ -42,13 +42,29 @@ const UNIT_PER_METER: Record<Unit, number> = {
   ft: 1 / 0.3048,
 }
 
+// Decimal places kept after converting INTO this unit — chosen well beyond
+// any real cargo-dimension precision (0.1mm for cm, ~0.03mm for ft, 0.1mm
+// for m) so floating-point noise from the conversion math itself always
+// rounds away cleanly instead of showing up as digits like 1999.999999992.
+// A high fixed precision (e.g. round to 1e-9, or even 9 significant figures)
+// isn't enough: chaining conversions through an irrational-ish factor like
+// 1/0.3048 compounds sub-precision noise every hop, and that noise then
+// gets amplified by the next unit's own conversion factor — no fixed
+// precision much finer than real-world tolerance survives every chain.
+const UNIT_DECIMALS: Record<Unit, number> = {
+  m: 4,
+  cm: 2,
+  ft: 4,
+}
+
 function convertLength(value: number, from: Unit, to: Unit): number {
   if (from === to) return value
   // value is in `from` units; convert to meters then to `to` units
   const meters = value / UNIT_PER_METER[from]
-  // Round to a reasonable precision so repeated unit switches don't accumulate
-  // floating-point noise (e.g. 20 m becoming 19.99999999999 ft and back).
-  return Math.round(meters * UNIT_PER_METER[to] * 1e9) / 1e9
+  const result = meters * UNIT_PER_METER[to]
+  if (!Number.isFinite(result)) return result
+  const p = 10 ** UNIT_DECIMALS[to]
+  return Math.round(result * p) / p
 }
 
 export interface DeckConfig {

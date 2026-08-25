@@ -100,6 +100,16 @@ describe('calculator store', () => {
     expect(deck.length).toBeCloseTo(8, 6)
   })
 
+  it('produces a clean value switching ft -> cm (regression: used to yield 1999.999999992 instead of 2000)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 20, length: 8 })
+    s.setUnit('ft')
+    s.setUnit('cm')
+    const deck = useCalculator.getState().deck
+    expect(deck.width).toBe(2000)
+    expect(deck.length).toBe(800)
+  })
+
   it('does not auto-select a cargo item when switching mode', () => {
     const s = useCalculator.getState()
     s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
