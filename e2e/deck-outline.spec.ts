@@ -33,7 +33,7 @@ test.describe('Non-rectangular deck outline', () => {
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
     await itemCard.locator('label:has-text("Кол-во") + input').fill('5')
 
-    await expect(page.getByText(/Размещено 0 из 5/)).toBeVisible()
+    await expect(page.getByText(/0\/5 ед\./)).toBeVisible()
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
     const bgBox = await background.boundingBox()
     if (!bgBox) throw new Error('deck background not found')
@@ -42,11 +42,11 @@ test.describe('Non-rectangular deck outline', () => {
 
     // Placement count must still read 0/5 — the click into the cut corner
     // was rejected, not silently accepted.
-    await expect(page.getByText(/Размещено 0 из 5/)).toBeVisible()
+    await expect(page.getByText(/0\/5 ед\./)).toBeVisible()
 
     // A click well inside the remaining polygon succeeds.
     await background.click({ position: { x: 60, y: 60 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 5/)).toBeVisible()
+    await expect(page.getByText(/1\/5 ед\./)).toBeVisible()
 
     // 3D view renders without crashing when the deck has a custom outline.
     await page.getByRole('radio', { name: '3D' }).click()
@@ -87,11 +87,11 @@ test.describe('Non-rectangular deck outline', () => {
     // Right against the left/bottom edges (straight, unaffected by the
     // top-right cut) — inside the 1m board-offset zone. Must be rejected.
     await background.click({ position: { x: 3, y: bgBox.height - 3 }, force: true })
-    await expect(page.getByText(/Размещено 0 из 3/)).toBeVisible()
+    await expect(page.getByText(/0\/3 ед\./)).toBeVisible()
 
     // Well past the offset on both axes — must succeed.
     await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.7 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 3/)).toBeVisible()
+    await expect(page.getByText(/1\/3 ед\./)).toBeVisible()
   })
 
   // Regression: handleAutoRedistribute (page.tsx) built packDeckVariants'

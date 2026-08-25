@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-// Header badge shows e.g. "12/22 ед. · 54%"
+// Placed/total + utilization text lives in the deck card's footer (e.g.
+// "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
+// that was removed as redundant clutter.
 function headerBadge(page: Page) {
-  return page.locator('header').locator('text=/\\d+\\/\\d+ ед\\. · \\d+%/').first()
+  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
 }
 
 test.describe('DeckLoad smoke tests', () => {

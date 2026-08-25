@@ -7,7 +7,6 @@ import {
   Ship,
   Wand2,
   MousePointerClick,
-  Anchor,
   Download,
   Upload,
   AlertTriangle,
@@ -1303,11 +1302,6 @@ export default function Home() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <Badge variant="outline" className="hidden lg:inline-flex">
-              <Anchor className="h-3 w-3 mr-1" />
-              {result.placedCount}/{result.requestedCount} ед. · {Math.round(result.utilization * 100)}%
-            </Badge>
-
             <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
               <Download className="h-3.5 w-3.5 sm:mr-1" />
               <span className="hidden sm:inline">Скачать JSON</span>
@@ -1627,15 +1621,10 @@ export default function Home() {
                     onSetDrawingRestrictionZoneFreeform={setDrawingRestrictionZoneFreeform}
                   />
                   )}
-                  <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      Размещено {result.placedCount} из {result.requestedCount} ед.
-                    </span>
-                    <span>
-                      Загрузка:{' '}
-                      <span className="font-semibold text-foreground">
-                        {Math.round(result.utilization * 100)}%
-                      </span>
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    {result.placedCount}/{result.requestedCount} ед. · Загрузка:{' '}
+                    <span className="font-semibold text-foreground">
+                      {Math.round(result.utilization * 100)}%
                     </span>
                   </div>
                   <PresetsBar onPlaceCustomShape={handlePlaceCustomShape} />

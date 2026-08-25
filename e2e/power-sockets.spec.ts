@@ -24,10 +24,10 @@ test.describe('Power socket markers', () => {
     // The socket is purely visual — placing cargo right at/near the exact
     // same spot must not be blocked.
     await page.getByRole('button', { name: 'Добавить груз' }).click()
-    await expect(page.getByText(/Размещено 0 из 1/)).toBeVisible()
+    await expect(page.getByText(/0\/1 ед\./)).toBeVisible()
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
     await background.click({ position: { x: 60, y: bgBox.height / 2 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 1/)).toBeVisible()
+    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
 
     await page.locator('button[title="Удалить розетку"]').first().click()
     const socketChip = page.getByRole('button', { name: /Розетка/ })

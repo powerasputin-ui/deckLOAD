@@ -12,7 +12,7 @@ test.describe('Lashing points (securing-force check)', () => {
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 100, y: 100 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 1/)).toBeVisible()
+    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
 
     await page.getByRole('button', { name: /Крепление груза/ }).click()
     await page.getByRole('button', { name: 'Добавить крепление' }).click()

@@ -20,17 +20,17 @@ test.describe('Click-to-place quantity cap', () => {
     // used for SVG clicks elsewhere in this suite.
     await page.getByText('Груз 1', { exact: true }).first().click()
     await background.click({ position: { x: 40, y: 40 }, force: true })
-    await expect(page.getByText('Размещено 1 из 2')).toBeVisible()
+    await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
     // Item 1's stamp stays armed — click empty deck elsewhere to try placing
     // a SECOND unit of item 1, whose own quantity (1) is already satisfied.
     await background.click({ position: { x: 300, y: 200 }, force: true })
     await expect(page.getByText(/Все 1 ед\. груза «Груз 1» уже размещены/)).toBeVisible()
-    await expect(page.getByText('Размещено 1 из 2')).toBeVisible()
+    await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
     // Item 2 is unaffected — still places normally.
     await page.getByText('Груз 2', { exact: true }).first().click()
     await background.click({ position: { x: 300, y: 200 }, force: true })
-    await expect(page.getByText('Размещено 2 из 2')).toBeVisible()
+    await expect(page.getByText(/2\/2 ед\./)).toBeVisible()
   })
 })

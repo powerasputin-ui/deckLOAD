@@ -67,7 +67,7 @@ test.describe('Cargo management', () => {
     const bgBox = await background.boundingBox()
     if (!bgBox) throw new Error('deck background not found')
     await background.click({ position: { x: bgBox.width * 0.25, y: bgBox.height * 0.4 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 1/)).toBeVisible()
+    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
 
     const box = page.locator('svg rect[fill="#0ea5e9"]').first()
     const startBox = await box.boundingBox()

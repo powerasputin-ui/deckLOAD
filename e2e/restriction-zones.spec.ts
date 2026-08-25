@@ -49,13 +49,13 @@ test.describe('Restriction (obstacle) zones', () => {
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText(/Размещено 0 из 0/)).toBeVisible()
+    await expect(page.getByText(/0\/0 ед\./)).toBeVisible()
 
     // Placing well outside the zone succeeds.
     const box3 = await background.boundingBox()
     if (!box3) throw new Error('deck background not found (2)')
     await background.click({ position: { x: box3.width - 60, y: box3.height - 40 }, force: true })
-    await expect(page.getByText(/Размещено 1 из 1/)).toBeVisible()
+    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
   })
 
   test('the drawn shape stays visible on the deck between drag-release and confirming the name (regression)', async ({ page }) => {
@@ -115,7 +115,7 @@ test.describe('Restriction (obstacle) zones', () => {
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText(/Размещено 0 из 0/)).toBeVisible()
+    await expect(page.getByText(/0\/0 ед\./)).toBeVisible()
   })
 
   test('a freeform zone gets corner resize handles that scale its outline, and the delete button does not overlap them (regression)', async ({ page }) => {

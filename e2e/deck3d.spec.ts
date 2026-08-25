@@ -6,7 +6,7 @@ test.describe('3D deck view', () => {
     page.on('pageerror', (err) => pageErrors.push(String(err)))
 
     await page.goto('/')
-    await expect(page.locator('header').locator('text=/\\d+\\/\\d+ ед\\. · \\d+%/').first()).toHaveText(/\/22 ед\./)
+    await expect(page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()).toHaveText(/\/22 ед\./)
 
     await page.getByRole('radio', { name: '3D' }).click()
     const canvas = page.locator('canvas')

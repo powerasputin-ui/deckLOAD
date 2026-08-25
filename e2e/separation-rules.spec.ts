@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 function headerBadge(page: Page) {
-  return page.locator('header').locator('text=/\\d+\\/\\d+ ед\\. · \\d+%/').first()
+  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
 }
 
 test.describe('Category separation rules', () => {
