@@ -95,6 +95,24 @@ describe('maxLayersFor', () => {
     expect(maxLayersFor({ height: Infinity }, 5)).toBe(1)
     expect(maxLayersFor({ height: 1 }, Infinity)).toBe(1)
   })
+
+  it('caps at the per-item maxLayers when it is more restrictive than the height ceiling', () => {
+    expect(maxLayersFor({ height: 1.5, maxLayers: 1 }, 4.5)).toBe(1)
+    expect(maxLayersFor({ height: 1.5, maxLayers: 2 }, 4.5)).toBe(2)
+  })
+
+  it('ignores maxLayers when it is less restrictive than the height ceiling', () => {
+    expect(maxLayersFor({ height: 1.5, maxLayers: 10 }, 4.5)).toBe(3)
+  })
+
+  it('treats maxLayers <= 0 or unset as no override', () => {
+    expect(maxLayersFor({ height: 1.5, maxLayers: 0 }, 4.5)).toBe(3)
+    expect(maxLayersFor({ height: 1.5 }, 4.5)).toBe(3)
+  })
+
+  it('maxLayers alone (no clearance) still caps at 1, matching the no-clearance default', () => {
+    expect(maxLayersFor({ height: 1, maxLayers: 5 }, 0)).toBe(1)
+  })
 })
 
 describe('packDeck', () => {

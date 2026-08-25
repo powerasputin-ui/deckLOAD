@@ -20,6 +20,7 @@ export interface Project {
   showFreeSpace: boolean
   showGrid: boolean
   showLabels: boolean
+  showCargoContents: boolean
 }
 
 interface ProjectsState {
@@ -45,6 +46,7 @@ interface ProjectsState {
     showFreeSpace: boolean
     showGrid: boolean
     showLabels: boolean
+    showCargoContents: boolean
   }) => void
   duplicateProject: (id: string) => string | null
   importProject: (raw: unknown) => string | null
@@ -271,6 +273,7 @@ function freshProject(name: string, withDemo = false): Project {
     showFreeSpace: true,
     showGrid: true,
     showLabels: true,
+    showCargoContents: true,
   }
 }
 
@@ -321,6 +324,8 @@ function normalizeProject(p: Partial<Project>): Project {
           category: toOptionalString(it.category),
           shape: normalizeShape(it.shape),
           outline: normalizeOutline(it.outline),
+          maxLayers: typeof it.maxLayers === 'number' && Number.isFinite(it.maxLayers) && it.maxLayers > 0 ? Math.floor(it.maxLayers) : undefined,
+          contents: toOptionalString(it.contents),
         }))
       : [],
     manualPlacements: Array.isArray(p.manualPlacements)
@@ -346,6 +351,7 @@ function normalizeProject(p: Partial<Project>): Project {
     showFreeSpace: toBool(p.showFreeSpace, true),
     showGrid: toBool(p.showGrid, true),
     showLabels: toBool(p.showLabels, true),
+    showCargoContents: toBool(p.showCargoContents, true),
   }
 }
 
@@ -482,6 +488,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
                 showFreeSpace: data.showFreeSpace,
                 showGrid: data.showGrid,
                 showLabels: data.showLabels,
+                showCargoContents: data.showCargoContents,
                 updatedAt: Date.now(),
               }
             : p

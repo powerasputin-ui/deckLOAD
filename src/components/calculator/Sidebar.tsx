@@ -117,10 +117,12 @@ export function Sidebar({
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
+  const showCargoContents = useCalculator((s) => s.showCargoContents)
   const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
   const toggleFreeSpace = useCalculator((s) => s.toggleFreeSpace)
   const toggleGrid = useCalculator((s) => s.toggleGrid)
   const toggleLabels = useCalculator((s) => s.toggleLabels)
+  const toggleCargoContents = useCalculator((s) => s.toggleCargoContents)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -372,6 +374,7 @@ export function Sidebar({
                 <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
                 <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />
                 <Toggle label="Метки грузов" checked={showLabels} onToggle={toggleLabels} />
+                <Toggle label="Содержимое груза" checked={showCargoContents} onToggle={toggleCargoContents} />
               </div>
             </div>
             <Separator />

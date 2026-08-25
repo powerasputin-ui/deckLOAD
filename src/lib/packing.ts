@@ -39,6 +39,13 @@ export interface CargoItem {
   // additive precision data. Rotated on the fly via rotateOutline90() —
   // never stored pre-rotated, so there's only ever one source of truth.
   outline?: { x: number; y: number }[]
+  // User-set cap on how many units of this item can stack vertically —
+  // combined with the clearance-height ceiling via maxLayersFor() (whichever
+  // is more restrictive wins). Unset/0 = no override, height ceiling only.
+  maxLayers?: number
+  // Free-text cargo contents, shown as a hover tooltip on placed instances
+  // (gated by the global "Содержимое груза" setting) — never affects packing.
+  contents?: string
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -434,6 +441,7 @@ export interface PlacedItem {
   shape?: CargoShape
   outline?: { x: number; y: number }[] // see CargoItem.outline — same local/unrotated convention
   clearanceMargin?: ClearanceMargin // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
+  contents?: string // see CargoItem.contents — resolved fresh from the source item, shown as a hover tooltip
 }
 
 export interface UnplacedItem {
@@ -817,15 +825,20 @@ export interface PinnedPlacement {
   clearanceMargin?: ClearanceMargin
 }
 
-// Compute how many tiers (layers) can be stacked for an item.
-export function maxLayersFor(item: { height: number }, clearance: number): number {
+// Compute how many tiers (layers) can be stacked for an item. `item.maxLayers`
+// (user-set per-item cap) is combined with the clearance-height ceiling by
+// taking the minimum of the two — whichever is more restrictive wins.
+export function maxLayersFor(item: { height: number; maxLayers?: number }, clearance: number): number {
   const h = toFinite(item.height, 0)
   const c = toFinite(clearance, 0)
-  if (c <= 0 || h <= 0) return 1
-  const raw = c / h
-  if (!Number.isFinite(raw)) return 1
-  // A tiny epsilon prevents values like 1.9999999999999998 from losing a layer.
-  return Math.max(1, Math.floor(raw + 1e-9))
+  const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : Infinity
+  let heightCap = 1
+  if (c > 0 && h > 0) {
+    const raw = c / h
+    // A tiny epsilon prevents values like 1.9999999999999998 from losing a layer.
+    if (Number.isFinite(raw)) heightCap = Math.max(1, Math.floor(raw + 1e-9))
+  }
+  return Math.max(1, Math.min(heightCap, userCap))
 }
 
 export function packDeck(
@@ -877,6 +890,7 @@ export function packDeck(
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
   const shapeByItemId = new Map(items.map((it) => [it.id, it.shape]))
   const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
+  const contentsByItemId = new Map(items.map((it) => [it.id, it.contents]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -1088,6 +1102,7 @@ export function packDeck(
       index: index++,
       shape: shapeByItemId.get(pin.itemId),
       outline: outlineByItemId.get(pin.itemId),
+      contents: contentsByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
     })
     result.usedArea += pin.width * pin.length
@@ -1270,6 +1285,7 @@ export function packDeck(
       index: stackIdx++,
       shape: item.shape,
       outline: item.outline,
+      contents: item.contents,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -2307,10 +2323,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[] }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers })
     }
   }
 
@@ -2330,6 +2346,7 @@ export function packingResultFromManual(
     index: i,
     shape: itemMap.get(p.itemId)?.shape,
     outline: itemMap.get(p.itemId)?.outline,
+    contents: itemMap.get(p.itemId)?.contents,
     clearanceMargin: p.clearanceMargin,
   }))
 
@@ -2348,7 +2365,7 @@ export function packingResultFromManual(
       requested: itemInfo?.quantity ?? 0,
       placed: 0,
       footprints: 0,
-      layers: itemInfo ? maxLayersFor({ height: itemInfo.height }, clearance ?? 0) : 1,
+      layers: itemInfo ? maxLayersFor({ height: itemInfo.height, maxLayers: itemInfo.maxLayers }, clearance ?? 0) : 1,
       area: 0,
       weight: 0,
       unitWeight: p.weight ?? 0,

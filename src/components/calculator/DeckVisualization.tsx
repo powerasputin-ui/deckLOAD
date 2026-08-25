@@ -51,6 +51,7 @@ interface DeckVisualizationProps {
   showFreeSpace: boolean
   showGrid: boolean
   showLabels: boolean
+  showCargoContents: boolean
   backgroundImage?: string
   backgroundImageOpacity?: number
   onSetBackgroundImage?: (dataUrl: string | null) => void
@@ -149,6 +150,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   showFreeSpace,
   showGrid,
   showLabels,
+  showCargoContents,
   backgroundImage,
   backgroundImageOpacity,
   onSetBackgroundImage,
@@ -2466,6 +2468,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               category={category}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
               mergeTarget={isMergeTarget}
               dimmed={isBeingDragged && !!mergeTargetId}
               onPointerDown={
@@ -3079,6 +3082,7 @@ function PlacedRect({
   category,
   overLoad,
   overLoadTitle,
+  contentsTitle,
   mergeTarget,
   dimmed,
   scale,
@@ -3100,6 +3104,7 @@ function PlacedRect({
   category?: string
   overLoad?: boolean
   overLoadTitle?: string
+  contentsTitle?: string
   // Drag-to-stack: this placement is the potential landing spot for the item
   // currently being dragged (mergeTarget), or is itself being dragged toward
   // one (dimmed) — see findMergeTarget/handlePointerMove.
@@ -3159,7 +3164,9 @@ function PlacedRect({
         rotated={item.rotated}
         scale={scale}
       />
-      {overLoadTitle && <title>{overLoadTitle}</title>}
+      {(overLoadTitle || contentsTitle) && (
+        <title>{[overLoadTitle, contentsTitle].filter(Boolean).join('\n')}</title>
+      )}
       {overLoad && w >= 14 && h >= 14 && (
         <g className="pointer-events-none">
           <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />

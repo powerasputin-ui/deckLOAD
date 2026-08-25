@@ -183,6 +183,7 @@ describe('projects store', () => {
       showFreeSpace: true,
       showGrid: true,
       showLabels: true,
+      showCargoContents: true,
     })
     expect(useProjects.getState().projects[0].deck.width).toBe(99)
     expect(storage['deckload-projects']).toContain('99')
@@ -223,6 +224,7 @@ describe('projects store', () => {
       showFreeSpace: true,
       showGrid: true,
       showLabels: true,
+      showCargoContents: true,
     })
 
     // Simulate a page reload: reset the in-memory store and re-hydrate from
@@ -255,6 +257,7 @@ describe('projects store', () => {
       showFreeSpace: true,
       showGrid: true,
       showLabels: true,
+      showCargoContents: true,
     })
     useProjects.setState({ projects: [], activeId: null, hydrated: false })
     useProjects.getState().hydrate()

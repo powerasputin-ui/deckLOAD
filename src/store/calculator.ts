@@ -109,6 +109,7 @@ interface CalculatorState {
   showFreeSpace: boolean
   showGrid: boolean
   showLabels: boolean
+  showCargoContents: boolean
   mode: Mode
   manualPlacements: ManualPlacement[]
   // Pinned placements keyed by trip index — each multi-trip voyage is a
@@ -171,6 +172,7 @@ interface CalculatorState {
   toggleFreeSpace: () => void
   toggleGrid: () => void
   toggleLabels: () => void
+  toggleCargoContents: () => void
   setDeckBackgroundImage: (dataUrl: string | null) => void
   setDeckBackgroundImageOpacity: (opacity: number) => void
   setMode: (m: Mode) => void
@@ -518,6 +520,7 @@ export const useCalculator = create<CalculatorState>()(
   showFreeSpace: true,
   showGrid: true,
   showLabels: true,
+  showCargoContents: true,
   mode: 'auto',
   manualPlacements: [],
   pinnedPlacementsByTrip: {},
@@ -848,6 +851,7 @@ export const useCalculator = create<CalculatorState>()(
   toggleFreeSpace: () => set((s) => ({ showFreeSpace: !s.showFreeSpace })),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
+  toggleCargoContents: () => set((s) => ({ showCargoContents: !s.showCargoContents })),
   // Built directly, not routed through setDeck — a photo/opacity change must
   // never trigger setDeck's boundsChanged/reflow logic, since it has no
   // effect on placement geometry.

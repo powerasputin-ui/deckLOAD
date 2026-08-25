@@ -9,11 +9,14 @@ import {
   Unlock,
   Package,
   ArrowUp,
+  FileText,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Textarea } from '@/components/ui/textarea'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Card,
   CardContent,
@@ -292,7 +295,7 @@ function ItemRow({
             </Badge>
           </div>
 
-          <div className="grid grid-cols-5 gap-1.5 mt-2">
+          <div className="grid grid-cols-6 gap-1.5 mt-2">
             <NumField
               label="Шир."
               value={item.width}
@@ -324,6 +327,25 @@ function ItemRow({
               onChange={(v) => onUpdate({ weight: v || undefined })}
               unit=""
             />
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <NumField
+                      label="Ярусов"
+                      value={item.maxLayers ?? 0}
+                      onChange={(v) => onUpdate({ maxLayers: Math.round(v) > 0 ? Math.round(v) : undefined })}
+                      unit=""
+                      integer
+                      allowZero
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Максимум единиц этого груза друг на друге (0 = без ограничения, кроме высоты палубы)
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           <div className="mt-2 space-y-0.5">
@@ -387,6 +409,32 @@ function ItemRow({
                 </Tooltip>
               </TooltipProvider>
 
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    title="Содержимое груза"
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors hover:bg-accent',
+                      item.contents ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'
+                    )}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-2.5 space-y-1.5" align="end">
+                  <Label className="text-xs font-medium">Содержимое груза</Label>
+                  <Textarea
+                    value={item.contents ?? ''}
+                    onChange={(e) => onUpdate({ contents: e.target.value || undefined })}
+                    placeholder="Например: запчасти для буровой, партия №..."
+                    className="min-h-[80px] text-xs"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Показывается при наведении на груз на палубе (можно отключить в «Настройки»)
+                  </p>
+                </PopoverContent>
+              </Popover>
+
               <IconBtn onClick={onDuplicate} title="Дублировать">
                 <Copy className="h-3.5 w-3.5" />
               </IconBtn>
@@ -407,13 +455,16 @@ function NumField({
   onChange,
   unit,
   integer,
+  allowZero,
 }: {
   label: string
   value: number
   onChange: (v: number) => void
   unit: Unit | ''
   integer?: boolean
+  allowZero?: boolean
 }) {
+  const min = allowZero ? 0 : integer ? 1 : 0.1
   return (
     <div className="space-y-0.5">
       <Label className="text-[10px] text-muted-foreground leading-none">
@@ -422,13 +473,12 @@ function NumField({
       </Label>
       <Input
         type="number"
-        min={integer ? 1 : 0.1}
+        min={min}
         step={integer ? 1 : 0.1}
         value={value}
         onChange={(e) => {
           const v = Number(e.target.value)
           if (isNaN(v)) return
-          const min = integer ? 1 : 0.1
           onChange(v < min ? min : v)
         }}
         className="h-7 text-xs px-1.5"

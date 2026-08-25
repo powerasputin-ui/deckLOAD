@@ -81,6 +81,7 @@ export default function Home() {
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
   const showGrid = useCalculator((s) => s.showGrid)
   const showLabels = useCalculator((s) => s.showLabels)
+  const showCargoContents = useCalculator((s) => s.showCargoContents)
   const setDeckBackgroundImage = useCalculator((s) => s.setDeckBackgroundImage)
   const setDeckBackgroundImageOpacity = useCalculator((s) => s.setDeckBackgroundImageOpacity)
   const mode = useCalculator((s) => s.mode)
@@ -303,6 +304,7 @@ export default function Home() {
       showFreeSpace: proj.showFreeSpace,
       showGrid: proj.showGrid,
       showLabels: proj.showLabels,
+      showCargoContents: proj.showCargoContents ?? true,
       activeStampId: null,
       pendingPresetStamp: null,
       activePresetCategory: null,
@@ -335,10 +337,11 @@ export default function Home() {
         showFreeSpace,
         showGrid,
         showLabels,
+        showCargoContents,
       })
     }, 400)
     return () => clearTimeout(t)
-  }, [activeId, deck, items, manualPlacements, pinnedPlacementsByTrip, separationRules, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, saveSnapshot])
+  }, [activeId, deck, items, manualPlacements, pinnedPlacementsByTrip, separationRules, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, showCargoContents, saveSnapshot])
 
   // In auto mode, cargo that doesn't fit in one voyage automatically spills
   // into additional trips (same deck, repeated) via packMultiTrip. Manual mode
@@ -770,11 +773,12 @@ export default function Home() {
     const newLayers = currentLayers + delta
     if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
     if (newLayers > maxPhys) {
-      return {
-        ok: false,
-        reason: `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`,
-        maxPhys,
-      }
+      const heightCap = maxLayersFor({ height: item.height }, deck.clearance)
+      const reason =
+        item.maxLayers && item.maxLayers < heightCap
+          ? `Превышен лимит ярусов для этого груза (${item.maxLayers}) — измените поле «Ярусов» в списке грузов`
+          : `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`
+      return { ok: false, reason, maxPhys }
     }
     // Sum of layers across all placements of this item (excluding the one(s)
     // being changed) — across ALL trips, since the item's quantity is a single
@@ -1452,6 +1456,7 @@ export default function Home() {
                     showFreeSpace={showFreeSpace}
                     showGrid={showGrid}
                     showLabels={showLabels}
+                    showCargoContents={showCargoContents}
                     backgroundImage={deck.backgroundImage}
                     backgroundImageOpacity={deck.backgroundImageOpacity}
                     onSetBackgroundImage={setDeckBackgroundImage}
