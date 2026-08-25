@@ -228,6 +228,27 @@ describe('packDeck', () => {
     expect(res.placedCount).toBe(3)
   })
 
+  // Regression: locked was only ever used by the UI as a drag gate — the
+  // resulting PlacedItem never carried it, so page.tsx's redistribute logic
+  // (which reads it back off variant.result.placed to decide what survives
+  // a reshuffle) always saw it as undefined and treated every pin the same,
+  // silently ignoring an explicit "Закрепить".
+  it('carries a pin\'s locked flag through onto the resulting PlacedItem', () => {
+    const lockedPin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'Груз', x: 1, y: 1, width: 2, length: 2,
+      layers: 1, rotated: false, color: '#0ea5e9', locked: true,
+    }
+    const unlockedPin: PinnedPlacement = {
+      id: 'p2', itemId: 'a', name: 'Груз', x: 5, y: 5, width: 2, length: 2,
+      layers: 1, rotated: false, color: '#0ea5e9',
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 3 })], {
+      pinned: [lockedPin, unlockedPin],
+    })
+    expect(res.placed.find((p) => p.x === 1 && p.y === 1)?.locked).toBe(true)
+    expect(res.placed.find((p) => p.x === 5 && p.y === 5)?.locked).toBeFalsy()
+  })
+
   it('reserves a pinned clearance margin so auto-placed cargo stays out of it', () => {
     const pin: PinnedPlacement = {
       id: 'p1',

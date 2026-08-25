@@ -442,6 +442,7 @@ export interface PlacedItem {
   outline?: { x: number; y: number }[] // see CargoItem.outline — same local/unrotated convention
   clearanceMargin?: ClearanceMargin // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
   contents?: string // see CargoItem.contents — resolved fresh from the source item, shown as a hover tooltip
+  locked?: boolean // see PinnedPlacement.locked — only ever set on pin-sourced placements, never on freshly algorithm-placed ones
 }
 
 export interface UnplacedItem {
@@ -1112,6 +1113,7 @@ export function packDeck(
       outline: outlineByItemId.get(pin.itemId),
       contents: contentsByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
+      locked: pin.locked,
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers

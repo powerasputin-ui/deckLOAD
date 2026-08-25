@@ -1106,23 +1106,30 @@ export default function Home() {
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))
-    // A clearance-zoned placement (in the current mode/trip) is an
-    // operational constraint, not just a position — silently letting a
-    // full reshuffle relocate or drop it would defeat the reason it was
-    // drawn. Pass it through as `pinned` (the only mechanism packDeck has
-    // for "exclude this rectangle for everyone else"), which freezes it at
-    // its exact position while everything else still reshuffles normally.
-    // A lashing point is the same situation: its cornerX/cornerY and the
-    // anchor's own x/y are only ever carried over by translating them by
-    // the placement's own move delta (remapLashingPointsForRedistribute) —
-    // that's a best-effort geometric guess, not a guarantee the rigging
-    // still makes physical sense afterward. Freezing the placement in
-    // place is what actually keeps a lashing setup valid across a
-    // redistribute, so a lashed placement gets the same treatment.
+    // A clearance-zoned or lashing-attached placement (in the current
+    // mode/trip) is an operational constraint, not just a position —
+    // silently letting a full reshuffle relocate or drop it would defeat
+    // the reason it was drawn. A LOCKED placement (auto mode's explicit
+    // "Закрепить") is a deliberate, explicit request to protect a
+    // position — the whole point of locking something is that
+    // "Автораспределение" respects it instead of silently overriding it,
+    // which used to be the case (locking had no effect on this button
+    // whatsoever). All three are passed through as `pinned` (the only
+    // mechanism packDeck has for "exclude this rectangle for everyone
+    // else"), which freezes them at their exact position while everything
+    // else — including any UNLOCKED item the user merely dragged around
+    // earlier — still reshuffles normally. A lashing point's cornerX/
+    // cornerY and the anchor's own x/y are only ever carried over by
+    // translating them by the placement's own move delta
+    // (remapLashingPointsForRedistribute) — that's a best-effort
+    // geometric guess, not a guarantee the rigging still makes physical
+    // sense afterward, so freezing the placement in place is what
+    // actually keeps a lashing setup valid across a redistribute.
     const sourcePlacements = mode === 'manual' ? manualPlacements : pinnedPlacements
     const attachedIds = new Set((deck.lashingPoints ?? []).map((lp) => lp.placementId).filter(Boolean))
+    const isLocked = (p: ManualPlacement | PinnedPlacement) => 'locked' in p && !!p.locked
     const frozenPinned: PinnedPlacement[] = sourcePlacements
-      .filter((p) => !!p.clearanceMargin || attachedIds.has(p.id))
+      .filter((p) => !!p.clearanceMargin || attachedIds.has(p.id) || isLocked(p))
       .map((p) => ({
         id: p.id,
         itemId: p.itemId,
@@ -1136,6 +1143,7 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
+        locked: isLocked(p),
       }))
     // Warn user if pinned placements (across all trips) will be cleared —
     // excluding the frozen ones above, which specifically will NOT be reset
@@ -1145,10 +1153,10 @@ export default function Home() {
     const totalPinnedAllTrips = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
     const totalPinned = mode === 'auto' ? totalPinnedAllTrips - frozenPinned.length : totalPinnedAllTrips
     if (totalPinned > 0) {
-      toast.warning(`Закрепления (${totalPinned}) будут сброшены`)
+      toast.warning(`Незакреплённые размещения (${totalPinned}) будут переставлены заново`)
     }
     if (frozenPinned.length > 0) {
-      toast.info(`Груз с зоной отступа/точками крепления (${frozenPinned.length}) останется на месте`)
+      toast.info(`Закреплённый груз, зоны отступа и точки крепления (${frozenPinned.length}) останутся на месте`)
     }
     const newVariants = packDeckVariants(
       deck.width,
@@ -1263,6 +1271,7 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
+        locked: p.locked,
       }))
       const matches = matchLashingCarryover(s.pinnedPlacementsByTrip[clampedTripIndex] ?? [], newPinned)
       useCalculator.setState({
