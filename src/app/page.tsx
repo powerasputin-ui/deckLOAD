@@ -1415,7 +1415,7 @@ export default function Home() {
                           <>Вращение/приближение камеры · клик по грузу — выбрать (двигать и вращать — в 2D)</>
                         ) : (
                           <>
-                            Вид сверху · зелёная штриховка — свободное пространство
+                            Вид сверху
                             {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
                             {' · выбрали груз? стрелки/Пробел тоже работают'}
                           </>
@@ -1424,11 +1424,10 @@ export default function Home() {
                     </div>
                     {viewMode === '2d' && (
                       <div className="flex items-center gap-2 text-xs flex-wrap">
-                        <LegendDot color="#0ea5e9" label="Груз" />
                         <LegendDot hatch label="Свободно" />
                         <LegendDot icon="↻" label="Повернут" />
                         {mode === 'auto' && (
-                          <LegendDot color="#7c3aed" label="Закреплён" />
+                          <LegendDot badge="🔒" badgeColor="#7c3aed" label="Закреплён" />
                         )}
                       </div>
                     )}
@@ -1684,11 +1683,20 @@ function LegendDot({
   label,
   hatch,
   icon,
+  badge,
+  badgeColor,
 }: {
   color?: string
   label: string
   hatch?: boolean
   icon?: string
+  // A tiny emoji-on-color-chip swatch, matching the actual corner badge
+  // rendered on a locked/pinned item on the deck (see the `locked` branch
+  // in FootprintShape) — distinct from `color`, a plain solid square, so
+  // this entry can't be mistaken for the selection outline, which uses the
+  // same purple (#7c3aed) for a completely different meaning.
+  badge?: string
+  badgeColor?: string
 }) {
   return (
     <span className="inline-flex items-center gap-1">
@@ -1703,6 +1711,13 @@ function LegendDot({
       ) : icon ? (
         <span className="grid h-3 w-3 place-items-center text-[10px] font-bold text-primary">
           {icon}
+        </span>
+      ) : badge ? (
+        <span
+          className="grid h-3.5 w-4 place-items-center rounded-sm text-[8px]"
+          style={{ backgroundColor: badgeColor }}
+        >
+          {badge}
         </span>
       ) : (
         <span
