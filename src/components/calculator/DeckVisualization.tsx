@@ -260,6 +260,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // file input, no duplicate upload logic). Screen-space {x,y}, not deck
   // coords, since the menu is a position:fixed overlay.
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contentsTooltip, setContentsTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const handleDeckContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY })
@@ -2469,6 +2470,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
               contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
+              onContentsHover={(text, cx, cy) => setContentsTooltip(text ? { text, x: cx, y: cy } : null)}
               mergeTarget={isMergeTarget}
               dimmed={isBeingDragged && !!mergeTargetId}
               onPointerDown={
@@ -2880,6 +2882,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
       />
+      {contentsTooltip && (
+        <div
+          className="pointer-events-none fixed z-50 max-w-64 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-card-foreground shadow-md"
+          style={{
+            left: Math.min(contentsTooltip.x + 14, window.innerWidth - 260),
+            top: Math.min(contentsTooltip.y + 14, window.innerHeight - 60),
+          }}
+        >
+          <div className="mb-0.5 font-medium text-muted-foreground">Содержимое груза</div>
+          <div className="whitespace-pre-wrap break-words">{contentsTooltip.text}</div>
+        </div>
+      )}
       {contextMenu && (
         <div
           className="fixed z-50 w-48 rounded-lg border bg-card p-1 shadow-md"
@@ -3083,6 +3097,7 @@ function PlacedRect({
   overLoad,
   overLoadTitle,
   contentsTitle,
+  onContentsHover,
   mergeTarget,
   dimmed,
   scale,
@@ -3105,6 +3120,7 @@ function PlacedRect({
   overLoad?: boolean
   overLoadTitle?: string
   contentsTitle?: string
+  onContentsHover?: (text: string | null, clientX: number, clientY: number) => void
   // Drag-to-stack: this placement is the potential landing spot for the item
   // currently being dragged (mergeTarget), or is itself being dragged toward
   // one (dimmed) — see findMergeTarget/handlePointerMove.
@@ -3130,8 +3146,17 @@ function PlacedRect({
       : 'pointer'
   return (
     <g
-      onMouseEnter={() => onHover(item.itemId)}
-      onMouseLeave={() => onHover(null)}
+      onMouseEnter={(e) => {
+        onHover(item.itemId)
+        if (contentsTitle) onContentsHover?.(contentsTitle, e.clientX, e.clientY)
+      }}
+      onMouseMove={(e) => {
+        if (contentsTitle) onContentsHover?.(contentsTitle, e.clientX, e.clientY)
+      }}
+      onMouseLeave={() => {
+        onHover(null)
+        if (contentsTitle) onContentsHover?.(null, 0, 0)
+      }}
       onPointerDown={onPointerDown}
       style={{ cursor, opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s' }}
     >
@@ -3164,9 +3189,7 @@ function PlacedRect({
         rotated={item.rotated}
         scale={scale}
       />
-      {(overLoadTitle || contentsTitle) && (
-        <title>{[overLoadTitle, contentsTitle].filter(Boolean).join('\n')}</title>
-      )}
+      {overLoadTitle && <title>{overLoadTitle}</title>}
       {overLoad && w >= 14 && h >= 14 && (
         <g className="pointer-events-none">
           <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />

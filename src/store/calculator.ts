@@ -724,6 +724,12 @@ export const useCalculator = create<CalculatorState>()(
             length: conv(z.length),
             outline: z.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
           })),
+          powerSockets: s.deck.powerSockets?.map((p) => ({
+            ...p,
+            x: conv(p.x),
+            y: conv(p.y),
+          })),
+          outline: s.deck.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
         },
         items: s.items.map((it) => ({
           ...it,

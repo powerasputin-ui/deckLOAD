@@ -62,6 +62,34 @@ describe('calculator store', () => {
     expect(deck.gap).toBeCloseTo(10)
   })
 
+  it('converts power socket coordinates when switching units (regression: used to stay in old units and drift off the deck)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 2, length: 1, gap: 0.1, boardOffset: 0.05, clearance: 0.5 })
+    s.addPowerSocket({ x: 1, y: 0.5, label: 'Розетка 1' })
+    s.setUnit('cm')
+    const socket = useCalculator.getState().deck.powerSockets?.[0]
+    expect(socket?.x).toBeCloseTo(100)
+    expect(socket?.y).toBeCloseTo(50)
+  })
+
+  it('converts the deck outline polygon when switching units (regression: area computed from a stale-unit outline caused false "does not fit" errors)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({
+      width: 2,
+      length: 1,
+      outline: [
+        { x: 0, y: 0 },
+        { x: 2, y: 0 },
+        { x: 2, y: 1 },
+        { x: 0, y: 1 },
+      ],
+    })
+    s.setUnit('cm')
+    const outline = useCalculator.getState().deck.outline
+    expect(outline?.[1].x).toBeCloseTo(200)
+    expect(outline?.[2].y).toBeCloseTo(100)
+  })
+
   it('round-trips meters to feet and back without drift', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 20, length: 8 })
