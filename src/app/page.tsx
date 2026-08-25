@@ -1601,6 +1601,8 @@ export default function Home() {
                     onUpdateRestrictionZone={updateRestrictionZone}
                     onRemoveRestrictionZone={removeRestrictionZone}
                     drawingRestrictionZoneFreeform={drawingRestrictionZoneFreeform}
+                    onSetDrawingRestrictionShape={setDrawingRestrictionShape}
+                    onSetDrawingRestrictionZoneFreeform={setDrawingRestrictionZoneFreeform}
                   />
                   )}
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

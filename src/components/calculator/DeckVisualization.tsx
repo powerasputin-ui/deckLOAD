@@ -132,6 +132,13 @@ interface DeckVisualizationProps {
   // append/close-loop mechanics as drawingCustomShape/onFinishDrawing above,
   // just producing a zone instead of a cargo item.
   drawingRestrictionZoneFreeform?: boolean
+  // Disarms the shape-drag / freeform tool the MOMENT a zone's outline is
+  // finished (bbox drag released, or the point-by-point loop closed) — not
+  // only once "Добавить" is confirmed. Without this, the tool stayed armed
+  // and a stray click while the name form was still open started drawing a
+  // second zone right on top of the first one.
+  onSetDrawingRestrictionShape?: (shape: RestrictionZoneShape | null) => void
+  onSetDrawingRestrictionZoneFreeform?: (v: boolean) => void
 }
 
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
@@ -199,6 +206,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onUpdateRestrictionZone,
   onRemoveRestrictionZone,
   drawingRestrictionZoneFreeform,
+  onSetDrawingRestrictionShape,
+  onSetDrawingRestrictionZoneFreeform,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
   const svgRef = useRef<SVGSVGElement>(null)
@@ -850,6 +859,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           outline: zoneFreeformPoints,
         })
         setZoneFreeformPoints([])
+        // Disarm the freehand tool the moment the loop closes — the cursor
+        // has no active drawing action again until the user re-arms it,
+        // instead of a stray click on the deck (while the name form is
+        // still open) starting a second zone right on top of the first.
+        onSetDrawingRestrictionZoneFreeform?.(false)
         return true
       }
     }
@@ -1493,6 +1507,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (width > 0.2 && length > 0.2) {
         setZoneDraftName('')
         setPendingZoneDraft({ shapeType: zoneDrawDrag.shapeType, x, y, width, length })
+        // Disarm the shape tool now that a real zone has been drawn — same
+        // reasoning as the freeform close-loop path above (see there for
+        // why this can't wait until "Добавить" is clicked).
+        onSetDrawingRestrictionShape?.(null)
       }
       return
     }

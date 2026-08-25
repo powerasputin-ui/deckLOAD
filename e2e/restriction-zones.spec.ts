@@ -270,4 +270,35 @@ test.describe('Restriction (obstacle) zones', () => {
     await page.getByTitle('Удалить зону').click()
     await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(0)
   })
+
+  test('the drawing tool disarms itself the moment a zone is finished, so a stray click does not start a second one (regression)', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Очистить' }).click()
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+
+    const rectButton = page.getByRole('button', { name: 'Прямоугольник' })
+    await rectButton.click()
+    await expect(rectButton).toHaveClass(/border-red-400/)
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.scrollIntoViewIfNeeded()
+    const box = await background.boundingBox()
+    if (!box) throw new Error('deck background not found')
+    await page.mouse.move(box.x + 40, box.y + 40)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 160, box.y + 120, { steps: 10 })
+    await page.mouse.up()
+
+    // The tool must show as disarmed already — before "Добавить" is even
+    // clicked, not only after — since the whole point is that a stray
+    // click on the deck in between must not start drawing a second zone.
+    await expect(page.getByPlaceholder('Название зоны')).toBeVisible()
+    await expect(rectButton).not.toHaveClass(/border-red-400/)
+
+    // A click on empty deck while the name form is still open must not
+    // start a second drag-to-create.
+    await background.click({ position: { x: 250, y: 200 }, force: true })
+    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(1)
+  })
 })
