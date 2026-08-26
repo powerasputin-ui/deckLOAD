@@ -1452,6 +1452,28 @@ describe('resolveSnappedDragPosition', () => {
     }
   })
 
+  // Regression: a self-margined item's WIDENED footprint (a clearance zone,
+  // or a pipe pyramid's own base-row spread via pyramidSpreadAsClearance)
+  // used to be clampable right up to the deck edge/board-offset using only
+  // its raw, unwidened rect — the search never accounted for the margin
+  // when computing the boundary, so the item's real (wider) footprint could
+  // stick out past the edge even though the raw rect stayed "inside."
+  // Reported live as "pipes can be dragged past the deck outline/board
+  // offset."
+  it('keeps the WIDENED footprint (not just the raw rect) inside the deck edge/board-offset', () => {
+    const selfMargin = { top: 0, right: 0.4, bottom: 0, left: 0.4 }
+    // Drag straight toward the right edge of a 20-wide deck with a 0.2
+    // board offset — without margin-aware clamping this would settle with
+    // the raw rect flush at x=19.8-1=18.8, leaving its 0.4m margin sticking
+    // out to x=19.2, well past the 19.8 usable edge.
+    const result = resolveSnappedDragPosition(
+      19.9, 4, 1, 1, 10, 4, [], 20, 8, 0.2, 0.1, 1, undefined, selfMargin
+    )
+    // The raw rect plus its own margin must stay within [0.2, 19.8].
+    expect(result.x + 1 + selfMargin.right).toBeLessThanOrEqual(19.8 + 1e-9)
+    expect(result.x - selfMargin.left).toBeGreaterThanOrEqual(0.2 - 1e-9)
+  })
+
   // Regression: an immediately-adjacent neighbour sitting right on the
   // straight line from drag-start to the cursor used to freeze the item in
   // place for the ENTIRE rest of the drag, no matter how far the cursor

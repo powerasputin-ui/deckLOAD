@@ -2371,8 +2371,25 @@ export function resolveSnappedDragPosition(
   // already pass — this can only ever return a position the gate accepts.
   selfMargin?: ClearanceMargin
 ): { x: number; y: number } {
+  // A self-margined item (a clearance zone, or a pipe pyramid's own
+  // base-row spread expressed as a margin — see pyramidSpreadAsClearance)
+  // must keep its WIDENED extent inside the deck edge/board-offset, not
+  // just its raw single-unit rect — otherwise the raw rect can sit flush
+  // against the edge while the wider footprint actually drawn on screen
+  // sticks out past it. Clamp the widened rect against the deck bounds,
+  // then translate back to the raw x/y that's actually stored.
+  const ml = selfMargin?.left ?? 0
+  const mr = selfMargin?.right ?? 0
+  const mt = selfMargin?.top ?? 0
+  const mb = selfMargin?.bottom ?? 0
   const tryPos = (x: number, y: number): { x: number; y: number } | null => {
-    const clamped = clampToDeck({ x, y, width, length }, deckWidth, deckLength, edgePadding)
+    const wideClamped = clampToDeck(
+      { x: x - ml, y: y - mt, width: width + ml + mr, length: length + mt + mb },
+      deckWidth,
+      deckLength,
+      edgePadding
+    )
+    const clamped = { x: wideClamped.x + ml, y: wideClamped.y + mt }
     const testRect = selfMargin
       ? withClearanceFootprint({ x: clamped.x, y: clamped.y, width, length, clearanceMargin: selfMargin })
       : { ...clamped, width, length }

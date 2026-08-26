@@ -41,6 +41,8 @@ import {
   withClearanceFootprint,
   collidesWithClearance,
   isPipeShape,
+  pyramidSpreadAsClearance,
+  addClearanceMargins,
   type ClearanceMargin,
   type CargoShape,
   lashingPointExclusionRects,
@@ -726,15 +728,42 @@ export default function Home() {
       const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
       const current = placements.find((p) => p.id === selectedId)
       if (!current) return
+      const nudgedItem = items.find((it) => it.id === current.itemId)
       const target2 = {
         x: current.x + dx * step,
         y: current.y + dy * step,
         width: current.width,
         length: current.length,
       }
-      const clamped = clampToDeck(target2, deck.width, deck.length, deck.boardOffset)
-      if (usableOutline && !rectInsidePolygon({ ...clamped, width: current.width, length: current.length }, usableOutline)) return
-      const nudgedItem = items.find((it) => it.id === current.itemId)
+      // Clamp the WIDENED footprint (own clearanceMargin + a pipe pyramid's
+      // own base-row spread) against the deck edge/board-offset, not just
+      // the raw single-unit rect — otherwise a nudge can walk the raw rect
+      // flush against the edge while the wider footprint actually drawn on
+      // screen sticks out past it. Same reasoning as resolveSnappedDragPosition's
+      // selfMargin handling.
+      const nudgeMargin = addClearanceMargins(
+        current.clearanceMargin,
+        nudgedItem ? pyramidSpreadAsClearance(nudgedItem, current.layers) : undefined
+      )
+      const ml = nudgeMargin?.left ?? 0
+      const mr = nudgeMargin?.right ?? 0
+      const mt = nudgeMargin?.top ?? 0
+      const mb = nudgeMargin?.bottom ?? 0
+      const wideClamped = clampToDeck(
+        { x: target2.x - ml, y: target2.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
+        deck.width,
+        deck.length,
+        deck.boardOffset
+      )
+      const clamped = { x: wideClamped.x + ml, y: wideClamped.y + mt }
+      if (
+        usableOutline &&
+        !rectInsidePolygon(
+          { x: clamped.x - ml, y: clamped.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
+          usableOutline
+        )
+      )
+        return
       // Single check (bbox + outline + both-direction clearance margin) —
       // sourced from result.placed like the rotate handlers above, since
       // raw ManualPlacement/PinnedPlacement never carry outline data.
