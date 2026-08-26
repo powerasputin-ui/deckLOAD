@@ -300,7 +300,7 @@ const UNIFORMS = {
   // strictly blue-hued while making the animation actually read as motion.
   // All unused slots repeat the last colour (palette() only walks
   // colorCount-1 segments, so the trailing repeats are inert).
-  colors: [[0.02,0.05,0.12],[0.05,0.14,0.30],[0.12,0.32,0.58],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85]] as [number, number, number][],
+  colors: [[0.02,0.05,0.12],[0.05,0.14,0.30],[0.14,0.36,0.63],[0.28,0.58,0.92],[0.28,0.58,0.92],[0.28,0.58,0.92],[0.28,0.58,0.92],[0.28,0.58,0.92]] as [number, number, number][],
   colorCount: 4,
   scale: 1.260,
   intensity: 0.7,
@@ -308,7 +308,7 @@ const UNIFORMS = {
   warp: 0.35,
   detail: 1.824,
   contrast: 1.0,
-  brightness: 0.04,
+  brightness: 0.06,
   saturation: 1.000,
   hue: 0.0000,
   vignette: 0.000,
@@ -435,14 +435,14 @@ export function ShaderBackground({ className }: { className?: string }) {
 
     const resizeCanvas = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      const rawWidth = Math.max(1, Math.round(bounds.width * dpr))
-      const rawHeight = Math.max(1, Math.round(bounds.height * dpr))
-      const pixelScale = Math.min(
-        1,
-        Math.sqrt(2_000_000 / Math.max(1, rawWidth * rawHeight)),
-      )
-      const width = Math.max(1, Math.round(rawWidth * pixelScale))
-      const height = Math.max(1, Math.round(rawHeight * pixelScale))
+      // No further downscale below the dpr-scaled size — the previous
+      // 2,000,000px cap forced a real resolution cut on any large/high-res
+      // monitor, then the browser stretched that lower-res buffer back up
+      // to fill the full-screen CSS box, which showed as visible soft
+      // interpolation seams on big displays. This shader is cheap enough
+      // to render at native resolution.
+      const width = Math.max(1, Math.round(bounds.width * dpr))
+      const height = Math.max(1, Math.round(bounds.height * dpr))
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width
         canvas.height = height
