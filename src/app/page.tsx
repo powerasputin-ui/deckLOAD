@@ -996,16 +996,63 @@ export default function Home() {
   // same clearance/quantity escalation as the "+" button, since merging is
   // conceptually "add N layers to the target", just sourced from an existing
   // placement instead of the unplaced pool.
+  // When the dragged and target placements belong to DIFFERENT cargo items
+  // (e.g. an item and its "Дублировать" copy — DeckVisualization's
+  // findMergeTarget already gated on matching footprint, but not shape/
+  // height, which it can't see), this verifies they're truly physically
+  // identical and that the merged layer count still fits under the height/
+  // clearance cap — BOTH checked before touching any state, so there is
+  // nothing to roll back on rejection. Since merging just RELABELS existing
+  // physical units as belonging to the target's item rather than creating
+  // or destroying any, it moves `delta` units of quantity from the dragged
+  // item to the target item so both items' own "Кол-во" stay truthful. If
+  // that empties the dragged item's quantity entirely, it's removed from
+  // the "Грузы" list, matching what the user asked for: "убирать груз
+  // который я взял" — the source disappears once every one of its units
+  // has been folded into the target. Returns false (having changed
+  // nothing) if the merge can't proceed for any reason.
+  const reconcileCrossItemMerge = (draggedItemId: string, targetItemId: string, targetLayers: number, delta: number): boolean => {
+    if (draggedItemId === targetItemId) return true
+    const draggedItem = items.find((it) => it.id === draggedItemId)
+    const targetItem = items.find((it) => it.id === targetItemId)
+    if (!draggedItem || !targetItem) return false
+    const physicallySame =
+      (draggedItem.shape ?? 'box') === (targetItem.shape ?? 'box') &&
+      draggedItem.width === targetItem.width &&
+      draggedItem.length === targetItem.length &&
+      draggedItem.height === targetItem.height
+    if (!physicallySame) {
+      toast.warning(`«${draggedItem.name}» и «${targetItem.name}» — разные типы груза, объединить нельзя`)
+      return false
+    }
+    const maxPhys = maxLayersFor(targetItem, deck.clearance)
+    if (targetLayers + delta > maxPhys) {
+      toast.warning('Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус')
+      return false
+    }
+    const store = useCalculator.getState()
+    const remaining = draggedItem.quantity - delta
+    if (remaining <= 0) store.removeItem(draggedItem.id)
+    else store.updateItem(draggedItem.id, { quantity: remaining })
+    store.updateItem(targetItem.id, { quantity: targetItem.quantity + delta })
+    return true
+  }
+
   const handleMergePinned = (draggedId: string, targetId: string) => {
     if (draggedId === targetId) return
     const dragged = pinnedPlacements.find((p) => p.id === draggedId)
     const target = pinnedPlacements.find((p) => p.id === targetId)
-    if (!dragged || !target || dragged.itemId !== target.itemId) return
+    if (!dragged || !target) return
     const delta = dragged.layers
-    const check = checkLayerChange(target.itemId, target.layers, delta, [target.id, dragged.id])
-    if (!check.ok) {
-      toast.warning(check.reason ?? 'Невозможно объединить')
-      return
+    const crossItem = dragged.itemId !== target.itemId
+    if (crossItem) {
+      if (!reconcileCrossItemMerge(dragged.itemId, target.itemId, target.layers, delta)) return
+    } else {
+      const check = checkLayerChange(target.itemId, target.layers, delta, [target.id, dragged.id])
+      if (!check.ok) {
+        toast.warning(check.reason ?? 'Невозможно объединить')
+        return
+      }
     }
     updatePinned(clampedTripIndex, target.id, { layers: target.layers + delta })
     removePinned(clampedTripIndex, dragged.id)
@@ -1016,13 +1063,18 @@ export default function Home() {
     if (draggedId === targetId) return
     const dragged = manualPlacements.find((m) => m.id === draggedId)
     const target = manualPlacements.find((m) => m.id === targetId)
-    if (!dragged || !target || dragged.itemId !== target.itemId) return
+    if (!dragged || !target) return
     const targetLayers = Math.max(1, target.layers)
     const delta = Math.max(1, dragged.layers)
-    const check = checkLayerChange(target.itemId, targetLayers, delta, [target.id, dragged.id])
-    if (!check.ok) {
-      toast.warning(check.reason ?? 'Невозможно объединить')
-      return
+    const crossItem = dragged.itemId !== target.itemId
+    if (crossItem) {
+      if (!reconcileCrossItemMerge(dragged.itemId, target.itemId, targetLayers, delta)) return
+    } else {
+      const check = checkLayerChange(target.itemId, targetLayers, delta, [target.id, dragged.id])
+      if (!check.ok) {
+        toast.warning(check.reason ?? 'Невозможно объединить')
+        return
+      }
     }
     updateManualPlacement(target.id, { layers: targetLayers + delta })
     removeManualPlacement(dragged.id)

@@ -71,8 +71,11 @@ interface DeckVisualizationProps {
   onMoveManual?: (id: string, x: number, y: number) => void
   onUpdateManualClearance?: (id: string, margin: ClearanceMargin) => void
   onRemoveManual?: (id: string) => void
-  // Dragging one placement onto another of the same item merges them into a
-  // single stacked footprint (layers add up, the dragged one is removed).
+  // Dragging one placement onto another merges them into a single stacked
+  // footprint (layers add up, the dragged one is removed) — either the same
+  // item, or a different item with the exact same footprint (e.g. a
+  // "Дублировать" copy); the handler verifies the latter case is truly
+  // physically identical (shape/height too) before committing.
   onMergeManual?: (draggedId: string, targetId: string) => void
   manualPlacements: ManualPlacement[]
   // Interactive auto mode
@@ -1223,7 +1226,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (draggedArea <= 0) return null
     let best: { id: string; overlap: number } | null = null
     for (const p of placements) {
-      if (p.id === draggedId || p.itemId !== draggedItemId) continue
+      if (p.id === draggedId) continue
+      // Same item, or a DIFFERENT item that happens to share the exact same
+      // footprint (either orientation) — e.g. an item and its "Дублировать"
+      // copy. Matching on footprint alone here is a cheap, generous filter
+      // for "is this even a plausible drop target"; the actual merge
+      // handler (onMergeManual/onMergePinned in page.tsx, which has the
+      // full CargoItem list) does the rigorous shape/height check and
+      // rejects with a toast if the two aren't truly physically identical —
+      // this function only decides where the drag visually latches.
+      const sameFootprint =
+        (p.width === width && p.length === length) || (p.width === length && p.length === width)
+      if (p.itemId !== draggedItemId && !sameFootprint) continue
       const ox = Math.max(0, Math.min(x + width, p.x + p.width) - Math.max(x, p.x))
       const oy = Math.max(0, Math.min(y + length, p.y + p.length) - Math.max(y, p.y))
       const overlapArea = ox * oy
