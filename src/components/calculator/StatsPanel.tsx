@@ -189,7 +189,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
                     <th className="px-2 py-1.5 font-medium">Груз</th>
                     <th
                       className="px-1.5 py-1.5 font-medium text-right"
-                      title="Сколько ярусов ЭТОГО груза максимум влезает в одну стопку по высоте (зазор палубы ÷ высота груза) — не то же самое, что фактически размещённое количество (см. «Всего ед.»)"
+                      title="Высота самой высокой РЕАЛЬНО размещённой стопки этого груза (не теоретический максимум по высоте зазора)"
                     >
                       Ярусы
                     </th>

@@ -408,6 +408,27 @@ describe('packDeck', () => {
     expect(res.totalWeight).toBe(300)
   })
 
+  // Regression: breakdown.layers used to report maxLayersFor's THEORETICAL
+  // height-based capacity (e.g. a 0.15m-tall item under a 5m clearance
+  // could theoretically stack 33 high) instead of how many layers are
+  // ACTUALLY placed anywhere — reported live as "I added a pipe with 0
+  // ярусов (auto) and it shows 33" when only a handful of units exist.
+  it('breakdown.layers reflects the REAL tallest stack placed, not the theoretical height-based capacity', () => {
+    const res = packDeck(10, 10, [
+      // Thin item (0.15m tall) under a large clearance (5m) — theoretical
+      // capacity is floor(5/0.15) = 33, but only 3 units are requested.
+      item({ id: 'a', width: 1, length: 1, height: 0.15, quantity: 3 }),
+    ], { clearance: 5 })
+    const b = res.breakdown.find((x) => x.itemId === 'a')
+    expect(b).toBeDefined()
+    expect(b!.layers).toBeLessThan(33)
+    expect(b!.layers).toBeGreaterThan(0)
+    // And it must actually match the tallest real placement, not just
+    // "some smaller number" — sanity-check against the real placed data.
+    const realMax = Math.max(...res.placed.filter((p) => p.itemId === 'a').map((p) => p.stackedCount))
+    expect(b!.layers).toBe(realMax)
+  })
+
   it('keeps the real edge margin exactly at boardOffset regardless of gap', () => {
     const res = packDeck(10, 10, [
       item({ id: 'a', width: 2, length: 2, quantity: 1 }),
