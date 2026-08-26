@@ -96,15 +96,21 @@ export default function Home() {
   // handleEnterIntro doesn't itself trigger a re-render (noopSubscribe
   // never fires), so entering this session is tracked separately.
   const [justEntered, setJustEntered] = useState(false)
+  // Clicking "DeckLoad" in the header replays the intro on demand — this
+  // overrides both the localStorage "seen" flag and justEntered until the
+  // visitor clicks/skips through the video again.
+  const [replayIntro, setReplayIntro] = useState(false)
   // NEXT_PUBLIC_SKIP_INTRO is inlined as a constant at build time —
   // identical on server and client, so it's safe to read directly here.
   // Set ONLY in playwright.config.ts's and vitest.config.ts's test
   // environments, so automated suites skip straight to the calculator.
-  const entered = process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered
+  const entered = !replayIntro && (process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered)
   const handleEnterIntro = () => {
     window.localStorage.setItem(INTRO_SEEN_KEY, '1')
     setJustEntered(true)
+    setReplayIntro(false)
   }
+  const handleReplayIntro = () => setReplayIntro(true)
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
@@ -1430,7 +1436,14 @@ export default function Home() {
         <div className="flex items-center gap-3 px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <div className="leading-tight">
-              <div className="text-sm font-bold">DeckLoad</div>
+              <button
+                type="button"
+                onClick={handleReplayIntro}
+                title="Показать вступительный ролик ещё раз"
+                className="text-sm font-bold cursor-pointer hover:opacity-70"
+              >
+                DeckLoad
+              </button>
               <div className="text-[11px] text-muted-foreground hidden sm:block">
                 Загрузка палубы
               </div>
