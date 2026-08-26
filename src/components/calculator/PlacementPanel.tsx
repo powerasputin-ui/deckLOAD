@@ -184,7 +184,7 @@ export function PlacementPanel({
               Сначала добавьте грузы
             </p>
           ) : (
-            <ScrollArea className="h-[200px] pr-1">
+            <ScrollArea className="h-[340px] pr-1">
               <div className="space-y-1">
                 {items.map((it) => {
                   // A preset stamp stays armed (uncapped placement) after its
