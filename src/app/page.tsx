@@ -40,6 +40,7 @@ import {
   erodePolygon,
   withClearanceFootprint,
   collidesWithClearance,
+  isPipeShape,
   type ClearanceMargin,
   lashingPointExclusionRects,
   restrictionZoneExclusions,
@@ -1016,13 +1017,23 @@ export default function Home() {
     const draggedItem = items.find((it) => it.id === draggedItemId)
     const targetItem = items.find((it) => it.id === targetItemId)
     if (!draggedItem || !targetItem) return false
+    // Restricted to pipe-shaped cargo only, per explicit user request — a
+    // pyramid of round stock is the one case where "two separately-tracked
+    // stacks of the same physical item" is a real, common workflow (split a
+    // delivery, duplicate to place the rest, then recombine into one
+    // pyramid). For boxes/pallets/etc. two same-dimension items are more
+    // likely genuinely different cargo that just happens to share a
+    // footprint, so silently folding one into the other would be surprising.
+    if (!isPipeShape(draggedItem) || !isPipeShape(targetItem)) {
+      toast.warning('Объединение перетаскиванием доступно только для труб')
+      return false
+    }
     const physicallySame =
-      (draggedItem.shape ?? 'box') === (targetItem.shape ?? 'box') &&
       draggedItem.width === targetItem.width &&
       draggedItem.length === targetItem.length &&
       draggedItem.height === targetItem.height
     if (!physicallySame) {
-      toast.warning(`«${draggedItem.name}» и «${targetItem.name}» — разные типы груза, объединить нельзя`)
+      toast.warning(`«${draggedItem.name}» и «${targetItem.name}» — разные размеры труб, объединить нельзя`)
       return false
     }
     const maxPhys = maxLayersFor(targetItem, deck.clearance)

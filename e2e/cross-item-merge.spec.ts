@@ -94,4 +94,56 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await expect(pipeRects).toHaveCount(1)
     await expect(page.getByText(/Всего: 16/)).toBeVisible()
   })
+
+  test('dragging a duplicated BOX (non-pipe) onto its original does not merge — cross-item merge is pipe-only', async ({ page }) => {
+    await page.goto('/')
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    await page.getByRole('button', { name: 'Очистить' }).click()
+
+    // Manual mode: unlike auto mode, a manual placement never gets silently
+    // reflowed/rotated by the packing algorithm when a SIBLING placement is
+    // dragged — confirmed necessary via debugging: in auto mode, nudging the
+    // original caused the still-un-pinned duplicate to auto-repack into a
+    // ROTATED orientation, so the two boxes' final rects only partially
+    // overlapped and never crossed the 65% merge-latch threshold at all —
+    // a test-environment artifact, not the pipe-only behavior under test.
+    await page.getByRole('radio', { name: 'Ручной' }).click()
+
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Контейнеры' }).click()
+    await page.getByText('Контейнер 20ft', { exact: true }).click()
+
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.click({ position: { x: 60, y: 60 }, force: true })
+
+    const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Контейнер 20ft' }).first()
+    await originalCard.getByTitle('Дублировать').click()
+    await expect(page.getByText('Груз дублирован')).toBeVisible()
+    await expect(page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Контейнер 20ft' })).toHaveCount(2)
+
+    // The duplicate needs its own click-placement (manual mode never
+    // auto-places a freshly duplicated item onto the deck).
+    await page.getByRole('button', { name: /^Контейнер 20ft \(копия\) 6\.06×2/ }).click()
+    await background.click({ position: { x: 260, y: 60 }, force: true })
+
+    await page.keyboard.press('Escape')
+
+    const boxRects = page.locator('svg rect[fill="#0ea5e9"]')
+    await expect(boxRects).toHaveCount(2)
+    await boxRects.nth(0).scrollIntoViewIfNeeded()
+
+    const boxA = await boxRects.nth(0).boundingBox()
+    const boxB = await boxRects.nth(1).boundingBox()
+    if (!boxA || !boxB) throw new Error('box rects not found')
+
+    await page.mouse.move(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(boxB.x + boxB.width / 2, boxB.y + boxB.height / 2, { steps: 10 })
+    await page.mouse.up()
+
+    await expect(page.getByText('Объединение перетаскиванием доступно только для труб')).toBeVisible()
+    // Nothing merged — both cards and both placements are still there.
+    await expect(page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Контейнер 20ft' })).toHaveCount(2)
+    await expect(boxRects).toHaveCount(2)
+  })
 })
