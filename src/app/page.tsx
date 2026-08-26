@@ -1391,12 +1391,9 @@ export default function Home() {
         {/* Main content */}
         <main ref={mainRef} className="flex-1 min-w-0 overflow-auto">
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
-            {/* Visualization — self-start so a taller sibling (e.g. the
-                placement panel after "Автораспределение" adds a variants
-                list) doesn't stretch this card's height via the grid row,
-                leaving empty space inside it below the deck view. */}
-            <div className="xl:col-span-8 self-start">
-              <Card>
+            {/* Visualization */}
+            <div className="xl:col-span-8">
+              <Card className="h-full">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
@@ -1635,11 +1632,8 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Right panel row 1: placement — self-start so it doesn't
-                stretch to match the deck card's height (same fix already
-                applied to the Статистика/Грузы row below), which used to
-                leave a block of empty space under a short tips list. */}
-            <div className="xl:col-span-4 self-start">
+            {/* Right panel row 1: placement */}
+            <div className="xl:col-span-4">
               <PlacementPanel
                 mode={mode}
                 tripIndex={clampedTripIndex}

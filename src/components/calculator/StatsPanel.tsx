@@ -210,9 +210,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
                               className="h-2.5 w-2.5 rounded-sm shrink-0 border border-black/10"
                               style={{ backgroundColor: b.color }}
                             />
-                            <span className="truncate max-w-[90px]" title={b.name}>
-                              {b.name}
-                            </span>
+                            <span className="break-words">{b.name}</span>
                           </div>
                         </td>
                         <td className="px-1.5 py-1.5 text-right tabular-nums">

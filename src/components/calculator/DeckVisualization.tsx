@@ -3223,7 +3223,24 @@ function FootprintShape({
     return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
   }
   if (shape === 'triangle') {
-    const points = `${x + w / 2},${y} ${x},${y + h} ${x + w},${y + h}`
+    // Unlike the box/diamond/ellipse cases, an apex-up triangle is NOT
+    // symmetric under a 90° turn — redrawing the same "apex at top-center,
+    // base at bottom" formula with w/h merely swapped (what a naive port of
+    // the box case would do) produces a squashed/stretched apex-up triangle
+    // instead of an actually-rotated (apex-sideways) one, which reads as a
+    // different shape and size entirely. Define the triangle once in its
+    // own unrotated local frame and reuse rotateOutline90 (the same helper
+    // the custom-outline branch above already relies on) to get the real
+    // rotated silhouette.
+    const origW = rotated ? h : w
+    const origL = rotated ? w : h
+    const local: { x: number; y: number }[] = [
+      { x: origW / 2, y: 0 },
+      { x: 0, y: origL },
+      { x: origW, y: origL },
+    ]
+    const pts = rotated ? rotateOutline90(local, origW, origL) : local
+    const points = pts.map((p) => `${x + p.x},${y + p.y}`).join(' ')
     return <polygon points={points} strokeLinejoin="round" {...common} />
   }
   if (shape === 'diamond') {

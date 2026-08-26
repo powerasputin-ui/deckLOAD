@@ -88,7 +88,7 @@ export function PlacementPanel({
   }
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
