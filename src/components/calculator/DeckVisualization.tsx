@@ -22,6 +22,7 @@ import {
   checkLashingBalance,
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
+  pipePyramidSpreadMargin,
   type PackingResult,
   type PlacedItem,
   type ManualPlacement,
@@ -3412,17 +3413,30 @@ function PlacedRect({
           <text x={x + w - 9} y={y + h - 4.5} fontSize={9} textAnchor="middle" fill="#fff" className="select-none">🔒</text>
         </g>
       )}
-      {showLabels && w > 30 && h > 18 && (
-        <>
-          <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill="#fff" className="select-none pointer-events-none">
-            {clip(item.name, w)}
-          </text>
-          <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill="rgba(255,255,255,0.92)" className="select-none pointer-events-none">
-            {fmt(item.width)}×{fmt(item.length)}
-            {item.rotated ? ' ↻' : ''}
-          </text>
-        </>
-      )}
+      {showLabels && w > 30 && h > 18 && (() => {
+        // A stacked pipe pyramid's true occupied footprint is WIDER than a
+        // single pipe's own cross-section the moment more than one layer is
+        // placed (see pipePyramidSpreadMargin — the same widening already
+        // reserved in the packing engine so pyramids don't overlap their
+        // neighbours). The rect drawn on screen is only ever a single pipe's
+        // width, so the dimension label must add the same spread back in —
+        // otherwise it silently understates how much deck space the stack
+        // actually occupies.
+        const spread = item.shape === 'cylinder' && item.stackedCount > 1 ? pipePyramidSpreadMargin(item, item.stackedCount) : null
+        const dispWidth = spread ? item.width + spread.onWidth * 2 : item.width
+        const dispLength = spread ? item.length + spread.onLength * 2 : item.length
+        return (
+          <>
+            <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill="#fff" className="select-none pointer-events-none">
+              {clip(item.name, w)}
+            </text>
+            <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill="rgba(255,255,255,0.92)" className="select-none pointer-events-none">
+              {fmt(dispWidth)}×{fmt(dispLength)}
+              {item.rotated ? ' ↻' : ''}
+            </text>
+          </>
+        )
+      })()}
       {item.stackedCount > 1 && item.shape === 'cylinder' && (() => {
         // Schematic "bundle of pipes" glyph — a row of small circles (one
         // per unit ACTUALLY stacked here, up to however many fit) instead
