@@ -64,6 +64,7 @@ export interface ZoneLoadCheck {
   areaM2: number
   densityTPerM2: number
   limitTPerM2: number
+  exceeded: boolean
 }
 
 function overlapsZone(f: { x: number; y: number; width: number; length: number }, z: LoadZone): boolean {
@@ -141,7 +142,15 @@ export function zoneAreaWithinOutline(
 // if part of it overhangs a cut corner. A placement overlapping two zones
 // contributes its full weight to both independently. Returns only zones
 // that exceed their limit.
-export function checkZoneLoads(
+// Every zone's current load status, whether or not it's over the limit —
+// the basis for both checkZoneLoads (violations only, used for warnings)
+// and any UI that wants to show a zone's live "X т/м² of Y т/м²" reading
+// even when it's fine, so a user can actually see WHY a zone did or didn't
+// trigger a warning instead of guessing (a 1 т/м² limit over a large zone
+// easily absorbs several tonnes of cargo without ever exceeding it — that's
+// correct density math, not a bug, but it reads as "broken" with no way to
+// see the live number).
+export function computeZoneLoads(
   placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
   zones: LoadZone[] | undefined,
   deckOutline?: { x: number; y: number }[]
@@ -157,11 +166,24 @@ export function checkZoneLoads(
       if (overlapsZone(p, z)) totalWeightKg += p.totalWeightKg
     }
     const densityTPerM2 = totalWeightKg / 1000 / areaM2
-    if (densityTPerM2 > z.maxLoadPerArea + eps) {
-      results.push({ zoneId: z.id, totalWeightKg, areaM2, densityTPerM2, limitTPerM2: z.maxLoadPerArea })
-    }
+    results.push({
+      zoneId: z.id,
+      totalWeightKg,
+      areaM2,
+      densityTPerM2,
+      limitTPerM2: z.maxLoadPerArea,
+      exceeded: densityTPerM2 > z.maxLoadPerArea + eps,
+    })
   }
   return results
+}
+
+export function checkZoneLoads(
+  placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
+  zones: LoadZone[] | undefined,
+  deckOutline?: { x: number; y: number }[]
+): ZoneLoadCheck[] {
+  return computeZoneLoads(placements, zones, deckOutline).filter((z) => z.exceeded)
 }
 
 // Every zone id a single footprint overlaps — used to look up whether an

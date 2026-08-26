@@ -59,6 +59,7 @@ import {
   type LashingDeviceType,
   type PinnedPlacement,
   type ClearanceMargin,
+  type ZoneLoadCheck,
 } from '@/lib/packing'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn, fmtNumber } from '@/lib/utils'
@@ -91,6 +92,9 @@ interface SidebarProps {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
+  // Every load zone's live density (t/m²), whether or not it currently
+  // exceeds its limit — see LoadZonesSection for why this matters.
+  zoneLoads?: ZoneLoadCheck[]
 }
 
 export function Sidebar({
@@ -104,6 +108,7 @@ export function Sidebar({
   canRedo,
   onUndo,
   onRedo,
+  zoneLoads,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -344,7 +349,7 @@ export function Sidebar({
         <DeckSettings />
 
         {/* Load zones (per-area capacity) */}
-        <LoadZonesSection />
+        <LoadZonesSection zoneLoads={zoneLoads} />
 
         {/* Cargo category separation rules */}
         <SeparationRulesSection />
@@ -588,7 +593,7 @@ function Toggle({
   )
 }
 
-function LoadZonesSection() {
+function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const zones = useCalculator((s) => s.deck.loadZones ?? EMPTY_ZONES)
   const unit = useCalculator((s) => s.deck.unit)
   const addLoadZone = useCalculator((s) => s.addLoadZone)
@@ -599,28 +604,42 @@ function LoadZonesSection() {
     <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false}>
       <div className="space-y-2">
         <p className="text-[10px] text-muted-foreground">
-          Допустимая нагрузка (т/м²) по прямоугольным зонам палубы. Превышение — мягкое предупреждение, груз не блокируется.
+          Допустимая нагрузка (т/м²) по прямоугольным зонам палубы — это плотность (тонны на квадратный метр площади зоны), а не общий вес зоны целиком: большая зона выдерживает много тонн даже при небольшом лимите. Превышение — мягкое предупреждение, груз не блокируется.
         </p>
-        {zones.map((z) => (
-          <div key={z.id} className="rounded-md border p-2 space-y-1.5">
-            <div className="grid grid-cols-4 gap-1">
-              <MiniNumField label="X" value={z.x} unit={unit} onChange={(v) => updateLoadZone(z.id, { x: v })} />
-              <MiniNumField label="Y" value={z.y} unit={unit} onChange={(v) => updateLoadZone(z.id, { y: v })} />
-              <MiniNumField label="Шир." value={z.width} unit={unit} onChange={(v) => updateLoadZone(z.id, { width: v })} />
-              <MiniNumField label="Длин." value={z.length} unit={unit} onChange={(v) => updateLoadZone(z.id, { length: v })} />
+        {zones.map((z) => {
+          const load = zoneLoads?.find((zl) => zl.zoneId === z.id)
+          return (
+            <div key={z.id} className="rounded-md border p-2 space-y-1.5">
+              <div className="grid grid-cols-4 gap-1">
+                <MiniNumField label="X" value={z.x} unit={unit} onChange={(v) => updateLoadZone(z.id, { x: v })} />
+                <MiniNumField label="Y" value={z.y} unit={unit} onChange={(v) => updateLoadZone(z.id, { y: v })} />
+                <MiniNumField label="Шир." value={z.width} unit={unit} onChange={(v) => updateLoadZone(z.id, { width: v })} />
+                <MiniNumField label="Длин." value={z.length} unit={unit} onChange={(v) => updateLoadZone(z.id, { length: v })} />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <MiniNumField label="Лимит, т/м²" value={z.maxLoadPerArea} unit="" onChange={(v) => updateLoadZone(z.id, { maxLoadPerArea: v })} />
+                <button
+                  onClick={() => removeLoadZone(z.id)}
+                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                  title="Удалить зону"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {load && (
+                <p
+                  className={cn(
+                    'text-[10px] tabular-nums',
+                    load.exceeded ? 'font-medium text-destructive' : 'text-muted-foreground'
+                  )}
+                >
+                  Сейчас: {fmtNumber(load.densityTPerM2)} т/м² ({fmtNumber(load.totalWeightKg / 1000)} т на {fmtNumber(load.areaM2)} м²)
+                  {load.exceeded ? ' — превышен лимит' : ` из ${fmtNumber(load.limitTPerM2)}`}
+                </p>
+              )}
             </div>
-            <div className="flex items-center gap-1.5">
-              <MiniNumField label="Лимит, т/м²" value={z.maxLoadPerArea} unit="" onChange={(v) => updateLoadZone(z.id, { maxLoadPerArea: v })} />
-              <button
-                onClick={() => removeLoadZone(z.id)}
-                className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-destructive"
-                title="Удалить зону"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
         <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addLoadZone()}>
           <Plus className="h-3.5 w-3.5 mr-1" /> Добавить зону
         </Button>

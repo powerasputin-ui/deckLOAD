@@ -14,6 +14,7 @@ import {
   rotatePlacementAnywhere,
   resolveSnappedDragPosition,
   checkZoneLoads,
+  computeZoneLoads,
   zoneAreaWithinOutline,
   zoneIdsOverlapping,
   checkLashingBalance,
@@ -1671,6 +1672,51 @@ describe('checkZoneLoads', () => {
     const zones = [zone({ id: 'z1', x: 5, y: 5, width: 2, length: 2, maxLoadPerArea: 1 })]
     const p = [placement({ x: 5, y: 5, width: 1, length: 1, totalWeightKg: 100000 })]
     expect(checkZoneLoads(p, zones, outline)).toEqual([])
+  })
+})
+
+describe('computeZoneLoads', () => {
+  const zone = (partial: Partial<LoadZone> & { id: string }): LoadZone => ({
+    x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 5, ...partial,
+  })
+  const placement = (partial: { x: number; y: number; width: number; length: number; totalWeightKg: number }) => partial
+
+  it('reports every zone\'s live density even when under the limit, unlike checkZoneLoads which only reports violations', () => {
+    // Same scenario as the "small item in a big zone" checkZoneLoads case —
+    // this is the exact confusion a user hits: they set a 1 т/м² limit,
+    // put 2.2 tonnes of cargo in, and see no warning. checkZoneLoads
+    // correctly reports nothing (not exceeded); computeZoneLoads is what
+    // lets the UI show the real number so that's visibly NOT a bug.
+    const zones = [zone({ id: 'z1', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 1 })]
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 2200 })]
+    expect(checkZoneLoads(p, zones)).toEqual([])
+    const all = computeZoneLoads(p, zones)
+    expect(all).toHaveLength(1)
+    expect(all[0].exceeded).toBe(false)
+    expect(all[0].totalWeightKg).toBe(2200)
+    expect(all[0].areaM2).toBe(100)
+    expect(all[0].densityTPerM2).toBeCloseTo(0.022, 9)
+  })
+
+  it('marks exceeded:true exactly when checkZoneLoads would have flagged it, false otherwise', () => {
+    const zones = [
+      zone({ id: 'under', x: 0, y: 0, width: 2, length: 2, maxLoadPerArea: 1 }),
+      zone({ id: 'over', x: 10, y: 0, width: 1, length: 1, maxLoadPerArea: 1 }),
+    ]
+    const p = [
+      placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1000 }), // 0.25 t/m^2 < 1
+      placement({ x: 10, y: 0, width: 1, length: 1, totalWeightKg: 2000 }), // 2 t/m^2 > 1
+    ]
+    const all = computeZoneLoads(p, zones)
+    expect(all.find((z) => z.zoneId === 'under')!.exceeded).toBe(false)
+    expect(all.find((z) => z.zoneId === 'over')!.exceeded).toBe(true)
+    expect(checkZoneLoads(p, zones).map((z) => z.zoneId)).toEqual(['over'])
+  })
+
+  it('returns an empty array with no zones configured, same as checkZoneLoads', () => {
+    const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1000 })]
+    expect(computeZoneLoads(p, undefined)).toEqual([])
+    expect(computeZoneLoads(p, [])).toEqual([])
   })
 })
 

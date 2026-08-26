@@ -48,6 +48,7 @@ import {
   lashingPointExclusionRects,
   restrictionZoneExclusions,
   checkZoneLoads,
+  computeZoneLoads,
   LASHING_DEVICES,
   type ManualPlacement,
   type PinnedPlacement,
@@ -465,6 +466,24 @@ export default function Home() {
       )
     }
     prevOverloadedZoneCountRef.current = overloadedZones.length
+  }, [result.placed, deck.loadZones, deck.outline])
+
+  // Every load zone's LIVE density, exceeded or not — threaded into the
+  // sidebar so a user setting up a zone limit can see the actual current
+  // number (e.g. "0.11 из 1 т/м²") instead of only finding out something's
+  // wrong via a red highlight on the deck. A zone with a big footprint can
+  // easily absorb several tonnes without ever crossing a 1 т/м² limit —
+  // correct density math, not a bug, but invisible without this readout.
+  const zoneLoads = useMemo(() => {
+    if (!deck.loadZones || deck.loadZones.length === 0) return []
+    const placements = result.placed.map((p) => ({
+      x: p.x,
+      y: p.y,
+      width: p.width,
+      length: p.length,
+      totalWeightKg: (p.weight ?? 0) * p.stackedCount,
+    }))
+    return computeZoneLoads(placements, deck.loadZones, deck.outline)
   }, [result.placed, deck.loadZones, deck.outline])
 
   const categoryByItemId = useMemo(
@@ -1537,6 +1556,7 @@ export default function Home() {
           onViewModeChange={setViewMode}
           canUndo={canUndo}
           canRedo={canRedo}
+          zoneLoads={zoneLoads}
           onUndo={() => useCalculator.temporal.getState().undo()}
           onRedo={() => useCalculator.temporal.getState().redo()}
         />
