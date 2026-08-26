@@ -1362,10 +1362,19 @@ export function packDeck(
     const placedForItem = result.placed.filter((p) => p.itemId === item.id)
     const placedUnits = placedForItem.reduce((s, p) => s + p.stackedCount, 0)
     const footprints = placedForItem.length
-    // The REAL tallest stack actually placed — see the matching comment in
-    // packingResultFromManual's breakdown builder below for why this isn't
-    // maxLayersFor's theoretical height-based capacity.
-    const layers = placedForItem.length > 0 ? Math.max(...placedForItem.map((p) => p.stackedCount)) : 0
+    // Prefer the user's own "Ярусов" cap from the item card — that's the
+    // number they explicitly set and expect to see reflected here. Only
+    // fall back to the real tallest stack actually placed when no cap is
+    // set (item.maxLayers is 0/undefined): showing an unrelated
+    // clearance-derived theoretical number there was the original bug this
+    // fallback fixed (see git history), but an explicit user-entered cap is
+    // not that — it's the number they typed, not a derived guess.
+    const layers =
+      item.maxLayers && item.maxLayers > 0
+        ? item.maxLayers
+        : placedForItem.length > 0
+          ? Math.max(...placedForItem.map((p) => p.stackedCount))
+          : 0
     const area = placedForItem.reduce((s, p) => s + p.width * p.length, 0)
     const unitWeight = item.weight ?? 0
     // Sum each placement's actual weight (not always item.weight): a pinned
@@ -2611,19 +2620,18 @@ export function packingResultFromManual(
       requested: itemInfo?.quantity ?? 0,
       placed: 0,
       footprints: 0,
-      // The REAL tallest stack actually placed, not the theoretical
-      // capacity a stack of this item could reach under the current deck
-      // clearance — those two routinely disagree by a lot (e.g. a thin
-      // pipe under a tall clearance setting could physically fit 30+
-      // layers, but only a handful are actually stacked anywhere), and
-      // showing the theoretical number here read as "why does it say 33
-      // when I only added a few."
-      layers: p.stackedCount,
+      // Prefer the user's own "Ярусов" cap (see the matching comment in
+      // packDeck's breakdown builder above) — only fall back to the real
+      // tallest stack actually placed when no cap is set.
+      layers:
+        itemInfo?.maxLayers && itemInfo.maxLayers > 0 ? itemInfo.maxLayers : p.stackedCount,
       area: 0,
       weight: 0,
       unitWeight: p.weight ?? 0,
     }
-    b.layers = Math.max(b.layers, p.stackedCount)
+    if (!(itemInfo?.maxLayers && itemInfo.maxLayers > 0)) {
+      b.layers = Math.max(b.layers, p.stackedCount)
+    }
     b.placed += p.stackedCount
     b.footprints += 1
     b.area += p.width * p.length

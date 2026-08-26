@@ -429,6 +429,20 @@ describe('packDeck', () => {
     expect(b!.layers).toBe(realMax)
   })
 
+  it('breakdown.layers shows the item\'s own maxLayers cap when set, even if fewer are actually stacked', () => {
+    const res = packDeck(10, 10, [
+      item({ id: 'a', width: 1, length: 1, height: 0.15, maxLayers: 5, quantity: 3 }),
+    ], { clearance: 5 })
+    const b = res.breakdown.find((x) => x.itemId === 'a')
+    expect(b).toBeDefined()
+    // Only 3 units requested, so no stack ever reaches 5 — but the user's
+    // own "Ярусов" field value should still be what's reported, not the
+    // smaller real stack height.
+    const realMax = Math.max(...res.placed.filter((p) => p.itemId === 'a').map((p) => p.stackedCount))
+    expect(realMax).toBeLessThan(5)
+    expect(b!.layers).toBe(5)
+  })
+
   it('keeps the real edge margin exactly at boardOffset regardless of gap', () => {
     const res = packDeck(10, 10, [
       item({ id: 'a', width: 2, length: 2, quantity: 1 }),
@@ -668,6 +682,18 @@ describe('packingResultFromManual', () => {
       { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 2, color: '#0ea5e9', allowRotation: true },
     ])
     expect(res.unplaced).toHaveLength(0)
+  })
+
+  it('breakdown.layers shows the item\'s own maxLayers cap when set, even if fewer are actually stacked', () => {
+    const placements: ManualPlacement[] = [
+      { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 3, layers: 1, rotated: false, color: '#0ea5e9' },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 1, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 1, color: '#0ea5e9', allowRotation: true, maxLayers: 4 },
+    ])
+    const b = res.breakdown.find((x) => x.itemId === 'a')
+    expect(b).toBeDefined()
+    expect(b!.layers).toBe(4)
   })
 
   it('reports an unplaced entry for an item with zero placements', () => {
