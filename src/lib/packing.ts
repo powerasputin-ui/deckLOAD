@@ -1623,6 +1623,57 @@ export function computeGridStep(deckWidth: number, deckLength: number): number {
   return 10
 }
 
+// One row of a pyramid pile of round stock (pipes/rebar). `rowIndex` is
+// height order (0 = base row, sitting on the deck). `offsets` are this
+// row's units' horizontal positions, in units of ONE RADIUS — the caller
+// multiplies by the item's actual radius (and applies it to whichever
+// world axis the pile spreads across) to get real offsets. Deliberately
+// centered on the row's own natural (full-pyramid) width even when it
+// holds fewer units than that — see decomposePipePyramid's doc comment for
+// why that's what keeps a leftover top row resting in real valleys instead
+// of floating over solid pipe.
+export interface PipeRow {
+  rowIndex: number
+  offsets: number[]
+}
+
+// Decomposes `layers` round units into pyramid rows — base row widest,
+// each row above exactly one unit narrower, the way round stock actually
+// piles up. Every unit's horizontal offset is centered on its row's
+// naturalCount (how many units a FULL row at that height would hold in a
+// perfect decreasing-by-1 pyramid: base, base-1, base-2, ...) — NOT on
+// however many units the row actually ends up holding, which can be
+// smaller once the remaining total runs out before the pyramid completes
+// (e.g. 8 units only fill a 4-3-1 pile, not a full 4-3-2-1 one).
+//
+// This distinction is the whole fix: two rows whose naturalCount differs by
+// exactly 1 (which this decomposition always produces, by construction)
+// share the same center and are offset by exactly one radius — the
+// geometric condition for round stock resting in the gaps of the row
+// beneath it. Centering a truncated row on its own (smaller) unit count
+// instead — the bug this replaces — breaks that alignment the moment a row
+// runs short: e.g. a lone leftover unit would render dead-center over the
+// row below, which is only a valid resting spot when that row below has an
+// ODD naturalCount (a real center gap); otherwise the unit floats over
+// solid pipe instead of resting in a valley — physically impossible. This
+// was reported live: an 8-pipe stack rendered its top pipe dead-center,
+// balanced impossibly on the row below instead of nested in a valley.
+export function decomposePipePyramid(layers: number): PipeRow[] {
+  const base = Math.max(1, Math.round(Math.sqrt(2 * layers)))
+  const rows: PipeRow[] = []
+  let remaining = layers
+  let rowIndex = 0
+  while (remaining > 0) {
+    const naturalCount = Math.max(1, base - rowIndex)
+    const count = Math.min(remaining, naturalCount)
+    const offsets = Array.from({ length: count }, (_, i) => (i - (naturalCount - 1) / 2) * 2)
+    rows.push({ rowIndex, offsets })
+    remaining -= count
+    rowIndex++
+  }
+  return rows
+}
+
 // Independent hard-block margin per side of a placement's footprint —
 // lets the exclusion zone be wider on, say, the side a rigger needs to work
 // from, rather than a single symmetric radius.

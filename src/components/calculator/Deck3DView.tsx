@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import * as THREE from 'three'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Edges } from '@react-three/drei'
-import { rotateOutline90, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
+import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 
 interface PinData {
   itemId: string
@@ -284,17 +284,17 @@ export default function Deck3DView({
       // — nested in the "valley" of the row below, the way round stock
       // (pipes/rebar) actually piles up. Boxes/barrels above stack straight
       // instead, which is physically correct for square/upright cargo but
-      // was, until now, also being applied to pipes, which is not.
+      // was, until now, also being applied to pipes, which is not. The row
+      // layout and per-unit centering both live in decomposePipePyramid
+      // (packing.ts) — this loop just scales its radius-unit offsets and
+      // row heights into world space.
       const acrossIsX = !(p.width >= p.length) // the pipe's own axis runs along whichever world axis is "long"; rows spread out along the OTHER one
-      const base = Math.max(1, Math.round(Math.sqrt(2 * layers)))
-      let remaining = layers
-      let rowIndex = 0
+      const rows = decomposePipePyramid(layers)
       let seq = 0
-      while (remaining > 0) {
-        const rowCount = Math.min(remaining, Math.max(1, base - rowIndex))
-        const rowY = radius + rowIndex * radius * SQRT3
-        for (let i = 0; i < rowCount; i++) {
-          const across = (i - (rowCount - 1) / 2) * radius * 2
+      for (const row of rows) {
+        const rowY = radius + row.rowIndex * radius * SQRT3
+        for (const offsetUnits of row.offsets) {
+          const across = offsetUnits * radius
           out.push({
             key: `${p.itemId}-${thisIdx}-${seq++}`,
             placementId,
@@ -308,8 +308,6 @@ export default function Deck3DView({
             color: p.color,
           })
         }
-        remaining -= rowCount
-        rowIndex++
       }
     }
     return out

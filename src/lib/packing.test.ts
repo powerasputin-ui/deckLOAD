@@ -34,6 +34,7 @@ import {
   dedupePolygonVertices,
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
+  decomposePipePyramid,
   type CargoItem,
   type ManualPlacement,
   type PinnedPlacement,
@@ -1776,5 +1777,82 @@ describe('packMultiTrip', () => {
     expect(trips).toHaveLength(1)
     expect(trips[0].placedCount).toBe(0)
     expect(trips[0].requestedCount).toBe(0)
+  })
+})
+
+describe('decomposePipePyramid', () => {
+  // Each row's offsets (radius units, already centered — see the function's
+  // own doc comment) must place every upper-row unit in an actual valley of
+  // the row below: the gap exactly between two adjacent lower-row units.
+  // For rows whose unit spacing is 2 (one diameter) and whose counts are
+  // consistent with the decreasing-by-1 pyramid this function guarantees,
+  // that's equivalent to checking every offset in row i+1 falls exactly
+  // halfway between two consecutive offsets in row i (or, for the single
+  // base row, needs no check).
+  function isNestedInValleys(rows: ReturnType<typeof decomposePipePyramid>): boolean {
+    for (let i = 1; i < rows.length; i++) {
+      const below = rows[i - 1].offsets
+      for (const off of rows[i].offsets) {
+        const restsInValley = below.some((a, j) => {
+          const b = below[j + 1]
+          return b !== undefined && Math.abs((a + b) / 2 - off) < 1e-9
+        })
+        if (!restsInValley) return false
+      }
+    }
+    return true
+  }
+
+  it('sums to the requested layer count for a wide range of values', () => {
+    for (let layers = 1; layers <= 40; layers++) {
+      const rows = decomposePipePyramid(layers)
+      const sum = rows.reduce((s, r) => s + r.offsets.length, 0)
+      expect(sum).toBe(layers)
+    }
+  })
+
+  it('every unit at every layer count rests in a real valley of the row below it — never floating', () => {
+    for (let layers = 1; layers <= 40; layers++) {
+      expect(isNestedInValleys(decomposePipePyramid(layers))).toBe(true)
+    }
+  })
+
+  it('row heights are in ascending order starting from 0 (the deck)', () => {
+    for (let layers = 1; layers <= 40; layers++) {
+      const rows = decomposePipePyramid(layers)
+      expect(rows.map((r) => r.rowIndex)).toEqual(rows.map((_, i) => i))
+    }
+  })
+
+  it('8 units (the reported bug) build a 4-3-1 pile with the lone top unit resting in a real valley, not dead center', () => {
+    const rows = decomposePipePyramid(8)
+    expect(rows.map((r) => r.offsets.length)).toEqual([4, 3, 1])
+    // Row 1 (3 units, natural width 3): -2, 0, 2 — valleys at -1 and 1.
+    expect(rows[1].offsets).toEqual([-2, 0, 2])
+    // The lone top unit is centered on naturalCount=2 (not its own count of
+    // 1), landing at -1 — a real valley of row 1 — rather than 0 (dead
+    // center, which would float directly on top of row 1's middle pipe;
+    // this is exactly the bug that was reported live).
+    expect(rows[2].offsets).toEqual([-1])
+  })
+
+  it('11 units build a 5-4-2 pile with the top row resting in real valleys of the row below', () => {
+    const rows = decomposePipePyramid(11)
+    expect(rows.map((r) => r.offsets.length)).toEqual([5, 4, 2])
+    // Row 1 (4 units): -3, -1, 1, 3 — valleys at -2, 0, 2.
+    expect(rows[1].offsets).toEqual([-3, -1, 1, 3])
+    // Row 2 centered on naturalCount=3 (not its own count of 2): -2, 0 —
+    // both real valleys of row 1, not the old bug's independently-centered
+    // (and invalid) -1/1.
+    expect(rows[2].offsets).toEqual([-2, 0])
+  })
+
+  it('an exact triangular count (6 = 3+2+1) needs no truncation at all', () => {
+    const rows = decomposePipePyramid(6)
+    expect(rows.map((r) => r.offsets.length)).toEqual([3, 2, 1])
+  })
+
+  it('a single unit is just one row of one, centered', () => {
+    expect(decomposePipePyramid(1)).toEqual([{ rowIndex: 0, offsets: [0] }])
   })
 })
