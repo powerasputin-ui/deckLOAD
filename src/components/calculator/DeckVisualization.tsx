@@ -22,7 +22,6 @@ import {
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
   pipePyramidSpreadMargin,
-  decomposePipePyramid,
   withHardBlockFootprint,
   addClearanceMargins,
   pyramidSpreadAsClearance,
@@ -3473,41 +3472,12 @@ function PlacedRect({
           </>
         )
       })()}
-      {item.stackedCount > 1 && item.shape === 'cylinder' && (() => {
-        // Schematic "bundle of pipes" glyph — one circle per pipe in the
-        // pyramid's BASE (bottom) row, not every unit squeezed into a
-        // single row — so a stack of e.g. 9 pipes with a 4-wide base reads
-        // as "4 across" rather than an arbitrary flat row of 9. Spans the
-        // now-widened footprint (w/h are already inflated to the pyramid's
-        // true base width via pipePyramidSpreadMargin, see the render loop
-        // above), so the glyph visually matches the box it sits in. Falls
-        // back to the old "however many fit, +N overflow" cap only for
-        // pathologically large base rows, so it can't overflow off-screen.
-        const baseRowCount = Math.max(1, decomposePipePyramid(item.stackedCount)[0]?.offsets.length ?? 1)
-        const dia = 7
-        const gap = 2
-        const glyphW = Math.max(w, 30)
-        const cx = x + w / 2
-        const cy = y + h / 2
-        const maxFit = Math.max(1, Math.floor((glyphW + gap) / (dia + gap)))
-        const overflow = baseRowCount > maxFit
-        const circleCount = overflow ? maxFit - 1 : baseRowCount
-        const startX = cx - ((circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap) / 2 + dia / 2
-        return (
-          <g className="pointer-events-none">
-            <rect x={startX - dia / 2 - 2} y={cy - dia / 2 - 2} width={(circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap + 4} height={dia + 4} rx={3} fill="rgba(0,0,0,0.45)" />
-            {Array.from({ length: circleCount }).map((_, i) => (
-              <circle key={i} cx={startX + i * (dia + gap)} cy={cy} r={dia / 2} fill={item.color} stroke="#fff" strokeWidth={1} />
-            ))}
-            {overflow && (
-              <text x={startX + circleCount * (dia + gap)} y={cy + 3} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                +{baseRowCount - circleCount}
-              </text>
-            )}
-          </g>
-        )
-      })()}
-      {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
+      {/* Stacked-count badge — the real total unit count (not the pyramid's
+          base-row count), same badge for every shape including pipes. A
+          per-row circle glyph used to draw here for cylinders, but reading
+          "4 circles" for a 10-unit pyramid (4-wide base, 3 rows) was
+          confusing — this always shows the true number actually stacked. */}
+      {item.stackedCount > 1 && w >= 16 && h >= 16 && (
         <g className="pointer-events-none">
           <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
           <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
