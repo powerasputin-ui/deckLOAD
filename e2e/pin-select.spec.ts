@@ -21,11 +21,10 @@ test.describe('Auto-mode pin/lock interaction', () => {
       await expect(placedRect).toHaveAttribute('stroke', '#7c3aed', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
-    // Selected — the group-actions panel shows it, and it now has a real
-    // (unlocked) placement record so it can be dragged. No lock badge
-    // ("🔒") appears purely from clicking — that only happens after an
-    // explicit right-click "Закрепить".
-    await expect(page.getByText('Выбрано 1 груз')).toBeVisible()
+    // Selected — the rect already shows the purple stroke checked above,
+    // and it now has a real (unlocked) placement record so it can be
+    // dragged. No lock badge ("🔒") appears purely from clicking — that
+    // only happens after an explicit right-click "Закрепить".
     await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
 
     // Clicking it again deselects (same toggle behavior as before).

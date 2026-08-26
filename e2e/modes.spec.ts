@@ -33,16 +33,19 @@ test.describe('Auto / manual modes', () => {
     // placements are exactly what redistribute is meant to reshuffle; only
     // an explicit right-click "Закрепить" protects one (see the next test).
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    // A selected item's own rect gets the purple #7c3aed stroke (see
+    // FootprintShape's strokeColor) — that's the selection signal now that
+    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
+    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
     await expect(async () => {
       await placedRect.click({ force: true })
-      await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
+      await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // Redistribute reshuffles every unlocked placement (page.tsx's
     // handleAutoRedistribute/applyVariant) and warns the user beforehand.
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     await expect(page.getByText(/Незакреплённые размещения.*будут переставлены/)).toBeVisible()
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
-    await expect(page.getByText('Выбрано 1 груз')).not.toBeVisible()
   })
 
   test('auto redistribute keeps a LOCKED placement fixed in place', async ({ page }) => {
@@ -72,12 +75,16 @@ test.describe('Auto / manual modes', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    // A selected item's own rect gets the purple #7c3aed stroke (see
+    // FootprintShape's strokeColor) — that's the selection signal now that
+    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
+    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
       await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
-      await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
+      await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
     // Give it a clearance zone via the "Крепление груза" sidebar section.
@@ -104,12 +111,16 @@ test.describe('Auto / manual modes', () => {
     }).toPass({ timeout: 10000 })
     // Pin the first placed item by clicking its colored rect
     const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    // A selected item's own rect gets the purple #7c3aed stroke (see
+    // FootprintShape's strokeColor) — that's the selection signal now that
+    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
+    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
       await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
-      await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
+      await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // Click rotate on the selected pin (purple circle around the ↻ icon)
     await page.locator('svg circle[fill="#7c3aed"]').first().click({ force: true })

@@ -3,9 +3,7 @@
 import {
   Pin,
   RotateCw,
-  X,
   Unlock,
-  Move,
   Wand2,
   MousePointerClick,
   Package,
@@ -23,7 +21,6 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
 import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
-import { rotatePlacement } from '@/lib/packing'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -47,14 +44,8 @@ export function PlacementPanel({
   const items = useCalculator((s) => s.items)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const pinnedPlacements = pinnedPlacementsByTrip[tripIndex] ?? []
-  const selectedPinIds = useCalculator((s) => s.selectedPinIds)
-  const selectedManualIds = useCalculator((s) => s.selectedManualIds)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
-  const updatePinned = useCalculator((s) => s.updatePinned)
-  const removePinned = useCalculator((s) => s.removePinned)
   const clearPinned = useCalculator((s) => s.clearPinned)
-  const clearSelection = useCalculator((s) => s.clearSelection)
-  const clearManualSelection = useCalculator((s) => s.clearManualSelection)
   const clearManualPlacements = useCalculator((s) => s.clearManualPlacements)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
@@ -62,14 +53,10 @@ export function PlacementPanel({
   const setPendingPresetStamp = useCalculator((s) => s.setPendingPresetStamp)
   const stampRotated = useCalculator((s) => s.stampRotated)
   const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
-  const deck = useCalculator((s) => s.deck)
 
-  // In manual mode: selected = manualPlacements count; in auto: selected pins
   const isAuto = mode === 'auto'
   const placements = isAuto ? pinnedPlacements : manualPlacements
-  const selectedCount = isAuto ? selectedPinIds.length : selectedManualIds.length
   const hasPlacements = placements.length > 0
-  const showGroupActions = selectedCount > 0
 
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
   // What's actually shown on the deck — result.placed includes both
@@ -88,55 +75,6 @@ export function PlacementPanel({
   for (const p of result.placed) {
     const count = Number.isFinite(p.stackedCount) && p.stackedCount > 0 ? p.stackedCount : 1
     placedByItemId.set(p.itemId, (placedByItemId.get(p.itemId) ?? 0) + count)
-  }
-
-  const handleRotateSelected = () => {
-    if (isAuto) {
-      let rotatedCount = 0
-      const toRotate = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
-      for (const pin of toRotate) {
-        const item = items.find((it) => it.id === pin.itemId)
-        if (!item?.allowRotation) {
-          toast.warning(`Груз «${pin.name}» не разрешает поворот`)
-          continue
-        }
-        // Rotate around the centre, clamp inside the usable deck and check collision
-        // with all other pinned placements (using current state).
-        const others = pinnedPlacements
-          .filter((p) => p.id !== pin.id)
-          .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length }))
-        const result = rotatePlacement(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others)
-        if (!result) {
-          toast.warning(`Груз «${pin.name}» невозможно повернуть: нет места`)
-          continue
-        }
-        updatePinned(tripIndex, pin.id, {
-          x: result.x,
-          y: result.y,
-          width: result.width,
-          length: result.length,
-          rotated: !pin.rotated,
-        })
-        rotatedCount++
-      }
-      toast.info(`Повернуто: ${rotatedCount} груз(ов)`)
-    }
-  }
-
-  // Returns the selected pin(s) to the algorithm's pool WITHOUT touching
-  // item.quantity — this button is labeled "Открепить" (unpin), not
-  // "Удалить" (delete), and it used to actually call the destructive
-  // delete-with-quantity-decrement path (a pre-existing label/behavior
-  // mismatch). True deletion is available via the canvas's own red ✕ button
-  // on a pinned item — this one only releases user control, matching
-  // handleClearAll's "Снять все закрепления" (which was already correct).
-  const handleUnpinSelected = () => {
-    if (isAuto) {
-      for (const id of selectedPinIds) {
-        removePinned(tripIndex, id)
-      }
-      toast.info(`Откреплено: ${selectedPinIds.length} груз(ов) — алгоритм расставит их автоматически`)
-    }
   }
 
   const handleClearAll = () => {
@@ -285,59 +223,6 @@ export function PlacementPanel({
             </ScrollArea>
           )}
         </div>
-
-        {/* Selected items (both modes) */}
-        {showGroupActions && (
-          <div className="rounded-lg border bg-violet-50/50 dark:bg-violet-950/20 p-2.5 space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-400">
-              <Move className="h-3.5 w-3.5" />
-              Выбрано {selectedCount} {selectedCount === 1 ? 'груз' : 'грузов'}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {(isAuto
-                ? pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
-                : manualPlacements.filter((m) => selectedManualIds.includes(m.id))
-              )
-                .slice(0, 6)
-                .map((p) => (
-                  <span
-                    key={p.id}
-                    className="inline-flex items-center gap-1 rounded-md border bg-card px-1.5 py-0.5 text-[11px]"
-                  >
-                    <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: p.color }} />
-                    {p.name}
-                    {(p.layers ?? 1) > 1 && <span className="text-muted-foreground">×{p.layers}</span>}
-                  </span>
-                ))}
-            </div>
-            {/* Rotate + delete (auto mode only for pinned) */}
-            {isAuto && (
-              <div className="grid grid-cols-2 gap-2">
-                <Button size="sm" variant="outline" onClick={handleRotateSelected}>
-                  <RotateCw className="h-3.5 w-3.5 mr-1" />
-                  Повернуть
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleUnpinSelected}
-                >
-                  <Unlock className="h-3.5 w-3.5 mr-1" />
-                  Открепить
-                </Button>
-              </div>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => (isAuto ? clearSelection() : clearManualSelection())}
-              className="w-full h-7 text-xs"
-            >
-              <X className="h-3.5 w-3.5 mr-1" />
-              Снять выделение
-            </Button>
-          </div>
-        )}
 
         {/* Clear all */}
         {hasPlacements && (

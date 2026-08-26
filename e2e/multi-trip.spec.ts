@@ -36,12 +36,16 @@ test.describe('Multi-trip voyages', () => {
 
     await page.getByRole('button', { name: /Рейс 2/ }).click()
     const placedRect = page.locator('svg rect[fill="#10b981"]').first() // Паллета EUR's color
+    // A selected item's own rect gets the purple #7c3aed stroke (see
+    // FootprintShape's strokeColor) — that's the selection signal now that
+    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
+    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
       await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
-      await expect(page.getByText('Выбрано 1 груз')).toBeVisible({ timeout: 1000 })
+      await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
     // Trip 1's own counts are unaffected by pinning something on trip 2.
