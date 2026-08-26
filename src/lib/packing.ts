@@ -1084,14 +1084,22 @@ export function packDeck(
     // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap).
     // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
     // inflated cell instead, so the free-rect splitter never offers that
-    // space to algorithmically-placed (non-pinned) cargo either.
+    // space to algorithmically-placed (non-pinned) cargo either. Same
+    // pyramid-spread widening as the fresh-stack loop above — a manually
+    // placed/locked pipe stack must exclude its true pyramid footprint too,
+    // or other cargo could still be auto-packed into space its pyramid
+    // actually occupies once other stacks are laid out around it.
     const cm = pin.clearanceMargin
+    const pinSpread = pipePyramidSpreadMargin(
+      { shape: shapeByItemId.get(pin.itemId), width: pin.width, length: pin.length, height: heightByItemId.get(pin.itemId) ?? 0 },
+      layers
+    )
     placeRect(
       {
-        x: pin.x - gap / 2 - (cm?.left ?? 0),
-        y: pin.y - gap / 2 - (cm?.top ?? 0),
-        width: pin.width + gap + (cm?.left ?? 0) + (cm?.right ?? 0),
-        height: pin.length + gap + (cm?.top ?? 0) + (cm?.bottom ?? 0),
+        x: pin.x - gap / 2 - (cm?.left ?? 0) - pinSpread.onWidth,
+        y: pin.y - gap / 2 - (cm?.top ?? 0) - pinSpread.onLength,
+        width: pin.width + gap + (cm?.left ?? 0) + (cm?.right ?? 0) + pinSpread.onWidth * 2,
+        height: pin.length + gap + (cm?.top ?? 0) + (cm?.bottom ?? 0) + pinSpread.onLength * 2,
       },
       freeRects
     )
@@ -1191,11 +1199,15 @@ export function packDeck(
     // Symmetric gap model: each item is surrounded by gap/2 on every side, so the
     // distance between any two neighbouring items is exactly `gap` regardless of
     // which side they touch. The reserved cell is (w+gap) x (l+gap); the item is
-    // drawn at cell origin + gap/2.
-    const cellW = item.width + gap
-    const cellL = item.length + gap
-    const cellWRot = item.length + gap
-    const cellLRot = item.width + gap
+    // drawn at cell origin + gap/2 — widened further by pyramidSpread when this
+    // stack is more than one pipe piled into a single placement, so the free-rect
+    // model reserves the pyramid's actual base-row width, not just one pipe's
+    // cross-section (see pipePyramidSpreadMargin's doc comment).
+    const pyramidSpread = pipePyramidSpreadMargin(item, unitsInStack)
+    const cellW = item.width + gap + pyramidSpread.onWidth * 2
+    const cellL = item.length + gap + pyramidSpread.onLength * 2
+    const cellWRot = item.length + gap + pyramidSpread.onLength * 2
+    const cellLRot = item.width + gap + pyramidSpread.onWidth * 2
 
     const fitsNormal = cellW <= uw && cellL <= ul
     const fitsRotated =
@@ -1239,9 +1251,15 @@ export function packDeck(
 
     const visW = pos.rotated ? item.length : item.width
     const visL = pos.rotated ? item.width : item.length
-    // Item position = cell origin + gap/2 (so the gap/2 buffer stays around it)
-    const itemX = pos.node.x + gap / 2
-    const itemY = pos.node.y + gap / 2
+    // Item position = cell origin, centered within whatever the cell's own
+    // world-space size ended up being (gap/2 on each side normally; wider
+    // still on the pyramid-spread axis, split evenly on both sides so the
+    // true (narrow) pipe is centered under its own pyramid rather than
+    // flush to one edge of the extra reserved room).
+    const nodeWorldW = pos.rotated ? cellWRot : cellW
+    const nodeWorldL = pos.rotated ? cellLRot : cellL
+    const itemX = pos.node.x + (nodeWorldW - visW) / 2
+    const itemY = pos.node.y + (nodeWorldL - visL) / 2
 
     // Separation is a hard constraint (unlike load density, which is only a
     // soft warning computed at render time): reject this stack's placement
@@ -1580,12 +1598,15 @@ export function computeFreeRects(
     const pl = toFinite(p.length, 0)
     if (pw <= 0 || pl <= 0) continue
     const cm = p.clearanceMargin
+    // Same pyramid-spread widening as packDeck's own reservation, so this
+    // overlay never shows a stacked pipe pyramid's true footprint as free.
+    const spread = pipePyramidSpreadMargin({ shape: p.shape, width: pw, length: pl, height: p.height }, p.stackedCount)
     placeRect(
       {
-        x: p.x - g / 2 - (cm?.left ?? 0),
-        y: p.y - g / 2 - (cm?.top ?? 0),
-        width: pw + g + (cm?.left ?? 0) + (cm?.right ?? 0),
-        height: pl + g + (cm?.top ?? 0) + (cm?.bottom ?? 0),
+        x: p.x - g / 2 - (cm?.left ?? 0) - spread.onWidth,
+        y: p.y - g / 2 - (cm?.top ?? 0) - spread.onLength,
+        width: pw + g + (cm?.left ?? 0) + (cm?.right ?? 0) + spread.onWidth * 2,
+        height: pl + g + (cm?.top ?? 0) + (cm?.bottom ?? 0) + spread.onLength * 2,
       },
       free
     )
@@ -1672,6 +1693,48 @@ export function decomposePipePyramid(layers: number): PipeRow[] {
     rowIndex++
   }
   return rows
+}
+
+// Same heuristic Deck3DView.tsx uses to decide whether a cylinder cargo
+// lies on its side like a pipe (stacks into a pyramid) versus stands
+// upright like a barrel (stacks straight up, rim-on-rim) — kept here too
+// so the packing engine's own space reservation (see
+// pipePyramidSpreadMargin below) can agree with what the 3D view will
+// actually render, instead of drifting out of sync as two separate copies
+// of the same formula.
+export function isPipeShape(item: { shape?: CargoShape; width: number; length: number; height: number }): boolean {
+  if (item.shape !== 'cylinder') return false
+  const longSpan = Math.max(item.width, item.length)
+  const shortSpan = Math.min(item.width, item.length)
+  return longSpan > shortSpan * 1.5 && longSpan > item.height * 1.5
+}
+
+// A pyramid pile of pipes is physically WIDER than a single pipe's own
+// cross-section the moment more than one unit is stacked into one
+// placement — a base row of `decomposePipePyramid`'s widest row spans that
+// many pipe-diameters, not one. Nothing in the packing engine used to
+// account for this: a placement's reserved 2D footprint was always just
+// the single pipe's own width/length regardless of `layers`, so two
+// separate pipe stacks (e.g. an original and a duplicate) could be packed
+// edge-to-edge on paper while their 3D pyramids — which need real room —
+// physically overlapped. This was reported live as "duplicating a stack
+// of pipes distributes them as a jumbled mess instead of separate piles."
+//
+// Returns the extra HALF-margin (already halved, ready to add to both
+// sides symmetrically) needed on whichever of width/length is the pipe's
+// own short span (its diameter direction — the axis the pyramid actually
+// spreads across; the long axis is the pipe's own length and needs no
+// extra room). Zero for non-pipe shapes or a single-layer stack, so every
+// caller can apply this unconditionally with no special-casing.
+export function pipePyramidSpreadMargin(
+  item: { shape?: CargoShape; width: number; length: number; height: number },
+  layers: number
+): { onWidth: number; onLength: number } {
+  if (layers <= 1 || !isPipeShape(item)) return { onWidth: 0, onLength: 0 }
+  const shortSpan = Math.min(item.width, item.length)
+  const baseCount = decomposePipePyramid(layers)[0]?.offsets.length ?? 1
+  const half = (shortSpan * (baseCount - 1)) / 2
+  return item.width <= item.length ? { onWidth: half, onLength: 0 } : { onWidth: 0, onLength: half }
 }
 
 // Independent hard-block margin per side of a placement's footprint —

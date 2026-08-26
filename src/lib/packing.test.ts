@@ -35,6 +35,8 @@ import {
   DEFAULT_VESSEL_MOTION,
   VESSEL_MOTION_PRESETS,
   decomposePipePyramid,
+  isPipeShape,
+  pipePyramidSpreadMargin,
   type CargoItem,
   type ManualPlacement,
   type PinnedPlacement,
@@ -1854,5 +1856,113 @@ describe('decomposePipePyramid', () => {
 
   it('a single unit is just one row of one, centered', () => {
     expect(decomposePipePyramid(1)).toEqual([{ rowIndex: 0, offsets: [0] }])
+  })
+})
+
+describe('isPipeShape', () => {
+  it('is true for a long, thin, flat cylinder (a pipe lying on its side)', () => {
+    expect(isPipeShape({ shape: 'cylinder', width: 9.5, length: 0.25, height: 0.25 })).toBe(true)
+  })
+
+  it('is false for a barrel-shaped cylinder (roughly square footprint, stands upright)', () => {
+    expect(isPipeShape({ shape: 'cylinder', width: 0.9, length: 0.9, height: 1.0 })).toBe(false)
+  })
+
+  it('is false for a box, even with pipe-like proportions', () => {
+    expect(isPipeShape({ shape: 'box', width: 9.5, length: 0.25, height: 0.25 })).toBe(false)
+  })
+
+  it('is false when there is no shape at all', () => {
+    expect(isPipeShape({ width: 9.5, length: 0.25, height: 0.25 })).toBe(false)
+  })
+})
+
+describe('pipePyramidSpreadMargin', () => {
+  const pipe = { shape: 'cylinder' as const, width: 9.5, length: 0.25, height: 0.25 }
+
+  it('is zero for a single-layer stack (no pyramid at all)', () => {
+    expect(pipePyramidSpreadMargin(pipe, 1)).toEqual({ onWidth: 0, onLength: 0 })
+  })
+
+  it('is zero for a non-pipe shape regardless of layers', () => {
+    expect(pipePyramidSpreadMargin({ shape: 'box', width: 2, length: 1, height: 1 }, 8)).toEqual({
+      onWidth: 0,
+      onLength: 0,
+    })
+  })
+
+  it('widens the SHORT axis (the diameter direction) only — never the pipe-length axis', () => {
+    const margin = pipePyramidSpreadMargin(pipe, 8)
+    expect(margin.onWidth).toBe(0) // width (9.5) is the long, pipe-length axis
+    expect(margin.onLength).toBeGreaterThan(0) // length (0.25) is the short, diameter axis
+  })
+
+  it('matches decomposePipePyramid\'s own base-row width for 8 layers (4-wide base)', () => {
+    const margin = pipePyramidSpreadMargin(pipe, 8)
+    // Base row of 4 pipes spans 4 diameters; a single pipe spans 1. The
+    // extra width beyond a single pipe is 3 diameters, split evenly on
+    // both sides.
+    const diameter = pipe.length
+    expect(margin.onLength).toBeCloseTo((diameter * 3) / 2, 10)
+  })
+
+  it('is symmetric regardless of which of width/length is the short axis', () => {
+    const rotatedPipe = { shape: 'cylinder' as const, width: 0.25, length: 9.5, height: 0.25 }
+    const margin = pipePyramidSpreadMargin(rotatedPipe, 8)
+    expect(margin.onLength).toBe(0)
+    expect(margin.onWidth).toBeGreaterThan(0)
+  })
+})
+
+describe('packDeck reserves real pyramid footprint for stacked pipes (regression)', () => {
+  // The reported bug: place 8 pipes (one stack), then duplicate the item
+  // (creating a second, independent CargoItem requesting another 8-pipe
+  // stack) — the two stacks' NARROW declared footprints don't overlap on
+  // paper, but their 3D pyramids, which are physically much wider once
+  // stacked, used to collide into a jumbled mess because packDeck never
+  // reserved the pyramid's real width.
+  function pyramidHalfWidth(p: { width: number; length: number; shape?: string; height: number; stackedCount: number }): number {
+    const spread = pipePyramidSpreadMargin(
+      { shape: p.shape as 'cylinder' | undefined, width: p.width, length: p.length, height: p.height },
+      p.stackedCount
+    )
+    const shortSpan = Math.min(p.width, p.length)
+    return shortSpan / 2 + Math.max(spread.onWidth, spread.onLength)
+  }
+
+  it('two separate 8-pipe stacks (original + duplicate) never overlap once their real pyramid footprints are accounted for', () => {
+    // Deck sized so the packer is forced to place the two stacks
+    // side-by-side along their SHORT (diameter) axis — barely wide enough
+    // for one pipe's own 9.5m length, but with room along the other axis
+    // for several 0.25m-wide stacks — which is exactly the arrangement the
+    // bug affected (a deck with room to spare end-to-end along the pipe's
+    // long axis never exercised it, since the packer naturally lined pipes
+    // up lengthwise there regardless of the fix).
+    const original = item({ id: 'pipe-a', name: 'Обсадная труба', shape: 'cylinder', width: 9.5, length: 0.25, height: 0.25, maxLayers: 8, quantity: 8, allowRotation: true })
+    const duplicate = item({ id: 'pipe-b', name: 'Обсадная труба (копия)', shape: 'cylinder', width: 9.5, length: 0.25, height: 0.25, maxLayers: 8, quantity: 8, allowRotation: true })
+    const res = packDeck(10, 3, [original, duplicate], { gap: 0.1, boardOffset: 0.2, clearance: 100 })
+    expect(res.unplaced).toHaveLength(0)
+    expect(res.placed).toHaveLength(2)
+    expect(res.placed.every((p) => p.stackedCount === 8)).toBe(true)
+
+    const [a, b] = res.placed
+    // Real center-to-center distance along whichever axis actually
+    // separates them, versus the sum of their pyramid half-widths (plus a
+    // little slack for the gap) — must never be less, or the two piles'
+    // pyramids would physically intersect in 3D.
+    const dx = Math.abs((a.x + a.width / 2) - (b.x + b.width / 2))
+    const dy = Math.abs((a.y + a.length / 2) - (b.y + b.length / 2))
+    const centerDist = Math.hypot(dx, dy)
+    const requiredDist = pyramidHalfWidth(a) + pyramidHalfWidth(b)
+    expect(centerDist).toBeGreaterThanOrEqual(requiredDist - 1e-6)
+  })
+
+  it('a single 8-pipe stack still reports its true (narrow) single-pipe width/length for display, not the widened pyramid footprint', () => {
+    const single = item({ id: 'pipe-c', shape: 'cylinder', width: 9.5, length: 0.25, height: 0.25, maxLayers: 8, quantity: 8, allowRotation: true })
+    const res = packDeck(20, 6, [single], { gap: 0.1, boardOffset: 0.2, clearance: 100 })
+    expect(res.placed).toHaveLength(1)
+    expect(res.placed[0].width).toBe(9.5)
+    expect(res.placed[0].length).toBe(0.25)
+    expect(res.placed[0].stackedCount).toBe(8)
   })
 })
