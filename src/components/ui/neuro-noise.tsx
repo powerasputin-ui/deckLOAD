@@ -75,7 +75,16 @@ float hash21(vec2 p) {
 // Even, un-structured white noise for film grain (Dave Hoskins hash12). The
 // multiply hash above is fine for value noise but shows a faint axis-aligned
 // mesh at integer fragment coords, which reads as a net over flat areas.
+// Unlike hash21/hash22 above (fed bounded, resolution-normalized coordinates),
+// this is fed raw gl_FragCoord — on a large/4K+ display at native canvas
+// resolution that can run into the thousands of px, which a mediump-only GPU
+// (common on TVs/embedded panels) can't represent with enough relative
+// precision, producing visible seam-like discontinuities. Wrap it the same
+// way the other two hashes already do.
 float grainHash(vec2 p) {
+#ifndef GL_FRAGMENT_PRECISION_HIGH
+  p = mod(p, 512.0);
+#endif
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
