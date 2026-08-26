@@ -834,20 +834,29 @@ export interface PinnedPlacement {
   locked?: boolean
 }
 
-// Compute how many tiers (layers) can be stacked for an item. `item.maxLayers`
-// (user-set per-item cap) is combined with the clearance-height ceiling by
-// taking the minimum of the two — whichever is more restrictive wins.
+// Compute how many tiers (layers) can be stacked for an item. When the deck
+// actually has a configured height budget (clearance > 0), `item.maxLayers`
+// (user-set per-item cap) is combined with that clearance-height ceiling by
+// taking the minimum of the two — whichever is more restrictive wins, since
+// both are then real physical constraints. But clearance = 0 isn't itself a
+// physical "only 1 fits" fact — it's the deck-wide default for "no height
+// budget was ever configured" (see the deck settings' own "0 = один ярус"
+// hint). An explicit per-item maxLayers is a much more specific, deliberate
+// signal than that blanket default, so it wins outright when clearance is
+// unset — previously it was silently intersected down to 1 regardless of
+// what the user typed, which read as "the Ярусов field does nothing."
 export function maxLayersFor(item: { height: number; maxLayers?: number }, clearance: number): number {
   const h = toFinite(item.height, 0)
   const c = toFinite(clearance, 0)
-  const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : Infinity
+  const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : undefined
+  if (c <= 0) return userCap ?? 1
   let heightCap = 1
-  if (c > 0 && h > 0) {
+  if (h > 0) {
     const raw = c / h
     // A tiny epsilon prevents values like 1.9999999999999998 from losing a layer.
     if (Number.isFinite(raw)) heightCap = Math.max(1, Math.floor(raw + 1e-9))
   }
-  return Math.max(1, Math.min(heightCap, userCap))
+  return Math.max(1, Math.min(heightCap, userCap ?? Infinity))
 }
 
 export function packDeck(

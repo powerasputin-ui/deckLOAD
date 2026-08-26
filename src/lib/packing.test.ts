@@ -116,8 +116,12 @@ describe('maxLayersFor', () => {
     expect(maxLayersFor({ height: 1.5 }, 4.5)).toBe(3)
   })
 
-  it('maxLayers alone (no clearance) still caps at 1, matching the no-clearance default', () => {
-    expect(maxLayersFor({ height: 1, maxLayers: 5 }, 0)).toBe(1)
+  it('an explicit maxLayers wins outright when clearance is unset (0), not intersected down to 1', () => {
+    expect(maxLayersFor({ height: 1, maxLayers: 5 }, 0)).toBe(5)
+  })
+
+  it('still returns 1 with no clearance AND no explicit maxLayers', () => {
+    expect(maxLayersFor({ height: 1 }, 0)).toBe(1)
   })
 })
 

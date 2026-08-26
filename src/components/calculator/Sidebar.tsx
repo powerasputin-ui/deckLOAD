@@ -533,7 +533,8 @@ function DeckSettings() {
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
           <p className="text-[10px] text-muted-foreground">
-            0 = один ярус. &gt;0 = расчёт ярусов по высоте груза
+            0 = без своего лимита «Ярусов» — один ярус. &gt;0 = ограничивает
+            и «Ярусов» груза, если оно больше физически влезающего по высоте
           </p>
         </div>
         <div className="space-y-1">

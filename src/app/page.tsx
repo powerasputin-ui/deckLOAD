@@ -848,9 +848,13 @@ export default function Home() {
     const newLayers = currentLayers + delta
     if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
     if (newLayers > maxPhys) {
-      const heightCap = maxLayersFor({ height: item.height }, deck.clearance)
+      // maxPhys is bound by the item's own "Ярусов" cap (not the deck's
+      // height ceiling) whenever that cap is set and is the smaller/equal
+      // value actually in effect — including when deck.clearance is 0,
+      // where maxLayersFor now lets an explicit item cap through directly
+      // rather than silently forcing 1 (see maxLayersFor's own comment).
       const reason =
-        item.maxLayers && item.maxLayers < heightCap
+        item.maxLayers && item.maxLayers > 0 && item.maxLayers <= maxPhys
           ? `Превышен лимит ярусов для этого груза (${item.maxLayers}) — измените поле «Ярусов» в списке грузов`
           : `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`
       return { ok: false, reason, maxPhys }
