@@ -291,23 +291,28 @@ void main() {
 `
 
 const UNIFORMS = {
-  // Dark-blue-only palette (per request) — a tight range of navy → steel
-  // blue shades instead of the default purple/magenta/gold recipe. All
-  // unused slots repeat the last colour (palette() only walks colorCount-1
-  // segments, so the trailing repeats are inert).
-  colors: [[0.02,0.05,0.12],[0.04,0.10,0.22],[0.06,0.16,0.32],[0.06,0.16,0.32],[0.06,0.16,0.32],[0.06,0.16,0.32],[0.06,0.16,0.32],[0.06,0.16,0.32]] as [number, number, number][],
-  colorCount: 3,
+  // Dark-blue-only palette (per request) — navy through a noticeably
+  // brighter steel/sky-blue peak, instead of a tight low-luminance band.
+  // The first pass here (three close, dark stops) made the flowing wave
+  // motion nearly invisible — the field's glow value barely moved between
+  // three colours that were all almost the same dark shade. Widening the
+  // range (and bumping intensity/warp/contrast below) keeps everything
+  // strictly blue-hued while making the animation actually read as motion.
+  // All unused slots repeat the last colour (palette() only walks
+  // colorCount-1 segments, so the trailing repeats are inert).
+  colors: [[0.02,0.05,0.12],[0.05,0.14,0.30],[0.12,0.32,0.58],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85],[0.24,0.52,0.85]] as [number, number, number][],
+  colorCount: 4,
   scale: 1.260,
-  intensity: 0.350,
+  intensity: 0.7,
   paramA: 0.280,
-  warp: 0.000,
+  warp: 0.35,
   detail: 1.824,
-  contrast: 1.005,
-  brightness: 0.000,
+  contrast: 1.0,
+  brightness: 0.04,
   saturation: 1.000,
   hue: 0.0000,
   vignette: 0.000,
-  blur: 0.0000,
+  blur: 0.012,
   grain: 0.042,
   seed: 1.0,
   rotate: 0.0000,

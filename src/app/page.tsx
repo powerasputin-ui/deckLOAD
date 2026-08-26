@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import dynamic from 'next/dynamic'
 import { v4 as uuid } from 'uuid'
 import {
@@ -72,13 +72,39 @@ import { VideoIntro } from '@/components/intro/VideoIntro'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { toast } from 'sonner'
 
+// Once a visitor clicks through the intro, this survives reloads/new tabs
+// so the video doesn't replay every time they come back.
+const INTRO_SEEN_KEY = 'deckload-intro-seen'
+
+// useSyncExternalStore (not useState+useEffect) to read this: it's the hook
+// React designed exactly for "a value that lives outside React and may
+// differ between the server-rendered snapshot and the real client value" —
+// it renders `false` (getServerSnapshot) for the initial/server-matching
+// pass with no hydration-mismatch warning, then transparently re-renders
+// with the real localStorage value right after hydration. A plain
+// useState+useEffect pair would need its own three-state dance (null while
+// unchecked) to get the same guarantee, and calling setState directly
+// inside the effect body trips react-hooks/set-state-in-effect.
+const noopSubscribe = () => () => {}
+const getIntroSeenSnapshot = () => window.localStorage.getItem(INTRO_SEEN_KEY) === '1'
+const getIntroSeenServerSnapshot = () => false
+
 export default function Home() {
-  // NEXT_PUBLIC_SKIP_INTRO is inlined at build time (identical on server
-  // and client — no window/localStorage read here, so no hydration
-  // mismatch) and set ONLY in playwright.config.ts / vitest.config.ts's
-  // test environments, so automated suites skip straight to the
-  // calculator; real visitors always see the intro.
-  const [entered, setEntered] = useState(() => process.env.NEXT_PUBLIC_SKIP_INTRO === '1')
+  const introSeen = useSyncExternalStore(noopSubscribe, getIntroSeenSnapshot, getIntroSeenServerSnapshot)
+  // A same-session "just clicked enter" flag — the snapshot above only
+  // reflects localStorage from a PAST visit; localStorage.setItem in
+  // handleEnterIntro doesn't itself trigger a re-render (noopSubscribe
+  // never fires), so entering this session is tracked separately.
+  const [justEntered, setJustEntered] = useState(false)
+  // NEXT_PUBLIC_SKIP_INTRO is inlined as a constant at build time —
+  // identical on server and client, so it's safe to read directly here.
+  // Set ONLY in playwright.config.ts's and vitest.config.ts's test
+  // environments, so automated suites skip straight to the calculator.
+  const entered = process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered
+  const handleEnterIntro = () => {
+    window.localStorage.setItem(INTRO_SEEN_KEY, '1')
+    setJustEntered(true)
+  }
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
@@ -1394,7 +1420,7 @@ export default function Home() {
   }
 
   if (!entered) {
-    return <VideoIntro onEnter={() => setEntered(true)} />
+    return <VideoIntro onEnter={handleEnterIntro} />
   }
 
   return (
