@@ -19,5 +19,9 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
+    // Skips the video intro gate for every automated spec — set only here
+    // and in vitest.config.ts, never in production. NEXT_PUBLIC_ vars are
+    // inlined at build time, so this must be present during `bun run build`.
+    env: { NEXT_PUBLIC_SKIP_INTRO: '1' },
   },
 })

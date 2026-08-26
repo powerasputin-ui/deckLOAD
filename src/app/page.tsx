@@ -68,10 +68,17 @@ import { StatsPanel } from '@/components/calculator/StatsPanel'
 import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
 import { PresetsBar } from '@/components/calculator/PresetsBar'
+import { VideoIntro } from '@/components/intro/VideoIntro'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { toast } from 'sonner'
 
 export default function Home() {
+  // NEXT_PUBLIC_SKIP_INTRO is inlined at build time (identical on server
+  // and client — no window/localStorage read here, so no hydration
+  // mismatch) and set ONLY in playwright.config.ts / vitest.config.ts's
+  // test environments, so automated suites skip straight to the
+  // calculator; real visitors always see the intro.
+  const [entered, setEntered] = useState(() => process.env.NEXT_PUBLIC_SKIP_INTRO === '1')
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
@@ -1384,6 +1391,10 @@ export default function Home() {
   const handleSelectVariant = (variant: PackVariant) => {
     applyVariant(variant)
     toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
+  }
+
+  if (!entered) {
+    return <VideoIntro onEnter={() => setEntered(true)} />
   }
 
   return (

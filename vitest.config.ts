@@ -9,6 +9,9 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Skips the video intro gate so page.test.tsx keeps rendering the
+    // calculator directly — see playwright.config.ts for the matching e2e flag.
+    env: { NEXT_PUBLIC_SKIP_INTRO: '1' },
   },
   resolve: {
     alias: {
