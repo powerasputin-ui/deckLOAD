@@ -546,6 +546,32 @@ describe('calculator store', () => {
     expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].weight).toBe(250)
   })
 
+  it('clamps existing placements down when maxLayers is tightened, without a repack', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0, clearance: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, height: 1, quantity: 5 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#000',
+    })
+    s.pinFromPlaced(0, { itemId: item.id, name: 'Box', x: 5, y: 5, width: 1, length: 1, layers: 4, rotated: false, color: '#000' })
+    s.updateItem(item.id, { maxLayers: 2 })
+    expect(useCalculator.getState().manualPlacements[0].layers).toBe(2)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].layers).toBe(2)
+  })
+
+  it('does not shrink existing placements when maxLayers is raised or unset', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0, clearance: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, height: 1, quantity: 5, maxLayers: 2 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 2, rotated: false, color: '#000',
+    })
+    s.updateItem(item.id, { maxLayers: 8 })
+    expect(useCalculator.getState().manualPlacements[0].layers).toBe(2)
+  })
+
   it('reflows existing placements when the item width/length changes', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0 })

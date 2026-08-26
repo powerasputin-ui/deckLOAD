@@ -798,7 +798,10 @@ export const useCalculator = create<CalculatorState>()(
       const weightChanged = patch.weight !== undefined && patch.weight !== prevItem.weight
       const widthChanged = patch.width !== undefined && patch.width !== prevItem.width
       const lengthChanged = patch.length !== undefined && patch.length !== prevItem.length
-      if (!weightChanged && !widthChanged && !lengthChanged) return { items }
+      const layerCapChanged =
+        (patch.maxLayers !== undefined && patch.maxLayers !== prevItem.maxLayers) ||
+        (patch.height !== undefined && patch.height !== prevItem.height)
+      if (!weightChanged && !widthChanged && !lengthChanged && !layerCapChanged) return { items }
 
       // Existing placements snapshot their own width/length/weight at the
       // time they were placed — without this, editing an item after it's
@@ -835,6 +838,30 @@ export const useCalculator = create<CalculatorState>()(
       }
       if (stillColliding) {
         toast.warning('Новый размер груза не помещается без пересечений — проверьте раскладку')
+      }
+
+      // A tighter "Ярусов" cap (or a taller item, which lowers the
+      // clearance-height ceiling) must also clamp the layer count already
+      // baked into existing placements — without this, edits to maxLayers
+      // silently did nothing until the next full repack (Автораспределение),
+      // which is the exact bug this closes. Only clamps down, mirroring the
+      // clearance-driven clamp in setDeck's reflow above: raising the cap
+      // never grows an existing stack on its own.
+      let layersClamped = false
+      if (layerCapChanged) {
+        const newItem = items.find((it) => it.id === id)!
+        const newMaxLayers = maxLayersFor(newItem, s.deck.clearance)
+        const clampLayers = <T extends { itemId: string; layers: number }>(p: T): T =>
+          p.itemId === id && p.layers > newMaxLayers
+            ? ((layersClamped = true), { ...p, layers: newMaxLayers })
+            : p
+        manualPlacements = manualPlacements.map(clampLayers)
+        pinnedPlacementsByTrip = Object.fromEntries(
+          Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(clampLayers)])
+        )
+      }
+      if (layersClamped) {
+        toast.info('Число ярусов уже размещённого груза уменьшено под новый лимит')
       }
 
       return { items, manualPlacements, pinnedPlacementsByTrip }
