@@ -37,7 +37,12 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await originalCard.locator('label:has-text("Кол-во") + input').fill('8')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.locator('svg rect[fill="#57534e"]')).toHaveCount(1)
+    // A stacked pipe pyramid now draws as several <rect> capsule segments
+    // sharing the same fill (see DeckVisualization's per-row pipe render) —
+    // count placements via the g[data-cargo-placement] wrapper, not raw
+    // rects, so one 8-pipe pyramid isn't miscounted as several placements.
+    const pipePlacements = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])')
+    await expect(pipePlacements).toHaveCount(1)
 
     // Duplicate it — the copy starts with the same quantity (8) and,
     // being in auto mode, places itself on the deck automatically.
@@ -51,7 +56,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // second pointer-down created a THIRD placement instead of dragging).
     await page.keyboard.press('Escape')
 
-    const pipeRects = page.locator('svg rect[fill="#57534e"]')
+    const pipeRects = pipePlacements
     await expect(pipeRects).toHaveCount(2)
     await pipeRects.nth(0).scrollIntoViewIfNeeded()
 

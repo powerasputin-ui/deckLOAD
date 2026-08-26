@@ -22,6 +22,7 @@ import {
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
   pipePyramidSpreadMargin,
+  decomposePipePyramid,
   withHardBlockFootprint,
   addClearanceMargins,
   pyramidSpreadAsClearance,
@@ -3241,6 +3242,8 @@ function FootprintShape({
   outline,
   rotated,
   scale,
+  pipeRowCount,
+  pipeDivideAxis,
 }: {
   shape?: PlacedItem['shape']
   x: number
@@ -3260,8 +3263,46 @@ function FootprintShape({
   outline?: { x: number; y: number }[]
   rotated?: boolean
   scale?: number
+  // When set (a stacked pipe pyramid, see PlacedRect's pipeSpread), the
+  // widened `w`/`h` footprint is divided into this many round-ended
+  // segments along `pipeDivideAxis`, so it reads as several pipes side by
+  // side instead of one solid box the width of a container.
+  pipeRowCount?: number
+  pipeDivideAxis?: 'w' | 'h'
 }) {
   const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
+  if (shape === 'cylinder') {
+    // A pipe lying flat is genuinely a thin rectangle from directly above
+    // (only its END shows roundness) — a capsule (fully rounded short
+    // ends) reads as "round stock" at a glance without pretending to show
+    // a circular cross-section that isn't actually visible from this
+    // angle. When more than one pipe occupies this footprint's base row
+    // (pipeRowCount > 1), divide the widened axis into that many capsules
+    // with a hairline gap between them, so the true multi-pipe width
+    // drawn here (see pipePyramidSpreadMargin) doesn't just look like one
+    // wide solid block.
+    if (pipeRowCount && pipeRowCount > 1 && pipeDivideAxis) {
+      const isW = pipeDivideAxis === 'w'
+      const totalSpan = isW ? w : h
+      const crossSpan = isW ? h : w
+      const gap = Math.max(0.5, Math.min(2, totalSpan / pipeRowCount * 0.06))
+      const segSpan = (totalSpan - gap * (pipeRowCount - 1)) / pipeRowCount
+      const r = Math.min(segSpan, crossSpan) / 2
+      return (
+        <>
+          {Array.from({ length: pipeRowCount }).map((_, i) => {
+            const offset = i * (segSpan + gap)
+            const segX = isW ? x + offset : x
+            const segY = isW ? y : y + offset
+            const segW = isW ? segSpan : w
+            const segH = isW ? h : segSpan
+            return <rect key={i} x={segX} y={segY} width={segW} height={segH} rx={r} ry={r} {...common} />
+          })}
+        </>
+      )
+    }
+    return <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />
+  }
   if (shape === 'custom' && outline && outline.length >= 3 && scale) {
     const origWidth = rotated ? h / scale : w / scale
     const origLength = rotated ? w / scale : h / scale
@@ -3376,8 +3417,31 @@ function PlacedRect({
       : onPointerDown
         ? 'grab'
         : 'pointer'
+  // A stacked pipe pyramid's widened footprint (w/h already inflated to
+  // the true base-row width — see the render loop above) should visually
+  // read as several round pipes side by side, not one solid box that
+  // happens to be wider — otherwise it's indistinguishable from a
+  // container at a glance. pipeSpread tells FootprintShape how many
+  // segments to divide the widened axis into, and which axis (w or h)
+  // that widening was applied to.
+  const pipeSpread =
+    item.shape === 'cylinder' && item.stackedCount > 1
+      ? (() => {
+          const margin = pipePyramidSpreadMargin(item, item.stackedCount)
+          const rowCount = Math.max(1, decomposePipePyramid(item.stackedCount)[0]?.offsets.length ?? 1)
+          if (margin.onWidth === 0 && margin.onLength === 0) return null
+          return { rowCount, axis: margin.onWidth > 0 ? ('w' as const) : ('h' as const) }
+        })()
+      : null
   return (
     <g
+      // A stacked pipe pyramid can render as several <rect> segments (see
+      // pipeSpread above) that all share the same fill color — a plain
+      // `svg rect[fill="..."]` selector (used by several e2e specs to
+      // count placements) would then over-count one placement as many.
+      // This marks exactly one element per placement, regardless of how
+      // many segments its shape draws inside.
+      data-cargo-placement="true"
       onMouseEnter={(e) => {
         onHover(item.itemId)
         if (contentsTitle) onContentsHover?.(contentsTitle, e.clientX, e.clientY)
@@ -3421,6 +3485,8 @@ function PlacedRect({
         outline={item.outline}
         rotated={item.rotated}
         scale={scale}
+        pipeRowCount={pipeSpread?.rowCount}
+        pipeDivideAxis={pipeSpread?.axis}
       />
       {overLoadTitle && <title>{overLoadTitle}</title>}
       {overLoad && w >= 14 && h >= 14 && (
