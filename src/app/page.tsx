@@ -1632,8 +1632,11 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Right panel row 1: placement */}
-            <div className="xl:col-span-4">
+            {/* Right panel row 1: placement — self-start so it doesn't
+                stretch to match the deck card's height (same fix already
+                applied to the Статистика/Грузы row below), which used to
+                leave a block of empty space under a short tips list. */}
+            <div className="xl:col-span-4 self-start">
               <PlacementPanel
                 mode={mode}
                 tripIndex={clampedTripIndex}
