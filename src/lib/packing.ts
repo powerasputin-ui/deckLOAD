@@ -1765,6 +1765,71 @@ export function withClearanceFootprint<
   }
 }
 
+// Sums two optional ClearanceMargins side-by-side — used to combine a
+// placement's own explicit clearanceMargin with an implicit margin (e.g. a
+// pipe pyramid's own spread) into one value that every existing
+// margin-aware call site (resolveSnappedDragPosition's selfMargin, etc.)
+// already knows how to consume, instead of teaching each of them a second
+// margin concept.
+export function addClearanceMargins(a?: ClearanceMargin, b?: ClearanceMargin): ClearanceMargin | undefined {
+  if (!a && !b) return undefined
+  return {
+    top: (a?.top ?? 0) + (b?.top ?? 0),
+    right: (a?.right ?? 0) + (b?.right ?? 0),
+    bottom: (a?.bottom ?? 0) + (b?.bottom ?? 0),
+    left: (a?.left ?? 0) + (b?.left ?? 0),
+  }
+}
+
+// Expresses a pipe pyramid's own spread (see pipePyramidSpreadMargin) as a
+// ClearanceMargin, so it can be merged (addClearanceMargins) with a real
+// clearanceMargin and fed through the same selfMargin plumbing that already
+// makes a dragged zoned item's OWN footprint search-and-collide correctly.
+export function pyramidSpreadAsClearance(
+  p: { shape?: CargoShape; width: number; length: number; height: number },
+  layers: number
+): ClearanceMargin | undefined {
+  const m = pipePyramidSpreadMargin(p, layers)
+  if (m.onWidth === 0 && m.onLength === 0) return undefined
+  return { top: m.onLength, bottom: m.onLength, left: m.onWidth, right: m.onWidth }
+}
+
+// Same idea as withClearanceFootprint, but also folds in a stacked pipe
+// pyramid's own spread (pipePyramidSpreadMargin) — the packing engine's
+// algorithmic placement already reserves this wider cell so pyramids don't
+// overlap their neighbours, but the interactive click/drag/rotate/nudge
+// collision paths only ever knew about clearanceMargin. Without this, a
+// user could drag a pipe stack right up against a neighbour at just the
+// flat gap, closer than the pyramid can actually occupy without its base
+// row overlapping — which the 2D view now draws as a real, visible
+// overlap (see the pyramid-footprint render fix in DeckVisualization.tsx).
+export function withHardBlockFootprint<
+  T extends {
+    x: number
+    y: number
+    width: number
+    length: number
+    clearanceMargin?: ClearanceMargin
+    shape?: CargoShape
+    height?: number
+    stackedCount?: number
+  }
+>(p: T): { x: number; y: number; width: number; length: number } {
+  const cm = p.clearanceMargin
+  const pyr = pipePyramidSpreadMargin({ shape: p.shape, width: p.width, length: p.length, height: p.height ?? 0 }, p.stackedCount ?? 1)
+  const left = (cm?.left ?? 0) + pyr.onWidth
+  const right = (cm?.right ?? 0) + pyr.onWidth
+  const top = (cm?.top ?? 0) + pyr.onLength
+  const bottom = (cm?.bottom ?? 0) + pyr.onLength
+  if (left === 0 && right === 0 && top === 0 && bottom === 0) return p
+  return {
+    x: p.x - left,
+    y: p.y - top,
+    width: p.width + left + right,
+    length: p.length + top + bottom,
+  }
+}
+
 // A lashing point's anchor needs clear room for rigging access (tensioning,
 // inspecting, releasing the device) — cargo shouldn't be placeable directly
 // on top of it. The exclusion square is sized to track the deck's own gap
@@ -2136,14 +2201,17 @@ type ClearanceCollisionCandidate = {
   rotated?: boolean
   outline?: { x: number; y: number }[]
   clearanceMargin?: ClearanceMargin
+  shape?: CargoShape
+  height?: number
+  stackedCount?: number
 }
 export function collidesWithClearance(
   target: ClearanceCollisionCandidate,
   others: ClearanceCollisionCandidate[],
   gap = 0
 ): boolean {
-  if (collidesPrecisely(target, others.map(withClearanceFootprint), gap)) return true
-  if (target.clearanceMargin && collidesPrecisely(withClearanceFootprint(target), others, gap)) return true
+  if (collidesPrecisely(target, others.map(withHardBlockFootprint), gap)) return true
+  if (collidesPrecisely(withHardBlockFootprint(target), others, gap)) return true
   return false
 }
 

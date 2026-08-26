@@ -42,6 +42,7 @@ import {
   collidesWithClearance,
   isPipeShape,
   type ClearanceMargin,
+  type CargoShape,
   lashingPointExclusionRects,
   restrictionZoneExclusions,
   checkZoneLoads,
@@ -549,10 +550,13 @@ export default function Home() {
     const preciseOthers = [
       ...result.placed
         .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin })),
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount })),
       ...zoneRects,
     ]
-    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline, clearanceMargin: pin.clearanceMargin }
+    // The rotated pin's own footprint also needs pipe-pyramid self-widening
+    // (see collidesWithClearance) so it can't rotate itself right up
+    // against a neighbour closer than its own pyramid base actually allows.
+    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline, clearanceMargin: pin.clearanceMargin, shape: item.shape, height: item.height, stackedCount: pin.layers }
     if (collidesWithClearance(target, preciseOthers, deck.gap)) {
       toast.warning('Невозможно повернуть: нет места')
       return
@@ -594,10 +598,10 @@ export default function Home() {
     const preciseOthers = [
       ...result.placed
         .filter((p) => manualPlacements[p.index]?.id !== id)
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin })),
+        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount })),
       ...zoneRects2,
     ]
-    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline, clearanceMargin: mp.clearanceMargin }
+    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline, clearanceMargin: mp.clearanceMargin, shape: item.shape, height: item.height, stackedCount: mp.layers }
     if (collidesWithClearance(target, preciseOthers, deck.gap)) {
       toast.warning('Невозможно повернуть: нет места')
       return
@@ -734,19 +738,22 @@ export default function Home() {
       // Single check (bbox + outline + both-direction clearance margin) —
       // sourced from result.placed like the rotate handlers above, since
       // raw ManualPlacement/PinnedPlacement never carry outline data.
-      type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }
+      type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: CargoShape; height?: number; stackedCount?: number }
       const placedRects: CollisionCandidate[] =
         mode === 'manual'
           ? result.placed
               .filter((p) => manualPlacements[p.index]?.id !== selectedId)
-              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
           : result.placed
               .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
-              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin }))
+              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
       const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
       const zoneRects3: CollisionCandidate[] = restrictionZoneExclusions(deck.restrictionZones ?? [])
       const preciseOthers = [...placedRects, ...lashingRects3, ...zoneRects3]
-      const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin }
+      // Same pipe-pyramid self-widening as the rotate handlers above, so a
+      // nudged pipe stack can't be walked closer to a neighbour than its
+      // own pyramid base actually allows.
+      const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin, shape: nudgedItem?.shape, height: nudgedItem?.height, stackedCount: current.layers }
       if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
       if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
       else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y })

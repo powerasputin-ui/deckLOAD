@@ -37,6 +37,9 @@ import {
   decomposePipePyramid,
   isPipeShape,
   pipePyramidSpreadMargin,
+  withHardBlockFootprint,
+  addClearanceMargins,
+  pyramidSpreadAsClearance,
   type CargoItem,
   type ManualPlacement,
   type PinnedPlacement,
@@ -725,6 +728,78 @@ describe('collidesWithClearance', () => {
     const c = { x: 2, y: 0, width: 1, length: 1 }
     expect(collidesWithClearance(a, [b])).toBe(true)
     expect(collidesWithClearance(a, [c])).toBe(false)
+  })
+})
+
+describe('withHardBlockFootprint', () => {
+  it('returns the footprint unchanged for a non-pipe or a single-layer pipe', () => {
+    const box = { x: 1, y: 1, width: 2, length: 2, shape: 'box' as const, height: 1, stackedCount: 8 }
+    expect(withHardBlockFootprint(box)).toEqual(box)
+    const singlePipe = { x: 1, y: 1, width: 9.5, length: 0.15, shape: 'cylinder' as const, height: 0.15, stackedCount: 1 }
+    expect(withHardBlockFootprint(singlePipe)).toEqual(singlePipe)
+  })
+
+  it('inflates a stacked pipe pyramid by pipePyramidSpreadMargin, matching a direct call', () => {
+    const pipe = { x: 1, y: 1, width: 9.5, length: 0.15, shape: 'cylinder' as const, height: 0.15, stackedCount: 9 }
+    const margin = pipePyramidSpreadMargin(pipe, 9)
+    expect(withHardBlockFootprint(pipe)).toEqual({
+      x: 1 - margin.onWidth,
+      y: 1 - margin.onLength,
+      width: 9.5 + margin.onWidth * 2,
+      length: 0.15 + margin.onLength * 2,
+    })
+  })
+
+  it('combines clearanceMargin and pyramid spread additively', () => {
+    const pipe = {
+      x: 1, y: 1, width: 9.5, length: 0.15, shape: 'cylinder' as const, height: 0.15, stackedCount: 9,
+      clearanceMargin: { top: 0.2, right: 0.3, bottom: 0.2, left: 0.3 },
+    }
+    const pyr = pipePyramidSpreadMargin(pipe, 9)
+    const combined = withHardBlockFootprint(pipe)
+    expect(combined.x).toBeCloseTo(1 - (0.3 + pyr.onWidth))
+    expect(combined.width).toBeCloseTo(9.5 + (0.3 + pyr.onWidth) * 2)
+  })
+})
+
+describe('collidesWithClearance — pipe pyramid self-widening (regression)', () => {
+  // The exact scenario reported: a stacked pipe pyramid dragged right up
+  // against a container at only the flat configured gap. The pyramid's
+  // real base row is wider than a single pipe's cross-section, so this
+  // must be blocked even though the raw (unwidened) rects don't overlap.
+  it('blocks a pipe pyramid from sitting closer to a neighbour than its own base row needs', () => {
+    const pipeStack = { x: 0, y: 5, width: 9.5, length: 0.15, shape: 'cylinder' as const, height: 0.15, stackedCount: 9 }
+    const container = { x: 0, y: 0, width: 6, length: 4.85 } // 0.15m flat gap below the pipe's raw (unwidened) top edge
+    expect(collidesWithClearance(pipeStack, [container])).toBe(true)
+    const farContainer = { x: 0, y: 0, width: 6, length: 3 }
+    expect(collidesWithClearance(pipeStack, [farContainer])).toBe(false)
+  })
+
+  it('does not block a non-pipe shape or a single-layer pipe at the same distance (no false positives)', () => {
+    const box = { x: 0, y: 5, width: 9.5, length: 0.15, shape: 'box' as const, height: 0.15, stackedCount: 9 }
+    const container = { x: 0, y: 0, width: 6, length: 4.85 }
+    expect(collidesWithClearance(box, [container])).toBe(false)
+    const singlePipe = { x: 0, y: 5, width: 9.5, length: 0.15, shape: 'cylinder' as const, height: 0.15, stackedCount: 1 }
+    expect(collidesWithClearance(singlePipe, [container])).toBe(false)
+  })
+})
+
+describe('addClearanceMargins / pyramidSpreadAsClearance', () => {
+  it('addClearanceMargins sums two margins side by side, and passes through a single one unchanged', () => {
+    const a = { top: 1, right: 2, bottom: 3, left: 4 }
+    const b = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }
+    expect(addClearanceMargins(a, b)).toEqual({ top: 1.5, right: 2.5, bottom: 3.5, left: 4.5 })
+    expect(addClearanceMargins(a, undefined)).toEqual(a)
+    expect(addClearanceMargins(undefined, undefined)).toBeUndefined()
+  })
+
+  it('pyramidSpreadAsClearance mirrors pipePyramidSpreadMargin as a ClearanceMargin, or undefined when zero', () => {
+    const pipe = { shape: 'cylinder' as const, width: 9.5, length: 0.15, height: 0.15 }
+    const m = pyramidSpreadAsClearance(pipe, 9)
+    const pyr = pipePyramidSpreadMargin(pipe, 9)
+    expect(m).toEqual({ top: pyr.onLength, bottom: pyr.onLength, left: pyr.onWidth, right: pyr.onWidth })
+    expect(pyramidSpreadAsClearance(pipe, 1)).toBeUndefined()
+    expect(pyramidSpreadAsClearance({ shape: 'box', width: 2, length: 1, height: 1 }, 9)).toBeUndefined()
   })
 })
 

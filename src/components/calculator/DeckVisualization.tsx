@@ -13,7 +13,6 @@ import {
   rectInsidePolygon,
   erodePolygon,
   dedupePolygonVertices,
-  withClearanceFootprint,
   lashingPointExclusionRects,
   rotateOutline90,
   resolveSnappedDragPosition,
@@ -23,6 +22,10 @@ import {
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
   pipePyramidSpreadMargin,
+  decomposePipePyramid,
+  withHardBlockFootprint,
+  addClearanceMargins,
+  pyramidSpreadAsClearance,
   type PackingResult,
   type PlacedItem,
   type ManualPlacement,
@@ -1367,16 +1370,25 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const draggedRendered = renderedItems.find((m) => m.manualId === dragState.id)
           const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
           const zoneExclusions = restrictionZones?.length ? restrictionZoneExclusions(restrictionZones) : []
-          const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
+          const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: PlacedItem['shape']; height?: number; stackedCount?: number }[] = [
             ...renderedItems.filter((m) => m.manualId !== dragState.id),
             ...lashingExclusions,
             ...zoneExclusions,
           ]
-          const others = preciseOthers.map((m) => withClearanceFootprint(m))
-          const resolved = resolveDragPosition(
-            nx, ny, mp.width, mp.length, mp.x, mp.y, others, mp.clearanceMargin
+          const others = preciseOthers.map((m) => withHardBlockFootprint(m))
+          // A dragged PIPE STACK needs the same "search agrees with the
+          // final gate" self-widening the zoned-item fix already gives
+          // clearanceMargin — otherwise the search can return a position
+          // that then fails the final collidesWithClearance gate below
+          // (its own self-widen branch), silently freezing the drag.
+          const selfMargin = addClearanceMargins(
+            mp.clearanceMargin,
+            draggedRendered ? pyramidSpreadAsClearance(draggedRendered, draggedRendered.stackedCount) : undefined
           )
-          const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline, clearanceMargin: mp.clearanceMargin }
+          const resolved = resolveDragPosition(
+            nx, ny, mp.width, mp.length, mp.x, mp.y, others, selfMargin
+          )
+          const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline, clearanceMargin: mp.clearanceMargin, shape: draggedRendered?.shape, height: draggedRendered?.height, stackedCount: draggedRendered?.stackedCount }
           const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
           if (insideDeck && !collidesWithClearance(resolvedTarget, preciseOthers, gap)) {
             setDragPreviewPos({ x: resolved.x, y: resolved.y })
@@ -1565,16 +1577,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         )
         const lashingExclusions = lashingPoints?.length ? lashingPointExclusionRects(lashingPoints, gap) : []
         const zoneExclusions = restrictionZones?.length ? restrictionZoneExclusions(restrictionZones) : []
-        const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin }[] = [
+        const preciseOthers: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: PlacedItem['shape']; height?: number; stackedCount?: number }[] = [
           ...renderedItems.filter((p2) => p2 !== draggedRendered),
           ...lashingExclusions,
           ...zoneExclusions,
         ]
-        const others = preciseOthers.map((p2) => withClearanceFootprint(p2))
-        const resolved = resolveDragPosition(
-          nx, ny, pin.width, pin.length, pin.x, pin.y, others, pin.clearanceMargin
+        const others = preciseOthers.map((p2) => withHardBlockFootprint(p2))
+        // Same pipe-pyramid self-widening as the manual-drag branch above.
+        const selfMargin = addClearanceMargins(
+          pin.clearanceMargin,
+          draggedRendered ? pyramidSpreadAsClearance(draggedRendered, draggedRendered.stackedCount) : undefined
         )
-        const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline, clearanceMargin: pin.clearanceMargin }
+        const resolved = resolveDragPosition(
+          nx, ny, pin.width, pin.length, pin.x, pin.y, others, selfMargin
+        )
+        const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline, clearanceMargin: pin.clearanceMargin, shape: draggedRendered?.shape, height: draggedRendered?.height, stackedCount: draggedRendered?.stackedCount }
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
         if (insideDeck && !collidesWithClearance(resolvedTarget, preciseOthers, gap)) {
           setDragPreviewPos({ x: resolved.x, y: resolved.y })
@@ -2519,8 +2536,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
         {/* Placed items */}
         {renderedItems.map((p, idx) => {
-          const pw = p.width * scale
-          const ph = p.length * scale
+          // A stacked pipe pyramid's true occupied footprint is wider than a
+          // single pipe's own cross-section the moment more than one layer
+          // is placed — the packing engine already reserves this exact
+          // widened cell (pipePyramidSpreadMargin) so pyramids don't
+          // overlap their neighbours, but the rect drawn here used to stay
+          // single-pipe width regardless, making the reserved gap to a
+          // neighbour look like unexplained empty space. Drawing the real
+          // footprint fixes that — what's on screen now matches what's
+          // actually blocked. Returns zero margin for non-pipe shapes and
+          // single-layer placements, so nothing else changes.
+          const spreadMargin = pipePyramidSpreadMargin(p, p.stackedCount)
+          const visWidth = p.width + spreadMargin.onWidth * 2
+          const visLength = p.length + spreadMargin.onLength * 2
+          const pw = visWidth * scale
+          const ph = visLength * scale
           const isHover = hoveredItemId === p.itemId
           const isManualSelected =
             mode === 'manual' &&
@@ -2560,12 +2590,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // only reflects the throttled store commit) — see dragPreviewPos.
           const renderX = isBeingDragged && dragPreviewPos ? dragPreviewPos.x : p.x
           const renderY = isBeingDragged && dragPreviewPos ? dragPreviewPos.y : p.y
+          // p.x/p.y is the pipe's own (unwidened) rect origin — the widened
+          // cell is centered on it, so shift the drawn origin back by the
+          // margin on each side to keep the pyramid centered where it
+          // actually sits.
+          const drawX = renderX - spreadMargin.onWidth
+          const drawY = renderY - spreadMargin.onLength
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
               item={p}
-              x={toX(renderX)}
-              y={toY(renderY)}
+              x={toX(drawX)}
+              y={toY(drawY)}
               w={pw}
               h={ph}
               scale={scale}
@@ -3438,27 +3474,24 @@ function PlacedRect({
         )
       })()}
       {item.stackedCount > 1 && item.shape === 'cylinder' && (() => {
-        // Schematic "bundle of pipes" glyph — a row of small circles (one
-        // per unit ACTUALLY stacked here, up to however many fit) instead
-        // of a numeric badge, so "several round items are stacked here"
-        // reads at a glance even when the item itself renders far too thin
-        // on screen to show its real cross-section (a 0.15m pipe is
-        // sub-pixel at deck scale). Uses stackedCount, not the theoretical
-        // per-footprint capacity (item.layers, derived from deck clearance
-        // / item height) — that capacity can be far larger than what's
-        // actually placed (e.g. 34 for a thin pipe under a tall clearance
-        // setting) and would otherwise draw a misleading "+N" overflow
-        // badge for units that were never placed. Anchored to a minimum
-        // on-screen span so it doesn't collapse for hairline-thin
-        // footprints, same reasoning as controlAnchors above.
+        // Schematic "bundle of pipes" glyph — one circle per pipe in the
+        // pyramid's BASE (bottom) row, not every unit squeezed into a
+        // single row — so a stack of e.g. 9 pipes with a 4-wide base reads
+        // as "4 across" rather than an arbitrary flat row of 9. Spans the
+        // now-widened footprint (w/h are already inflated to the pyramid's
+        // true base width via pipePyramidSpreadMargin, see the render loop
+        // above), so the glyph visually matches the box it sits in. Falls
+        // back to the old "however many fit, +N overflow" cap only for
+        // pathologically large base rows, so it can't overflow off-screen.
+        const baseRowCount = Math.max(1, decomposePipePyramid(item.stackedCount)[0]?.offsets.length ?? 1)
         const dia = 7
         const gap = 2
         const glyphW = Math.max(w, 30)
         const cx = x + w / 2
         const cy = y + h / 2
         const maxFit = Math.max(1, Math.floor((glyphW + gap) / (dia + gap)))
-        const overflow = item.stackedCount > maxFit
-        const circleCount = overflow ? maxFit - 1 : item.stackedCount
+        const overflow = baseRowCount > maxFit
+        const circleCount = overflow ? maxFit - 1 : baseRowCount
         const startX = cx - ((circleCount + (overflow ? 1 : 0)) * (dia + gap) - gap) / 2 + dia / 2
         return (
           <g className="pointer-events-none">
@@ -3468,7 +3501,7 @@ function PlacedRect({
             ))}
             {overflow && (
               <text x={startX + circleCount * (dia + gap)} y={cy + 3} fontSize={8} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                +{item.stackedCount - circleCount}
+                +{baseRowCount - circleCount}
               </text>
             )}
           </g>
