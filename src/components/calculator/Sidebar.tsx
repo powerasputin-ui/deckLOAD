@@ -604,10 +604,18 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
     <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false}>
       <div className="space-y-2">
         <p className="text-[10px] text-muted-foreground">
-          Допустимая нагрузка (т/м²) по прямоугольным зонам палубы — это плотность (тонны на квадратный метр площади зоны), а не общий вес зоны целиком: большая зона выдерживает много тонн даже при небольшом лимите. Превышение — мягкое предупреждение, груз не блокируется.
+          Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
         </p>
         {zones.map((z) => {
           const load = zoneLoads?.find((zl) => zl.zoneId === z.id)
+          // Bare-rectangle capacity preview, shown even before anything is
+          // placed — directly answers "how many tonnes actually fit here"
+          // at the current limit, without the reader doing limit×area math
+          // themselves (the exact miscalculation this readout exists to
+          // prevent). Uses the real outline-clipped area once cargo is on
+          // the deck (load.areaM2), the bare rectangle before that.
+          const areaM2 = load?.areaM2 ?? z.width * z.length
+          const capacityT = z.maxLoadPerArea * areaM2
           return (
             <div key={z.id} className="rounded-md border p-2 space-y-1.5">
               <div className="grid grid-cols-4 gap-1">
@@ -626,6 +634,9 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
+              <p className="text-[10px] text-muted-foreground">
+                Держит до {fmtNumber(capacityT)} т суммарно ({fmtNumber(z.maxLoadPerArea)} т/м² × {fmtNumber(areaM2)} м²)
+              </p>
               {load && (
                 <p
                   className={cn(
@@ -633,8 +644,8 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
                     load.exceeded ? 'font-medium text-destructive' : 'text-muted-foreground'
                   )}
                 >
-                  Сейчас: {fmtNumber(load.densityTPerM2)} т/м² ({fmtNumber(load.totalWeightKg / 1000)} т на {fmtNumber(load.areaM2)} м²)
-                  {load.exceeded ? ' — превышен лимит' : ` из ${fmtNumber(load.limitTPerM2)}`}
+                  Сейчас в зоне: {fmtNumber(load.totalWeightKg / 1000)} т ({fmtNumber(load.densityTPerM2)} т/м²)
+                  {load.exceeded ? ' — превышен лимит!' : ` из ${fmtNumber(capacityT)} т`}
                 </p>
               )}
             </div>
