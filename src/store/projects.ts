@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride } from '@/lib/packing'
+import { toast } from 'sonner'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin } from '@/lib/packing'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
+import { DEMO_DECK, createDemoItems } from './calculator'
 
 export interface Project {
   id: string
@@ -24,6 +26,68 @@ export interface Project {
   showCargoContents: boolean
 }
 
+export interface SaveSnapshotData {
+  id: string
+  deck: DeckConfig
+  items: CargoItem[]
+  manualPlacements: ManualPlacement[]
+  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+  separationRules: SeparationRule[]
+  mode: Mode
+  sortStrategy: SortStrategy
+  globalRotation: boolean
+  showFreeSpace: boolean
+  showGrid: boolean
+  showLabels: boolean
+  showCargoContents: boolean
+}
+
+// Module-level (not React-state) pending-autosave buffer. page.tsx's autosave
+// effect debounces by calling scheduleAutosave() on every relevant change
+// instead of managing its own setTimeout — the point of hoisting this out of
+// React is that switchTo/deleteProject/createProject below are plain store
+// actions, not hooks, so they can synchronously flushPendingAutosave() the
+// LAST edited project's data before they change `activeId`. Previously the
+// only flush path was a `useEffect` cleanup keyed on `activeId`, which reran
+// in the same commit as (and in an order relative to) the project-load
+// effect that already overwrites the calculator store with the NEW project's
+// data — by the time that cleanup ran, the pending timer was simply cleared,
+// never saved, silently dropping up to 400ms of the previous project's edits
+// on every project switch/delete/create. A `beforeunload`/`pagehide` flush
+// closes the matching gap for closing/reloading the tab within that window.
+let pendingAutosave: { id: string; data: SaveSnapshotData } | null = null
+let pendingAutosaveTimer: ReturnType<typeof setTimeout> | null = null
+
+export function scheduleAutosave(data: SaveSnapshotData, save: (d: SaveSnapshotData) => void): void {
+  pendingAutosave = { id: data.id, data }
+  if (pendingAutosaveTimer) clearTimeout(pendingAutosaveTimer)
+  pendingAutosaveTimer = setTimeout(() => {
+    pendingAutosaveTimer = null
+    flushPendingAutosave(save)
+  }, 400)
+}
+
+export function flushPendingAutosave(save: (d: SaveSnapshotData) => void): void {
+  if (pendingAutosaveTimer) {
+    clearTimeout(pendingAutosaveTimer)
+    pendingAutosaveTimer = null
+  }
+  if (pendingAutosave) {
+    const { data } = pendingAutosave
+    pendingAutosave = null
+    save(data)
+  }
+}
+
+if (typeof window !== 'undefined') {
+  // `save` is resolved lazily from the live store rather than captured once,
+  // since this listener is registered at module-load time, before the store
+  // (defined below) exists.
+  const flushOnLeave = () => flushPendingAutosave((d) => useProjects.getState().saveSnapshot(d))
+  window.addEventListener('beforeunload', flushOnLeave)
+  window.addEventListener('pagehide', flushOnLeave)
+}
+
 interface ProjectsState {
   projects: Project[]
   activeId: string | null
@@ -34,21 +98,7 @@ interface ProjectsState {
   renameProject: (id: string, name: string) => void
   deleteProject: (id: string) => void
   switchTo: (id: string) => void
-  saveSnapshot: (data: {
-    id: string
-    deck: DeckConfig
-    items: CargoItem[]
-    manualPlacements: ManualPlacement[]
-    pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
-    separationRules: SeparationRule[]
-    mode: Mode
-    sortStrategy: SortStrategy
-    globalRotation: boolean
-    showFreeSpace: boolean
-    showGrid: boolean
-    showLabels: boolean
-    showCargoContents: boolean
-  }) => void
+  saveSnapshot: (data: SaveSnapshotData) => void
   duplicateProject: (id: string) => string | null
   importProject: (raw: unknown) => string | null
   getActive: () => Project | null
@@ -252,6 +302,27 @@ function normalizeStabilityOverride(value: unknown): StabilityOverride | undefin
   return { vcgAboveDeckM: o.vcgAboveDeckM }
 }
 
+function normalizeClearanceMargin(value: unknown): ClearanceMargin | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const m = value as Record<string, unknown>
+  return {
+    top: toFiniteNonNegative(m.top, 0),
+    right: toFiniteNonNegative(m.right, 0),
+    bottom: toFiniteNonNegative(m.bottom, 0),
+    left: toFiniteNonNegative(m.left, 0),
+  }
+}
+
+// A placement's own weight override — unlike CargoItem.weight (already
+// finite-checked), this passed straight through the `...` spread before,
+// so a corrupted/hand-edited import with e.g. weight: "abc" or NaN would
+// round-trip as-is and silently poison downstream arithmetic (zone-load
+// totals, the stability engine) with NaN/Infinity, with nothing in the UI
+// ever flagging it as wrong.
+function normalizeOptionalWeight(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
 function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
   if (!Array.isArray(value)) return undefined
   const points = value.map((p) => {
@@ -316,7 +387,41 @@ function normalizePinnedList(value: unknown): PinnedPlacement[] {
       layers: toPositiveInt(pin.layers, 1),
       rotated: typeof pin.rotated === 'boolean' ? pin.rotated : false,
       color: typeof pin.color === 'string' ? pin.color : '#0ea5e9',
+      weight: normalizeOptionalWeight(pin.weight),
+      clearanceMargin: normalizeClearanceMargin(pin.clearanceMargin),
+      stabilityOverride: normalizeStabilityOverride(pin.stabilityOverride),
     } as PinnedPlacement
+  })
+}
+
+// Mirrors normalizePinnedList's strictness — previously this mapping only
+// spread `...m` and overrode a handful of numeric/boolean fields, leaving
+// `itemId`/`name`/`color` completely unvalidated. A corrupted or hand-edited
+// project (itemId missing/wrong-typed) would then round-trip an `itemId`
+// typed as `string` but actually `undefined`; every downstream
+// `items.find(it => it.id === mp.itemId)` lookup that doesn't optional-chain
+// its result then throws at render time — with no error boundary anywhere
+// in the app, that crashes the entire tree, not just one placement.
+function normalizeManualPlacements(value: unknown): ManualPlacement[] {
+  if (!Array.isArray(value)) return []
+  return value.map((mm) => {
+    const m = mm as Record<string, unknown>
+    return {
+      ...(m as object),
+      id: typeof m.id === 'string' && m.id ? m.id : uuid(),
+      itemId: typeof m.itemId === 'string' ? m.itemId : '',
+      name: typeof m.name === 'string' ? m.name : 'Груз',
+      x: toFiniteNonNegative(m.x, 0),
+      y: toFiniteNonNegative(m.y, 0),
+      width: toFinitePositive(m.width, 1),
+      length: toFinitePositive(m.length, 1),
+      layers: toPositiveInt(m.layers, 1),
+      rotated: typeof m.rotated === 'boolean' ? m.rotated : false,
+      color: typeof m.color === 'string' ? m.color : '#0ea5e9',
+      weight: normalizeOptionalWeight(m.weight),
+      clearanceMargin: normalizeClearanceMargin(m.clearanceMargin),
+      stabilityOverride: normalizeStabilityOverride(m.stabilityOverride),
+    } as ManualPlacement
   })
 }
 
@@ -361,14 +466,8 @@ function freshProject(name: string, withDemo = false): Project {
     name,
     createdAt: now,
     updatedAt: now,
-    deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
-    items: withDemo
-      ? [
-          { id: uuid(), name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 },
-          { id: uuid(), name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 },
-          { id: uuid(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
-        ]
-      : [],
+    deck: { ...DEMO_DECK },
+    items: withDemo ? createDemoItems(uuid) : [],
     manualPlacements: [],
     pinnedPlacementsByTrip: {},
     separationRules: [],
@@ -437,18 +536,7 @@ function normalizeProject(p: Partial<Project>): Project {
           stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
         }))
       : [],
-    manualPlacements: Array.isArray(p.manualPlacements)
-      ? p.manualPlacements.map((m) => ({
-          ...m,
-          id: typeof m.id === 'string' && m.id ? m.id : uuid(),
-          x: toFiniteNonNegative(m.x, 0),
-          y: toFiniteNonNegative(m.y, 0),
-          width: toFinitePositive(m.width, 1),
-          length: toFinitePositive(m.length, 1),
-          layers: toPositiveInt(m.layers, 1),
-          rotated: typeof m.rotated === 'boolean' ? m.rotated : false,
-        }))
-      : [],
+    manualPlacements: normalizeManualPlacements(p.manualPlacements),
     pinnedPlacementsByTrip: normalizePinnedPlacementsByTrip(
       (p as { pinnedPlacementsByTrip?: unknown }).pinnedPlacementsByTrip,
       (p as { pinnedPlacements?: unknown }).pinnedPlacements
@@ -501,15 +589,32 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null; hasS
   }
 }
 
-function saveToStorage(projects: Project[], activeId: string | null) {
-  if (typeof window === 'undefined') return
+// Previously this swallowed a failed write entirely — every caller
+// (saveSnapshot, createProject, deleteProject, switchTo, duplicateProject,
+// importProject) went on to update the in-memory store and, for several of
+// them, show a "success" toast, even though nothing actually reached
+// localStorage (quota exceeded, private-browsing mode, storage disabled).
+// The user would keep working normally, then lose everything on the next
+// reload with no warning at all. `hasWarnedAboutStorageFailure` rate-limits
+// the toast to once per failure streak (reset on the next successful write)
+// so a persistently full quota doesn't spam a toast on every autosave tick.
+let hasWarnedAboutStorageFailure = false
+
+function saveToStorage(projects: Project[], activeId: string | null): boolean {
+  if (typeof window === 'undefined') return true
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ projects, activeId })
     )
+    hasWarnedAboutStorageFailure = false
+    return true
   } catch {
-    // ignore quota errors
+    if (!hasWarnedAboutStorageFailure) {
+      hasWarnedAboutStorageFailure = true
+      toast.error('Не удалось сохранить проект в браузере — возможно, переполнено хранилище или включён приватный режим. Изменения видны только пока открыта эта вкладка.')
+    }
+    return false
   }
 }
 
@@ -540,6 +645,10 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   },
 
   createProject: (name) => {
+    // Flush any edit still sitting in the debounce window before the
+    // currently-active project stops being active — otherwise it's silently
+    // dropped (see the pendingAutosave block above).
+    flushPendingAutosave((d) => get().saveSnapshot(d))
     // New projects start EMPTY (no preset). Use "Сбросить к примеру" for demo data.
     const p = freshProject(name || `Расчёт ${get().projects.length + 1}`, false)
     set((s) => {
@@ -561,7 +670,16 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       return next
     }),
 
-  deleteProject: (id) =>
+  deleteProject: (id) => {
+    // If the active project is the one being deleted, its own in-flight
+    // edit is moot (it's about to be discarded) — but if a DIFFERENT
+    // project is being deleted while the active one has a pending edit,
+    // that edit must still be flushed first. Flushing BEFORE this set() call
+    // (rather than from inside the updater) matters: saveSnapshot's own
+    // set() would otherwise run nested inside this one and get clobbered
+    // when this updater's returned `projects` (computed from the stale `s`
+    // closure captured before the flush) overwrites it right after.
+    if (get().activeId !== id) flushPendingAutosave((d) => get().saveSnapshot(d))
     set((s) => {
       const remaining = s.projects.filter((p) => p.id !== id)
       let activeId = s.activeId
@@ -570,14 +688,17 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       }
       saveToStorage(remaining, activeId)
       return { projects: remaining, activeId }
-    }),
+    })
+  },
 
-  switchTo: (id) =>
+  switchTo: (id) => {
+    if (!get().projects.some((p) => p.id === id)) return
+    flushPendingAutosave((d) => get().saveSnapshot(d))
     set((s) => {
-      if (!s.projects.some((p) => p.id === id)) return s
       saveToStorage(s.projects, id)
       return { activeId: id }
-    }),
+    })
+  },
 
   saveSnapshot: (data) =>
     set((s) => {

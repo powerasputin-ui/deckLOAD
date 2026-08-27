@@ -2015,8 +2015,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <rect
               x={toX(edgePad)}
               y={toY(edgePad)}
-              width={(deckWidth - edgePad * 2) * scale}
-              height={(deckLength - edgePad * 2) * scale}
+              // A board offset larger than half the deck's own width/length
+              // (easy to hit — the two fields have no cross-validation
+              // against each other) drove this negative, which SVG rejects
+              // outright ("<rect> attribute width: A negative value is not
+              // valid") — the free-space hatching a few dozen lines below
+              // already guards the identical formula with this same clamp.
+              width={Math.max(0, (deckWidth - edgePad * 2) * scale)}
+              height={Math.max(0, (deckLength - edgePad * 2) * scale)}
               fill="none"
               stroke="#94a3b8"
               strokeWidth={0.75}

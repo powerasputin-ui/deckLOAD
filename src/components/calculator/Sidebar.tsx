@@ -1006,14 +1006,17 @@ function VesselStabilitySection() {
       setKnError('Нужна хотя бы строка углов и одна строка водоизмещения')
       return
     }
-    const headingAngles = lines[0].split(',').map((s) => Number(s.trim().replace(',', '.'))).filter((n) => Number.isFinite(n))
+    // Values are comma-separated, so a comma can't also serve as this
+    // locale's decimal separator here (each part is already comma-free
+    // after the split) — periods are the only valid decimal point.
+    const headingAngles = lines[0].split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
     if (headingAngles.length === 0) {
       setKnError('Первая строка — углы крена через запятую, напр.: 0,10,20,30,40')
       return
     }
     const rows: { displacementKg: number; KNByAngle: number[] }[] = []
     for (let i = 1; i < lines.length; i++) {
-      const parts = lines[i].split(',').map((s) => Number(s.trim().replace(',', '.')))
+      const parts = lines[i].split(',').map((s) => Number(s.trim()))
       if (parts.length !== headingAngles.length + 1 || parts.some((n) => !Number.isFinite(n))) {
         setKnError(`Строка ${i + 1}: ожидается водоизмещение + ${headingAngles.length} значений KN через запятую`)
         return

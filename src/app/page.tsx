@@ -25,8 +25,8 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, PALETTE } from '@/store/calculator'
-import { useProjects } from '@/store/projects'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
+import { useProjects, scheduleAutosave } from '@/store/projects'
 import {
   packDeckVariants,
   packMultiTrip,
@@ -362,11 +362,20 @@ export default function Home() {
     loadedProjectId.current = activeId
   }, [hydrated, activeId, projects])
 
-  // Auto-save snapshot (debounced)
+  // Auto-save snapshot (debounced). The debounce timer itself lives in
+  // src/store/projects.ts (scheduleAutosave/flushPendingAutosave), not as a
+  // local setTimeout here — switchTo/deleteProject/createProject need to be
+  // able to synchronously flush a pending save before they change
+  // `activeId`, which a plain effect-owned timer can't offer them (an effect
+  // cleanup keyed on `activeId` runs too late: in the same commit as, and
+  // after, the project-load effect has already overwritten this store with
+  // the NEW project's data — see scheduleAutosave's own comment for the full
+  // trace). This was a real, reproducible data-loss bug: editing a field and
+  // switching projects within 400ms silently dropped that edit.
   useEffect(() => {
     if (!activeId || loadedProjectId.current !== activeId) return
-    const t = setTimeout(() => {
-      saveSnapshot({
+    scheduleAutosave(
+      {
         id: activeId,
         deck,
         items: items.map((it) => ({ ...it })),
@@ -382,9 +391,9 @@ export default function Home() {
         showGrid,
         showLabels,
         showCargoContents,
-      })
-    }, 400)
-    return () => clearTimeout(t)
+      },
+      saveSnapshot
+    )
   }, [activeId, deck, items, manualPlacements, pinnedPlacementsByTrip, separationRules, mode, sortStrategy, globalRotation, showFreeSpace, showGrid, showLabels, showCargoContents, saveSnapshot])
 
   // In auto mode, cargo that doesn't fit in one voyage automatically spills
@@ -556,12 +565,8 @@ export default function Home() {
 
   const handleResetCurrent = () => {
     useCalculator.setState({
-      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5.2 },
-      items: [
-        { id: crypto.randomUUID(), name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 },
-        { id: crypto.randomUUID(), name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 },
-        { id: crypto.randomUUID(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
-      ],
+      deck: { ...DEMO_DECK },
+      items: createDemoItems(() => crypto.randomUUID()),
       manualPlacements: [],
       pinnedPlacementsByTrip: {},
       separationRules: [],
@@ -577,22 +582,29 @@ export default function Home() {
     toast.info('Восстановлен демонстрационный пример')
   }
 
-  const handleRotatePinned = (id: string) => {
-    const pin = pinnedPlacements.find((p) => p.id === id)
-    if (!pin) return
-    const item = items.find((it) => it.id === pin.itemId)
+  // Shared by handleRotatePinned/handleRotateManual below — these two were
+  // ~50 lines of near-identical logic each (build `others`, call
+  // rotatePlacementAnywhere, re-check rectInsidePolygon, build
+  // preciseOthers, call collidesWithClearance), differing only in which
+  // store list/updater they touch. A future fix to the rotation-collision
+  // logic (e.g. the own-zone-after-rotation check documented below) had to
+  // be applied to both copies by hand, with nothing enforcing they stay
+  // identical — this collapses them into one implementation.
+  const attemptRotate = (
+    self: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; clearanceMargin?: ClearanceMargin },
+    siblings: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[],
+    excludeFromResultPlaced: (p: (typeof result.placed)[number]) => boolean,
+    commit: (patch: { x: number; y: number; width: number; length: number; rotated: boolean }) => void
+  ): void => {
+    const item = items.find((it) => it.id === self.itemId)
     if (!item?.allowRotation) {
-      toast.warning(`Груз «${pin.name}» не разрешает поворот`)
+      toast.warning(`Груз «${self.name}» не разрешает поворот`)
       return
     }
-    const placementRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = pinnedPlacements
-      .filter((p) => p.id !== id)
-      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, clearanceMargin: p.clearanceMargin }))
     const lashingRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
     const zoneRects = restrictionZoneExclusions(deck.restrictionZones ?? [])
-    const rawOthers = [...placementRects, ...lashingRects, ...zoneRects]
-    const others = rawOthers.map((p) => withClearanceFootprint(p))
-    const rotated = rotatePlacementAnywhere(pin, deck.width, deck.length, deck.boardOffset, deck.gap, others, usableOutline)
+    const others = [...siblings, ...lashingRects, ...zoneRects].map((p) => withClearanceFootprint(p))
+    const rotated = rotatePlacementAnywhere(self, deck.width, deck.length, deck.boardOffset, deck.gap, others, usableOutline)
     if (!rotated) {
       toast.warning('Невозможно повернуть: нет места')
       return
@@ -610,70 +622,47 @@ export default function Home() {
     // outline-vs-outline check finds actually overlapping.
     const preciseOthers = [
       ...result.placed
-        .filter((p) => !(p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01))
+        .filter((p) => !excludeFromResultPlaced(p))
         .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount })),
       ...zoneRects,
     ]
-    // The rotated pin's own footprint also needs pipe-pyramid self-widening
-    // (see collidesWithClearance) so it can't rotate itself right up
-    // against a neighbour closer than its own pyramid base actually allows.
-    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !pin.rotated, outline: item.outline, clearanceMargin: pin.clearanceMargin, shape: item.shape, height: item.height, stackedCount: pin.layers }
+    // The rotated placement's own footprint also needs pipe-pyramid
+    // self-widening (see collidesWithClearance) so it can't rotate itself
+    // right up against a neighbour closer than its own pyramid base allows.
+    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !self.rotated, outline: item.outline, clearanceMargin: self.clearanceMargin, shape: item.shape, height: item.height, stackedCount: self.layers }
     if (collidesWithClearance(target, preciseOthers, deck.gap)) {
       toast.warning('Невозможно повернуть: нет места')
       return
     }
-    updatePinned(clampedTripIndex, id, {
-      x: rotated.x,
-      y: rotated.y,
-      width: rotated.width,
-      length: rotated.length,
-      rotated: !pin.rotated,
-    })
+    commit({ x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !self.rotated })
+  }
+
+  const handleRotatePinned = (id: string) => {
+    const pin = pinnedPlacements.find((p) => p.id === id)
+    if (!pin) return
+    const siblings = pinnedPlacements
+      .filter((p) => p.id !== id)
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, clearanceMargin: p.clearanceMargin }))
+    attemptRotate(
+      pin,
+      siblings,
+      (p) => p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01,
+      (patch) => updatePinned(clampedTripIndex, id, patch)
+    )
   }
 
   const handleRotateManual = (id: string) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
-    const item = items.find((it) => it.id === mp.itemId)
-    if (!item?.allowRotation) {
-      toast.warning(`Груз «${mp.name}» не разрешает поворот`)
-      return
-    }
-    const manualRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = manualPlacements
+    const siblings = manualPlacements
       .filter((m) => m.id !== id)
       .map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, clearanceMargin: m.clearanceMargin }))
-    const lashingRects2: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-    const zoneRects2 = restrictionZoneExclusions(deck.restrictionZones ?? [])
-    const rawOthers = [...manualRects, ...lashingRects2, ...zoneRects2]
-    const others = rawOthers.map((m) => withClearanceFootprint(m))
-    const rotated = rotatePlacementAnywhere(mp, deck.width, deck.length, deck.boardOffset, deck.gap, others, usableOutline)
-    if (!rotated) {
-      toast.warning('Невозможно повернуть: нет места')
-      return
-    }
-    if (usableOutline && !rectInsidePolygon(rotated, usableOutline)) {
-      toast.warning('Невозможно повернуть: груз выйдет за пределы палубы')
-      return
-    }
-    // Same own-zone-after-rotation check as handleRotatePinned above.
-    const preciseOthers = [
-      ...result.placed
-        .filter((p) => manualPlacements[p.index]?.id !== id)
-        .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount })),
-      ...zoneRects2,
-    ]
-    const target = { x: rotated.x, y: rotated.y, width: rotated.width, length: rotated.length, rotated: !mp.rotated, outline: item.outline, clearanceMargin: mp.clearanceMargin, shape: item.shape, height: item.height, stackedCount: mp.layers }
-    if (collidesWithClearance(target, preciseOthers, deck.gap)) {
-      toast.warning('Невозможно повернуть: нет места')
-      return
-    }
-    updateManualPlacement(id, {
-      x: rotated.x,
-      y: rotated.y,
-      width: rotated.width,
-      length: rotated.length,
-      rotated: !mp.rotated,
-    })
+    attemptRotate(
+      mp,
+      siblings,
+      (p) => manualPlacements[p.index]?.id === id,
+      (patch) => updateManualPlacement(id, patch)
+    )
   }
 
   // Raw drawn points (deck-meter coords, click order) -> a normalized outline

@@ -479,7 +479,7 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
     items: [
       { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200 },
       { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800 },
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, allowRotation: true, weight: 500 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, allowRotation: true, weight: 500 },
       // Offshore/DNV 2.7-1 units — same "container" family as the two
       // above, just certified/shaped for platform crane transfer.
       { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
@@ -492,7 +492,7 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   pallets: {
     label: 'Паллеты',
     items: [
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 1.6, allowRotation: true, weight: 500 },
+      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, allowRotation: true, weight: 500 },
       { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, allowRotation: true, weight: 700 },
     ],
   },
@@ -522,6 +522,35 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Овал', width: 1.6, length: 1.0, height: 0.8, allowRotation: true, weight: 200, shape: 'oval' },
     ],
   },
+}
+
+// The single source of truth for the "demo/example" deck+cargo dataset,
+// used by BOTH the very first project a new visitor ever sees
+// (freshProject in src/store/projects.ts) and "Сбросить к примеру" /
+// handleResetCurrent (src/app/page.tsx). Previously each of those two call
+// sites hardcoded its own independent copy of this data — they had already
+// drifted (one used a real EUR-pallet height of 0.14m, matching the
+// standard's real ~144mm; the other used 1.6m, and even the deck's own
+// `clearance` differed, 0 vs 5.2) — so a user hitting "Сбросить к примеру"
+// got a visibly different demo than a first-time visitor did, changing
+// stacking-layer counts, 3D render height, and the stability VCG estimate
+// for the exact same named item. Import this in both places instead of
+// re-typing the literals.
+export const DEMO_DECK: { width: number; length: number; unit: Unit; gap: number; boardOffset: number; clearance: number } = {
+  width: 20,
+  length: 8,
+  unit: 'm',
+  gap: 0.1,
+  boardOffset: 0.2,
+  clearance: 0,
+}
+
+export function createDemoItems(genId: () => string): CargoItem[] {
+  return [
+    { id: genId(), name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 2200 },
+    { id: genId(), name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, quantity: 12, color: '#10b981', allowRotation: true, weight: 500 },
+    { id: genId(), name: 'Ящик', width: 1.5, length: 1.0, height: 1.0, quantity: 6, color: '#f59e0b', allowRotation: true, weight: 300 },
+  ]
 }
 
 // One fixed color per template NAME, shared across every category — not per
