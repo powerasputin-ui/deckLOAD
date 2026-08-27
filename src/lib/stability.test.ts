@@ -271,6 +271,82 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     expect(angleCheck.actualValue).toBe(10)
   })
 
+  it('checkIMOCriteria: angle-of-max-gz criterion passes when the curve peaks late enough', () => {
+    // Peaks at 30 deg -> satisfies the >=25deg requirement.
+    const latePeakVessel: VesselStabilityData = {
+      ...vessel,
+      knCurves: {
+        headingAngles: [0, 10, 20, 30, 40],
+        points: [{ displacementKg: 2_000_000, KNByAngle: [0, 1.0, 2.0, 3.0, 2.5] }],
+      },
+    }
+    const loading = { totalDisplacementKg: 2_000_000, KG: 0, overallTCG: 0, overallLCG: 0 }
+    const stability = computeStabilityResult(latePeakVessel, loading)!
+    const gz = computeGZCurve(latePeakVessel, loading)!
+    const angleCheck = checkIMOCriteria(gz, stability).find((c) => c.id === 'angle-of-max-gz')!
+    expect(angleCheck.pass).toBe(true)
+    expect(angleCheck.actualValue).toBe(30)
+  })
+
+  // A deliberately low-magnitude KN curve — every area criterion fails
+  // against it, giving a clean fail case for each of the three area checks.
+  const lowKNVessel: VesselStabilityData = {
+    ...vessel,
+    knCurves: {
+      headingAngles: [0, 10, 20, 30, 40],
+      points: [{ displacementKg: 2_000_000, KNByAngle: [0, 0.02, 0.04, 0.06, 0.08] }],
+    },
+  }
+  const lowKNLoading = { totalDisplacementKg: 2_000_000, KG: 0, overallTCG: 0, overallLCG: 0 }
+  // The shared "healthy" fixture at the top of this describe block
+  // (KN=[0,1.2,2.3,3.1,3.6]) is the pass case for all three area criteria —
+  // already exercised numerically in the "integrates area" test above.
+  const healthyLoading = { totalDisplacementKg: 2_000_000, KG: 0, overallTCG: 0, overallLCG: 0 }
+
+  it('checkIMOCriteria: area-0-30 criterion fails for a low curve and passes for a healthy one', () => {
+    const failStability = computeStabilityResult(lowKNVessel, lowKNLoading)!
+    const failGz = computeGZCurve(lowKNVessel, lowKNLoading)!
+    expect(checkIMOCriteria(failGz, failStability).find((c) => c.id === 'area-0-30')!.pass).toBe(false)
+
+    const passStability = computeStabilityResult(vessel, healthyLoading)!
+    const passGz = computeGZCurve(vessel, healthyLoading)!
+    expect(checkIMOCriteria(passGz, passStability).find((c) => c.id === 'area-0-30')!.pass).toBe(true)
+  })
+
+  it('checkIMOCriteria: area-30-40 criterion fails for a low curve and passes for a healthy one', () => {
+    const failStability = computeStabilityResult(lowKNVessel, lowKNLoading)!
+    const failGz = computeGZCurve(lowKNVessel, lowKNLoading)!
+    expect(checkIMOCriteria(failGz, failStability).find((c) => c.id === 'area-30-40')!.pass).toBe(false)
+
+    const passStability = computeStabilityResult(vessel, healthyLoading)!
+    const passGz = computeGZCurve(vessel, healthyLoading)!
+    expect(checkIMOCriteria(passGz, passStability).find((c) => c.id === 'area-30-40')!.pass).toBe(true)
+  })
+
+  it('checkIMOCriteria: area-0-40 criterion fails for a low curve and passes for a healthy one', () => {
+    const failStability = computeStabilityResult(lowKNVessel, lowKNLoading)!
+    const failGz = computeGZCurve(lowKNVessel, lowKNLoading)!
+    expect(checkIMOCriteria(failGz, failStability).find((c) => c.id === 'area-0-40')!.pass).toBe(false)
+
+    const passStability = computeStabilityResult(vessel, healthyLoading)!
+    const passGz = computeGZCurve(vessel, healthyLoading)!
+    expect(checkIMOCriteria(passGz, passStability).find((c) => c.id === 'area-0-40')!.pass).toBe(true)
+  })
+
+  it('checkIMOCriteria: gz-max-at-30 criterion fails when KG eats into GZ at 30deg, passes with a lower KG', () => {
+    // GZ(30) = KN(30) - KG*sin(30) = 3.1 - 6*0.5 = 0.1 < 0.2 -> fails.
+    const failLoading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+    const failStability = computeStabilityResult(vessel, failLoading)!
+    const failGz = computeGZCurve(vessel, failLoading)!
+    expect(checkIMOCriteria(failGz, failStability).find((c) => c.id === 'gz-max-at-30')!.pass).toBe(false)
+
+    // GZ(30) = 3.1 - 2*0.5 = 2.1 >= 0.2 -> passes.
+    const passLoading = { totalDisplacementKg: 2_000_000, KG: 2.0, overallTCG: 0, overallLCG: 0 }
+    const passStability = computeStabilityResult(vessel, passLoading)!
+    const passGz = computeGZCurve(vessel, passLoading)!
+    expect(checkIMOCriteria(passGz, passStability).find((c) => c.id === 'gz-max-at-30')!.pass).toBe(true)
+  })
+
   it('returns all 6 criteria', () => {
     const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
     const stability = computeStabilityResult(vessel, loading)!
