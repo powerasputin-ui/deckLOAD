@@ -83,7 +83,8 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
   const stability = computeStabilityResult(vessel, loading)
   const gz = stability ? computeGZCurve(vessel, loading) : null
   const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg
-  const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg) : null
+  const minGM = vessel.particulars.minGM
+  const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : null
   const hasFreeSurfaceData = vessel.variableWeights.some((w) => (w.freeSurfaceMomentTm ?? 0) !== 0)
 
   if (!stability) {
@@ -103,7 +104,11 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
     )
   }
 
-  const gmOk = stability.GM_fluid >= G_METACENTRIC_MIN_SAFE
+  // Judge against THIS vessel's own approved minimum whenever the loaded
+  // vessel data carries one — the generic 0.15 m is a fallback, and for a
+  // real offshore vessel it can be many times too lenient (see minGM).
+  const gmLimit = minGM ?? G_METACENTRIC_MIN_SAFE
+  const gmOk = stability.GM_fluid >= gmLimit
   const listSideLabel = stability.listSide === 'starboard' ? 'на правый борт' : stability.listSide === 'port' ? 'на левый борт' : ''
 
   return (
@@ -130,7 +135,9 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
             </div>
             <div className="text-[10px] text-muted-foreground">
               KM {fmtNumber(stability.KM)} м − KG {fmtNumber(stability.KG)} м − FSC {fmtNumber(stability.freeSurfaceCorrectionM)} м ·
-              мин. ориентир {G_METACENTRIC_MIN_SAFE} м
+              {minGM !== undefined
+                ? ` допустимый минимум ${minGM} м (формуляр судна)`
+                : ` мин. ориентир ${G_METACENTRIC_MIN_SAFE} м (общий)`}
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
               GM без поправки (GM_solid): {fmtNumber(stability.GM_solid)} м

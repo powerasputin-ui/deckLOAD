@@ -517,6 +517,57 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Якорная цепь в корзине', width: 1.5, length: 1.5, height: 1.2, allowRotation: false, weight: 3000 },
     ],
   },
+  // Real line pipe from an approved project document — ДВТК/638.362241.034
+  // "Проект перевозки труб... А. Кузнецов" REV3, Таблица 1.1/1.2. Unlike
+  // the generic drill/casing pipe in `mixed` above, every length, weight
+  // and diameter here is a real transported product.
+  //
+  // `width` is the pipe's long axis (12.15–12.38 m per the document — the
+  // upper bound is used, since a footprint must not be understated), and
+  // `length`/`height` are the OUTER diameter including concrete coating
+  // (НУБП-NN = NN mm of coating per side, so OD = steel Ø + 2×NN).
+  //
+  // Note п. 2.1.2 of the same document: a pipe stack must not exceed 3.0 m
+  // in height — set that as the clearance/height limit before stacking.
+  pipes: {
+    label: 'Трубы (проект)',
+    items: [
+      // Ø813 × 30.2 SAWL 450 IFD, concrete-coated (НУБП-NN-СК)
+      { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба Ø813×30,2 НУБП-90', width: 12.38, length: 0.993, height: 0.993, allowRotation: true, weight: 17000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e' },
+      // Ø219.1, bare (без покрытия) — OD is the steel diameter itself
+      { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155' },
+      { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155' },
+      // ТШ406.4 × 22.2 with 45 mm concrete → OD 406.4 + 2×45 = 496.4 mm
+      { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e' },
+      // ОШ-D-1220 × 13, 3 mm coating → OD 1220 + 2×3 = 1226 mm
+      { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c' },
+    ],
+  },
+  // Real certified offshore tare from the operator's own RMRS registry
+  // («Схемы укладки ТП … + тара + модули + МГС», лист «ТАРА»). Dimensions
+  // are the registry's own mm figures converted to metres; `weight` is the
+  // unit's EMPTY (tare) weight, which is what the registry lists — add the
+  // real contents on top before trusting any stability number. The payload
+  // capacity ("полезная нагрузка") each unit is certified for is carried in
+  // `contents` so it shows on hover instead of being silently lost.
+  offshoreTare: {
+    label: 'Тара (реестр)',
+    items: [
+      { name: "Контейнер 10' (2661)", width: 2.991, length: 2.438, height: 2.661, allowRotation: true, weight: 2100, contents: 'Тара 2100 кг · полезная нагрузка 7480 кг' },
+      { name: "Контейнер 10' (2591)", width: 2.991, length: 2.438, height: 2.591, allowRotation: true, weight: 2230, contents: 'Тара 2230 кг · полезная нагрузка 7770 кг' },
+      { name: "Корзина 10'", width: 2.991, length: 2.438, height: 1.345, allowRotation: true, weight: 1550, contents: 'Тара 1550 кг · полезная нагрузка 7750 кг' },
+      { name: "Корзина 20'", width: 6.058, length: 2.438, height: 1.438, allowRotation: true, weight: 3500, contents: 'Тара 3500–3600 кг · полезная нагрузка 16300 кг' },
+      { name: "Контейнер 6'", width: 1.6, length: 1.8, height: 2.82, allowRotation: true, weight: 1750, contents: 'Тара 1750 кг · полезная нагрузка 5250 кг' },
+      // Gas-cylinder units — dangerous goods, so they get a category that
+      // the existing separation-rule machinery can key off directly.
+      { name: 'Корзина для баллонов (РМРС)', width: 1.25, length: 1.25, height: 2.13, allowRotation: true, weight: 580, category: 'Опасный груз', contents: 'Баллоны с газом · тара ~580 кг · полезная нагрузка ~1940 кг' },
+      { name: 'Контейнер КО-3 (16 баллонов)', width: 1.15, length: 1.15, height: 2.13, allowRotation: true, weight: 560, category: 'Опасный груз', contents: 'Офшорный КО-3 на 16 баллонов · тара ~560 кг · полезная нагрузка ~1944 кг' },
+    ],
+  },
   // Real cargo with a non-rectangular footprint — 2D/3D actually draw its
   // true shape (see CargoShape in packing.ts), not just a rectangle with a
   // shape label. Placeholder generic dimensions/weight since there's no one

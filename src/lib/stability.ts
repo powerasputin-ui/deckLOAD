@@ -39,6 +39,15 @@ export interface VesselParticulars {
   // this for the standard 30°/40° area boundaries when it is smaller.
   // undefined = not known — standard 30°/40° boundaries are used as-is.
   downfloodingAngleDeg?: number
+  // THIS vessel's own approved minimum GM for the load case at hand, read
+  // off the Min GM table in its class-approved stability booklet. Offshore
+  // vessels carrying tall deck cargo routinely require far more than the
+  // generic G_METACENTRIC_MIN_SAFE below — the real А. Кузнецов figure is
+  // 1.220 m, over eight times it — so a green "PASS" against the generic
+  // number can badly mislead. Whenever this is set it REPLACES the generic
+  // constant everywhere the criteria and UI are checked.
+  // undefined = not known; the generic reference is used and labelled as such.
+  minGM?: number
 }
 
 // A generic "everything that is not lightship and not deck cargo" weight —
@@ -621,7 +630,11 @@ export interface StabilityCriterion {
 export function checkIMOCriteria(
   gz: GZCurveResult,
   stability: StabilityResult,
-  downfloodingAngleDeg?: number
+  downfloodingAngleDeg?: number,
+  // THIS vessel's own approved minimum GM (VesselParticulars.minGM). When
+  // given it replaces the generic G_METACENTRIC_MIN_SAFE in the initial-GM
+  // criterion — see that field's own comment for why that matters.
+  minGM?: number
 ): StabilityCriterion[] {
   const results: StabilityCriterion[] = []
   const boundary30 = downfloodingAngleDeg !== undefined ? Math.min(30, downfloodingAngleDeg) : 30
@@ -675,13 +688,17 @@ export function checkIMOCriteria(
     unit: '°',
     pass: gz.angleOfMaxGZ >= 25,
   })
+  const gmLimit = minGM ?? G_METACENTRIC_MIN_SAFE
   results.push({
     id: 'initial-gm',
-    description: `Начальная GM (с поправкой на своб. поверхность) ≥ ${G_METACENTRIC_MIN_SAFE} м (IS Code 2008, п. 2.2.4) — ОБЩИЙ ориентир, сверьте с формуляром остойчивости ВАШЕГО судна`,
-    requiredValue: G_METACENTRIC_MIN_SAFE,
+    description:
+      minGM !== undefined
+        ? `Начальная GM (с поправкой на своб. поверхность) ≥ ${minGM} м — допустимый минимум ИЗ ФОРМУЛЯРА ЭТОГО СУДНА (строже общего ориентира IS Code ${G_METACENTRIC_MIN_SAFE} м)`
+        : `Начальная GM (с поправкой на своб. поверхность) ≥ ${G_METACENTRIC_MIN_SAFE} м (IS Code 2008, п. 2.2.4) — ОБЩИЙ ориентир, сверьте с формуляром остойчивости ВАШЕГО судна`,
+    requiredValue: gmLimit,
     actualValue: stability.GM_fluid,
     unit: 'м',
-    pass: stability.GM_fluid >= G_METACENTRIC_MIN_SAFE,
+    pass: stability.GM_fluid >= gmLimit,
   })
   return results
 }

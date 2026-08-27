@@ -20,6 +20,19 @@ export interface VesselTemplate {
   shipFrame: DeckShipFrame
   deckForwardIsPositiveY: boolean
   note: string // shown to the user on selection — what's real vs. estimated
+  // Operational limits, kept as STRUCTURED numbers rather than only as
+  // prose inside `note`. A caveat buried in a toast the user dismisses once
+  // is not a safety control; a number the app can show, compare against and
+  // pre-fill a load zone with is.
+  limits?: {
+    // t/m². Two real sources disagree for А. Кузнецов (see `note`), so this
+    // is a range, not a single figure — the app must not silently pick one.
+    deckStrengthTPerM2?: { min: number; max: number; sources: string }
+    maxDeckCargoT?: number // total deck cargo capacity
+    maxStackHeightM?: number // max permitted cargo stack height
+    tenFootContainerCapacity?: number // how many 10' units fit when fully loaded with pipe
+    reeferSocketCount?: number // powered sockets for reefer containers
+  }
 }
 
 // Table 3 (LC51 - Max deck cargo Arrival) line items that are NOT the deck
@@ -73,8 +86,19 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
         // offset below — not because the app enforces that consistency,
         // but because nothing else will.
         lightshipLCG: 41.213,
-        lightshipTCG: 0, // not reported in the source document (no nonzero value given)
+        // Real — Таблица 3 LIGHT SHIP row: "TCG от ДП = −0,020 м"
+        // (MTCG = −81,0 т·м). Previously carried here as 0 on the mistaken
+        // reading that the document gave no figure; it does, and zeroing it
+        // silently erases the vessel's own built-in list bias to port.
+        lightshipTCG: -0.02,
         longitudinalOrigin: 'aft-perpendicular',
+        // Real — the vessel's OWN approved minimum for this load case,
+        // interpolated from the Min GM table in Final Stability Calculation
+        // No. 4749-152-006 and quoted in the project document as
+        // "Допустимая GMmin = 1,220 м". Over 8x the app's generic 0.15 m
+        // reference, so without this the app would show a comfortable green
+        // PASS at, say, GM = 1.0 m where the real approved criterion FAILS.
+        minGM: 1.22,
       },
       hydrostatics: {
         points: [
@@ -99,14 +123,24 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
       heightAboveBaselineM: 8.40, // real — "Высота борта на миделе" (depth at midships)
     },
     deckForwardIsPositiveY: true,
+    limits: {
+      // FEMCO technical specification says 10 t/m²; the ДВТК project's own
+      // worked example explicitly designs to 5.0 t/m². Both are real, from
+      // real documents, and they disagree by a factor of two — so both are
+      // carried and the choice is left to the person planning the operation.
+      deckStrengthTPerM2: { min: 5.0, max: 10.0, sources: 'ДВТК 5,0 / FEMCO 10,0' },
+      maxDeckCargoT: 2550, // FEMCO spec — Deck Cargo
+      maxStackHeightM: 3.0, // ДВТК п. 2.1.2 — допустимая высота штабелирования
+      tenFootContainerCapacity: 14, // реестр: при полной загрузке трубной продукцией
+      reeferSocketCount: 8, // реестр: точек подключения рефконтейнеров
+    },
     note:
-      'Судно, лёгкое судно, гидростатика (1 точка) и танки/расходники — из реального утверждённого проекта (ДВТК/638.362241.034). ' +
-      'Площадь палубы (860/830 м²) подтверждена ВТОРЫМ независимым источником — технической спецификацией FEMCO — точно совпадает. ' +
-      'Размеры палубы (17×49 м) и продольное положение палубы на корпусе — по-прежнему ОЦЕНКА (ни один источник не даёт точный GA-чертёж с разбивкой ширина×длина). ' +
-      'ВНИМАНИЕ — конфликт по допустимой нагрузке на палубу: спецификация FEMCO указывает 10 т/м², а рабочий пример из проекта ДВТК явно использует лимит 5,0 т/м² ' +
-      '(«Допустимое давление груза на палубу не должно превышать g = 5,0 т/м²»). Это НЕ разрешено автоматически — при создании зоны нагрузки на палубе сверьте, ' +
-      'какой лимит актуален для конкретной операции, прежде чем полагаться на предупреждения о перегрузке. ' +
-      'Справочно: максимальная грузоподъёмность палубы (Deck Cargo capacity) по FEMCO — 2550 т. ' +
-      'Кросс-кривые KN в документах отсутствуют — недоступна полная кривая GZ. Сверьте перед реальным рейсом.',
+      'ОЦЕНКА: размеры палубы 17×49 м и её продольное положение на корпусе. Реальна только площадь (860/830 м²), ' +
+      'подтверждённая двумя независимыми источниками (ДВТК и FEMCO); ни один не даёт GA-чертёж с разбивкой ширина×длина. ' +
+      'КОНФЛИКТ ИСТОЧНИКОВ: допустимая нагрузка на палубу — 10 т/м² по FEMCO против 5,0 т/м² в рабочем примере ДВТК. ' +
+      'Приложение НЕ выбирает за вас: задавая зону нагрузки, поставьте тот лимит, который актуален для вашей операции. ' +
+      'НЕТ ДАННЫХ: кросс-кривые KN отсутствуют в обоих документах — полная кривая GZ и критерии IMO Part A недоступны, ' +
+      'считаются только начальная GM, крен и дифферент. Гидростатика — одна точка (Δ=7456,7 т), за её пределами идёт экстраполяция. ' +
+      'Остальное (лёгкое судно, танки, расходники, допустимая GMmin 1,220 м) — из реального утверждённого проекта ДВТК/638.362241.034.',
   },
 ]

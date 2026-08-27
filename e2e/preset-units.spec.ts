@@ -32,6 +32,15 @@ test.describe('Preset dimensions follow the current unit', () => {
 
     await chip.click()
     const deckSvg = page.locator('svg').filter({ has: page.locator('[data-deck-background="true"]') }).first()
+    // Arming the chip requires scrolling the preset bar (which lives BELOW
+    // the deck) into view, which pushes the deck partly off the top of the
+    // viewport — box.y goes negative. page.mouse.click() takes viewport
+    // coordinates, so a candidate point near the deck's top edge then
+    // resolves to a NEGATIVE y, lands outside the deck entirely, and
+    // silently disarms the chip; the loop below reads that as "placed" and
+    // breaks having placed nothing. Scroll the deck back into view and
+    // re-measure so every candidate is a real on-deck point.
+    await deckSvg.scrollIntoViewIfNeeded()
     const box = await deckSvg.boundingBox()
     if (!box) throw new Error('deck svg not visible')
     // Try a spread of points across the deck — the demo project is ~50%
@@ -43,10 +52,16 @@ test.describe('Preset dimensions follow the current unit', () => {
       [0.08, 0.5], [0.5, 0.5], [0.9, 0.5],
       [0.08, 0.9], [0.5, 0.9], [0.9, 0.9],
     ]
+    const viewport = page.viewportSize()
     for (const [fx, fy] of candidates) {
       const stillArmed = await page.getByRole('button', { name: /активен/ }).count()
       if (stillArmed === 0) break
-      await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy)
+      const x = box.x + box.width * fx
+      const y = box.y + box.height * fy
+      // Never click outside the viewport — that hits nothing, disarms the
+      // chip, and ends the loop early with a false "placed" signal.
+      if (y < 0 || x < 0 || (viewport && (y > viewport.height || x > viewport.width))) continue
+      await page.mouse.click(x, y)
       await page.waitForTimeout(150)
     }
 
