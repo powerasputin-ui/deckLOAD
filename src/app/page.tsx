@@ -27,6 +27,8 @@ import {
 } from '@/components/ui/toggle-group'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
 import { useProjects, scheduleAutosave } from '@/store/projects'
+import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   packDeckVariants,
   packMultiTrip,
@@ -192,6 +194,7 @@ export default function Home() {
   const saveSnapshot = useProjects((s) => s.saveSnapshot)
   const getActiveProject = useProjects((s) => s.getActive)
   const importProject = useProjects((s) => s.importProject)
+  const createProject = useProjects((s) => s.createProject)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   const handleExportJson = () => {
@@ -580,6 +583,52 @@ export default function Home() {
     clearCalculatorHistory()
     prevOverloadedZoneCountRef.current = 0
     toast.info('Восстановлен демонстрационный пример')
+  }
+
+  // "Судно" header button — creates a fresh calculation with a real
+  // vessel's deck size + stability data (lightship/hydrostatics/tanks)
+  // already filled in. Cargo is deliberately left empty; see
+  // src/lib/vesselTemplates.ts for exactly which fields are real vs.
+  // estimated for each vessel.
+  //
+  // Writes go through saveSnapshot (the PROJECT'S own persisted data),
+  // never useCalculator.setState directly — createProject() switches
+  // activeId, which schedules the "load project into calculator" effect
+  // above (~line 332) to run on the next commit and overwrite the
+  // calculator store from projects.find(activeId)'s CURRENT data. Calling
+  // useCalculator.setState synchronously here would just get clobbered by
+  // that effect a moment later (confirmed live — vessel came back
+  // undefined). Updating the project itself first means the load effect
+  // picks up the vessel data on its own, instead of fighting it.
+  const handleApplyVesselTemplate = (tpl: VesselTemplate) => {
+    const newId = createProject(tpl.label)
+    saveSnapshot({
+      id: newId,
+      deck: {
+        width: tpl.deck.width,
+        length: tpl.deck.length,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: tpl.vessel,
+        shipFrame: tpl.shipFrame,
+        deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    toast.success(`Судно «${tpl.label}» загружено`)
+    toast.info(tpl.note, { duration: 12000 })
   }
 
   // Shared by handleRotatePinned/handleRotateManual below — these two were
@@ -1464,6 +1513,32 @@ export default function Home() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8">
+                  <Ship className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">Судно</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-1.5" align="end">
+                <p className="px-1.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Библиотека судов
+                </p>
+                {VESSEL_TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => handleApplyVesselTemplate(tpl)}
+                    className="w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  >
+                    {tpl.label}
+                  </button>
+                ))}
+                <p className="px-1.5 pt-1 text-[10px] text-muted-foreground">
+                  Создаёт новый расчёт с палубой и данными судна; груз остаётся пустым.
+                </p>
+              </PopoverContent>
+            </Popover>
+
             <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
               <Download className="h-3.5 w-3.5 sm:mr-1" />
               <span className="hidden sm:inline">Скачать JSON</span>
