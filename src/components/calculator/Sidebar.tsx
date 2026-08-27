@@ -986,6 +986,9 @@ function VesselStabilitySection() {
   const setKNCrossCurves = useCalculator((s) => s.setKNCrossCurves)
   const setShipFrame = useCalculator((s) => s.setShipFrame)
   const setDeckForwardIsPositiveY = useCalculator((s) => s.setDeckForwardIsPositiveY)
+  const addVariableWeight = useCalculator((s) => s.addVariableWeight)
+  const updateVariableWeight = useCalculator((s) => s.updateVariableWeight)
+  const removeVariableWeight = useCalculator((s) => s.removeVariableWeight)
 
   const [knText, setKnText] = useState('')
   const [knError, setKnError] = useState<string | null>(null)
@@ -993,6 +996,7 @@ function VesselStabilitySection() {
   const particulars = vessel?.particulars ?? DEFAULT_VESSEL_PARTICULARS
   const points = vessel?.hydrostatics.points ?? []
   const knCurves = vessel?.knCurves
+  const variableWeights = vessel?.variableWeights ?? []
 
   const statusLabel = !vessel
     ? 'не заданы'
@@ -1043,14 +1047,24 @@ function VesselStabilitySection() {
             onChange={(e) => setVesselParticulars({ name: e.target.value || undefined })}
             className="h-7 text-xs"
           />
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-3 gap-1">
             <MiniNumField label="Длина LBP" value={particulars.lengthBpp} unit="м" onChange={(v) => setVesselParticulars({ lengthBpp: v })} />
             <MiniNumField label="Ширина" value={particulars.breadth} unit="м" onChange={(v) => setVesselParticulars({ breadth: v })} />
+            <MiniNumField
+              label="Угол заливания"
+              value={particulars.downfloodingAngleDeg ?? 0}
+              unit="°"
+              onChange={(v) => setVesselParticulars({ downfloodingAngleDeg: v > 0 ? v : undefined })}
+            />
           </div>
-          <div className="grid grid-cols-3 gap-1">
+          <p className="text-[9px] text-muted-foreground">
+            Угол заливания опционален (0 = не задан, используются стандартные 30°/40°) — задайте, если он меньше, для честной площади под GZ (IS Code 2008, п. 2.2.1).
+          </p>
+          <div className="grid grid-cols-2 gap-1">
             <MiniNumField label="Лёгкий вес" value={particulars.lightshipWeightKg} unit="кг" onChange={(v) => setVesselParticulars({ lightshipWeightKg: v })} />
             <MiniNumField label="Лёгкий KG" value={particulars.lightshipKG} unit="м" onChange={(v) => setVesselParticulars({ lightshipKG: v })} />
             <MiniNumField label="Лёгкий LCG" value={particulars.lightshipLCG} unit="м" onChange={(v) => setVesselParticulars({ lightshipLCG: v })} />
+            <MiniNumField label="Лёгкий TCG" value={particulars.lightshipTCG} unit="м" onChange={(v) => setVesselParticulars({ lightshipTCG: v })} />
           </div>
           <div className="space-y-0.5">
             <label className="text-[9px] text-muted-foreground leading-none block">Точка отсчёта LCG/LCF/LCB</label>
@@ -1065,6 +1079,51 @@ function VesselStabilitySection() {
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+            Переменные грузы (танки/балласт/топливо/вода)
+          </p>
+          <p className="text-[9px] text-muted-foreground">
+            Без этого GM показывается без поправки на свободную поверхность — реальная остойчивость может быть ниже.
+          </p>
+          {variableWeights.map((w) => (
+            <div key={w.id} className="rounded-md border p-1.5 space-y-1">
+              <div className="flex items-center gap-1">
+                <Input
+                  value={w.name}
+                  onChange={(e) => updateVariableWeight(w.id, { name: e.target.value })}
+                  className="h-6 text-[11px] flex-1"
+                  placeholder="Название (напр. Балласт форпик)"
+                />
+                <button
+                  onClick={() => removeVariableWeight(w.id)}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                  title="Удалить"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <MiniNumField label="Вес" value={w.weightKg} unit="кг" onChange={(v) => updateVariableWeight(w.id, { weightKg: v })} />
+                <MiniNumField label="VCG" value={w.vcgM} unit="м" onChange={(v) => updateVariableWeight(w.id, { vcgM: v })} />
+                <MiniNumField label="TCG" value={w.tcgM} unit="м" onChange={(v) => updateVariableWeight(w.id, { tcgM: v })} />
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                <MiniNumField label="LCG" value={w.lcgM} unit="м" onChange={(v) => updateVariableWeight(w.id, { lcgM: v })} />
+                <MiniNumField
+                  label="Момент своб. пов."
+                  value={w.freeSurfaceMomentTm ?? 0}
+                  unit="т·м"
+                  onChange={(v) => updateVariableWeight(w.id, { freeSurfaceMomentTm: v !== 0 ? v : undefined })}
+                />
+              </div>
+            </div>
+          ))}
+          <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addVariableWeight()}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Добавить переменный груз
+          </Button>
         </div>
 
         <div className="space-y-1.5">

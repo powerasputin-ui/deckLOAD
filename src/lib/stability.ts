@@ -17,6 +17,7 @@
 // nothing cached here).
 
 import type { StabilityOverride } from './packing'
+import { polygonCentroid, rotateOutline90 } from './packing'
 
 // ---- Vessel particulars (from the vessel's Stability Booklet) ----
 
@@ -32,6 +33,31 @@ export interface VesselParticulars {
   // this wrong silently flips the sign of every trim/list computation, so
   // it is asked explicitly rather than assumed.
   longitudinalOrigin: 'midships' | 'aft-perpendicular'
+  lightshipTCG: number // m, + = starboard of centerline — a real lightship rarely sits at exactly TCG=0
+  // Angle (deg) at which downflooding actually occurs on THIS vessel (open
+  // vents, unsecured hatches, etc). IS Code 2008 2.2.1 requires substituting
+  // this for the standard 30°/40° area boundaries when it is smaller.
+  // undefined = not known — standard 30°/40° boundaries are used as-is.
+  downfloodingAngleDeg?: number
+}
+
+// A generic "everything that is not lightship and not deck cargo" weight —
+// tanks, ballast, fuel, fresh water, stores, crew. One shared shape (not
+// three separate "Tank"/"Ballast"/"Consumable" types) because the physics
+// (weight + CG + optional free surface) is identical; `name` is free text
+// so the user can label it however their own stability booklet does.
+export interface VariableWeightItem {
+  id: string
+  name: string
+  weightKg: number
+  vcgM: number
+  tcgM: number // + = starboard
+  lcgM: number
+  // t·m, from the vessel's own trim-and-stability booklet / sounding
+  // tables. undefined = this weight has no free surface (pressed
+  // full/empty tank, solid stores, etc) — NOT the same as 0, which would
+  // still say "checked, genuinely zero."
+  freeSurfaceMomentTm?: number
 }
 
 // ---- Hydrostatic curve, keyed by displacement ----
@@ -60,6 +86,7 @@ export interface VesselStabilityData {
   particulars: VesselParticulars
   hydrostatics: HydrostaticTable
   knCurves?: KNCrossCurves // absent = Phase 1 only (GM/list/trim, no GZ curve)
+  variableWeights: VariableWeightItem[] // tanks/ballast/fuel/water/stores — see VariableWeightItem
 }
 
 // How the deck's own local (x,y) origin sits relative to the ship's own
@@ -80,6 +107,7 @@ export const DEFAULT_VESSEL_PARTICULARS: VesselParticulars = {
   lightshipWeightKg: 0,
   lightshipKG: 0,
   lightshipLCG: 0,
+  lightshipTCG: 0,
   longitudinalOrigin: 'midships',
 }
 
@@ -145,8 +173,49 @@ export function computeLoadingCondition(
 // "width" axis, y across its "length" axis — deckWidth/2 and deckLength/2
 // are therefore each footprint's own centerline/midships reference before
 // shipFrame's own additional offset is added.
+// A placement's (TCG,LCG) moment arm defaults to its footprint's bounding-
+// box center — correct for any shape with a uniform-density, symmetric
+// footprint (box/cylinder/etc). For a hand-drawn `outline` (which can be
+// concave — an L/Z shape), the bbox center measurably diverges from the
+// true geometric centroid, so the polygon's own shoelace centroid is used
+// instead whenever `outline` is present, rotated to match the placement's
+// current orientation first.
+function footprintCenter(p: {
+  x: number
+  y: number
+  width: number
+  length: number
+  rotated?: boolean
+  outline?: { x: number; y: number }[]
+}): { x: number; y: number } {
+  if (p.outline && p.outline.length >= 3) {
+    // p.width/p.length are the CURRENT (post-rotation) footprint;
+    // rotateOutline90 needs the box the raw outline points were originally
+    // drawn against — recover it by swapping back when rotated, mirroring
+    // the same correction already used in packing.ts (~line 2008) and
+    // DeckVisualization.tsx/Deck3DView.tsx wherever this outline is rotated.
+    const unrotatedWidth = p.rotated ? p.length : p.width
+    const unrotatedLength = p.rotated ? p.width : p.length
+    const local = p.rotated ? rotateOutline90(p.outline, unrotatedWidth, unrotatedLength) : p.outline
+    const c = polygonCentroid(local)
+    return { x: p.x + c.x, y: p.y + c.y }
+  }
+  return { x: p.x + p.width / 2, y: p.y + p.length / 2 }
+}
+
 export function buildCargoWeightMoments(
-  placements: { x: number; y: number; width: number; length: number; height: number; layers: number; weight?: number; stabilityOverride?: StabilityOverride }[],
+  placements: {
+    x: number
+    y: number
+    width: number
+    length: number
+    height: number
+    layers: number
+    weight?: number
+    rotated?: boolean
+    outline?: { x: number; y: number }[]
+    stabilityOverride?: StabilityOverride
+  }[],
   deckWidth: number,
   deckLength: number,
   shipFrame: DeckShipFrame,
@@ -155,17 +224,29 @@ export function buildCargoWeightMoments(
   return placements
     .filter((p) => (p.weight ?? 0) > 0)
     .map((p) => {
-      const centerX = p.x + p.width / 2
-      const centerY = p.y + p.length / 2
-      const tcgM = shipFrame.originOffsetFromCenterlineM + (centerX - deckWidth / 2)
+      const center = footprintCenter(p)
+      const tcgAuto = shipFrame.originOffsetFromCenterlineM + (center.x - deckWidth / 2)
       // Deck-local y grows "down" the deck rectangle (toward larger y); the
       // ship's own +fwd direction is a separate, explicit choice, since
       // there is no universal convention tying the two together.
-      const alongDeckFromMid = centerY - deckLength / 2
-      const lcgM = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
+      const alongDeckFromMid = center.y - deckLength / 2
+      const lcgAuto = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
       const vcgM = shipFrame.heightAboveBaselineM + computeItemVCG(p)
+      // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
+      // (position-derived) arm, not an absolute value — unlike
+      // vcgAboveDeckM, TCG/LCG move every time the item is dragged, so an
+      // absolute override would silently detach from the item on the next
+      // move. An offset stays correct relative to wherever the item is now.
+      const tcgM = tcgAuto + (p.stabilityOverride?.tcgOffsetM ?? 0)
+      const lcgM = lcgAuto + (p.stabilityOverride?.lcgOffsetM ?? 0)
       return { weightKg: p.weight ?? 0, vcgM, tcgM, lcgM }
     })
+}
+
+function variableWeightsToMoments(items: VariableWeightItem[]): WeightMoment[] {
+  return items
+    .filter((w) => w.weightKg > 0)
+    .map((w) => ({ weightKg: w.weightKg, vcgM: w.vcgM, tcgM: w.tcgM, lcgM: w.lcgM }))
 }
 
 export function buildLoadingConditionFromPlacements(
@@ -173,16 +254,39 @@ export function buildLoadingConditionFromPlacements(
   shipFrame: DeckShipFrame,
   deck: { width: number; length: number },
   deckForwardIsPositiveY: boolean,
-  placements: { x: number; y: number; width: number; length: number; height: number; layers: number; weight?: number; stabilityOverride?: StabilityOverride }[]
+  placements: {
+    x: number
+    y: number
+    width: number
+    length: number
+    height: number
+    layers: number
+    weight?: number
+    rotated?: boolean
+    outline?: { x: number; y: number }[]
+    stabilityOverride?: StabilityOverride
+  }[]
 ): LoadingCondition {
   const lightship: WeightMoment = {
     weightKg: vessel.particulars.lightshipWeightKg,
     vcgM: vessel.particulars.lightshipKG,
-    tcgM: 0,
+    tcgM: vessel.particulars.lightshipTCG,
     lcgM: vessel.particulars.lightshipLCG,
   }
   const cargo = buildCargoWeightMoments(placements, deck.width, deck.length, shipFrame, deckForwardIsPositiveY)
-  return computeLoadingCondition(lightship, cargo)
+  const variable = variableWeightsToMoments(vessel.variableWeights)
+  return computeLoadingCondition(lightship, [...variable, ...cargo])
+}
+
+// FSC (m) = ΣFSM(t·m) / Displacement(t) — standard free-surface correction.
+// Only weights that actually carry a freeSurfaceMomentTm contribute; a tank
+// with none (pressed full/empty, or solid stores) contributes 0, same as
+// today's behavior when no variable weights are entered at all.
+export function computeFreeSurfaceCorrection(variableWeights: VariableWeightItem[], totalDisplacementKg: number): number {
+  if (totalDisplacementKg <= 0) return 0
+  const totalFsmTm = variableWeights.reduce((s, w) => s + (w.freeSurfaceMomentTm ?? 0), 0)
+  if (totalFsmTm === 0) return 0
+  return totalFsmTm / (totalDisplacementKg / 1000)
 }
 
 // ---- Hydrostatic interpolation ----
@@ -265,7 +369,9 @@ export interface StabilityResult {
   draftM: number | null
   KM: number
   KG: number
-  GM_solid: number
+  GM_solid: number // KM - KG, WITHOUT the free-surface correction
+  freeSurfaceCorrectionM: number // FSC subtracted from GM_solid to get GM_fluid
+  GM_fluid: number // GM_solid - FSC — the value IS Code criteria are actually about
   listDeg: number
   listSide: 'port' | 'starboard' | 'none'
   listReliable: boolean // false once listDeg exceeds LIST_SMALL_ANGLE_LIMIT_DEG — small-angle formula no longer trustworthy
@@ -282,9 +388,13 @@ export function computeStabilityResult(
   const hydro = lookupHydrostatics(vessel.hydrostatics, loading.totalDisplacementKg)
   if (!hydro) return null
   const GM_solid = hydro.KM - loading.KG
+  const freeSurfaceCorrectionM = computeFreeSurfaceCorrection(vessel.variableWeights, loading.totalDisplacementKg)
+  const GM_fluid = GM_solid - freeSurfaceCorrectionM
   // Small-angle static list: tan(list) = TCG / GM (heeling moment / righting
-  // moment, both proportional to displacement, which cancels).
-  const listRad = GM_solid > 0.001 ? Math.atan(Math.abs(loading.overallTCG) / GM_solid) : Math.PI / 2
+  // moment, both proportional to displacement, which cancels). Uses
+  // GM_fluid — the free-surface-corrected value is what the ship actually
+  // resists heeling with, not the uncorrected GM_solid.
+  const listRad = GM_fluid > 0.001 ? Math.atan(Math.abs(loading.overallTCG) / GM_fluid) : Math.PI / 2
   const listDeg = (listRad * 180) / Math.PI
   const listSide: StabilityResult['listSide'] =
     Math.abs(loading.overallTCG) < 1e-6 ? 'none' : loading.overallTCG > 0 ? 'starboard' : 'port'
@@ -304,6 +414,8 @@ export function computeStabilityResult(
     KM: hydro.KM,
     KG: loading.KG,
     GM_solid,
+    freeSurfaceCorrectionM,
+    GM_fluid,
     listDeg,
     listSide,
     listReliable: listDeg <= LIST_SMALL_ANGLE_LIMIT_DEG,
@@ -353,23 +465,71 @@ function interpolateKN(knCurves: KNCrossCurves, displacementKg: number, angleIdx
   return last.KNByAngle[angleIdx] ?? 0
 }
 
-// Trapezoidal integration of GZ(θ) over [fromDeg, toDeg], in m·rad (the unit
-// IMO's area criteria are expressed in).
+// Composite Simpson's-rule integration of GZ(θ) over [fromDeg, toDeg], in
+// m·rad (the unit IMO's area criteria are expressed in) — matches how
+// class/IMO area calculations are conventionally done, replacing a plain
+// trapezoidal sum (which, on the coarse angle grids typical of a
+// hand-entered KN table, can measurably over- or under-estimate area
+// relative to Simpson's rule, in either direction depending on curve
+// shape). Supports a non-uniform angle grid (Simpson's rule for unequal
+// intervals), since a user's own angle spacing is rarely uniform once
+// clipped to an arbitrary [fromDeg, toDeg] window.
+//
+// Only integrates over the portion of [fromDeg, toDeg] that actually lies
+// within the curve's own tabulated angle domain — exactly like the
+// trapezoidal version this replaces, it never extrapolates GZ beyond the
+// user's own data (a request for area past the last tabulated angle simply
+// contributes nothing, rather than guessing GZ=0 there).
 function integrateArea(curve: GZPoint[], fromDeg: number, toDeg: number): number {
+  if (curve.length < 2) return 0
+  const domainLo = curve[0].heelDeg
+  const domainHi = curve[curve.length - 1].heelDeg
+  const lo = Math.max(fromDeg, domainLo)
+  const hi = Math.min(toDeg, domainHi)
+  if (hi <= lo) return 0
+
+  const nodes: { xRad: number; GZ: number }[] = []
+  const push = (deg: number, gz: number) => {
+    const xRad = (deg * Math.PI) / 180
+    if (nodes.length === 0 || Math.abs(nodes[nodes.length - 1].xRad - xRad) > 1e-12) nodes.push({ xRad, GZ: gz })
+  }
+  // lo/hi are guaranteed within [domainLo, domainHi], so interpolateGZAt
+  // always finds a bracketing segment here (its 0-fallback never triggers).
+  push(lo, interpolateGZAt(curve, lo))
+  for (const p of curve) {
+    if (p.heelDeg > lo && p.heelDeg < hi) push(p.heelDeg, p.GZ)
+  }
+  push(hi, interpolateGZAt(curve, hi))
+
+  return simpsonComposite(nodes)
+}
+
+// Standard composite Simpson's rule generalized to a non-uniform grid: pairs
+// up consecutive intervals with the non-uniform 3-point Simpson formula; a
+// single leftover interval (odd interval count) falls back to the
+// trapezoid rule for just that segment — the conventional composite-Simpson
+// fallback, and a rare case in practice (most user-entered angle grids plus
+// the two clipped boundary points give an even interval count).
+function simpsonComposite(nodes: { xRad: number; GZ: number }[]): number {
   let area = 0
-  for (let i = 0; i < curve.length - 1; i++) {
-    const a = curve[i]
-    const b = curve[i + 1]
-    const segFrom = Math.max(fromDeg, a.heelDeg)
-    const segTo = Math.min(toDeg, b.heelDeg)
-    if (segTo <= segFrom) continue
-    const span = b.heelDeg - a.heelDeg
-    const t0 = span > 0 ? (segFrom - a.heelDeg) / span : 0
-    const t1 = span > 0 ? (segTo - a.heelDeg) / span : 1
-    const gz0 = a.GZ + (b.GZ - a.GZ) * t0
-    const gz1 = a.GZ + (b.GZ - a.GZ) * t1
-    const widthRad = ((segTo - segFrom) * Math.PI) / 180
-    area += ((gz0 + gz1) / 2) * widthRad
+  let i = 0
+  while (i < nodes.length - 1) {
+    if (i + 2 < nodes.length) {
+      const p0 = nodes[i]
+      const p1 = nodes[i + 1]
+      const p2 = nodes[i + 2]
+      const h0 = p1.xRad - p0.xRad
+      const h1 = p2.xRad - p1.xRad
+      if (h0 > 0 && h1 > 0) {
+        area += ((h0 + h1) / 6) * ((2 - h1 / h0) * p0.GZ + ((h0 + h1) ** 2 / (h0 * h1)) * p1.GZ + (2 - h0 / h1) * p2.GZ)
+        i += 2
+        continue
+      }
+    }
+    const a = nodes[i]
+    const b = nodes[i + 1]
+    area += ((a.GZ + b.GZ) / 2) * (b.xRad - a.xRad)
+    i += 1
   }
   return area
 }
@@ -431,31 +591,55 @@ export interface StabilityCriterion {
 // IMO IS Code 2008, Part A, Chapter 2 general criteria — the weather
 // criterion (§2.3) is deliberately NOT included here, see the module-level
 // comment.
-export function checkIMOCriteria(gz: GZCurveResult, stability: StabilityResult): StabilityCriterion[] {
+//
+// downfloodingAngleDeg (optional): IS Code 2008 п. 2.2.1 requires
+// substituting the vessel's actual downflooding angle for the standard
+// 30°/40° area boundaries whenever it is SMALLER — a lower real
+// downflooding angle means area credited beyond it is crediting righting
+// arm the ship can no longer actually rely on (water is already entering
+// the hull). undefined preserves today's behavior (fixed 30°/40°). This
+// substitution applies ONLY to the three area criteria (2.2.1) — the
+// GZ≥0.20m-at-30° (2.2.2) and angle-of-max-GZ≥25° (2.2.3) criteria are NOT
+// downflooding-adjusted by the Code, so they're left untouched.
+export function checkIMOCriteria(
+  gz: GZCurveResult,
+  stability: StabilityResult,
+  downfloodingAngleDeg?: number
+): StabilityCriterion[] {
   const results: StabilityCriterion[] = []
+  const boundary30 = downfloodingAngleDeg !== undefined ? Math.min(30, downfloodingAngleDeg) : 30
+  const boundary40 = downfloodingAngleDeg !== undefined ? Math.min(40, downfloodingAngleDeg) : 40
+  // Reuse the curve's own precomputed 0/30/40 areas when the standard
+  // boundaries apply unchanged (avoids recomputation on the common path);
+  // recompute from the raw curve only when downflooding actually clips a
+  // boundary below its standard value.
+  const areaUnder30 = boundary30 === 30 ? gz.areaUnder30Deg : integrateArea(gz.curve, 0, boundary30)
+  const areaUnder40 = boundary40 === 40 ? gz.areaUnder40Deg : integrateArea(gz.curve, 0, boundary40)
+  const area30to40 = boundary30 === 30 && boundary40 === 40 ? gz.area30to40 : integrateArea(gz.curve, boundary30, boundary40)
+
   results.push({
     id: 'area-0-30',
-    description: 'Площадь под кривой GZ до 30° (IS Code 2008, п. 2.2.1)',
+    description: `Площадь под кривой GZ до ${boundary30}° (IS Code 2008, п. 2.2.1)`,
     requiredValue: 0.055,
-    actualValue: gz.areaUnder30Deg,
+    actualValue: areaUnder30,
     unit: 'м·рад',
-    pass: gz.areaUnder30Deg >= 0.055,
+    pass: areaUnder30 >= 0.055,
   })
   results.push({
     id: 'area-30-40',
-    description: 'Площадь под кривой GZ 30°–40° (IS Code 2008, п. 2.2.1)',
+    description: `Площадь под кривой GZ ${boundary30}°–${boundary40}° (IS Code 2008, п. 2.2.1)`,
     requiredValue: 0.03,
-    actualValue: gz.area30to40,
+    actualValue: area30to40,
     unit: 'м·рад',
-    pass: gz.area30to40 >= 0.03,
+    pass: area30to40 >= 0.03,
   })
   results.push({
     id: 'area-0-40',
-    description: 'Площадь под кривой GZ до 40° (IS Code 2008, п. 2.2.1)',
+    description: `Площадь под кривой GZ до ${boundary40}° (IS Code 2008, п. 2.2.1)`,
     requiredValue: 0.09,
-    actualValue: gz.areaUnder40Deg,
+    actualValue: areaUnder40,
     unit: 'м·рад',
-    pass: gz.areaUnder40Deg >= 0.09,
+    pass: areaUnder40 >= 0.09,
   })
   const gzAt30 = gz.curve.find((p) => p.heelDeg === 30)?.GZ ?? interpolateGZAt(gz.curve, 30)
   results.push({
@@ -476,11 +660,11 @@ export function checkIMOCriteria(gz: GZCurveResult, stability: StabilityResult):
   })
   results.push({
     id: 'initial-gm',
-    description: `Начальная GM ≥ ${G_METACENTRIC_MIN_SAFE} м (IS Code 2008, п. 2.2.4) — ОБЩИЙ ориентир, сверьте с формуляром остойчивости ВАШЕГО судна`,
+    description: `Начальная GM (с поправкой на своб. поверхность) ≥ ${G_METACENTRIC_MIN_SAFE} м (IS Code 2008, п. 2.2.4) — ОБЩИЙ ориентир, сверьте с формуляром остойчивости ВАШЕГО судна`,
     requiredValue: G_METACENTRIC_MIN_SAFE,
-    actualValue: stability.GM_solid,
+    actualValue: stability.GM_fluid,
     unit: 'м',
-    pass: stability.GM_solid >= G_METACENTRIC_MIN_SAFE,
+    pass: stability.GM_fluid >= G_METACENTRIC_MIN_SAFE,
   })
   return results
 }
@@ -498,7 +682,5 @@ function interpolateGZAt(curve: GZPoint[], heelDeg: number): number {
   return 0
 }
 
-// Free-surface correction (FSC) would subtract from GM_solid here once a
-// tank/liquid model exists (DeckConfig has none today):
-//   GM_fluid = GM_solid - FSC
-// Left as a documented gap, not silently ignored — see UI disclaimer.
+// Free-surface correction (FSC) is applied in computeStabilityResult via
+// computeFreeSurfaceCorrection, above — GM_fluid = GM_solid - FSC.

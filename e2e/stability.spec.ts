@@ -25,8 +25,11 @@ test.describe('Ship stability calculator', () => {
     await page.getByRole('button', { name: 'Очистить' }).click()
     await fillVesselParticulars(page)
 
-    // GM = KM(7.2) - KG(5.5, no cargo yet) = 1.70
-    await expect(page.getByText(/1[.,]70\s*м/)).toBeVisible()
+    // GM = KM(7.2) - KG(5.5, no cargo yet) = 1.70. No variable weights are
+    // entered in this test, so GM_fluid == GM_solid == 1.70 м, and BOTH the
+    // primary (GM_fluid) number and the "GM без поправки" secondary line
+    // legitimately show "1.70 м" — .first() targets the primary figure.
+    await expect(page.getByText(/1[.,]70\s*м/).first()).toBeVisible()
     await expect(page.getByText('KM 7.20 м − KG 5.50 м', { exact: false })).toBeVisible()
     // Disclaimer must always be present once the panel shows real numbers.
     await expect(page.getByText('Не заменяет судовой прибор загрузки.', { exact: false })).toBeVisible()

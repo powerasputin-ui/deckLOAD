@@ -45,6 +45,21 @@ function Disclaimer() {
   )
 }
 
+// A second, more specific warning — shown only when it actually applies —
+// naming the ONE reason a green PASS from this tool could still be false:
+// no free-surface data was entered, so GM_fluid == GM_solid (uncorrected).
+function NoFreeSurfaceDataWarning() {
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+      <span>
+        <b>Свободная поверхность в танках не введена.</b> Показанная GM может быть выше реальной. Добавьте
+        танки/балласт/топливо с их моментом свободной поверхности в разделе «Остойчивость судна», чтобы это учесть.
+      </span>
+    </div>
+  )
+}
+
 export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
   if (!vessel) {
     return (
@@ -67,7 +82,9 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
   const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deckWidth, length: deckLength }, deckForwardIsPositiveY ?? true, result.placed)
   const stability = computeStabilityResult(vessel, loading)
   const gz = stability ? computeGZCurve(vessel, loading) : null
-  const criteria = gz && stability ? checkIMOCriteria(gz, stability) : null
+  const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg
+  const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg) : null
+  const hasFreeSurfaceData = vessel.variableWeights.some((w) => (w.freeSurfaceMomentTm ?? 0) !== 0)
 
   if (!stability) {
     return (
@@ -86,7 +103,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
     )
   }
 
-  const gmOk = stability.GM_solid >= G_METACENTRIC_MIN_SAFE
+  const gmOk = stability.GM_fluid >= G_METACENTRIC_MIN_SAFE
   const listSideLabel = stability.listSide === 'starboard' ? 'на правый борт' : stability.listSide === 'port' ? 'на левый борт' : ''
 
   return (
@@ -103,15 +120,20 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
       </CardHeader>
       <CardContent className="space-y-4">
         <Disclaimer />
+        {!hasFreeSurfaceData && <NoFreeSurfaceDataWarning />}
 
         <div className="grid grid-cols-2 gap-2.5">
           <div className="rounded-lg border bg-card p-3">
-            <div className="text-xs font-medium text-muted-foreground">GM (метацентрическая высота)</div>
+            <div className="text-xs font-medium text-muted-foreground">GM (с поправкой на своб. поверхность)</div>
             <div className={'text-xl font-bold tabular-nums mt-1 ' + (gmOk ? 'text-emerald-600' : 'text-red-600')}>
-              {fmtNumber(stability.GM_solid)} м
+              {fmtNumber(stability.GM_fluid)} м
             </div>
             <div className="text-[10px] text-muted-foreground">
-              KM {fmtNumber(stability.KM)} м − KG {fmtNumber(stability.KG)} м · мин. ориентир {G_METACENTRIC_MIN_SAFE} м
+              KM {fmtNumber(stability.KM)} м − KG {fmtNumber(stability.KG)} м − FSC {fmtNumber(stability.freeSurfaceCorrectionM)} м ·
+              мин. ориентир {G_METACENTRIC_MIN_SAFE} м
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              GM без поправки (GM_solid): {fmtNumber(stability.GM_solid)} м
             </div>
           </div>
           <div className="rounded-lg border bg-card p-3">
@@ -145,6 +167,12 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
             <p className="text-[10px] text-muted-foreground">
               Ветровой критерий (§2.3) для офшорных судов индивидуален и здесь не считается — см. формуляр остойчивости судна.
             </p>
+            {downfloodingAngleDeg === undefined && (
+              <p className="text-[10px] text-muted-foreground">
+                Угол заливания не указан — площади считаются до стандартных 30°/40°, что может завышать результат для судов с
+                меньшим реальным углом заливания.
+              </p>
+            )}
             <div className="rounded-lg border overflow-hidden">
               <table className="w-full text-[11px]">
                 <tbody>

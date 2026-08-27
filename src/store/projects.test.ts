@@ -288,7 +288,9 @@ describe('projects store', () => {
             lightshipWeightKg: 2_000_000,
             lightshipKG: 5.5,
             lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
             longitudinalOrigin: 'midships',
+            downfloodingAngleDeg: 28,
           },
           hydrostatics: {
             points: [{ displacementKg: 2_000_000, draftM: 4.0, KM: 7.2, LCB: 0.1, LCF: 0.2, MTC: 120 }],
@@ -297,6 +299,9 @@ describe('projects store', () => {
             headingAngles: [0, 10, 20],
             points: [{ displacementKg: 2_000_000, KNByAngle: [0, 1.1, 2.2] }],
           },
+          variableWeights: [
+            { id: 'w1', name: 'Балласт форпик', weightKg: 50_000, vcgM: 1.0, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 15 },
+          ],
         },
         shipFrame: { originOffsetFromCenterlineM: 0.5, originOffsetFromMidshipsM: -3, heightAboveBaselineM: 6 },
         deckForwardIsPositiveY: false,
@@ -311,7 +316,7 @@ describe('projects store', () => {
           quantity: 1,
           color: '#0ea5e9',
           allowRotation: true,
-          stabilityOverride: { vcgAboveDeckM: 0.7 },
+          stabilityOverride: { vcgAboveDeckM: 0.7, tcgOffsetM: 0.4, lcgOffsetM: -0.6 },
         },
       ],
       manualPlacements: [],
@@ -337,7 +342,9 @@ describe('projects store', () => {
       lightshipWeightKg: 2_000_000,
       lightshipKG: 5.5,
       lightshipLCG: -1.2,
+      lightshipTCG: 0.3,
       longitudinalOrigin: 'midships',
+      downfloodingAngleDeg: 28,
     })
     expect(reloaded.deck.vessel?.hydrostatics.points).toEqual([
       { displacementKg: 2_000_000, draftM: 4.0, KM: 7.2, LCB: 0.1, LCF: 0.2, MTC: 120 },
@@ -346,13 +353,16 @@ describe('projects store', () => {
       headingAngles: [0, 10, 20],
       points: [{ displacementKg: 2_000_000, KNByAngle: [0, 1.1, 2.2] }],
     })
+    expect(reloaded.deck.vessel?.variableWeights).toEqual([
+      { id: 'w1', name: 'Балласт форпик', weightKg: 50_000, vcgM: 1.0, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 15 },
+    ])
     expect(reloaded.deck.shipFrame).toEqual({
       originOffsetFromCenterlineM: 0.5,
       originOffsetFromMidshipsM: -3,
       heightAboveBaselineM: 6,
     })
     expect(reloaded.deck.deckForwardIsPositiveY).toBe(false)
-    expect(reloaded.items[0].stabilityOverride).toEqual({ vcgAboveDeckM: 0.7 })
+    expect(reloaded.items[0].stabilityOverride).toEqual({ vcgAboveDeckM: 0.7, tcgOffsetM: 0.4, lcgOffsetM: -0.6 })
   })
 
   it('normalizes cleanly to vessel:undefined for a legacy project with no vessel field at all', () => {
@@ -400,9 +410,11 @@ describe('projects store', () => {
             lightshipWeightKg: 2_000_000,
             lightshipKG: 5.5,
             lightshipLCG: 0,
+            lightshipTCG: 0,
             longitudinalOrigin: 'midships',
           },
           hydrostatics: { points: [] },
+          variableWeights: [],
           knCurves: {
             headingAngles: [0, 10, 20],
             points: [

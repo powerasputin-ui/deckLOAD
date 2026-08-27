@@ -32,7 +32,12 @@ import {
   type VesselParticulars,
   type HydrostaticPoint,
   type KNCrossCurves,
+  type VariableWeightItem,
 } from '@/lib/stability'
+
+function emptyVessel(): VesselStabilityData {
+  return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
+}
 
 export type Unit = 'm' | 'cm' | 'ft'
 export type Mode = 'auto' | 'manual'
@@ -287,6 +292,9 @@ interface CalculatorState {
   updateHydrostaticPoint: (index: number, patch: Partial<HydrostaticPoint>) => void
   removeHydrostaticPoint: (index: number) => void
   setKNCrossCurves: (curves: KNCrossCurves | undefined) => void
+  addVariableWeight: (item?: Partial<VariableWeightItem>) => void
+  updateVariableWeight: (id: string, patch: Partial<VariableWeightItem>) => void
+  removeVariableWeight: (id: string) => void
   setShipFrame: (patch: Partial<DeckShipFrame>) => void
   setDeckForwardIsPositiveY: (v: boolean) => void
   setItemStabilityOverride: (itemId: string, override: StabilityOverride | undefined) => void
@@ -1370,7 +1378,7 @@ export const useCalculator = create<CalculatorState>()(
 
   setVesselParticulars: (patch) =>
     set((s) => {
-      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      const vessel = s.deck.vessel ?? emptyVessel()
       return {
         deck: {
           ...s.deck,
@@ -1380,7 +1388,7 @@ export const useCalculator = create<CalculatorState>()(
     }),
   addHydrostaticPoint: (point) =>
     set((s) => {
-      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      const vessel = s.deck.vessel ?? emptyVessel()
       const newPoint: HydrostaticPoint = { displacementKg: 0, draftM: 0, KM: 0, ...point }
       return {
         deck: {
@@ -1405,8 +1413,28 @@ export const useCalculator = create<CalculatorState>()(
     }),
   setKNCrossCurves: (curves) =>
     set((s) => {
-      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      const vessel = s.deck.vessel ?? emptyVessel()
       return { deck: { ...s.deck, vessel: { ...vessel, knCurves: curves } } }
+    }),
+  addVariableWeight: (item) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? emptyVessel()
+      const newItem: VariableWeightItem = { id: uuid(), name: 'Танк', weightKg: 0, vcgM: 0, tcgM: 0, lcgM: 0, ...item }
+      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights: [...vessel.variableWeights, newItem] } } }
+    }),
+  updateVariableWeight: (id, patch) =>
+    set((s) => {
+      const vessel = s.deck.vessel
+      if (!vessel) return s
+      const variableWeights = vessel.variableWeights.map((w) => (w.id === id ? { ...w, ...patch } : w))
+      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights } } }
+    }),
+  removeVariableWeight: (id) =>
+    set((s) => {
+      const vessel = s.deck.vessel
+      if (!vessel) return s
+      const variableWeights = vessel.variableWeights.filter((w) => w.id !== id)
+      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights } } }
     }),
   setShipFrame: (patch) =>
     set((s) => ({

@@ -56,6 +56,13 @@ export interface CargoItem {
 // vertical center of gravity — see computeItemVCG() in src/lib/stability.ts.
 export interface StabilityOverride {
   vcgAboveDeckM?: number
+  // Corrections ADDED to the auto-computed (position-derived) TCG/LCG arm —
+  // not an absolute value like vcgAboveDeckM, because TCG/LCG move every
+  // time the item is dragged; an absolute override would silently detach
+  // from the item on its next move, an offset stays correct relative to
+  // wherever the item currently is.
+  tcgOffsetM?: number // + = toward starboard
+  lcgOffsetM?: number // + = toward the bow (per deckForwardIsPositiveY)
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -2103,6 +2110,30 @@ export function polygonArea(poly: { x: number; y: number }[]): number {
     sum += a.x * b.y - b.x * a.y
   }
   return Math.abs(sum) / 2
+}
+
+// Standard shoelace-based polygon centroid — the TRUE geometric center of
+// an arbitrary (including concave — L/Z-shaped) simple polygon, which for
+// a non-convex outline measurably diverges from its bounding-box center.
+// Used by the stability module to compute a custom-shaped cargo item's real
+// TCG/LCG moment arm instead of its bbox center. Falls back to the first
+// vertex for a degenerate (near-zero-area) polygon rather than dividing by
+// ~0.
+export function polygonCentroid(poly: { x: number; y: number }[]): { x: number; y: number } {
+  let a = 0
+  let cx = 0
+  let cy = 0
+  for (let i = 0; i < poly.length; i++) {
+    const p0 = poly[i]
+    const p1 = poly[(i + 1) % poly.length]
+    const cross = p0.x * p1.y - p1.x * p0.y
+    a += cross
+    cx += (p0.x + p1.x) * cross
+    cy += (p0.y + p1.y) * cross
+  }
+  a *= 0.5
+  if (Math.abs(a) < 1e-9) return { x: poly[0]?.x ?? 0, y: poly[0]?.y ?? 0 }
+  return { x: cx / (6 * a), y: cy / (6 * a) }
 }
 
 // True iff `rect` is fully contained in `poly` — all 4 corners inside AND no

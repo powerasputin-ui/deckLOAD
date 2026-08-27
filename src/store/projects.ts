@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin } from '@/lib/packing'
-import type { VesselStabilityData, DeckShipFrame, KNCrossCurves } from '@/lib/stability'
+import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
 import { DEMO_DECK, createDemoItems } from './calculator'
 
@@ -221,8 +221,27 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     lightshipWeightKg: toFiniteNonNegative(p.lightshipWeightKg, 0),
     lightshipKG: toFiniteNonNegative(p.lightshipKG, 0),
     lightshipLCG: toFinite(p.lightshipLCG, 0),
+    lightshipTCG: toFinite(p.lightshipTCG, 0),
     longitudinalOrigin,
+    downfloodingAngleDeg:
+      typeof p.downfloodingAngleDeg === 'number' && Number.isFinite(p.downfloodingAngleDeg) ? p.downfloodingAngleDeg : undefined,
   }
+}
+
+function normalizeVariableWeights(value: unknown): VariableWeightItem[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === 'object')
+    .map((w) => ({
+      id: typeof w.id === 'string' && w.id ? w.id : uuid(),
+      name: typeof w.name === 'string' ? w.name : 'Танк',
+      weightKg: toFiniteNonNegative(w.weightKg, 0),
+      vcgM: toFiniteNonNegative(w.vcgM, 0),
+      tcgM: toFinite(w.tcgM, 0),
+      lcgM: toFinite(w.lcgM, 0),
+      freeSurfaceMomentTm:
+        typeof w.freeSurfaceMomentTm === 'number' && Number.isFinite(w.freeSurfaceMomentTm) ? w.freeSurfaceMomentTm : undefined,
+    }))
 }
 
 function normalizeHydrostaticTable(value: unknown): VesselStabilityData['hydrostatics'] {
@@ -282,6 +301,7 @@ function normalizeVessel(value: unknown): VesselStabilityData | undefined {
     particulars,
     hydrostatics: normalizeHydrostaticTable((v.hydrostatics as Record<string, unknown> | undefined)?.points),
     knCurves: normalizeKNCrossCurves(v.knCurves),
+    variableWeights: normalizeVariableWeights(v.variableWeights),
   }
 }
 
@@ -298,8 +318,11 @@ function normalizeShipFrame(value: unknown): DeckShipFrame | undefined {
 function normalizeStabilityOverride(value: unknown): StabilityOverride | undefined {
   if (!value || typeof value !== 'object') return undefined
   const o = value as Record<string, unknown>
-  if (typeof o.vcgAboveDeckM !== 'number' || !Number.isFinite(o.vcgAboveDeckM)) return undefined
-  return { vcgAboveDeckM: o.vcgAboveDeckM }
+  const vcgAboveDeckM = typeof o.vcgAboveDeckM === 'number' && Number.isFinite(o.vcgAboveDeckM) ? o.vcgAboveDeckM : undefined
+  const tcgOffsetM = typeof o.tcgOffsetM === 'number' && Number.isFinite(o.tcgOffsetM) ? o.tcgOffsetM : undefined
+  const lcgOffsetM = typeof o.lcgOffsetM === 'number' && Number.isFinite(o.lcgOffsetM) ? o.lcgOffsetM : undefined
+  if (vcgAboveDeckM === undefined && tcgOffsetM === undefined && lcgOffsetM === undefined) return undefined
+  return { vcgAboveDeckM, tcgOffsetM, lcgOffsetM }
 }
 
 function normalizeClearanceMargin(value: unknown): ClearanceMargin | undefined {

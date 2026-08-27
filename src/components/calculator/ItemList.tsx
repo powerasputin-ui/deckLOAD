@@ -10,6 +10,7 @@ import {
   Package,
   ArrowUp,
   FileText,
+  Ship,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -58,6 +59,7 @@ export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToT
   const removeItem = useCalculator((s) => s.removeItem)
   const duplicateItem = useCalculator((s) => s.duplicateItem)
   const globalRotation = useCalculator((s) => s.globalRotation)
+  const setItemStabilityOverride = useCalculator((s) => s.setItemStabilityOverride)
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkCategory, setBulkCategory] = useState('')
@@ -181,6 +183,7 @@ export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToT
                   onUpdate={(patch) => updateItem(item.id, patch)}
                   onRemove={() => { removeItem(item.id); toast.info('Груз удалён') }}
                   onDuplicate={() => { duplicateItem(item.id); toast.success('Груз дублирован') }}
+                  onSetStabilityOverride={(patch) => setItemStabilityOverride(item.id, patch)}
                 />
               ))}
             </div>
@@ -215,6 +218,7 @@ interface ItemRowProps {
   onUpdate: (patch: Partial<CargoItem>) => void
   onRemove: () => void
   onDuplicate: () => void
+  onSetStabilityOverride: (patch: CargoItem['stabilityOverride']) => void
 }
 
 function ItemRow({
@@ -230,6 +234,7 @@ function ItemRow({
   onUpdate,
   onRemove,
   onDuplicate,
+  onSetStabilityOverride,
 }: ItemRowProps) {
   const [editName, setEditName] = useState(false)
   // A stable, SSR/client-consistent id for the datalist — item.id itself is
@@ -241,6 +246,10 @@ function ItemRow({
   const allPlaced = placed >= item.quantity
   const nonePlaced = placed === 0
   const rotationEnabled = globalRotation && item.allowRotation
+  const hasStabilityOverride =
+    item.stabilityOverride?.vcgAboveDeckM !== undefined ||
+    item.stabilityOverride?.tcgOffsetM !== undefined ||
+    item.stabilityOverride?.lcgOffsetM !== undefined
 
   return (
     <div
@@ -447,6 +456,53 @@ function ItemRow({
                 </PopoverContent>
               </Popover>
 
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    title="Остойчивость (override ЦТ)"
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors hover:bg-accent',
+                      hasStabilityOverride ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'
+                    )}
+                  >
+                    <Ship className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-2.5 space-y-1.5" align="end">
+                  <Label className="text-xs font-medium">Остойчивость — override центра тяжести</Label>
+                  <p className="text-[10px] text-muted-foreground">
+                    Пусто = авто (VCG — половина высоты стопки; TCG/LCG — геометрический центр груза). Заполните, только
+                    если реальный ЦТ этого груза смещён (напр. несимметрично загруженный контейнер).
+                  </p>
+                  <StabilityOverrideField
+                    label="VCG над палубой"
+                    value={item.stabilityOverride?.vcgAboveDeckM}
+                    unit={unit}
+                    onChange={(v) => onSetStabilityOverride({ ...item.stabilityOverride, vcgAboveDeckM: v })}
+                  />
+                  <StabilityOverrideField
+                    label="Сдвиг TCG (+ = правый борт)"
+                    value={item.stabilityOverride?.tcgOffsetM}
+                    unit={unit}
+                    onChange={(v) => onSetStabilityOverride({ ...item.stabilityOverride, tcgOffsetM: v })}
+                  />
+                  <StabilityOverrideField
+                    label="Сдвиг LCG (+ = к носу)"
+                    value={item.stabilityOverride?.lcgOffsetM}
+                    unit={unit}
+                    onChange={(v) => onSetStabilityOverride({ ...item.stabilityOverride, lcgOffsetM: v })}
+                  />
+                  {hasStabilityOverride && (
+                    <button
+                      onClick={() => onSetStabilityOverride(undefined)}
+                      className="text-[10px] text-muted-foreground hover:text-destructive underline"
+                    >
+                      Сбросить override
+                    </button>
+                  )}
+                </PopoverContent>
+              </Popover>
+
               <IconBtn onClick={onDuplicate} title="Дублировать">
                 <Copy className="h-3.5 w-3.5" />
               </IconBtn>
@@ -492,6 +548,44 @@ function NumField({
           const v = Number(e.target.value)
           if (isNaN(v)) return
           onChange(v < min ? min : v)
+        }}
+        className="h-7 text-xs px-1.5"
+      />
+    </div>
+  )
+}
+
+// A genuinely-optional numeric field — unlike NumField above, an empty
+// value here means "no override" (undefined), not 0. Distinguishing those
+// two matters for stabilityOverride: 0 is a meaningful override value
+// (e.g. a VCG deliberately pinned to deck level), so it must stay
+// distinguishable from "not set at all."
+function StabilityOverrideField({
+  label,
+  value,
+  unit,
+  onChange,
+}: {
+  label: string
+  value: number | undefined
+  unit: Unit
+  onChange: (v: number | undefined) => void
+}) {
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[10px] text-muted-foreground leading-none">
+        {label} ({UNIT_LABEL[unit]})
+      </Label>
+      <Input
+        type="number"
+        step={0.1}
+        value={value ?? ''}
+        placeholder="авто"
+        onChange={(e) => {
+          const raw = e.target.value
+          if (raw === '') { onChange(undefined); return }
+          const v = Number(raw)
+          if (!isNaN(v)) onChange(v)
         }}
         className="h-7 text-xs px-1.5"
       />
