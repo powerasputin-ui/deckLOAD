@@ -49,8 +49,10 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
   {
     id: 'aleksey-kuznetsov',
     label: 'Алексей Кузнецов (ПБУ, IMO 9692648)',
-    // Real total/usable cargo-deck AREA (860/830 m²) is known, but no
-    // published or GA-drawing source gave an exact width×length split —
+    // Real total/usable cargo-deck AREA (860/830 m²) is now confirmed by TWO
+    // independent real sources (the ДВТК project document and FEMCO's own
+    // technical specification sheet, both giving 860/830 m² exactly), but
+    // neither gives a published or GA-drawing exact width×length split —
     // estimated as width ≈ 17 m (typical clear deck width for this beam
     // class, main-deck breadth 20 m minus bulwark/walkway) and
     // length = 830/17 ≈ 49 m. Flagged to the user in `note`.
@@ -99,7 +101,12 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
     deckForwardIsPositiveY: true,
     note:
       'Судно, лёгкое судно, гидростатика (1 точка) и танки/расходники — из реального утверждённого проекта (ДВТК/638.362241.034). ' +
-      'Размеры палубы (17×49 м) и продольное положение палубы на корпусе — ОЦЕНКА по общей площади (860/830 м²) и чертежу, ' +
-      'не точный GA-чертёж. Кросс-кривые KN в документе отсутствуют — недоступна полная кривая GZ. Сверьте перед реальным рейсом.',
+      'Площадь палубы (860/830 м²) подтверждена ВТОРЫМ независимым источником — технической спецификацией FEMCO — точно совпадает. ' +
+      'Размеры палубы (17×49 м) и продольное положение палубы на корпусе — по-прежнему ОЦЕНКА (ни один источник не даёт точный GA-чертёж с разбивкой ширина×длина). ' +
+      'ВНИМАНИЕ — конфликт по допустимой нагрузке на палубу: спецификация FEMCO указывает 10 т/м², а рабочий пример из проекта ДВТК явно использует лимит 5,0 т/м² ' +
+      '(«Допустимое давление груза на палубу не должно превышать g = 5,0 т/м²»). Это НЕ разрешено автоматически — при создании зоны нагрузки на палубе сверьте, ' +
+      'какой лимит актуален для конкретной операции, прежде чем полагаться на предупреждения о перегрузке. ' +
+      'Справочно: максимальная грузоподъёмность палубы (Deck Cargo capacity) по FEMCO — 2550 т. ' +
+      'Кросс-кривые KN в документах отсутствуют — недоступна полная кривая GZ. Сверьте перед реальным рейсом.',
   },
 ]

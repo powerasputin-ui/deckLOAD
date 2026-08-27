@@ -566,15 +566,27 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   )
 
   // Layout geometry
+  // A real ship's cargo deck is far longer than it is wide. Screen-x is
+  // always the horizontal (landscape) extent and screen-y the vertical one,
+  // so an elongated deck is drawn "transposed" (deckLength on screen-x,
+  // deckWidth on screen-y) whenever length exceeds width — otherwise it
+  // renders as a tall, unreadable strip. Transposing is a diagonal
+  // reflection (self-inverse), not a rotation: every screen-point build and
+  // screen-size build below goes through `rotated` consistently so deck-local
+  // (x, y, width, length) — and everything derived from them elsewhere, e.g.
+  // stability.ts's TCG/LCG — never change; only the on-screen picture does.
+  const rotated = deckLength > deckWidth
   const maxW = 900
   const maxH = 560
   const pad = 32
+  const rDeckWidth = rotated ? deckLength : deckWidth
+  const rDeckHeight = rotated ? deckWidth : deckLength
   const scale = Math.min(
-    (maxW - pad * 2) / Math.max(deckWidth, 1),
-    (maxH - pad * 2) / Math.max(deckLength, 1)
+    (maxW - pad * 2) / Math.max(rDeckWidth, 1),
+    (maxH - pad * 2) / Math.max(rDeckHeight, 1)
   )
-  const w = deckWidth * scale
-  const h = deckLength * scale
+  const w = rDeckWidth * scale
+  const h = rDeckHeight * scale
   const offX = (maxW - w) / 2
   const offY = (maxH - h) / 2
 
@@ -721,13 +733,26 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const p = pt.matrixTransform(ctm.inverse())
       const dx = (p.x - offX) / scale
       const dy = (p.y - offY) / scale
-      return { x: dx, y: dy }
+      return rotated ? { x: dy, y: dx } : { x: dx, y: dy }
     },
-    [offX, offY, scale]
+    [offX, offY, scale, rotated]
   )
 
   const toX = (v: number) => offX + v * scale
   const toY = (v: number) => offY + v * scale
+  // Build a screen point from deck-local (x, y), applying the same transpose
+  // as screenToDeck's inverse above — the single pairing point for anything
+  // that currently does `{ x: toX(p.x), y: toY(p.y) }`.
+  const deckToScreen = (x: number, y: number) => ({ sx: toX(rotated ? y : x), sy: toY(rotated ? x : y) })
+  // Screen-pixel width/height from a deck-local footprint size.
+  const screenSpanW = (width: number, length: number) => (rotated ? length : width) * scale
+  const screenSpanH = (width: number, length: number) => (rotated ? width : length) * scale
+  // Under transpose, the on-screen 'ne'/'sw' handles swap which deck-space
+  // corner they grab; 'nw'/'se' (the diagonal the reflection is across) stay
+  // put. Use this to translate a screen-visual corner key into the logical
+  // (deck-space) corner key before applying x/y/width/length deltas.
+  const cornerKey = (k: 'nw' | 'ne' | 'sw' | 'se'): 'nw' | 'ne' | 'sw' | 'se' =>
+    rotated ? ({ nw: 'nw', se: 'se', ne: 'sw', sw: 'ne' } as const)[k] : k
   const fmt = fmtNumber
 
   // The rotate/delete/layer +/- controls anchor to an item's own corners in
@@ -739,10 +764,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // sit apart regardless of how thin the real footprint is.
   const MIN_CONTROL_SPAN = 44
   const controlAnchors = (x: number, y: number, width: number, length: number) => {
-    const left = toX(x)
-    const top = toY(y)
-    const pxW = toX(x + width) - left
-    const pxH = toY(y + length) - top
+    const { sx: left, sy: top } = deckToScreen(x, y)
+    const pxW = screenSpanW(width, length)
+    const pxH = screenSpanH(width, length)
     const effW = Math.max(pxW, MIN_CONTROL_SPAN)
     const effH = Math.max(pxH, MIN_CONTROL_SPAN)
     const ccx = left + pxW / 2
@@ -856,7 +880,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     const y = Math.max(0, Math.min(deckLength, pos.y))
     if (drawingPoints.length >= 3) {
       const first = drawingPoints[0]
-      const distPx = Math.hypot(toX(x) - toX(first.x), toY(y) - toY(first.y))
+      const a = deckToScreen(x, y)
+      const b = deckToScreen(first.x, first.y)
+      const distPx = Math.hypot(a.sx - b.sx, a.sy - b.sy)
       if (distPx <= CLOSE_LOOP_PIXEL_RADIUS) {
         onFinishDrawing(drawingPoints)
         setDrawingPoints([])
@@ -879,7 +905,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     const y = Math.max(0, Math.min(deckLength, pos.y))
     if (zoneFreeformPoints.length >= 3) {
       const first = zoneFreeformPoints[0]
-      const distPx = Math.hypot(toX(x) - toX(first.x), toY(y) - toY(first.y))
+      const a = deckToScreen(x, y)
+      const b = deckToScreen(first.x, first.y)
+      const distPx = Math.hypot(a.sx - b.sx, a.sy - b.sy)
       if (distPx <= CLOSE_LOOP_PIXEL_RADIUS) {
         const xs = zoneFreeformPoints.map((p) => p.x)
         const ys = zoneFreeformPoints.map((p) => p.y)
@@ -928,13 +956,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     for (let i = 0; i < editingOutline.length; i++) {
       const a = editingOutline[i]
       const b = editingOutline[(i + 1) % editingOutline.length]
-      const ax = toX(a.x), ay = toY(a.y), bx = toX(b.x), by = toY(b.y)
-      const px = toX(x), py = toY(y)
+      const { sx: ax, sy: ay } = deckToScreen(a.x, a.y)
+      const { sx: bx, sy: by } = deckToScreen(b.x, b.y)
+      const { sx: qx, sy: qy } = deckToScreen(x, y)
       const dx = bx - ax, dy = by - ay
       const lenSq = dx * dx + dy * dy
-      const t = lenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0
+      const t = lenSq > 0 ? Math.max(0, Math.min(1, ((qx - ax) * dx + (qy - ay) * dy) / lenSq)) : 0
       const cx = ax + t * dx, cy = ay + t * dy
-      const distPx = Math.hypot(px - cx, py - cy)
+      const distPx = Math.hypot(qx - cx, qy - cy)
       if (distPx < bestDistPx) {
         bestDistPx = distPx
         bestIndex = i
@@ -1423,7 +1452,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
         const clampedY = Math.max(0, Math.min(deckLength, pos.y))
         let opp: { x: number; y: number }
-        switch (zoneDrag.corner) {
+        switch (cornerKey(zoneDrag.corner)) {
           case 'nw': opp = { x: r.x + r.width, y: r.y + r.length }; break
           case 'ne': opp = { x: r.x, y: r.y + r.length }; break
           case 'sw': opp = { x: r.x + r.width, y: r.y }; break
@@ -1431,12 +1460,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         }
         const newX = Math.min(clampedX, opp.x - minSize)
         const newY = Math.min(clampedY, opp.y - minSize)
+        const logicalCorner = cornerKey(zoneDrag.corner)
         const patch =
-          zoneDrag.corner === 'nw'
+          logicalCorner === 'nw'
             ? { x: Math.max(0, newX), y: Math.max(0, newY), width: opp.x - Math.max(0, newX), length: opp.y - Math.max(0, newY) }
-            : zoneDrag.corner === 'ne'
+            : logicalCorner === 'ne'
               ? { x: opp.x, y: Math.max(0, newY), width: Math.max(minSize, clampedX - opp.x), length: opp.y - Math.max(0, newY) }
-              : zoneDrag.corner === 'sw'
+              : logicalCorner === 'sw'
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
         onUpdateLoadZone(zoneDrag.id, patch)
@@ -1481,7 +1511,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const clampedX = Math.max(0, Math.min(deckWidth, pos.x))
         const clampedY = Math.max(0, Math.min(deckLength, pos.y))
         let opp: { x: number; y: number }
-        switch (rzDrag.corner) {
+        const logicalCorner = cornerKey(rzDrag.corner)
+        switch (logicalCorner) {
           case 'nw': opp = { x: r.x + r.width, y: r.y + r.length }; break
           case 'ne': opp = { x: r.x, y: r.y + r.length }; break
           case 'sw': opp = { x: r.x + r.width, y: r.y }; break
@@ -1490,11 +1521,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const newX = Math.min(clampedX, opp.x - minSize)
         const newY = Math.min(clampedY, opp.y - minSize)
         const patch =
-          rzDrag.corner === 'nw'
+          logicalCorner === 'nw'
             ? { x: Math.max(0, newX), y: Math.max(0, newY), width: opp.x - Math.max(0, newX), length: opp.y - Math.max(0, newY) }
-            : rzDrag.corner === 'ne'
+            : logicalCorner === 'ne'
               ? { x: opp.x, y: Math.max(0, newY), width: Math.max(minSize, clampedX - opp.x), length: opp.y - Math.max(0, newY) }
-              : rzDrag.corner === 'sw'
+              : logicalCorner === 'sw'
                 ? { x: Math.max(0, newX), y: opp.y, width: opp.x - Math.max(0, newX), length: Math.max(minSize, clampedY - opp.y) }
                 : { x: opp.x, y: opp.y, width: Math.max(minSize, clampedX - opp.x), length: Math.max(minSize, clampedY - opp.y) }
         // A 'custom' (hand-drawn outline) zone's polygon is the source of
@@ -1522,9 +1553,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const deltaY = pos.y - startDeck.y
       const m = clearanceDrag.startMargin
       const next: ClearanceMargin = { ...m }
-      if (clearanceDrag.corner === 'nw' || clearanceDrag.corner === 'ne') next.top = Math.max(0, m.top - deltaY)
+      const logicalCorner = cornerKey(clearanceDrag.corner)
+      if (logicalCorner === 'nw' || logicalCorner === 'ne') next.top = Math.max(0, m.top - deltaY)
       else next.bottom = Math.max(0, m.bottom + deltaY)
-      if (clearanceDrag.corner === 'nw' || clearanceDrag.corner === 'sw') next.left = Math.max(0, m.left - deltaX)
+      if (logicalCorner === 'nw' || logicalCorner === 'sw') next.left = Math.max(0, m.left - deltaX)
       else next.right = Math.max(0, m.right + deltaX)
       if (clearanceDrag.kind === 'manual') onUpdateManualClearance?.(clearanceDrag.id, next)
       else onUpdatePinnedClearance?.(clearanceDrag.id, next)
@@ -1933,7 +1965,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </pattern>
           {deckOutline && deckOutline.length >= 3 && (
             <clipPath id="deck-outline-clip">
-              <polygon points={deckOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')} />
+              <polygon points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')} />
             </clipPath>
           )}
         </defs>
@@ -1988,7 +2020,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             intentional boundary rather than a clip artifact. */}
         {deckOutline && deckOutline.length >= 3 && (
           <polygon
-            points={deckOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+            points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
             fill="none"
             stroke="#1e293b"
             strokeWidth={2}
@@ -2003,7 +2035,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {edgePad > 0 &&
           (usableOutline ? (
             <polygon
-              points={usableOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              points={usableOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="none"
               stroke="#94a3b8"
               strokeWidth={0.75}
@@ -2021,8 +2053,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               // outright ("<rect> attribute width: A negative value is not
               // valid") — the free-space hatching a few dozen lines below
               // already guards the identical formula with this same clamp.
-              width={Math.max(0, (deckWidth - edgePad * 2) * scale)}
-              height={Math.max(0, (deckLength - edgePad * 2) * scale)}
+              width={Math.max(0, screenSpanW(deckWidth - edgePad * 2, deckLength - edgePad * 2))}
+              height={Math.max(0, screenSpanH(deckWidth - edgePad * 2, deckLength - edgePad * 2))}
               fill="none"
               stroke="#94a3b8"
               strokeWidth={0.75}
@@ -2068,14 +2100,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             }))
             .filter((r) => r.width > 0 && r.length > 0)
 
-          const outerPath = `M ${outerPts.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' L ')} Z`
+          const outerPath = `M ${outerPts.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' L ')} Z`
           const holePath = holes
             .map((r) => {
-              const x0 = toX(r.x)
-              const y0 = toY(r.y)
-              const x1 = toX(r.x + r.width)
-              const y1 = toY(r.y + r.length)
-              return `M ${x0},${y0} L ${x1},${y0} L ${x1},${y1} L ${x0},${y1} Z`
+              const c0 = deckToScreen(r.x, r.y)
+              const c1 = deckToScreen(r.x + r.width, r.y + r.length)
+              return `M ${c0.sx},${c0.sy} L ${c1.sx},${c0.sy} L ${c1.sx},${c1.sy} L ${c0.sx},${c1.sy} Z`
             })
             .join(' ')
 
@@ -2093,10 +2123,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             untouched rectangle. */}
         <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
         {loadZones?.map((z) => {
-          const zw = z.width * scale
-          const zh = z.length * scale
-          const zx = toX(z.x)
-          const zy = toY(z.y)
+          const zw = screenSpanW(z.width, z.length)
+          const zh = screenSpanH(z.width, z.length)
+          const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
           const isSelected = selectedZoneId === z.id
           const interactive = !!onUpdateLoadZone
           const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
@@ -2178,10 +2207,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 ? selectedManualIds?.includes(p.manualId ?? '') ?? false
                 : !!placementId && selectedPinIds.includes(placementId)
             const canDrag = isSelected && !!placementId
-            const zx = toX(p.x - margin.left)
-            const zy = toY(p.y - margin.top)
-            const zw = (p.width + margin.left + margin.right) * scale
-            const zh = (p.length + margin.top + margin.bottom) * scale
+            const { sx: zx, sy: zy } = deckToScreen(p.x - margin.left, p.y - margin.top)
+            const zw = screenSpanW(p.width + margin.left + margin.right, p.length + margin.top + margin.bottom)
+            const zh = screenSpanH(p.width + margin.left + margin.right, p.length + margin.top + margin.bottom)
             const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
               { key: 'nw', x: zx, y: zy },
               { key: 'ne', x: zx + zw, y: zy },
@@ -2229,11 +2257,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             only on the selected zone. */}
         {restrictionZones?.map((z) => {
           const poly = restrictionZonePolygon(z)
-          const points = poly.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')
-          const zx = toX(z.x)
-          const zy = toY(z.y)
-          const zw = z.width * scale
-          const zh = z.length * scale
+          const points = poly.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')
+          const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
+          const zw = screenSpanW(z.width, z.length)
+          const zh = screenSpanH(z.width, z.length)
           const isSelected = selectedRestrictionZoneId === z.id
           const interactive = !!onUpdateRestrictionZone
           const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
@@ -2370,7 +2397,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const poly = restrictionZonePolygon({ shapeType: zoneDrawDrag.shapeType, x, y, width, length })
           return (
             <polygon
-              points={poly.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              points={poly.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="rgba(220,38,38,0.15)"
               stroke="#dc2626"
               strokeWidth={1.5}
@@ -2386,7 +2413,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             reappear once "Добавить" was clicked, which read as broken. */}
         {pendingZoneDraft && (
           <polygon
-            points={restrictionZonePolygon(pendingZoneDraft).map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+            points={restrictionZonePolygon(pendingZoneDraft).map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
             fill="rgba(220,38,38,0.15)"
             stroke="#dc2626"
             strokeWidth={1.5}
@@ -2401,62 +2428,75 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {drawingRestrictionZoneFreeform && zoneFreeformPoints.length > 0 && (
           <g className="pointer-events-none" opacity={0.85}>
             <polyline
-              points={zoneFreeformPoints.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              points={zoneFreeformPoints.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="none"
               stroke="#dc2626"
               strokeWidth={1.5}
             />
-            {drawHoverPos && (
-              <line
-                x1={toX(zoneFreeformPoints[zoneFreeformPoints.length - 1].x)}
-                y1={toY(zoneFreeformPoints[zoneFreeformPoints.length - 1].y)}
-                x2={toX(drawHoverPos.x)}
-                y2={toY(drawHoverPos.y)}
-                stroke="#dc2626"
-                strokeWidth={1.5}
-                strokeDasharray="4 3"
-              />
-            )}
-            {zoneFreeformPoints.map((p, i) => (
+            {drawHoverPos && (() => {
+              const last = deckToScreen(zoneFreeformPoints[zoneFreeformPoints.length - 1].x, zoneFreeformPoints[zoneFreeformPoints.length - 1].y)
+              const hover = deckToScreen(drawHoverPos.x, drawHoverPos.y)
+              return (
+                <line
+                  x1={last.sx}
+                  y1={last.sy}
+                  x2={hover.sx}
+                  y2={hover.sy}
+                  stroke="#dc2626"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+              )
+            })()}
+            {zoneFreeformPoints.map((p, i) => { const { sx, sy } = deckToScreen(p.x, p.y); return (
               <circle
                 key={i}
-                cx={toX(p.x)}
-                cy={toY(p.y)}
+                cx={sx}
+                cy={sy}
                 r={i === 0 && zoneFreeformPoints.length >= 3 ? 7 : 4}
                 fill={i === 0 && zoneFreeformPoints.length >= 3 ? 'rgba(34,197,94,0.9)' : '#dc2626'}
                 stroke="#fff"
                 strokeWidth={1.2}
               />
-            ))}
+            )})}
           </g>
         )}
 
         {/* Lashing-point placement preview (follows cursor while armed) */}
-        {placingLashingPoint && lashingHoverPos && (
-          <g className="pointer-events-none" opacity={0.55}>
-            {pendingLashingCorner && (
-              <line
-                x1={toX(pendingLashingCorner.cornerX)}
-                y1={toY(pendingLashingCorner.cornerY)}
-                x2={toX(lashingHoverPos.x)}
-                y2={toY(lashingHoverPos.y)}
-                stroke="rgba(220,38,38,0.9)"
-                strokeWidth={1.5}
-                strokeDasharray="4 3"
-              />
-            )}
-            <circle cx={toX(lashingHoverPos.x)} cy={toY(lashingHoverPos.y)} r={6} fill="rgba(220,38,38,0.9)" stroke="#fff" strokeWidth={1.5} />
-            <line x1={toX(lashingHoverPos.x) - 3} y1={toY(lashingHoverPos.y)} x2={toX(lashingHoverPos.x) + 3} y2={toY(lashingHoverPos.y)} stroke="#fff" strokeWidth={1.2} />
-            <line x1={toX(lashingHoverPos.x)} y1={toY(lashingHoverPos.y) - 3} x2={toX(lashingHoverPos.x)} y2={toY(lashingHoverPos.y) + 3} stroke="#fff" strokeWidth={1.2} />
-          </g>
-        )}
+        {placingLashingPoint && lashingHoverPos && (() => {
+          const hover = deckToScreen(lashingHoverPos.x, lashingHoverPos.y)
+          return (
+            <g className="pointer-events-none" opacity={0.55}>
+              {pendingLashingCorner && (() => {
+                const corner = deckToScreen(pendingLashingCorner.cornerX, pendingLashingCorner.cornerY)
+                return (
+                  <line
+                    x1={corner.sx}
+                    y1={corner.sy}
+                    x2={hover.sx}
+                    y2={hover.sy}
+                    stroke="rgba(220,38,38,0.9)"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                  />
+                )
+              })()}
+              <circle cx={hover.sx} cy={hover.sy} r={6} fill="rgba(220,38,38,0.9)" stroke="#fff" strokeWidth={1.5} />
+              <line x1={hover.sx - 3} y1={hover.sy} x2={hover.sx + 3} y2={hover.sy} stroke="#fff" strokeWidth={1.2} />
+              <line x1={hover.sx} y1={hover.sy - 3} x2={hover.sx} y2={hover.sy + 3} stroke="#fff" strokeWidth={1.2} />
+            </g>
+          )
+        })()}
 
         {/* Power-socket placement preview (follows cursor while armed) */}
-        {placingPowerSocket && socketHoverPos && (
-          <g className="pointer-events-none" opacity={0.55}>
-            <PowerSocketGlyph x={toX(socketHoverPos.x)} y={toY(socketHoverPos.y)} />
-          </g>
-        )}
+        {placingPowerSocket && socketHoverPos && (() => {
+          const s = deckToScreen(socketHoverPos.x, socketHoverPos.y)
+          return (
+            <g className="pointer-events-none" opacity={0.55}>
+              <PowerSocketGlyph x={s.sx} y={s.sy} />
+            </g>
+          )
+        })()}
 
         {/* Custom-shape drawing preview: confirmed points + a dashed segment
             to the cursor, with the first vertex highlighted once the loop
@@ -2464,33 +2504,37 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {drawingCustomShape && drawingPoints.length > 0 && (
           <g className="pointer-events-none" opacity={0.8}>
             <polyline
-              points={drawingPoints.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              points={drawingPoints.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="none"
               stroke="rgba(37,99,235,0.9)"
               strokeWidth={1.5}
             />
-            {drawHoverPos && (
-              <line
-                x1={toX(drawingPoints[drawingPoints.length - 1].x)}
-                y1={toY(drawingPoints[drawingPoints.length - 1].y)}
-                x2={toX(drawHoverPos.x)}
-                y2={toY(drawHoverPos.y)}
-                stroke="rgba(37,99,235,0.9)"
-                strokeWidth={1.5}
-                strokeDasharray="4 3"
-              />
-            )}
-            {drawingPoints.map((p, i) => (
+            {drawHoverPos && (() => {
+              const last = deckToScreen(drawingPoints[drawingPoints.length - 1].x, drawingPoints[drawingPoints.length - 1].y)
+              const hover = deckToScreen(drawHoverPos.x, drawHoverPos.y)
+              return (
+                <line
+                  x1={last.sx}
+                  y1={last.sy}
+                  x2={hover.sx}
+                  y2={hover.sy}
+                  stroke="rgba(37,99,235,0.9)"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+              )
+            })()}
+            {drawingPoints.map((p, i) => { const { sx, sy } = deckToScreen(p.x, p.y); return (
               <circle
                 key={i}
-                cx={toX(p.x)}
-                cy={toY(p.y)}
+                cx={sx}
+                cy={sy}
                 r={i === 0 && drawingPoints.length >= 3 ? 7 : 4}
                 fill={i === 0 && drawingPoints.length >= 3 ? 'rgba(34,197,94,0.9)' : 'rgba(37,99,235,0.9)'}
                 stroke="#fff"
                 strokeWidth={1.2}
               />
-            ))}
+            )})}
           </g>
         )}
 
@@ -2502,17 +2546,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {editingDeckOutline && editingOutline.length > 0 && (
           <g opacity={0.9}>
             <polygon
-              points={editingOutline.map((p) => `${toX(p.x)},${toY(p.y)}`).join(' ')}
+              points={editingOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="rgba(37,99,235,0.08)"
               stroke="rgba(37,99,235,0.9)"
               strokeWidth={1.5}
               className="pointer-events-none"
             />
-            {editingOutline.map((p, i) => (
+            {editingOutline.map((p, i) => { const { sx, sy } = deckToScreen(p.x, p.y); return (
               <g key={i}>
                 <circle
-                  cx={toX(p.x)}
-                  cy={toY(p.y)}
+                  cx={sx}
+                  cy={sy}
                   r={6}
                   fill="rgba(37,99,235,0.9)"
                   stroke="#fff"
@@ -2529,14 +2573,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                       handleOutlineVertexRemove(i)
                     }}
                   >
-                    <circle cx={toX(p.x) + 10} cy={toY(p.y) - 10} r={7} fill="#ef4444" stroke="#fff" strokeWidth={1.2} />
-                    <text x={toX(p.x) + 10} y={toY(p.y) - 9} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="#fff">
+                    <circle cx={sx + 10} cy={sy - 10} r={7} fill="#ef4444" stroke="#fff" strokeWidth={1.2} />
+                    <text x={sx + 10} y={sy - 9} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="#fff">
                       ×
                     </text>
                   </g>
                 )}
               </g>
-            ))}
+            )})}
           </g>
         )}
 
@@ -2555,8 +2599,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const spreadMargin = pipePyramidSpreadMargin(p, p.stackedCount)
           const visWidth = p.width + spreadMargin.onWidth * 2
           const visLength = p.length + spreadMargin.onLength * 2
-          const pw = visWidth * scale
-          const ph = visLength * scale
+          const itemPw = screenSpanW(visWidth, visLength)
+          const itemPh = screenSpanH(visWidth, visLength)
           const isHover = hoveredItemId === p.itemId
           const isManualSelected =
             mode === 'manual' &&
@@ -2602,14 +2646,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // actually sits.
           const drawX = renderX - spreadMargin.onWidth
           const drawY = renderY - spreadMargin.onLength
+          const { sx: drawSx, sy: drawSy } = deckToScreen(drawX, drawY)
           return (
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
               item={p}
-              x={toX(drawX)}
-              y={toY(drawY)}
-              w={pw}
-              h={ph}
+              x={drawSx}
+              y={drawSy}
+              w={itemPw}
+              h={itemPh}
               scale={scale}
               hovered={isHover}
               selected={isSelected}
@@ -2651,8 +2696,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             on top and stays visible/clickable instead of being hidden
             underneath the cargo's fill. */}
         {lashingPoints?.map((pt) => {
-          const px = toX(pt.x)
-          const py = toY(pt.y)
+          const { sx: px, sy: py } = deckToScreen(pt.x, pt.y)
           const isAttached = pt.placementId !== undefined && pt.cornerX !== undefined && pt.cornerY !== undefined
           const isSelected = selectedLashingId === pt.id
           // Live length readout while actively dragging this anchor — same
@@ -2686,8 +2730,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <g key={`lash-${pt.id}`}>
               {isAttached && (
                 <line
-                  x1={toX(pt.cornerX!)}
-                  y1={toY(pt.cornerY!)}
+                  x1={deckToScreen(pt.cornerX!, pt.cornerY!).sx}
+                  y1={deckToScreen(pt.cornerX!, pt.cornerY!).sy}
                   x2={px}
                   y2={py}
                   stroke={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.6)'}
@@ -2696,8 +2740,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               )}
               {dragDistance !== null && (
                 <text
-                  x={(toX(pt.cornerX!) + px) / 2}
-                  y={(toY(pt.cornerY!) + py) / 2 - 6}
+                  x={(deckToScreen(pt.cornerX!, pt.cornerY!).sx + px) / 2}
+                  y={(deckToScreen(pt.cornerX!, pt.cornerY!).sy + py) / 2 - 6}
                   textAnchor="middle"
                   fontSize={11}
                   fontWeight={600}
@@ -2749,18 +2793,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         })}
 
         {powerSockets?.map((s, i) => {
-          const sx = toX(s.x)
-          const sy = toY(s.y)
+          const { sx, sy } = deckToScreen(s.x, s.y)
           const interactive = !!onUpdatePowerSocket
           // The number/icon label must sit OUTSIDE the deck, never overlap
           // it — nudge a hair further out along the perimeter's own outward
           // normal (deck-space), then convert that offset to screen space
-          // (handles any axis flip/scale correctly) and place the label a
-          // fixed pixel distance out along that same screen direction.
+          // (handles any axis flip/scale, AND the deck transpose, correctly)
+          // and place the label a fixed pixel distance out along that same
+          // screen direction.
           const outward = nearestPointOnPolygon(s, deckPerimeter)
           const nudged = { x: s.x + outward.normalX * 0.5, y: s.y + outward.normalY * 0.5 }
-          const dirX = toX(nudged.x) - sx
-          const dirY = toY(nudged.y) - sy
+          const nudgedScreen = deckToScreen(nudged.x, nudged.y)
+          const dirX = nudgedScreen.sx - sx
+          const dirY = nudgedScreen.sy - sy
           const dirLen = Math.hypot(dirX, dirY) || 1
           const labelX = sx + (dirX / dirLen) * 16
           const labelY = sy + (dirY / dirLen) * 16
@@ -2995,14 +3040,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           })()}
 
         {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
-        {activeStamp && stampDims && hoverPos && !dragState && (
+        {activeStamp && stampDims && hoverPos && !dragState && (() => {
+          const clamped = clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad)
+          const { sx: stampSx, sy: stampSy } = deckToScreen(clamped.x, clamped.y)
+          return (
           <g pointerEvents="none">
             <FootprintShape
               shape={activeStamp.shape}
-              x={toX(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).x)}
-              y={toY(clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad).y)}
-              w={stampDims.w * scale}
-              h={stampDims.l * scale}
+              x={stampSx}
+              y={stampSy}
+              w={screenSpanW(stampDims.w, stampDims.l)}
+              h={screenSpanH(stampDims.w, stampDims.l)}
               fill={activeStamp.color}
               fillOpacity={0.35}
               stroke={activeStamp.color}
@@ -3013,11 +3061,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               scale={scale}
             />
           </g>
-        )}
+          )
+        })()}
 
-        {/* Dimension labels */}
+        {/* Dimension labels — the horizontal (top) label always names
+            whichever real dimension is currently drawn along the screen's
+            horizontal axis, and the vertical (side) label the other one, so
+            the printed numbers stay next to the side of the box they
+            actually measure regardless of `rotated`. */}
         <text x={offX + w / 2} y={offY - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#0f172a">
-          {fmt(deckWidth)} {UNIT_LABEL[unit]}
+          {fmt(rotated ? deckLength : deckWidth)} {UNIT_LABEL[unit]}
         </text>
         <text
           x={offX - 16}
@@ -3028,7 +3081,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           fill="#0f172a"
           transform={`rotate(-90 ${offX - 16} ${offY + h / 2})`}
         >
-          {fmt(deckLength)} {UNIT_LABEL[unit]}
+          {fmt(rotated ? deckWidth : deckLength)} {UNIT_LABEL[unit]}
         </text>
       </svg>
       <PhotoCropDialog
