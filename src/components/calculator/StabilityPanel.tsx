@@ -194,10 +194,17 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
                 </tbody>
               </table>
             </div>
-            <div className="text-[10px] text-muted-foreground">
-              Макс. GZ {fmtNumber(gz.maxGZ)} м при {fmtNumber(gz.angleOfMaxGZ)}°
-              {gz.angleOfVanishingStability !== null && ` · угол заката остойчивости ${fmtNumber(gz.angleOfVanishingStability)}°`}
-            </div>
+            {gz.maxGZ <= 0 ? (
+              <div className="text-[10px] font-medium text-red-600">
+                Плечо остойчивости GZ не положительно ни на одном табличном угле крена — судно неостойчиво уже на
+                нулевом крене (угол заката остойчивости 0°).
+              </div>
+            ) : (
+              <div className="text-[10px] text-muted-foreground">
+                Макс. GZ {fmtNumber(gz.maxGZ)} м при {fmtNumber(gz.angleOfMaxGZ)}°
+                {gz.angleOfVanishingStability !== null && ` · угол заката остойчивости ${fmtNumber(gz.angleOfVanishingStability)}°`}
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">

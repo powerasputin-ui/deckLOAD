@@ -342,6 +342,42 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     expect(gz.curve[3].GZ).toBeCloseTo(3.1 - 6.0 * Math.sin(rad(30)), 6)
   })
 
+  it('applies the free-surface correction to the WHOLE GZ curve via an effective KG, not just the initial-GM scalar', () => {
+    const vesselWithTank: VesselStabilityData = {
+      ...vessel,
+      variableWeights: [{ id: 'w1', name: 'Танк', weightKg: 10_000, vcgM: 1, tcgM: 0, lcgM: 0, freeSurfaceMomentTm: 400 }],
+    }
+    const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+    // FSC = 400 / (2_000_000/1000) = 0.2 -> effective KG = 6.0 + 0.2 = 6.2
+    const gzWithTank = computeGZCurve(vesselWithTank, loading)!
+    const gzNoTank = computeGZCurve(vessel, loading)!
+    const rad30 = (30 * Math.PI) / 180
+    expect(gzWithTank.curve[3].GZ).toBeCloseTo(3.1 - 6.2 * Math.sin(rad30), 6)
+    // Regression: before the fix, the tank made no difference to the curve at all.
+    expect(gzWithTank.curve[3].GZ).not.toBeCloseTo(gzNoTank.curve[3].GZ, 6)
+    expect(gzWithTank.maxGZ).toBeLessThan(gzNoTank.maxGZ)
+  })
+
+  it('reports angle of vanishing stability as 0° (not null) when GZ is never positive at any tabulated angle', () => {
+    // KG large enough that GZ is <= 0 at every angle including 0° itself
+    // (GZ(0)=KN(0)-KG*sin(0)=0 always, by construction) -- the vessel is
+    // already unstable at upright, not "stable throughout," which is what
+    // null used to (wrongly) imply here before the fix.
+    const loading = { totalDisplacementKg: 2_000_000, KG: 20.0, overallTCG: 0, overallLCG: 0 }
+    const gz = computeGZCurve(vessel, loading)!
+    expect(gz.maxGZ).toBeLessThanOrEqual(0)
+    expect(gz.angleOfVanishingStability).toBe(0)
+  })
+
+  it('still reports null (genuinely stable throughout) when GZ is positive across the whole tabulated range', () => {
+    const loading = { totalDisplacementKg: 2_000_000, KG: 0.5, overallTCG: 0, overallLCG: 0 } // tiny KG -> GZ stays positive past 0deg
+    const gz = computeGZCurve(vessel, loading)!
+    // GZ(0deg) is always exactly 0 by construction (KN(0)=0, sin(0)=0) -
+    // "positive throughout" means every angle PAST zero stays positive.
+    expect(gz.curve.filter((p) => p.heelDeg > 0).every((p) => p.GZ > 0)).toBe(true)
+    expect(gz.angleOfVanishingStability).toBeNull()
+  })
+
   it('integrates area under the curve (composite Simpson) matching a hand calculation', () => {
     const loading = { totalDisplacementKg: 2_000_000, KG: 0, overallTCG: 0, overallLCG: 0 } // KG=0 -> GZ==KN, simplest case
     const gz = computeGZCurve(vessel, loading)!

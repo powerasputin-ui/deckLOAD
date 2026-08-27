@@ -537,9 +537,17 @@ function simpsonComposite(nodes: { xRad: number; GZ: number }[]): number {
 export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCondition): GZCurveResult | null {
   const kn = vessel.knCurves
   if (!kn || kn.headingAngles.length === 0) return null
+  // Free surface must reduce the WHOLE righting-arm curve, not just the
+  // single initial-GM scalar — the standard treatment is a "virtual rise
+  // of G" (effective KG = KG + FSC) applied everywhere GZ is computed.
+  // Using raw KG here would leave every GZ-derived criterion (areas,
+  // GZ-at-30°, angle of max GZ) reading as if no free surface existed,
+  // even when the initial-GM criterion elsewhere correctly failed on it.
+  const fsc = computeFreeSurfaceCorrection(vessel.variableWeights, loading.totalDisplacementKg)
+  const effectiveKG = loading.KG + fsc
   const curve: GZPoint[] = kn.headingAngles.map((heelDeg, idx) => {
     const KN = interpolateKN(kn, loading.totalDisplacementKg, idx)
-    const GZ = KN - loading.KG * Math.sin((heelDeg * Math.PI) / 180)
+    const GZ = KN - effectiveKG * Math.sin((heelDeg * Math.PI) / 180)
     return { heelDeg, GZ }
   })
 
@@ -555,9 +563,18 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
   // Angle of vanishing stability: first angle (past the max) where GZ
   // crosses back to <= 0, linearly interpolated between the bracketing
   // sample points. null if the curve never returns to/below zero within
-  // the tabulated angle range.
-  let angleOfVanishingStability: number | null = null
-  for (let i = 0; i < curve.length - 1; i++) {
+  // the tabulated angle range — genuinely "still positive throughout what
+  // was tabulated," a reassuring result.
+  //
+  // GZ(0°) is always exactly 0 by construction (KN(0°)=0, sin(0°)=0), so a
+  // vessel with NO positive righting arm anywhere (maxGZ <= 0 — already
+  // unstable at upright) would otherwise fall through this loop's `a.GZ >
+  // 0` check and ALSO come out as null — collapsing two opposite physical
+  // situations ("never vanishes because it's always fine" vs. "already
+  // vanished because it was never positive") into the same missing value.
+  // Report that case explicitly as 0deg instead.
+  let angleOfVanishingStability: number | null = maxGZ <= 0 ? 0 : null
+  for (let i = 0; maxGZ > 0 && i < curve.length - 1; i++) {
     const a = curve[i]
     const b = curve[i + 1]
     if (a.GZ > 0 && b.GZ <= 0) {
