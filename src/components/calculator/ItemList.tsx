@@ -322,12 +322,23 @@ function ItemRow({
               unit=""
               integer
             />
-            <NumField
-              label="Вес, кг"
-              value={item.weight ?? 0}
-              onChange={(v) => onUpdate({ weight: v || undefined })}
-              unit=""
-            />
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <NumField
+                      label="Вес/ед., кг"
+                      value={item.weight ?? 0}
+                      onChange={(v) => onUpdate({ weight: v || undefined })}
+                      unit=""
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Вес ОДНОЙ единицы этого груза, не общий вес всей партии — при кол-ве {item.quantity} итоговый вес считается как вес/ед. × {item.quantity} (см. «Σ вес» ниже)
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -371,8 +382,8 @@ function ItemRow({
                 S = {formatNum(area)} {UNIT_LABEL[unit]}²
               </span>
               {item.weight ? (
-                <span>
-                  Σ вес = {formatNum((item.weight ?? 0) * item.quantity)} кг
+                <span className={item.quantity > 1 ? 'font-medium text-foreground' : undefined}>
+                  Σ вес = {formatNum(item.weight)} × {item.quantity} = {formatNum((item.weight ?? 0) * item.quantity)} кг
                 </span>
               ) : null}
             </div>
