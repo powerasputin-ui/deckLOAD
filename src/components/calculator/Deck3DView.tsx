@@ -1,9 +1,11 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Edges } from '@react-three/drei'
+import { Maximize, Minimize } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 
 interface PinData {
@@ -66,6 +68,27 @@ export default function Deck3DView({
   onSelectPin,
   onPinInPlace,
 }: Deck3DViewProps) {
+  // Fullscreen toggle — expands this specific container (not the whole
+  // page) via the browser's real Fullscreen API, so OrbitControls/canvas
+  // interactions keep working unchanged and Escape/the browser's own exit
+  // control both work for free. `isFullscreen` is driven off the
+  // `fullscreenchange` event rather than just the click handler, so it
+  // stays correct if the user exits via Escape instead of the button.
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === containerRef.current)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      containerRef.current?.requestFullscreen()
+    }
+  }
+
   // Deck plane sits in XZ; height (Y) is item.height per tier. Each stacked
   // layer is rendered as its own mesh (with a thin gap between them) instead
   // of one tall solid block, so the layer count is visible at a glance —
@@ -345,7 +368,24 @@ export default function Deck3DView({
   const minDistance = Math.min(maxDim * 0.3, Math.max(0.5, minCargoDim * 1.2))
 
   return (
-    <div className="w-full rounded-lg border overflow-hidden bg-slate-100" style={{ height: 480 }}>
+    <div
+      ref={containerRef}
+      className={
+        'relative w-full rounded-lg border overflow-hidden bg-slate-100' +
+        (isFullscreen ? ' h-screen w-screen' : '')
+      }
+      style={isFullscreen ? undefined : { height: 480 }}
+    >
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="absolute bottom-2 right-2 z-10 h-7 w-7 rounded-lg border bg-card/95 shadow-sm backdrop-blur-sm"
+        title={isFullscreen ? 'Свернуть из полноэкранного режима' : 'Развернуть на весь экран'}
+        onClick={toggleFullscreen}
+      >
+        {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+      </Button>
       <Canvas
         camera={{ position: [maxDim * 0.7, maxDim * 0.65, maxDim * 0.9], fov: 45 }}
         dpr={[1, 2]}
