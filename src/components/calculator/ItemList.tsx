@@ -327,7 +327,7 @@ function ItemRow({
                 <TooltipTrigger asChild>
                   <div>
                     <NumField
-                      label="Вес/ед., кг"
+                      label="Вес, кг за ед."
                       value={item.weight ?? 0}
                       onChange={(v) => onUpdate({ weight: v || undefined })}
                       unit=""
@@ -335,7 +335,7 @@ function ItemRow({
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  Вес ОДНОЙ единицы этого груза, не общий вес всей партии — при кол-ве {item.quantity} итоговый вес считается как вес/ед. × {item.quantity} (см. «Σ вес» ниже)
+                  Вес ОДНОЙ единицы этого груза, не общий вес всей партии
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
