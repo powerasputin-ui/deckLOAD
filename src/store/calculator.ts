@@ -10,6 +10,7 @@ import {
   maxLayersFor,
   violatesSeparation,
   DEFAULT_VESSEL_MOTION,
+  type StabilityOverride,
   type CargoItem,
   type SortStrategy,
   type ManualPlacement,
@@ -23,6 +24,15 @@ import {
   type RestrictionZone,
   type RestrictionZoneShape,
 } from '@/lib/packing'
+import {
+  DEFAULT_VESSEL_PARTICULARS,
+  DEFAULT_SHIP_FRAME,
+  type VesselStabilityData,
+  type DeckShipFrame,
+  type VesselParticulars,
+  type HydrostaticPoint,
+  type KNCrossCurves,
+} from '@/lib/stability'
 
 export type Unit = 'm' | 'cm' | 'ft'
 export type Mode = 'auto' | 'manual'
@@ -97,6 +107,20 @@ export interface DeckConfig {
   // CargoItem.outline already has to a cargo item's own width/length.
   // Undefined = today's plain rectangle, zero behavior change anywhere.
   outline?: { x: number; y: number }[]
+  // Ship stability calculator (see src/lib/stability.ts) — planning/
+  // indicative only, not a class-approved loading instrument. vessel holds
+  // the vessel's own particulars/hydrostatics/KN cross-curves; shipFrame
+  // maps this deck's local (x,y) origin onto the ship's own centerline/
+  // midships/baseline reference. Both undefined = feature untouched, no
+  // computation attempted anywhere.
+  vessel?: VesselStabilityData
+  shipFrame?: DeckShipFrame
+  // true (default) = deck-local +y points toward the bow. Explicit, not
+  // assumed — this is exactly the kind of ambiguous-semantics field that
+  // has twice this session burned a user (density vs total, per-unit vs
+  // total weight); getting it wrong silently flips the sign of every trim
+  // computation.
+  deckForwardIsPositiveY?: boolean
 }
 
 const PALETTE = [
@@ -253,6 +277,20 @@ interface CalculatorState {
   setDrawingRestrictionShape: (shape: RestrictionZoneShape | null) => void
   setDrawingRestrictionZoneFreeform: (v: boolean) => void
   setVesselMotion: (patch: Partial<VesselMotion>) => void
+
+  // Ship stability calculator (src/lib/stability.ts) — planning/indicative
+  // only. setVesselParticulars seeds a default hydrostatics/particulars
+  // shape the first time it's called (mirrors setVesselMotion's own
+  // seed-from-default pattern above).
+  setVesselParticulars: (patch: Partial<VesselParticulars>) => void
+  addHydrostaticPoint: (point?: Partial<HydrostaticPoint>) => void
+  updateHydrostaticPoint: (index: number, patch: Partial<HydrostaticPoint>) => void
+  removeHydrostaticPoint: (index: number) => void
+  setKNCrossCurves: (curves: KNCrossCurves | undefined) => void
+  setShipFrame: (patch: Partial<DeckShipFrame>) => void
+  setDeckForwardIsPositiveY: (v: boolean) => void
+  setItemStabilityOverride: (itemId: string, override: StabilityOverride | undefined) => void
+
   // Lashing points and a clearance-margin exclusion zone are mutually
   // exclusive per placement (see clearanceMargin on ManualPlacement/
   // PinnedPlacement in packing.ts) — switching a placement to "zone" mode
@@ -1299,6 +1337,60 @@ export const useCalculator = create<CalculatorState>()(
         ...s.deck,
         vesselMotion: { ...(s.deck.vesselMotion ?? DEFAULT_VESSEL_MOTION), ...patch },
       },
+    })),
+
+  setVesselParticulars: (patch) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      return {
+        deck: {
+          ...s.deck,
+          vessel: { ...vessel, particulars: { ...vessel.particulars, ...patch } },
+        },
+      }
+    }),
+  addHydrostaticPoint: (point) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      const newPoint: HydrostaticPoint = { displacementKg: 0, draftM: 0, KM: 0, ...point }
+      return {
+        deck: {
+          ...s.deck,
+          vessel: { ...vessel, hydrostatics: { points: [...vessel.hydrostatics.points, newPoint] } },
+        },
+      }
+    }),
+  updateHydrostaticPoint: (index, patch) =>
+    set((s) => {
+      const vessel = s.deck.vessel
+      if (!vessel) return s
+      const points = vessel.hydrostatics.points.map((p, i) => (i === index ? { ...p, ...patch } : p))
+      return { deck: { ...s.deck, vessel: { ...vessel, hydrostatics: { points } } } }
+    }),
+  removeHydrostaticPoint: (index) =>
+    set((s) => {
+      const vessel = s.deck.vessel
+      if (!vessel) return s
+      const points = vessel.hydrostatics.points.filter((_, i) => i !== index)
+      return { deck: { ...s.deck, vessel: { ...vessel, hydrostatics: { points } } } }
+    }),
+  setKNCrossCurves: (curves) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] } }
+      return { deck: { ...s.deck, vessel: { ...vessel, knCurves: curves } } }
+    }),
+  setShipFrame: (patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        shipFrame: { ...(s.deck.shipFrame ?? DEFAULT_SHIP_FRAME), ...patch },
+      },
+    })),
+  setDeckForwardIsPositiveY: (v) =>
+    set((s) => ({ deck: { ...s.deck, deckForwardIsPositiveY: v } })),
+  setItemStabilityOverride: (itemId, override) =>
+    set((s) => ({
+      items: s.items.map((it) => (it.id === itemId ? { ...it, stabilityOverride: override } : it)),
     })),
 
   addSeparationRule: (rule) =>

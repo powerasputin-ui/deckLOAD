@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride } from '@/lib/packing'
+import type { VesselStabilityData, DeckShipFrame, KNCrossCurves } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
 
 export interface Project {
@@ -145,6 +146,110 @@ function normalizeVesselMotion(value: unknown): DeckConfig['vesselMotion'] {
     friction: toFiniteNonNegative(vm.friction, 0.3),
     preset,
   }
+}
+
+// General finite-number coercion allowing negative values (LCG/TCG-style
+// offsets legitimately go negative — unlike the length/weight fields above,
+// which are always toFiniteNonNegative/toFinitePositive).
+function toFinite(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+const VALID_LONGITUDINAL_ORIGINS = new Set(['midships', 'aft-perpendicular'])
+
+function normalizeVesselParticulars(value: unknown): VesselStabilityData['particulars'] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const p = value as Record<string, unknown>
+  const longitudinalOrigin =
+    typeof p.longitudinalOrigin === 'string' && VALID_LONGITUDINAL_ORIGINS.has(p.longitudinalOrigin)
+      ? (p.longitudinalOrigin as VesselStabilityData['particulars']['longitudinalOrigin'])
+      : 'midships'
+  return {
+    name: toOptionalString(p.name),
+    lengthBpp: toFiniteNonNegative(p.lengthBpp, 0),
+    breadth: toFiniteNonNegative(p.breadth, 0),
+    lightshipWeightKg: toFiniteNonNegative(p.lightshipWeightKg, 0),
+    lightshipKG: toFiniteNonNegative(p.lightshipKG, 0),
+    lightshipLCG: toFinite(p.lightshipLCG, 0),
+    longitudinalOrigin,
+  }
+}
+
+function normalizeHydrostaticTable(value: unknown): VesselStabilityData['hydrostatics'] {
+  if (!Array.isArray(value)) return { points: [] }
+  const points = value
+    .map((raw) => {
+      if (!raw || typeof raw !== 'object') return null
+      const pt = raw as Record<string, unknown>
+      if (typeof pt.displacementKg !== 'number' || !Number.isFinite(pt.displacementKg)) return null
+      if (typeof pt.KM !== 'number' || !Number.isFinite(pt.KM)) return null
+      return {
+        displacementKg: toFiniteNonNegative(pt.displacementKg, 0),
+        draftM: toFiniteNonNegative(pt.draftM, 0),
+        KM: toFiniteNonNegative(pt.KM, 0),
+        LCB: typeof pt.LCB === 'number' && Number.isFinite(pt.LCB) ? pt.LCB : undefined,
+        LCF: typeof pt.LCF === 'number' && Number.isFinite(pt.LCF) ? pt.LCF : undefined,
+        MTC: typeof pt.MTC === 'number' && Number.isFinite(pt.MTC) && pt.MTC > 0 ? pt.MTC : undefined,
+      }
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null)
+  return { points }
+}
+
+// Drops individual malformed KN rows (a row whose KNByAngle length doesn't
+// match headingAngles) rather than discarding the whole table — one bad row
+// shouldn't cost the user every other correctly-entered one.
+function normalizeKNCrossCurves(value: unknown): KNCrossCurves | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (!Array.isArray(raw.headingAngles) || raw.headingAngles.length === 0) return undefined
+  const headingAngles = raw.headingAngles.filter((a): a is number => typeof a === 'number' && Number.isFinite(a))
+  if (headingAngles.length === 0) return undefined
+  if (!Array.isArray(raw.points)) return undefined
+  const points = raw.points
+    .map((p) => {
+      if (!p || typeof p !== 'object') return null
+      const pt = p as Record<string, unknown>
+      if (typeof pt.displacementKg !== 'number' || !Number.isFinite(pt.displacementKg)) return null
+      if (!Array.isArray(pt.KNByAngle) || pt.KNByAngle.length !== headingAngles.length) return null
+      const KNByAngle = pt.KNByAngle.filter((k): k is number => typeof k === 'number' && Number.isFinite(k))
+      if (KNByAngle.length !== headingAngles.length) return null
+      return { displacementKg: pt.displacementKg, KNByAngle }
+    })
+    .filter((p): p is { displacementKg: number; KNByAngle: number[] } => p !== null)
+  return points.length > 0 ? { headingAngles, points } : undefined
+}
+
+// particulars are the mandatory minimum — a vessel entry with no usable
+// particulars isn't a usable vessel entry at all, so the whole thing
+// normalizes to undefined rather than a half-populated shell.
+function normalizeVessel(value: unknown): VesselStabilityData | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const particulars = normalizeVesselParticulars(v.particulars)
+  if (!particulars) return undefined
+  return {
+    particulars,
+    hydrostatics: normalizeHydrostaticTable((v.hydrostatics as Record<string, unknown> | undefined)?.points),
+    knCurves: normalizeKNCrossCurves(v.knCurves),
+  }
+}
+
+function normalizeShipFrame(value: unknown): DeckShipFrame | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const f = value as Record<string, unknown>
+  return {
+    originOffsetFromCenterlineM: toFinite(f.originOffsetFromCenterlineM, 0),
+    originOffsetFromMidshipsM: toFinite(f.originOffsetFromMidshipsM, 0),
+    heightAboveBaselineM: toFiniteNonNegative(f.heightAboveBaselineM, 0),
+  }
+}
+
+function normalizeStabilityOverride(value: unknown): StabilityOverride | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const o = value as Record<string, unknown>
+  if (typeof o.vcgAboveDeckM !== 'number' || !Number.isFinite(o.vcgAboveDeckM)) return undefined
+  return { vcgAboveDeckM: o.vcgAboveDeckM }
 }
 
 function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
@@ -309,6 +414,9 @@ function normalizeProject(p: Partial<Project>): Project {
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
       outline: normalizeOutline(p.deck?.outline),
       vesselMotion: normalizeVesselMotion(p.deck?.vesselMotion),
+      vessel: normalizeVessel(p.deck?.vessel),
+      shipFrame: normalizeShipFrame(p.deck?.shipFrame),
+      deckForwardIsPositiveY: toBool(p.deck?.deckForwardIsPositiveY, true),
     },
     items: Array.isArray(p.items)
       ? p.items.map((it) => ({
@@ -326,6 +434,7 @@ function normalizeProject(p: Partial<Project>): Project {
           outline: normalizeOutline(it.outline),
           maxLayers: typeof it.maxLayers === 'number' && Number.isFinite(it.maxLayers) && it.maxLayers > 0 ? Math.floor(it.maxLayers) : undefined,
           contents: toOptionalString(it.contents),
+          stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
         }))
       : [],
     manualPlacements: Array.isArray(p.manualPlacements)

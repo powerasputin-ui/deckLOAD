@@ -28,6 +28,7 @@ import {
   Box,
   Undo2,
   Redo2,
+  Ship,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -61,6 +62,7 @@ import {
   type ClearanceMargin,
   type ZoneLoadCheck,
 } from '@/lib/packing'
+import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -356,6 +358,9 @@ export function Sidebar({
 
         {/* Lashing/securing points (visual markers) */}
         <LashingPointsSection />
+
+        {/* Ship stability calculator (planning/indicative — see StabilityPanel's disclaimer) */}
+        <VesselStabilitySection />
       </div>
       </div>
 
@@ -965,6 +970,203 @@ function LashingPointsSection() {
             {' '}точек с расчётом: {attachedCount}
           </p>
         )}
+      </div>
+    </Section>
+  )
+}
+
+function VesselStabilitySection() {
+  const vessel = useCalculator((s) => s.deck.vessel)
+  const shipFrame = useCalculator((s) => s.deck.shipFrame)
+  const forwardIsPositiveY = useCalculator((s) => s.deck.deckForwardIsPositiveY ?? true)
+  const setVesselParticulars = useCalculator((s) => s.setVesselParticulars)
+  const addHydrostaticPoint = useCalculator((s) => s.addHydrostaticPoint)
+  const updateHydrostaticPoint = useCalculator((s) => s.updateHydrostaticPoint)
+  const removeHydrostaticPoint = useCalculator((s) => s.removeHydrostaticPoint)
+  const setKNCrossCurves = useCalculator((s) => s.setKNCrossCurves)
+  const setShipFrame = useCalculator((s) => s.setShipFrame)
+  const setDeckForwardIsPositiveY = useCalculator((s) => s.setDeckForwardIsPositiveY)
+
+  const [knText, setKnText] = useState('')
+  const [knError, setKnError] = useState<string | null>(null)
+
+  const particulars = vessel?.particulars ?? DEFAULT_VESSEL_PARTICULARS
+  const points = vessel?.hydrostatics.points ?? []
+  const knCurves = vessel?.knCurves
+
+  const statusLabel = !vessel
+    ? 'не заданы'
+    : !knCurves
+      ? 'только начальная GM (нет кривых KN)'
+      : 'полная кривая GZ'
+
+  const parseKnText = () => {
+    const lines = knText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (lines.length < 2) {
+      setKnError('Нужна хотя бы строка углов и одна строка водоизмещения')
+      return
+    }
+    const headingAngles = lines[0].split(',').map((s) => Number(s.trim().replace(',', '.'))).filter((n) => Number.isFinite(n))
+    if (headingAngles.length === 0) {
+      setKnError('Первая строка — углы крена через запятую, напр.: 0,10,20,30,40')
+      return
+    }
+    const rows: { displacementKg: number; KNByAngle: number[] }[] = []
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split(',').map((s) => Number(s.trim().replace(',', '.')))
+      if (parts.length !== headingAngles.length + 1 || parts.some((n) => !Number.isFinite(n))) {
+        setKnError(`Строка ${i + 1}: ожидается водоизмещение + ${headingAngles.length} значений KN через запятую`)
+        return
+      }
+      rows.push({ displacementKg: parts[0], KNByAngle: parts.slice(1) })
+    }
+    setKNCrossCurves({ headingAngles, points: rows })
+    setKnError(null)
+    setKnText('')
+  }
+
+  return (
+    <Section icon={<Ship className="h-4 w-4" />} title="Остойчивость судна" defaultOpen={false}>
+      <div className="space-y-2">
+        <p className="text-[10px] text-muted-foreground">
+          Ознакомительный/плановый расчёт — не заменяет одобренный классом судовой прибор загрузки. Данные: <b>{statusLabel}</b>.
+        </p>
+
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Судно</p>
+          <Input
+            placeholder="Название судна"
+            value={particulars.name ?? ''}
+            onChange={(e) => setVesselParticulars({ name: e.target.value || undefined })}
+            className="h-7 text-xs"
+          />
+          <div className="grid grid-cols-2 gap-1">
+            <MiniNumField label="Длина LBP" value={particulars.lengthBpp} unit="м" onChange={(v) => setVesselParticulars({ lengthBpp: v })} />
+            <MiniNumField label="Ширина" value={particulars.breadth} unit="м" onChange={(v) => setVesselParticulars({ breadth: v })} />
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            <MiniNumField label="Лёгкий вес" value={particulars.lightshipWeightKg} unit="кг" onChange={(v) => setVesselParticulars({ lightshipWeightKg: v })} />
+            <MiniNumField label="Лёгкий KG" value={particulars.lightshipKG} unit="м" onChange={(v) => setVesselParticulars({ lightshipKG: v })} />
+            <MiniNumField label="Лёгкий LCG" value={particulars.lightshipLCG} unit="м" onChange={(v) => setVesselParticulars({ lightshipLCG: v })} />
+          </div>
+          <div className="space-y-0.5">
+            <label className="text-[9px] text-muted-foreground leading-none block">Точка отсчёта LCG/LCF/LCB</label>
+            <Select
+              value={particulars.longitudinalOrigin}
+              onValueChange={(v) => setVesselParticulars({ longitudinalOrigin: v as VesselParticulars['longitudinalOrigin'] })}
+            >
+              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="midships">От миделя</SelectItem>
+                <SelectItem value="aft-perpendicular">От кормового перпендикуляра</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Система координат палубы</p>
+          <div className="grid grid-cols-3 gap-1">
+            <MiniNumField
+              label="Смещ. от ДП"
+              value={shipFrame?.originOffsetFromCenterlineM ?? 0}
+              unit="м"
+              onChange={(v) => setShipFrame({ originOffsetFromCenterlineM: v })}
+            />
+            <MiniNumField
+              label="Смещ. от миделя"
+              value={shipFrame?.originOffsetFromMidshipsM ?? 0}
+              unit="м"
+              onChange={(v) => setShipFrame({ originOffsetFromMidshipsM: v })}
+            />
+            <MiniNumField
+              label="Высота над килем"
+              value={shipFrame?.heightAboveBaselineM ?? 0}
+              unit="м"
+              onChange={(v) => setShipFrame({ heightAboveBaselineM: v })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">Нос палубы: {forwardIsPositiveY ? '+Y' : '−Y'}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-[10px] px-2"
+              onClick={() => setDeckForwardIsPositiveY(!forwardIsPositiveY)}
+            >
+              Сменить
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Гидростатика (по водоизмещению)</p>
+          {points.map((pt, i) => (
+            <div key={i} className="rounded-md border p-1.5 space-y-1">
+              <div className="grid grid-cols-3 gap-1">
+                <MiniNumField label="Водоизм." value={pt.displacementKg} unit="кг" onChange={(v) => updateHydrostaticPoint(i, { displacementKg: v })} />
+                <MiniNumField label="Осадка" value={pt.draftM} unit="м" onChange={(v) => updateHydrostaticPoint(i, { draftM: v })} />
+                <MiniNumField label="KM" value={pt.KM} unit="м" onChange={(v) => updateHydrostaticPoint(i, { KM: v })} />
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="grid grid-cols-3 gap-1 flex-1">
+                  <MiniNumField label="LCB" value={pt.LCB ?? 0} unit="м" onChange={(v) => updateHydrostaticPoint(i, { LCB: v })} />
+                  <MiniNumField label="LCF" value={pt.LCF ?? 0} unit="м" onChange={(v) => updateHydrostaticPoint(i, { LCF: v })} />
+                  <MiniNumField label="MTC" value={pt.MTC ?? 0} unit="т·м/см" onChange={(v) => updateHydrostaticPoint(i, { MTC: v })} />
+                </div>
+                <button
+                  onClick={() => removeHydrostaticPoint(i)}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                  title="Удалить точку"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+          <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addHydrostaticPoint()}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Добавить точку гидростатики
+          </Button>
+          <p className="text-[10px] text-muted-foreground">
+            LCB/MTC опциональны — без них расчёт дифферента недоступен (только GM и крен).
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Кросс-кривые KN (для полной кривой GZ)</p>
+          {knCurves ? (
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+              <span>{knCurves.headingAngles.length} углов × {knCurves.points.length} точек водоизмещения</span>
+              <button
+                onClick={() => setKNCrossCurves(undefined)}
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                title="Удалить кривые KN"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="text-[10px] text-muted-foreground">
+                Вставьте из формуляра остойчивости: первая строка — углы крена через запятую, далее по строке на
+                каждое водоизмещение (водоизмещение, KN...). Пример:
+                <br />0,10,20,30,40
+                <br />2000000,0,1.2,2.3,3.1,3.6
+              </p>
+              <textarea
+                value={knText}
+                onChange={(e) => setKnText(e.target.value)}
+                rows={3}
+                className="w-full rounded-md border p-1.5 text-[10px] font-mono"
+                placeholder={'0,10,20,30,40\n2000000,0,1.2,2.3,3.1,3.6'}
+              />
+              {knError && <p className="text-[10px] text-destructive">{knError}</p>}
+              <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={parseKnText}>
+                Применить кривые KN
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     </Section>
   )

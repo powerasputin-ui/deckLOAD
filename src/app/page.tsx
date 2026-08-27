@@ -66,6 +66,7 @@ const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
 })
 import { ItemList } from '@/components/calculator/ItemList'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
+import { StabilityPanel } from '@/components/calculator/StabilityPanel'
 import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
 import { PresetsBar } from '@/components/calculator/PresetsBar'
@@ -1821,8 +1822,16 @@ export default function Home() {
                 height on both — Статистика grows with its content (no
                 internal scroll), Грузы keeps its own fixed-height scroll
                 list as before. Not height-matched to each other. */}
-            <div className="xl:col-span-8 self-start">
+            <div className="xl:col-span-8 self-start space-y-4">
               <StatsPanel result={result} unit={deck.unit} loadZones={deck.loadZones} deckOutline={deck.outline} />
+              <StabilityPanel
+                result={result}
+                deckWidth={deck.width}
+                deckLength={deck.length}
+                vessel={deck.vessel}
+                shipFrame={deck.shipFrame}
+                deckForwardIsPositiveY={deck.deckForwardIsPositiveY}
+              />
             </div>
             <div className="xl:col-span-4 self-start">
               <ItemList

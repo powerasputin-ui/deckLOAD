@@ -264,6 +264,172 @@ describe('projects store', () => {
     expect(useProjects.getState().projects[0].deck.vesselMotion).toBeUndefined()
   })
 
+  // Ship stability data (vessel particulars, hydrostatic table, KN
+  // cross-curves, per-item VCG override) — same bug class as loadZones/
+  // vesselMotion above: a field missing from normalizeProject's deck
+  // allowlist silently vanishes on the very next reload.
+  it('round-trips vessel stability data and a per-item stability override through a reload', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            longitudinalOrigin: 'midships',
+          },
+          hydrostatics: {
+            points: [{ displacementKg: 2_000_000, draftM: 4.0, KM: 7.2, LCB: 0.1, LCF: 0.2, MTC: 120 }],
+          },
+          knCurves: {
+            headingAngles: [0, 10, 20],
+            points: [{ displacementKg: 2_000_000, KNByAngle: [0, 1.1, 2.2] }],
+          },
+        },
+        shipFrame: { originOffsetFromCenterlineM: 0.5, originOffsetFromMidshipsM: -3, heightAboveBaselineM: 6 },
+        deckForwardIsPositiveY: false,
+      },
+      items: [
+        {
+          id: 'i1',
+          name: 'Груз',
+          width: 1,
+          length: 1,
+          height: 1,
+          quantity: 1,
+          color: '#0ea5e9',
+          allowRotation: true,
+          stabilityOverride: { vcgAboveDeckM: 0.7 },
+        },
+      ],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.vessel?.particulars).toEqual({
+      name: 'Тестовое судно',
+      lengthBpp: 80,
+      breadth: 18,
+      lightshipWeightKg: 2_000_000,
+      lightshipKG: 5.5,
+      lightshipLCG: -1.2,
+      longitudinalOrigin: 'midships',
+    })
+    expect(reloaded.deck.vessel?.hydrostatics.points).toEqual([
+      { displacementKg: 2_000_000, draftM: 4.0, KM: 7.2, LCB: 0.1, LCF: 0.2, MTC: 120 },
+    ])
+    expect(reloaded.deck.vessel?.knCurves).toEqual({
+      headingAngles: [0, 10, 20],
+      points: [{ displacementKg: 2_000_000, KNByAngle: [0, 1.1, 2.2] }],
+    })
+    expect(reloaded.deck.shipFrame).toEqual({
+      originOffsetFromCenterlineM: 0.5,
+      originOffsetFromMidshipsM: -3,
+      heightAboveBaselineM: 6,
+    })
+    expect(reloaded.deck.deckForwardIsPositiveY).toBe(false)
+    expect(reloaded.items[0].stabilityOverride).toEqual({ vcgAboveDeckM: 0.7 })
+  })
+
+  it('normalizes cleanly to vessel:undefined for a legacy project with no vessel field at all', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.vessel).toBeUndefined()
+    expect(reloaded.deck.shipFrame).toBeUndefined()
+    expect(reloaded.deck.deckForwardIsPositiveY).toBe(true) // default
+  })
+
+  it('drops an individual malformed KN row without discarding the rest of the table', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: 0,
+            longitudinalOrigin: 'midships',
+          },
+          hydrostatics: { points: [] },
+          knCurves: {
+            headingAngles: [0, 10, 20],
+            points: [
+              { displacementKg: 1_000_000, KNByAngle: [0, 1, 2] },
+              { displacementKg: 2_000_000, KNByAngle: [0, 1] }, // malformed: wrong length
+            ],
+          },
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.vessel?.knCurves?.points).toEqual([{ displacementKg: 1_000_000, KNByAngle: [0, 1, 2] }])
+  })
+
   it('migrates legacy flat pinnedPlacements to pinnedPlacementsByTrip on hydrate', () => {
     storage['deckload-projects'] = JSON.stringify({
       projects: [

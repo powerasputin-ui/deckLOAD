@@ -46,6 +46,16 @@ export interface CargoItem {
   // Free-text cargo contents, shown as a hover tooltip on placed instances
   // (gated by the global "Содержимое груза" setting) — never affects packing.
   contents?: string
+  // Overrides the stability engine's default vertical-center-of-gravity
+  // estimate (half the stacked height above the deck) — see
+  // computeItemVCG() in src/lib/stability.ts. Never affects packing/collision.
+  stabilityOverride?: StabilityOverride
+}
+
+// Overrides the stability calculator's geometric default for a cargo unit's
+// vertical center of gravity — see computeItemVCG() in src/lib/stability.ts.
+export interface StabilityOverride {
+  vcgAboveDeckM?: number
 }
 
 // A rectangular deck zone with its own permitted load density (t/m²).
@@ -465,6 +475,7 @@ export interface PlacedItem {
   clearanceMargin?: ClearanceMargin // see PinnedPlacement.clearanceMargin — only pinned/manual placements ever carry one
   contents?: string // see CargoItem.contents — resolved fresh from the source item, shown as a hover tooltip
   locked?: boolean // see PinnedPlacement.locked — only ever set on pin-sourced placements, never on freshly algorithm-placed ones
+  stabilityOverride?: StabilityOverride // see CargoItem.stabilityOverride — resolved fresh from the source item
 }
 
 export interface UnplacedItem {
@@ -854,6 +865,9 @@ export interface PinnedPlacement {
   // separate, deliberate follow-up action, never a side effect of moving
   // or creating a placement.
   locked?: boolean
+  // See CargoItem.stabilityOverride — overrides the per-item default only
+  // for this specific placement. Never affects packing/collision.
+  stabilityOverride?: StabilityOverride
 }
 
 // Compute how many tiers (layers) can be stacked for an item. When the deck
@@ -931,6 +945,7 @@ export function packDeck(
   const shapeByItemId = new Map(items.map((it) => [it.id, it.shape]))
   const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
   const contentsByItemId = new Map(items.map((it) => [it.id, it.contents]))
+  const stabilityOverrideByItemId = new Map(items.map((it) => [it.id, it.stabilityOverride]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -1153,6 +1168,7 @@ export function packDeck(
       contents: contentsByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
       locked: pin.locked,
+      stabilityOverride: stabilityOverrideByItemId.get(pin.itemId),
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
@@ -1345,6 +1361,7 @@ export function packDeck(
       shape: item.shape,
       outline: item.outline,
       contents: item.contents,
+      stabilityOverride: item.stabilityOverride,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -1673,6 +1690,8 @@ export interface ManualPlacement {
   weight?: number
   // See PinnedPlacement.clearanceMargin above — same meaning here.
   clearanceMargin?: ClearanceMargin
+  // See PinnedPlacement.stabilityOverride above — same meaning here.
+  stabilityOverride?: StabilityOverride
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
@@ -2609,10 +2628,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number; stabilityOverride?: StabilityOverride }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers, stabilityOverride: it.stabilityOverride })
     }
   }
 
@@ -2634,6 +2653,7 @@ export function packingResultFromManual(
     outline: itemMap.get(p.itemId)?.outline,
     contents: itemMap.get(p.itemId)?.contents,
     clearanceMargin: p.clearanceMargin,
+    stabilityOverride: itemMap.get(p.itemId)?.stabilityOverride,
   }))
 
   // Breakdown by itemId
