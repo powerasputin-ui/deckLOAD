@@ -1006,6 +1006,29 @@ export interface PackOptions {
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
   outline?: { x: number; y: number }[] // non-rectangular deck silhouette, see deckOutlineExclusionRects
   restrictionZones?: RestrictionZone[] // hard-blocked obstacle zones (crane, bulwark, etc.)
+  // Load zones with a t/m² limit — SOFT preference, not a hard obstacle
+  // (unlike restrictionZones above): the packer retries a few alternate
+  // free rectangles looking for one that doesn't push a zone over its
+  // limit, but if every candidate would overload something anyway, it
+  // still places the item at the original best-fit position rather than
+  // leaving it unplaced. See the retry loop around findPosition in
+  // packDeck's main placement loop for the exact mechanics.
+  loadZones?: LoadZone[]
+  // Needed only to convert loadZones' real t/m² limit against the deck's
+  // own display unit (m/cm/ft) — see src/lib/units.ts. Everything else in
+  // this file is unit-agnostic (deck/item/zone geometry is always
+  // internally consistent regardless of what unit it's expressed in), but
+  // maxLoadPerArea is always a real physical t/m² figure, never scaled by
+  // display unit, so it's the one place packDeck needs to know which unit
+  // its own geometry inputs are actually in.
+  unit?: Unit
+  // The vessel's own approved total deck-cargo capacity, in kg (real
+  // physical limit — HARD stop, unlike loadZones above). A stack that
+  // would push the running total over this is left unplaced (same
+  // "unplaced, try the next item" pattern as running out of space) rather
+  // than aborting the whole placement loop, so lighter cargo further down
+  // the queue still gets a chance to fit within what's left of the budget.
+  maxTotalWeightKg?: number
 }
 
 export interface PinnedPlacement {
@@ -1107,6 +1130,9 @@ export function packDeck(
   const separationRules = typeof options === 'string' ? [] : options.separationRules ?? []
   const outline = typeof options === 'string' ? undefined : options.outline
   const restrictionZones = typeof options === 'string' ? [] : options.restrictionZones ?? []
+  const loadZones = typeof options === 'string' ? [] : options.loadZones ?? []
+  const unit: Unit = typeof options === 'string' ? 'm' : options.unit ?? 'm'
+  const maxTotalWeightKg = typeof options === 'string' ? undefined : options.maxTotalWeightKg
 
   // Sanitize deck dimensions and spacing so NaN/Infinity can't poison the result.
   const safeDeckWidth = toFinite(deckWidth, 0)
@@ -1437,8 +1463,61 @@ export function packDeck(
       noSpace: number
       leftover: number
       separation: number
+      overCapacity: number
     }
   >()
+
+  // Load-zone weight tracking — SOFT preference (see PackOptions.loadZones's
+  // doc comment): converted once to real metres up front (same pattern as
+  // computeZoneLoads, since maxLoadPerArea is always a real t/m² figure
+  // regardless of the deck's own display unit), then updated as stacks
+  // actually get committed below so later items in the loop see the
+  // zones' real current load, not just what was there at the start.
+  const zonesM =
+    unit === 'm'
+      ? loadZones
+      : loadZones.map((z) => ({ ...z, x: toMeters(z.x, unit), y: toMeters(z.y, unit), width: toMeters(z.width, unit), length: toMeters(z.length, unit) }))
+  const outlineM = unit === 'm' || !outline ? outline : outline.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) }))
+  const zoneAreaM2 = new Map(zonesM.map((z) => [z.id, zoneAreaWithinOutline(z, outlineM)]))
+  const zoneWeightKg = new Map(loadZones.map((z) => [z.id, 0]))
+  const ZONE_EPS = 1e-9
+  const MAX_ZONE_RETRY_ATTEMPTS = 5
+  // Whether placing a footprint (deck-unit coords, same as everything else
+  // in this function) with this much weight would push any zone it
+  // overlaps over its real t/m² limit. Converts the footprint to metres
+  // inline (zonesM/outlineM are already in metres) so the overlap test and
+  // the density division both operate in the same real units.
+  const wouldOverloadZone = (x: number, y: number, w: number, l: number, weightKg: number): boolean => {
+    if (zonesM.length === 0 || weightKg <= 0) return false
+    const fx = unit === 'm' ? x : toMeters(x, unit)
+    const fy = unit === 'm' ? y : toMeters(y, unit)
+    const fw = unit === 'm' ? w : toMeters(w, unit)
+    const fl = unit === 'm' ? l : toMeters(l, unit)
+    for (const z of zonesM) {
+      if (!overlapsZone({ x: fx, y: fy, width: fw, length: fl }, z)) continue
+      const areaM2 = zoneAreaM2.get(z.id) ?? 0
+      if (areaM2 <= 0) continue
+      const currentKg = zoneWeightKg.get(z.id) ?? 0
+      const densityTPerM2 = (currentKg + weightKg) / 1000 / areaM2
+      if (densityTPerM2 > z.maxLoadPerArea + ZONE_EPS) return true
+    }
+    return false
+  }
+  // Called only after a stack is actually committed (placeRect'd) — adds
+  // its weight to every zone whose (metres) rect it overlaps, in the SAME
+  // deck-unit->metres terms wouldOverloadZone already used to evaluate it.
+  const addWeightToOverlappingZones = (x: number, y: number, w: number, l: number, weightKg: number): void => {
+    if (zonesM.length === 0 || weightKg <= 0) return
+    const fx = unit === 'm' ? x : toMeters(x, unit)
+    const fy = unit === 'm' ? y : toMeters(y, unit)
+    const fw = unit === 'm' ? w : toMeters(w, unit)
+    const fl = unit === 'm' ? l : toMeters(l, unit)
+    for (const z of zonesM) {
+      if (!overlapsZone({ x: fx, y: fy, width: fw, length: fl }, z)) continue
+      zoneWeightKg.set(z.id, (zoneWeightKg.get(z.id) ?? 0) + weightKg)
+    }
+  }
+  let runningTotalWeightKg = result.totalWeight
 
   for (const { item, unitsInStack } of stacks) {
     if (perItemRemaining.get(item.id)! <= 0) continue
@@ -1470,6 +1549,7 @@ export function packDeck(
         noSpace: 0,
         leftover: 0,
         separation: 0,
+        overCapacity: 0,
       }
       stat.oversized += r
       unplacedStats.set(item.id, stat)
@@ -1477,7 +1557,61 @@ export function packDeck(
       continue
     }
 
-    const pos = findPosition(freeRects, cellW, cellL, item.allowRotation)
+    // The vessel's own total deck-cargo capacity — a HARD stop for THIS
+    // stack (unlike loadZones below, which only reject a specific
+    // candidate rect, not the whole stack). Checked before spending a
+    // findPosition search on something that can't be placed anyway. Marks
+    // only this stack unplaced and continues the loop — a later, lighter
+    // stack further down the queue may still fit within what's left of
+    // the budget, so this must not abort the whole placement run.
+    const stackWeightKg = (item.weight ?? 0) * unitsInStack
+    if (maxTotalWeightKg !== undefined && runningTotalWeightKg + stackWeightKg > maxTotalWeightKg) {
+      const stat = unplacedStats.get(item.id) ?? {
+        id: item.id,
+        name: item.name,
+        width: item.width,
+        length: item.length,
+        oversized: 0,
+        noSpace: 0,
+        leftover: 0,
+        separation: 0,
+        overCapacity: 0,
+      }
+      stat.overCapacity += unitsInStack
+      unplacedStats.set(item.id, stat)
+      perItemRemaining.set(item.id, perItemRemaining.get(item.id)! - unitsInStack)
+      continue
+    }
+
+    // Best-fit position, with up to MAX_ZONE_RETRY_ATTEMPTS retries against
+    // a shrinking copy of freeRects if the winning candidate would overload
+    // a load zone (see PackOptions.loadZones's doc comment — soft
+    // preference, not a hard rejection: if every retry still overloads
+    // something, the ORIGINAL best-fit candidate is used anyway rather than
+    // leaving the stack unplaced over a soft limit).
+    const bestFitPos = findPosition(freeRects, cellW, cellL, item.allowRotation)
+    let pos = bestFitPos
+    if (bestFitPos && wouldOverloadZone(bestFitPos.node.x, bestFitPos.node.y, bestFitPos.node.width, bestFitPos.node.height, stackWeightKg)) {
+      const excludedOrigins: { x: number; y: number }[] = [{ x: bestFitPos.node.x, y: bestFitPos.node.y }]
+      let found: ScoredNode | null = null
+      for (let attempt = 0; attempt < MAX_ZONE_RETRY_ATTEMPTS; attempt++) {
+        const trimmedFreeRects = freeRects.filter(
+          (fr) => !excludedOrigins.some((e) => e.x === fr.x && e.y === fr.y)
+        )
+        const retryPos = findPosition(trimmedFreeRects, cellW, cellL, item.allowRotation)
+        if (!retryPos) break // no more alternate rects to try
+        if (!wouldOverloadZone(retryPos.node.x, retryPos.node.y, retryPos.node.width, retryPos.node.height, stackWeightKg)) {
+          found = retryPos
+          break
+        }
+        excludedOrigins.push({ x: retryPos.node.x, y: retryPos.node.y })
+      }
+      // Found a non-overloading alternative -> use it. Otherwise every
+      // candidate tried would overload something anyway, so fall back to
+      // the original best-fit position and place it there regardless (the
+      // existing zone-load warning UI surfaces the overload as normal).
+      pos = found ?? bestFitPos
+    }
     if (!pos) {
       const r = perItemRemaining.get(item.id)!
       const stat = unplacedStats.get(item.id) ?? {
@@ -1489,6 +1623,7 @@ export function packDeck(
         noSpace: 0,
         leftover: 0,
         separation: 0,
+        overCapacity: 0,
       }
       stat.noSpace += r
       unplacedStats.set(item.id, stat)
@@ -1535,6 +1670,7 @@ export function packDeck(
         noSpace: 0,
         leftover: 0,
         separation: 0,
+        overCapacity: 0,
       }
       stat.separation += unitsInStack
       unplacedStats.set(item.id, stat)
@@ -1569,6 +1705,8 @@ export function packDeck(
     if (item.weight) result.totalWeight += item.weight * unitsInStack
     if (stackHeight > result.maxStackHeight) result.maxStackHeight = stackHeight
     perItemRemaining.set(item.id, perItemRemaining.get(item.id)! - unitsInStack)
+    runningTotalWeightKg += stackWeightKg
+    addWeightToOverlappingZones(itemX, itemY, visW, visL, stackWeightKg)
   }
 
   // Any remaining unplaced units (e.g. loop ended before stacks were exhausted)
@@ -1584,6 +1722,7 @@ export function packDeck(
         noSpace: 0,
         leftover: 0,
         separation: 0,
+        overCapacity: 0,
       }
       stat.leftover += remaining
       unplacedStats.set(item.id, stat)
@@ -1596,6 +1735,7 @@ export function packDeck(
     if (stat.oversized > 0) reasons.push(`Превышает размеры палубы (${stat.oversized} ед.)`)
     if (stat.noSpace > 0) reasons.push(`Недостаточно свободного места (${stat.noSpace} ед.)`)
     if (stat.separation > 0) reasons.push(`Нарушает сепарацию груза (${stat.separation} ед.)`)
+    if (stat.overCapacity > 0) reasons.push(`Превышен лимит веса судна (${stat.overCapacity} ед.)`)
     if (stat.leftover > 0) reasons.push(`Не вместилось (${stat.leftover} ед.)`)
     result.unplaced.push({
       itemId: stat.id,

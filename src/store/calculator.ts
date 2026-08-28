@@ -69,10 +69,20 @@ export interface DeckConfig {
   // The vessel's own approved total deck-cargo capacity (t), seeded from
   // VesselTemplate.limits.maxDeckCargoT when a template is applied.
   // Undefined = no known limit, not "unlimited" — StatsPanel shows nothing
-  // rather than a fabricated always-green check. Soft warning only, same
-  // as loadZones — never blocks placement.
+  // rather than a fabricated always-green check. Used two ways: a real HARD
+  // stop for auto-placement (page.tsx passes it to packMultiTrip/
+  // packDeckVariants as PackOptions.maxTotalWeightKg — cargo that would
+  // push the total over this is left unplaced, same as running out of
+  // deck area) and a soft red-text warning in StatsPanel for manual mode
+  // (where nothing auto-stops placement).
   maxDeckCargoT?: number
-  loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
+  // The vessel's own registry figure for how many 10-foot units fit at
+  // full pipe load, seeded from VesselTemplate.limits.tenFootContainerCapacity.
+  // Purely informational (StatsPanel live counter) — never enforced, since
+  // the source figure is itself conditional ("when fully loaded with
+  // pipe"), not a standalone hard cap.
+  tenFootContainerCapacity?: number
+  loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft PREFERENCE in auto-placement (see PackOptions.loadZones), plus a soft warning in the UI
   lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
   powerSockets?: PowerSocket[] // visual-only markers showing where deck electrical outlets are
   annotations?: DeckAnnotation[] // free-text leader notes / bow-stern-port-starboard labels — purely documentation, never read by any calculation

@@ -1151,6 +1151,61 @@ describe('packDeck restriction zones (auto mode)', () => {
   })
 })
 
+describe('packDeck load zones (soft preference) and vessel weight cap (hard stop)', () => {
+  it('prefers a free rect that does not overload a load zone when one is available', () => {
+    // Zone covers the left 2m of a 6x4 deck (area 8 m², limit 1 t/m² -> 8000 kg
+    // before overload). Two 2x2, 6000kg units: the first fits fine inside the
+    // zone (6000/8 = 0.75 t/m²); a second unit stacked in the same zone would
+    // push it to 1.5 t/m² (overloaded) — most of the deck sits outside the
+    // zone, so the packer should steer the second unit there instead.
+    const zone: LoadZone = { id: 'z1', x: 0, y: 0, width: 2, length: 4, maxLoadPerArea: 1 }
+    const items = [item({ id: 'a', width: 2, length: 2, weight: 6000, quantity: 2, allowRotation: false })]
+    const res = packDeck(6, 4, items, { loadZones: [zone] })
+    expect(res.placed).toHaveLength(2)
+    const zoneLoads = computeZoneLoads(
+      res.placed.map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, totalWeightKg: (p.weight ?? 0) * p.stackedCount })),
+      [zone]
+    )
+    expect(zoneLoads[0].exceeded).toBe(false)
+  })
+
+  it('still places cargo even when every available position would overload the zone — soft warning only, never blocks (per the user\'s explicit choice)', () => {
+    const zone: LoadZone = { id: 'z1', x: 0, y: 0, width: 4, length: 4, maxLoadPerArea: 0.1 } // limit only 1600 kg over the whole 4x4 deck
+    const items = [item({ id: 'a', width: 2, length: 2, weight: 6000, quantity: 1 })]
+    const res = packDeck(4, 4, items, { loadZones: [zone] })
+    expect(res.placed).toHaveLength(1)
+    expect(res.unplaced).toHaveLength(0)
+  })
+
+  it('leaves a stack unplaced once the vessel weight cap would be exceeded, but still places a lighter stack later in the queue', () => {
+    const items = [
+      item({ id: 'heavy', width: 2, length: 2, weight: 3_000_000, quantity: 1 }), // alone already exceeds the cap
+      item({ id: 'light', width: 1, length: 1, weight: 100, quantity: 1 }),
+    ]
+    const res = packDeck(10, 10, items, { maxTotalWeightKg: 1_000_000, sortStrategy: 'area-desc' })
+    const heavyUnplaced = res.unplaced.find((u) => u.itemId === 'heavy')
+    expect(heavyUnplaced).toBeDefined()
+    expect(heavyUnplaced!.reason).toContain('Превышен лимит веса судна')
+    expect(res.placed.some((p) => p.itemId === 'light')).toBe(true)
+  })
+
+  it('does not block placement when maxTotalWeightKg is undefined (default, no vessel limit known)', () => {
+    const items = [item({ id: 'a', width: 2, length: 2, weight: 999_999_999, quantity: 1 })]
+    const res = packDeck(10, 10, items)
+    expect(res.placed).toHaveLength(1)
+  })
+
+  it('packMultiTrip: a stack rejected by the weight cap on trip 1 is retried fresh on trip 2 (per-trip budget, not cumulative across trips)', () => {
+    // Each 600,000kg unit fits alone under a 1,000,000 cap, but two together
+    // (1,200,000) would not — the second must spill to a second trip.
+    const items = [item({ id: 'a', width: 2, length: 2, weight: 600_000, quantity: 2 })]
+    const trips = packMultiTrip(10, 10, items, { maxTotalWeightKg: 1_000_000 }, 3)
+    expect(trips.length).toBeGreaterThanOrEqual(2)
+    expect(trips[0].placedCount).toBe(1)
+    expect(trips[1].placedCount).toBe(1)
+  })
+})
+
 describe('dedupePolygonVertices', () => {
   it('drops a vertex sitting a few cm from its neighbor on a multi-meter deck', () => {
     const withStrayPoint = [

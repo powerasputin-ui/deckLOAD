@@ -433,11 +433,20 @@ export default function Home() {
         separationRules: separationRulesInUnit,
         outline: deck.outline,
         restrictionZones: deck.restrictionZones,
+        // Real, vessel-specific stowage limits — see PackOptions' own doc
+        // comments in packing.ts for exactly how each is enforced (loadZones
+        // soft-prefers a non-overloading position when one exists;
+        // maxTotalWeightKg hard-stops once the vessel's own approved deck
+        // capacity would be exceeded). Both are undefined/empty until a
+        // vessel template with real limits has actually been applied.
+        loadZones: deck.loadZones,
+        unit: deck.unit,
+        maxTotalWeightKg: deck.maxDeckCargoT !== undefined ? deck.maxDeckCargoT * 1000 : undefined,
       },
       10,
       pinnedPlacementsByTrip
     )
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, deck.loadZones, deck.unit, deck.maxDeckCargoT, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
@@ -653,6 +662,7 @@ export default function Home() {
         // total-deck-cargo capacity with zero warning (this WAS the case —
         // maxDeckCargoT existed only as picker text, never checked).
         maxDeckCargoT: tpl.limits?.maxDeckCargoT,
+        tenFootContainerCapacity: tpl.limits?.tenFootContainerCapacity,
         vessel: tpl.vessel,
         shipFrame: tpl.shipFrame,
         deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
@@ -1474,6 +1484,9 @@ export default function Home() {
         outline: deck.outline,
         restrictionZones: deck.restrictionZones,
         pinned: frozenPinned,
+        loadZones: deck.loadZones,
+        unit: deck.unit,
+        maxTotalWeightKg: deck.maxDeckCargoT !== undefined ? deck.maxDeckCargoT * 1000 : undefined,
       },
       3
     )
@@ -2042,6 +2055,7 @@ export default function Home() {
                 loadZones={deck.loadZones}
                 deckOutline={deck.outline}
                 maxDeckCargoT={deck.maxDeckCargoT}
+                tenFootContainerCapacity={deck.tenFootContainerCapacity}
               />
               <StabilityPanel
                 result={result}

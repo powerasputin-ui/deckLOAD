@@ -23,9 +23,12 @@ interface StatsPanelProps {
   // "unlimited"; this used to exist only as text in the vessel picker and
   // was never actually checked against anything.
   maxDeckCargoT?: number
+  // See DeckConfig.tenFootContainerCapacity's doc comment — purely
+  // informational, never enforced.
+  tenFootContainerCapacity?: number
 }
 
-export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -77,6 +80,12 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
           unit
         ).filter((c) => c.exceeded).length
       : 0
+  // No dedicated "10-foot unit" field on CargoItem — the only real signal
+  // across every 10' preset in PRESETS.containers (calculator.ts) is the
+  // `10'` substring in its name (Контейнер 10' (2661)/(2591), Корзина
+  // 10'). Same convention a live counter has to key off of, since the
+  // catalog itself never tagged these any other way.
+  const tenFootPlacedCount = placed.filter((p) => p.name.includes("10'")).reduce((s, p) => s + p.stackedCount, 0)
 
   return (
     <Card>
@@ -219,6 +228,20 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
             </span>
             <span className="font-bold tabular-nums">
               {fmtNumber(totalWeight / 1000)} / {fmtNumber(maxDeckCargoT)} т
+            </span>
+          </div>
+        )}
+
+        {/* Purely informational — see DeckConfig.tenFootContainerCapacity's
+            doc comment for why this is never enforced (the registry figure
+            itself is conditional, "when fully loaded with pipe"). */}
+        {tenFootContainerCapacity !== undefined && (
+          <div className="rounded-lg border bg-muted/30 p-2.5 text-xs flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              10-футовых контейнеров / лимит судна
+            </span>
+            <span className="font-bold tabular-nums">
+              {tenFootPlacedCount} / {fmtNumber(tenFootContainerCapacity)}
             </span>
           </div>
         )}

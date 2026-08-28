@@ -211,6 +211,8 @@ describe('projects store', () => {
         lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
         powerSockets: [{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }],
         annotations: [{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }],
+        maxDeckCargoT: 2550,
+        tenFootContainerCapacity: 14,
         vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
       },
       items: [
@@ -238,6 +240,8 @@ describe('projects store', () => {
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
     expect(reloaded.deck.powerSockets).toEqual([{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }])
     expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }])
+    expect(reloaded.deck.maxDeckCargoT).toBe(2550)
+    expect(reloaded.deck.tenFootContainerCapacity).toBe(14)
     expect(reloaded.items[0].category).toBe('hazard')
     expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
