@@ -99,12 +99,24 @@ function slugify(name: string): string {
   )
 }
 
+// One row per placement that carries a computed РД 31.11.21.23-96 п. 2.2.3
+// lashing requirement (n = 0,3·P/BL) — built by the caller from manual +
+// pinned placements, since exportPdf itself has no store access.
+export interface LashingRequirementRow {
+  name: string
+  requiredCount: number
+  attachedCount: number
+  wireLabel: string
+  justification?: string
+}
+
 interface ExportDeckPlanToPdfOptions {
   svgEl: SVGSVGElement
   deck: DeckConfig
   unit: Unit
   result: PackingResult
   projectName: string
+  lashingRequirements?: LashingRequirementRow[]
 }
 
 export async function exportDeckPlanToPdf({
@@ -113,6 +125,7 @@ export async function exportDeckPlanToPdf({
   unit,
   result,
   projectName,
+  lashingRequirements,
 }: ExportDeckPlanToPdfOptions): Promise<void> {
   const { dataUrl: img, width: imgWidthPx, height: imgHeightPx } = await rasterizeSvg(svgEl)
   const unitLabel = UNIT_LABEL[unit]
@@ -234,6 +247,60 @@ export async function exportDeckPlanToPdf({
       5: { halign: 'right' },
     },
   })
+
+  // --- Lashing count table (РД 31.11.21.23-96 п. 2.2.3), only when at
+  // least one placement actually carries a computed requirement ---
+  if (lashingRequirements && lashingRequirements.length > 0) {
+    y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 22
+    pdf.setFont(FONT_FAMILY, 'bold')
+    pdf.setFontSize(10)
+    pdf.setTextColor(...INK)
+    pdf.text('Крепление — РД 31.11.21.23-96 (п. 2.2.3)', margin, y)
+    y += 8
+
+    autoTable(pdf, {
+      startY: y,
+      margin: { left: margin, right: margin, bottom: 36 },
+      head: [['Груз', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
+      body: lashingRequirements.map((r) => [
+        r.name,
+        r.wireLabel,
+        String(r.requiredCount),
+        String(r.attachedCount),
+        r.attachedCount < r.requiredCount ? (r.justification || '—') : '—',
+      ]),
+      theme: 'grid',
+      styles: {
+        font: FONT_FAMILY,
+        fontSize: 9,
+        cellPadding: 6,
+        lineColor: BORDER,
+        lineWidth: 0.5,
+        textColor: INK,
+      },
+      headStyles: {
+        font: FONT_FAMILY,
+        fillColor: INK,
+        textColor: 255,
+        fontStyle: 'bold',
+        halign: 'left',
+      },
+      alternateRowStyles: { fillColor: CARD_BG },
+      columnStyles: {
+        0: { halign: 'left' },
+        1: { halign: 'left' },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'left' },
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 3) {
+          const row = lashingRequirements[data.row.index]
+          if (row && row.attachedCount < row.requiredCount) data.cell.styles.textColor = WARN
+        }
+      },
+    })
+  }
 
   // --- Footer on every page ---
   const pageCount = pdf.getNumberOfPages()

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
+import { fmtNumber } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -52,6 +53,8 @@ import {
   checkZoneLoads,
   computeZoneLoads,
   LASHING_DEVICES,
+  WIRE_ROPE_SPECS,
+  requiredLashingCount,
   type ManualPlacement,
   type PinnedPlacement,
   type PackVariant,
@@ -538,8 +541,27 @@ export default function Home() {
       return
     }
     const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
+    const points = deck.lashingPoints ?? []
+    const allPlacements: (ManualPlacement | PinnedPlacement)[] = [
+      ...manualPlacements,
+      ...Object.values(pinnedPlacementsByTrip).flat(),
+    ]
+    const lashingRequirements = allPlacements
+      .map((p) => {
+        const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+        const requiredCount = requiredLashingCount(p.weight ?? 0, WIRE_ROPE_SPECS[wireType].breakingLoadKN)
+        if (requiredCount <= 0) return null
+        return {
+          name: p.name,
+          requiredCount,
+          attachedCount: points.filter((pt) => pt.placementId === p.id).length,
+          wireLabel: WIRE_ROPE_SPECS[wireType].label,
+          justification: p.lashingJustification,
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
     try {
-      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName })
+      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements })
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')
@@ -638,6 +660,63 @@ export default function Home() {
         : tpl.note,
       { duration: 12000 }
     )
+    // Deck-strength limit is a genuinely conflicting range for some vessels
+    // (see VesselTemplate.limits.deckStrengthTPerM2's own doc comment) —
+    // never auto-picked. Offer both real sourced values as an explicit
+    // one-click choice instead; the zone applies to the whole deck, which
+    // addLoadZone already supports without any drag-UI. Deferred to a toast
+    // (rather than firing addLoadZone synchronously here) because
+    // createProject/saveSnapshot above only stage the new project — the
+    // calculator store is overwritten by a separate effect on the next
+    // commit, so an immediate addLoadZone call here would target the OLD
+    // project and then get clobbered anyway.
+    const strength = tpl.limits?.deckStrengthTPerM2
+    if (strength) {
+      const makeZone = (maxLoadPerArea: number) => {
+        useCalculator.getState().addLoadZone({
+          x: 0,
+          y: 0,
+          width: tpl.deck.width,
+          length: tpl.deck.length,
+          maxLoadPerArea,
+        })
+      }
+      toast.custom(
+        (t) => (
+          <div className="rounded-md border bg-background p-3 shadow-lg text-xs space-y-2 w-72">
+            <div className="font-medium">Зона нагрузки на всю палубу — «{tpl.label}»</div>
+            <div className="text-muted-foreground">
+              Источники расходятся ({strength.sources}) — выберите лимит сами.
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px] flex-1"
+                onClick={() => {
+                  makeZone(strength.min)
+                  toast.dismiss(t)
+                }}
+              >
+                {fmtNumber(strength.min)} т/м²
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px] flex-1"
+                onClick={() => {
+                  makeZone(strength.max)
+                  toast.dismiss(t)
+                }}
+              >
+                {fmtNumber(strength.max)} т/м²
+              </Button>
+            </div>
+          </div>
+        ),
+        { duration: 20000 }
+      )
+    }
   }
 
   // Shared by handleRotatePinned/handleRotateManual below — these two were

@@ -558,27 +558,41 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   // Real line pipe — the catalogue-wide count, not a single project's
   // manifest. Real transported products (see each item's own comment for
   // source), not generic placeholders.
+  //
+  // Every item is capped at `maxLayers: 1`: a real штабель for these pipes
+  // is built through PipeNestBuilder (src/lib/pipeNest.ts), which produces
+  // a single 'pipe-nest' CargoItem carrying its own real per-tier layout —
+  // it never stacks a plain 'cylinder' item vertically. Without this cap,
+  // clicking one of these chips repeatedly (or raising "Кол-во" by hand)
+  // on a deck with clearance > 0 lets the auto-packer's OLDER
+  // decomposePipePyramid path stack them into a valley-nested triangular
+  // pile — a shape this session already proved does not match how this
+  // vessel's pipes are actually stowed (straight, equal-count tiers on a
+  // timber crib, see pipeNest.ts's own doc comment). That pyramid path
+  // stays correct and enabled for the two GENERIC loose-pipe presets in
+  // `mixed` below (drill pipe / casing — a free pile, not a specific
+  // vessel's real stowage method), which is why they're not capped here.
   pipes: {
     label: 'Трубы',
     items: [
       // Ø813 × 30.2 SAWL 450 IFD, concrete-coated (НУБП-NN-СК)
-      { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e' },
-      { name: 'Труба Ø813×30,2 НУБП-90', width: 12.38, length: 0.993, height: 0.993, allowRotation: true, weight: 17000, shape: 'cylinder', color: '#57534e' },
-      { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e' },
-      { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e' },
-      { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба Ø813×30,2 НУБП-90', width: 12.38, length: 0.993, height: 0.993, allowRotation: true, weight: 17000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
       // Ø219.1, bare (без покрытия) — OD is the steel diameter itself
-      { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155' },
-      { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155' },
+      { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155', maxLayers: 1 },
+      { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155', maxLayers: 1 },
       // ТШ406.4 × 22.2 with 45 mm concrete → OD 406.4 + 2×45 = 496.4 mm
-      { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e' },
+      { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
       // ОШ-D-1220 × 13, 3 mm coating → OD 1220 + 2×3 = 1226 mm
-      { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c' },
+      { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c', maxLayers: 1 },
       // Real — «Схема Укладки ТП 2026.pdf», flexible flowline pipe. The
       // source table gives its diameter (617 mm) but leaves weight blank
       // ("Вес— 0000 m") — no real per-metre weight figure exists in any
       // document on file, so `weight` is left unset rather than guessed.
-      { name: 'Труба шлейф D=617 мм (514×27 НУБП-51)', width: 12.38, length: 0.617, height: 0.617, allowRotation: true, shape: 'cylinder', color: '#78716c' },
+      { name: 'Труба шлейф D=617 мм (514×27 НУБП-51)', width: 12.38, length: 0.617, height: 0.617, allowRotation: true, shape: 'cylinder', color: '#78716c', maxLayers: 1 },
     ],
   },
   // Real cargo with a non-rectangular footprint — 2D/3D actually draw its

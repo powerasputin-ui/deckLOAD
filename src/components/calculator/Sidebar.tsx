@@ -56,11 +56,14 @@ import { useProjects } from '@/store/projects'
 import { useCalculator, UNIT_LABEL, roundForDisplay, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
+  WIRE_ROPE_SPECS,
+  requiredLashingCount,
   type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
   type ClearanceMargin,
   type ZoneLoadCheck,
+  type WireRopeType,
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
@@ -793,7 +796,11 @@ function LashingPointsSection() {
   // whole toggle (and the input itself) would flicker away mid-edit. Mode is
   // tracked by whether a margin is set AT ALL, not by its size.
   const selectedHasClearance = selectedPlacement?.clearanceMargin !== undefined
-  const updateSelectedPlacement = (patch: { clearanceMargin?: ClearanceMargin }) => {
+  const updateSelectedPlacement = (patch: {
+    clearanceMargin?: ClearanceMargin
+    lashingWireType?: WireRopeType
+    lashingJustification?: string
+  }) => {
     if (selectedManual) updateManualPlacement(selectedManual.id, patch)
     else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
   }
@@ -803,6 +810,10 @@ function LashingPointsSection() {
   }
   const selectedPointsCount = selectedPlacement
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
+    : 0
+  const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+  const selectedRequiredLashing = selectedPlacement
+    ? requiredLashingCount(selectedPlacement.weight ?? 0, WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN)
     : 0
 
   return (
@@ -894,6 +905,41 @@ function LashingPointsSection() {
                 <Trash2 className="h-3 w-3 mr-1" />
                 Снять все точки ({selectedPointsCount}) с этого груза
               </Button>
+            )}
+          </div>
+        )}
+
+        {selectedPlacement && selectedRequiredLashing > 0 && (
+          <div className="rounded-md border p-2 space-y-1.5">
+            <div className="text-[10px] font-medium text-muted-foreground">
+              РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedRequiredLashing}
+            </div>
+            <Select
+              value={selectedWireType}
+              onValueChange={(v) => updateSelectedPlacement({ lashingWireType: v as WireRopeType })}
+            >
+              <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(WIRE_ROPE_SPECS).map(([key, w]) => (
+                  <SelectItem key={key} value={key}>{w.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="text-[10px] text-muted-foreground">
+              Прикреплено точек к этому грузу: {selectedPointsCount}
+            </div>
+            {selectedPointsCount < selectedRequiredLashing && (
+              <div className="space-y-1">
+                <div className="text-[10px] text-destructive">
+                  Меньше расчётного числа — укажите обоснование (идёт в PDF)
+                </div>
+                <textarea
+                  className="w-full rounded border bg-transparent text-[11px] p-1.5 min-h-[44px] resize-y"
+                  placeholder="Например: груз на деревянной клети между бортовыми стенками, доп. крепление сверх клети не требуется по проекту"
+                  value={selectedPlacement.lashingJustification ?? ''}
+                  onChange={(e) => updateSelectedPlacement({ lashingJustification: e.target.value })}
+                />
+              </div>
             )}
           </div>
         )}

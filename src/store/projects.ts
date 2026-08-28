@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType } from '@/lib/packing'
+import { WIRE_ROPE_SPECS } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
@@ -326,6 +327,10 @@ function normalizeStabilityOverride(value: unknown): StabilityOverride | undefin
   return { vcgAboveDeckM, tcgOffsetM, lcgOffsetM }
 }
 
+function normalizeWireRopeType(value: unknown): WireRopeType | undefined {
+  return typeof value === 'string' && value in WIRE_ROPE_SPECS ? (value as WireRopeType) : undefined
+}
+
 // A pipe штабель's computed geometry (src/lib/pipeNest.ts) — stored, not
 // recomputed on load, so a saved plan reproduces byte-identically even if
 // the geometry function is later refined. Dropped entirely (not
@@ -462,6 +467,8 @@ function normalizePinnedList(value: unknown): PinnedPlacement[] {
       weight: normalizeOptionalWeight(pin.weight),
       clearanceMargin: normalizeClearanceMargin(pin.clearanceMargin),
       stabilityOverride: normalizeStabilityOverride(pin.stabilityOverride),
+      lashingWireType: normalizeWireRopeType(pin.lashingWireType),
+      lashingJustification: typeof pin.lashingJustification === 'string' ? pin.lashingJustification : undefined,
     } as PinnedPlacement
   })
 }
@@ -493,6 +500,8 @@ function normalizeManualPlacements(value: unknown): ManualPlacement[] {
       weight: normalizeOptionalWeight(m.weight),
       clearanceMargin: normalizeClearanceMargin(m.clearanceMargin),
       stabilityOverride: normalizeStabilityOverride(m.stabilityOverride),
+      lashingWireType: normalizeWireRopeType(m.lashingWireType),
+      lashingJustification: typeof m.lashingJustification === 'string' ? m.lashingJustification : undefined,
     } as ManualPlacement
   })
 }

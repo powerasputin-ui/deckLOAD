@@ -18,6 +18,8 @@ import {
   zoneAreaWithinOutline,
   zoneIdsOverlapping,
   checkLashingBalance,
+  requiredLashingCount,
+  WIRE_ROPE_SPECS,
   violatesSeparation,
   rotateOutline90,
   polygonsOverlap,
@@ -182,6 +184,19 @@ describe('packDeck', () => {
     // maxLayers = 2, so 6 units need 3 stacks
     expect(res.placed).toHaveLength(3)
     expect(res.placedCount).toBe(6)
+  })
+
+  it('a real pipe preset with maxLayers: 1 never stacks into one footprint, even with generous clearance (regression: without this cap, repeat-clicking a real pipe preset on a clearanced deck would trigger the old valley-nested pyramid render, which does not match how this vessel actually stows pipe — see pipeNest.ts)', () => {
+    const res = packDeck(30, 30, [
+      item({ id: 'pipe', width: 12.38, length: 0.957, height: 0.957, shape: 'cylinder', quantity: 5, maxLayers: 1 }),
+    ], { clearance: 5 }) // clearance alone would allow floor(5/0.957) = 5 layers in one footprint
+    // Every placement must be its own single-unit stack.
+    expect(res.placed).toHaveLength(5)
+    expect(res.placedCount).toBe(5)
+    for (const p of res.placed) {
+      expect(p.stackedCount).toBe(1)
+      expect(p.layers).toBe(1)
+    }
   })
 
   it('marks oversized items as unplaced', () => {
@@ -1786,6 +1801,32 @@ describe('zoneIdsOverlapping', () => {
 
   it('returns an empty array with no zones', () => {
     expect(zoneIdsOverlapping({ x: 0, y: 0, width: 1, length: 1 }, undefined)).toEqual([])
+  })
+})
+
+describe('requiredLashingCount (РД 31.11.21.23-96 п. 2.2.3, n = 0,3·P/BL)', () => {
+  it('reproduces the real ДВТК/638.362241.023 worked example: 756 t stack, BL 203 kN -> 11', () => {
+    // Source document computed n and adopted 3 in practice (cargo cribbed
+    // between the bulwarks) — this pins the RD-computed figure only, which
+    // is what a caller must show alongside (not instead of) any smaller
+    // actual count.
+    expect(requiredLashingCount(756_000, WIRE_ROPE_SPECS.wire_19_5_g1zhn_1670.breakingLoadKN)).toBe(11)
+  })
+
+  it('reproduces the real 33-pipe Ø813 НУБП-72 stack (495 t) against the same wire', () => {
+    expect(requiredLashingCount(495_000, 203)).toBe(8)
+  })
+
+  it('returns 0 for a non-positive weight or breaking load', () => {
+    expect(requiredLashingCount(0, 203)).toBe(0)
+    expect(requiredLashingCount(-1, 203)).toBe(0)
+    expect(requiredLashingCount(756_000, 0)).toBe(0)
+    expect(requiredLashingCount(756_000, -1)).toBe(0)
+  })
+
+  it('rounds up, never down (a fractional lashing is not a real lashing)', () => {
+    // 0.3 * 1 t / (203/9.80665) kN-as-t = 0.0145 -> ceil to 1, not 0.
+    expect(requiredLashingCount(1_000, 203)).toBe(1)
   })
 })
 

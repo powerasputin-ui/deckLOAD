@@ -174,6 +174,15 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                     unitLabel={UNIT_LABEL[unit]}
                     color={color}
                     active={active}
+                    // A real pipe штабель is built below via PipeNestBuilder
+                    // (real per-tier layout, correct weight/VCG) — this chip
+                    // still places a single loose pipe on click (useful on
+                    // its own), but shouldn't read as the way to build a
+                    // stack, or a user clicking it repeatedly would expect
+                    // the same nested pile the old generic pipe presets in
+                    // "Смешанный" give, which this vessel's real stowage
+                    // doesn't match (see maxLayers: 1 on every item here).
+                    hint={activePresetCategory === 'pipes' ? 'через конструктор штабеля ниже' : undefined}
                     onSelect={() => setPendingPresetStamp(active ? null : { ...converted, color })}
                   />
                 )
@@ -387,12 +396,14 @@ function PresetTemplateChip({
   unitLabel,
   color,
   active,
+  hint,
   onSelect,
 }: {
   template: { name?: string; width?: number; length?: number; shape?: CargoShape }
   unitLabel: string
   color: string
   active: boolean
+  hint?: string
   onSelect: () => void
 }) {
   return (
@@ -421,6 +432,7 @@ function PresetTemplateChip({
         <div className="text-[10px] text-muted-foreground">
           {fmtNumber(template.width ?? 0)}×{fmtNumber(template.length ?? 0)} {unitLabel}
         </div>
+        {hint && <div className="text-[9px] italic text-muted-foreground/80">{hint}</div>}
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
     </button>
@@ -538,6 +550,15 @@ function PipeNestBuilder() {
   // the geometry call — computePipeNest works in real metres throughout.
   const [widthText, setWidthText] = useState(() => fmtNumber(deckWidth))
   const [countText, setCountText] = useState('')
+  // Optional cargo-in-cargo weight (e.g. water left in pipes during
+  // transport — a real line item for some projects, ~4% of stack weight in
+  // the one source document seen so far). Left EMPTY by default, never 0 —
+  // an empty field means "not accounted for", a 0 would falsely claim it
+  // was checked and found to be none. Added to the stack's total weight;
+  // the water is assumed to ride at the same VCG as the pipes themselves
+  // (it's distributed along their full length), so no separate VCG term is
+  // needed — computePipeNest's own geometric VCG already covers it.
+  const [waterText, setWaterText] = useState('')
   const [prevDeckWidth, setPrevDeckWidth] = useState(deckWidth)
   if (deckWidth !== prevDeckWidth) {
     setPrevDeckWidth(deckWidth)
@@ -558,10 +579,17 @@ function PipeNestBuilder() {
       ? computePipeNest({ pipeOuterDiameterM, pipeLengthM, pipeWeightKg: pipeWeightKg ?? 0, usableWidthM, pipeCount, maxStackHeightM })
       : null
   const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[pipeIndex % PALETTE.length]
+  const waterWeightKg = waterText.trim()
+    ? Math.max(0, (parseFloat(waterText.replace(',', '.')) || 0) * 1000)
+    : undefined
 
   const handleAdd = () => {
     if (!nest || nest.pipeCount <= 0) return
-    const totalWeightKg = pipeWeightKg !== undefined ? nest.pipeCount * pipeWeightKg : undefined
+    const pipesWeightKg = pipeWeightKg !== undefined ? nest.pipeCount * pipeWeightKg : undefined
+    const totalWeightKg =
+      pipesWeightKg !== undefined || waterWeightKg !== undefined
+        ? (pipesWeightKg ?? 0) + (waterWeightKg ?? 0)
+        : undefined
     addOrIncrementCargoFromTemplate({
       name: `${tpl.name} — штабель ${nest.pipeCount} шт`,
       width: nest.usableWidthM,
@@ -571,7 +599,10 @@ function PipeNestBuilder() {
       allowRotation: false,
       shape: 'pipe-nest',
       color,
-      nest,
+      nest:
+        waterWeightKg !== undefined
+          ? { ...nest, sourceNote: `${nest.sourceNote ? nest.sourceNote + ' ' : ''}Вода в трубах: ${fmtNumber(waterWeightKg / 1000)} т добавлена к весу штабеля (VCG принят равным VCG труб).` }
+          : nest,
     })
   }
 
@@ -610,6 +641,17 @@ function PipeNestBuilder() {
           className="h-7 w-24 rounded border bg-background px-1.5 text-xs"
         />
       </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="text-[10px] text-muted-foreground">Вода в трубах, т (если есть)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="нет данных"
+          value={waterText}
+          onChange={(e) => setWaterText(e.target.value)}
+          className="h-7 w-24 rounded border bg-background px-1.5 text-xs"
+        />
+      </div>
       <Button size="sm" className="h-7 text-xs" disabled={!nest || nest.pipeCount <= 0} onClick={handleAdd}>
         Добавить штабель
       </Button>
@@ -617,7 +659,8 @@ function PipeNestBuilder() {
         <div className="basis-full text-[10px] text-muted-foreground">
           {nest.pipesPerRow} труб/ряд × {nest.tierCounts.length} яр. = {nest.pipeCount} шт ·
           {' '}высота {fmtNumber(nest.heightM)} м
-          {pipeWeightKg !== undefined && <> · вес {fmtNumber((nest.pipeCount * pipeWeightKg) / 1000)} т</>}
+          {pipeWeightKg !== undefined && <> · вес труб {fmtNumber((nest.pipeCount * pipeWeightKg) / 1000)} т</>}
+          {waterWeightKg !== undefined && <> · + вода {fmtNumber(waterWeightKg / 1000)} т</>}
           {nest.crateHeightM !== REAL_CRATE_HEIGHT_M_OD1073M && (
             <> · высота клети {fmtNumber(nest.crateHeightM)} м — ОЦЕНКА, не измерена по чертежу для этого диаметра</>
           )}

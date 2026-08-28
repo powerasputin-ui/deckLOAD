@@ -350,6 +350,40 @@ export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: 
   custom: { label: 'Другое (вручную)', mslKg: 0 },
 }
 
+// A SEPARATE, additive check from checkLashingBalance below — that one is
+// an IMO CSS Code Annex 13 static-force balance per attached point; this is
+// the real РД 31.11.21.23-96 п. 2.2.3 rule a class-approved project actually
+// used for pipe штабели: the number of lashings for one stack is 0.3 of its
+// weight (t) divided by the wire's own breaking load (t). The two
+// methodologies can disagree — see requiredLashingCount's own doc comment —
+// so callers must show both, never merge them into one verdict.
+export type WireRopeType = 'wire_19_5_g1zhn_1670' | 'custom'
+
+export const WIRE_ROPE_SPECS: Record<WireRopeType, { label: string; breakingLoadKN: number }> = {
+  // Real — ДВТК/638.362241.023 REV3 п. 2.2.2: "стальной канат 19,5-Г-I-Ж-Н
+  // 1670 ГОСТ 2688-80 с разрывным усилием каната в целом BL= 203 кН (20,7т)".
+  wire_19_5_g1zhn_1670: { label: '19,5-Г-I-Ж-Н 1670 ГОСТ 2688-80 (BL 203 кН)', breakingLoadKN: 203 },
+  custom: { label: 'Свой канат (вручную)', breakingLoadKN: 0 },
+}
+
+// РД 31.11.21.23-96 п. 2.2.3: n = 0,3·P / BL, where P is the stack's own
+// weight and BL the wire's breaking load, both in the same mass unit —
+// rearranged here to keep BL in its usual kN and P in kg. Documented real
+// example: a 756 t (7,560,000 kg) pipe stack with BL = 203 kN gives
+// n = ceil(0.3 * 756 / (203/9.80665)) = 11 — the project's own approved
+// document then adopted 3 in practice, because the cargo was additionally
+// cribbed between the bulwark walls (see the source п.'s own note). That
+// gap is real and intentional, not something to silently reconcile here —
+// this function only returns the RD-computed figure; a caller comparing it
+// against a smaller actual count must ask for a justification, not treat it
+// as a failure.
+export function requiredLashingCount(stackWeightKg: number, breakingLoadKN: number): number {
+  if (!(breakingLoadKN > 0) || !(stackWeightKg > 0)) return 0
+  const stackWeightT = stackWeightKg / 1000
+  const breakingLoadT = breakingLoadKN / G
+  return Math.max(0, Math.ceil((0.3 * stackWeightT) / breakingLoadT))
+}
+
 // Vessel motion coefficients (in g) used by the simplified static-equivalent
 // lashing check below, plus the deck/cargo friction coefficient. Presets
 // stand in for a full GM/roll-period calculation, which real-world lashing
@@ -899,6 +933,15 @@ export interface PinnedPlacement {
   // See CargoItem.stabilityOverride — overrides the per-item default only
   // for this specific placement. Never affects packing/collision.
   stabilityOverride?: StabilityOverride
+  // РД 31.11.21.23-96 п. 2.2.3 lashing count — see requiredLashingCount.
+  // Which wire rope the required-count readout is computed against.
+  lashingWireType?: WireRopeType
+  // Free-text justification, required in the UI when the user's actual
+  // attached lashing-point count is below the computed requirement — real
+  // stowage (timber cribs, hull contact) can legitimately need fewer than
+  // the formula suggests, but that must be a stated reason, not a silent
+  // shortfall. Surfaced as-is in the PDF export.
+  lashingJustification?: string
 }
 
 // Compute how many tiers (layers) can be stacked for an item. When the deck
@@ -1747,6 +1790,9 @@ export interface ManualPlacement {
   clearanceMargin?: ClearanceMargin
   // See PinnedPlacement.stabilityOverride above — same meaning here.
   stabilityOverride?: StabilityOverride
+  // See PinnedPlacement.lashingWireType/lashingJustification above — same meaning here.
+  lashingWireType?: WireRopeType
+  lashingJustification?: string
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
