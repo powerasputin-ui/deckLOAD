@@ -11,14 +11,31 @@
 // marked as such in `note`, never silently invented as if they were real.
 
 import type { VesselStabilityData, DeckShipFrame, VariableWeightItem } from './stability'
+import type { RestrictionZone } from './packing'
 
 export interface VesselTemplate {
   id: string
   label: string
-  deck: { width: number; length: number } // meters
-  vessel: VesselStabilityData
-  shipFrame: DeckShipFrame
-  deckForwardIsPositiveY: boolean
+  // Non-rectangular real deck silhouette (from a GA drawing, say) — deck-
+  // local coords in the same [0,width]x[0,length] frame as DeckConfig.outline.
+  // Undefined = plain rectangle (today's default for every template that
+  // doesn't have a real outline to draw from).
+  deck: { width: number; length: number; outline?: { x: number; y: number }[] } // meters
+  // A template built from pure geometry (a GA drawing) may have NO stability
+  // data at all — no lightship weight/KG, no hydrostatics, nothing a real
+  // loading manual would carry. Optional rather than a fabricated zeroed
+  // VesselStabilityData: the app already shows an honest "Заполните данные
+  // судна" prompt when deck.vessel is undefined (StabilityPanel), so a
+  // geometry-only template just leaves stability unset instead of lying
+  // with invented numbers.
+  vessel?: VesselStabilityData
+  shipFrame?: DeckShipFrame
+  deckForwardIsPositiveY?: boolean
+  // Hard-blocked obstacles on the real deck (hatches, moon pool, crane
+  // pedestals, etc.) — seeded onto the new project's deck.restrictionZones
+  // on apply, same mechanism a user could draw by hand, just pre-filled
+  // from the real drawing.
+  restrictionZones?: RestrictionZone[]
   note: string // shown to the user on selection — what's real vs. estimated
   // Operational limits, kept as STRUCTURED numbers rather than only as
   // prose inside `note`. A caveat buried in a toast the user dismisses once
@@ -162,5 +179,107 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
       'размещённого через собственную геометрию приложения, может отличаться от документа на метры — нужен чертёж общего ' +
       'расположения (MW628A-100-02, источник [6] в списке литературы) или прямое указание шпации, чтобы это закрыть. ' +
       'Остальное (лёгкое судно, танки, расходники, допустимая GMmin 1,220 м) — из реального утверждённого проекта ДВТК/638.362241.034.',
+  },
+  {
+    id: 'olympic-commander',
+    label: 'Olympic Commander (MT6016, ROV Support Vessel)',
+    // Source: real GA (General Arrangement) drawing — "101-100 (1960-11)_A
+    // GA Commander.pdf" (Marin Teknikk, project MT6016, Olympic Shipping
+    // A.S.), Main Deck plan. This is a GEOMETRY drawing, not a stability
+    // booklet — see `note` for exactly what it does and doesn't give us.
+    //
+    // Real, printed on the drawing: Length o.a. 92.95 m, LBP 86.60 m,
+    // Breadth 19.70 m, Depth maindeck 7.70 m. Cargo deck area is labelled
+    // directly: "LxB=51mx16m = 815 m2".
+    //
+    // deck.length is NOT the printed 51 m — that figure describes the deck's
+    // full-WIDTH run only (stern to about frame 80). Past that, the
+    // accommodation block (locker room/coffee shop/ROV workshop/ROV control
+    // room) eats into the starboard side, and only a narrower port-side
+    // strip continues to about frame 103. Modelling that narrower strip
+    // (deck.outline below) means the deck's own bounding length has to be
+    // the FULL extent (~62 m), not just the full-width run — outline points
+    // beyond deck.length would be silently clipped by every packing/
+    // exclusion computation, which trusts width/length as the hard bound.
+    // 815 m^2 most likely nets the full block's own internal cutouts (see
+    // restrictionZones below) against the extra narrow-strip area — it is
+    // NOT expected to equal this polygon's own area exactly.
+    deck: {
+      width: 16, // real, printed
+      length: 62, // digitized total extent (see comment above) — NOT the printed "51 m" figure
+      // Deck-local (0,0) = port/stern corner (frame 0 sits at the stern per
+      // the drawing's own "Removable Stern Section" label; frame numbers
+      // grow toward the bow, confirmed against the bow shape on the plan).
+      // Digitized by eye against the drawing's own printed frame ruler
+      // (0..145) using an ESTIMATED ~0.6 m/frame spacing (145 frames x
+      // 0.6 = 87 m ~= the real 86.60 m LBP — consistent, but no spacing
+      // figure is printed as text anywhere on the drawing, so this stays an
+      // estimate, same status as the Kuznetsov шпация gap above).
+      outline: [
+        { x: 0, y: 0 },
+        { x: 16, y: 0 },
+        { x: 16, y: 48 }, // ~frame 80 — full-width run ends, accommodation block starts eating the starboard side
+        { x: 7, y: 48 }, // narrows to a ~7 m port-side strip
+        { x: 7, y: 62 }, // ~frame 103 — cargo deck ends at the engine casing/superstructure
+        { x: 0, y: 62 },
+      ],
+    },
+    // No stability booklet on hand for this vessel — a GA drawing carries
+    // none of lightship weight/KG/LCG, hydrostatics, GMmin, or KN curves.
+    // Deliberately left undefined rather than filled with invented numbers;
+    // the app already shows an honest "Заполните данные судна" prompt
+    // instead of a fabricated PASS/FAIL. Deck/cargo/auto-placement work
+    // fully regardless — that side has no dependency on stability data.
+    // limits also omitted — deck-strength/total-capacity figures live in a
+    // separate loading manual, not on a GA drawing.
+    restrictionZones: [
+      {
+        id: 'og-hatch',
+        // No printed dimensions for this one (unlike the two net openings
+        // below) — position and size both estimated off the drawing.
+        name: 'Люк/вырез в палубе (оценка размера и позиции)',
+        shapeType: 'rect',
+        x: 4,
+        y: 41, // ~frame 68
+        width: 8,
+        length: 7, // ~frame 68-80
+      },
+      {
+        id: 'og-net-opening-1',
+        // Real printed dimensions ("net opening 1300 1600"); position
+        // (which frame, how far from the port strip's edge) is estimated.
+        name: 'Net opening 1,3×1,6 м (реальный размер, позиция — оценка)',
+        shapeType: 'rect',
+        x: 5.5,
+        y: 56,
+        width: 1.3,
+        length: 1.6,
+      },
+      {
+        id: 'og-net-opening-2',
+        // Real printed dimensions ("net opening 2108 4376"); position estimated.
+        name: 'Net opening 2,108×4,376 м (реальный размер, позиция — оценка)',
+        shapeType: 'rect',
+        x: 4.5,
+        y: 57.6,
+        width: 2.108,
+        length: 4.376,
+      },
+    ],
+    note:
+      'Источник: реальный GA-чертёж (Marin Teknikk, проект MT6016, «101-100 (1960-11)_A GA Commander.pdf»), план Main Deck. ' +
+      'РЕАЛЬНОЕ: длина 92,95 м, LBP 86,60 м, ширина 19,70 м, площадь грузовой палубы подписана как 51×16 = 815 м² ' +
+      '(это ширина 16 м — использована как есть; длина 62 м в приложении — не то же самое число, см. комментарий в коде: ' +
+      'печатные 51 м — это только участок полной ширины, дальше в нос палуба сужается под надстройку, и это тоже часть ' +
+      'реальной грузовой площади на чертеже). Контур сужения и оба выреза «net opening» (реальные размеры: 1,3×1,6 м и ' +
+      '2,108×4,376 м, оба подписаны на чертеже) — оцифрованы на глаз по напечатанной шкале шпангоутов (0…145) при ' +
+      'ОЦЕНОЧНОЙ шпации ~0,6 м/шп. (нигде не подписана текстом). Большой люк/вырез в средней части палубы — оценка и ' +
+      'позиции, и размера (без подписанных размеров на чертеже). НЕТ ДАННЫХ ОБ ОСТОЙЧИВОСТИ: это чертёж общего ' +
+      'расположения, не книга остойчивости — лёгкий вес, ЦТ, гидростатика, допустимый GM, кросс-кривые KN на нём не ' +
+      'приведены и здесь не заполнены (не выдуманы). Расчёт остойчивости для этого судна будет недоступен, пока такие ' +
+      'данные не появятся — раздел палубы/груза/автораспределения на это никак не завязан. Лимиты по нагрузке на палубу ' +
+      '(т/м²) и общей грузоподъёмности палубы также не заполнены — это отдельный документ (loading manual), которого нет на руках. ' +
+      'Не включены в эту версию (сознательно отложено): 4 мелких объекта у кормы (склады/вентшахты) и основания кранов — ' +
+      'на чертеже без размеров, точность оценки ниже.',
   },
 ]

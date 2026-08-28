@@ -46,7 +46,11 @@ const LIGHTSHIP: WeightMoment = {
 }
 
 describe('real approved loading calculation — А. Кузнецов, LC51 Max deck cargo Arrival', () => {
-  const vessel: VesselStabilityData = kuznetsov.vessel
+  // kuznetsov is a fixture from a real approved project document — always
+  // has real stability data, unlike a geometry-only template (e.g. Olympic
+  // Commander), so `vessel`/`shipFrame` being optional on VesselTemplate in
+  // general doesn't apply to this specific one.
+  const vessel: VesselStabilityData = kuznetsov.vessel!
   // Same mapping variableWeightsToMoments does internally (it is private).
   const variableMoments: WeightMoment[] = vessel.variableWeights
     .filter((w) => w.weightKg > 0)
@@ -280,6 +284,6 @@ describe('template fidelity to the source document', () => {
     // Таблица 3 LIGHT SHIP row: TCG от ДП = −0.020 m, MTCG = −81.0 t·m.
     // A silently-zeroed lightship TCG understates the vessel's built-in
     // list bias, so the template must carry the real figure.
-    expect(kuznetsov.vessel.particulars.lightshipTCG).toBeCloseTo(-0.02, 3)
+    expect(kuznetsov.vessel!.particulars.lightshipTCG).toBeCloseTo(-0.02, 3)
   })
 })

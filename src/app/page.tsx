@@ -666,6 +666,13 @@ export default function Home() {
         vessel: tpl.vessel,
         shipFrame: tpl.shipFrame,
         deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
+        // A non-rectangular real deck silhouette (digitized from a GA
+        // drawing) and its real obstacles (hatches, moon pool, etc.) —
+        // same "bind the promise, don't just display it" reasoning as
+        // clearance/maxDeckCargoT above. Both undefined for a template
+        // with only a plain rectangular deck (e.g. Kuznetsov).
+        outline: tpl.deck.outline,
+        restrictionZones: tpl.restrictionZones,
       },
       items: [],
       manualPlacements: [],
