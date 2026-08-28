@@ -627,6 +627,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const h = rDeckHeight * scale
   const offX = (maxW - w) / 2
   const offY = (maxH - h) / 2
+  // Deck-unit equivalent of the `pad` screen-px margin already reserved
+  // around the deck rectangle in the fixed maxW×maxH canvas — the natural
+  // "how far outside the hull is still visible" distance, reused as the
+  // standard clearance for annotation placement (see handleAnnotationClick).
+  const annotationEdgeMarginDeckUnits = pad / scale
 
   const gridStep = computeGridStep(deckWidth, deckLength)
 
@@ -917,8 +922,27 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (!placingAnnotation || !onPlaceAnnotation) return false
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return true
-    const x = Math.max(0, Math.min(deckWidth, pos.x))
-    const y = Math.max(0, Math.min(deckLength, pos.y))
+    // Orientation stamps (Нос/Корма/Лево/Право) are a hull-relative label,
+    // not a free note — snapping the click to the deck's own perimeter and
+    // standing off a fixed distance along its outward normal (same
+    // nearestPointOnPolygon idiom PowerSocket already uses) gives every one
+    // of them the SAME clearance from the hull line, regardless of exactly
+    // where on the edge the user clicked. Previously the raw click was
+    // clamped straight to [0,deckWidth]x[0,deckLength], which glued a
+    // near-edge click flush onto the contour itself.
+    if (placingAnnotation.kind !== 'note') {
+      const nearest = nearestPointOnPolygon(pos, deckPerimeter)
+      const margin = annotationEdgeMarginDeckUnits * 0.6
+      onPlaceAnnotation(nearest.x + nearest.normalX * margin, nearest.y + nearest.normalY * margin)
+      return true
+    }
+    // A free note is documentation, not cargo — it isn't clamped to the
+    // deck rectangle at all, only to the same padding margin already
+    // reserved around the deck for the rest of the UI (zoom controls,
+    // dimension labels), so it can sit off the hull entirely without
+    // flying off the visible canvas.
+    const x = Math.max(-annotationEdgeMarginDeckUnits, Math.min(deckWidth + annotationEdgeMarginDeckUnits, pos.x))
+    const y = Math.max(-annotationEdgeMarginDeckUnits, Math.min(deckLength + annotationEdgeMarginDeckUnits, pos.y))
     if (placingAnnotation.withLeader && !pendingAnnotationLeaderPoint) {
       setPendingAnnotationLeaderPoint({ x, y })
       return true
@@ -1657,8 +1681,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (!startDeck) return
       const deltaX = pos.x - startDeck.x
       const deltaY = pos.y - startDeck.y
-      const nx = Math.max(0, Math.min(deckWidth, annotationDrag.startPos.x + deltaX))
-      const ny = Math.max(0, Math.min(deckLength, annotationDrag.startPos.y + deltaY))
+      // Same expanded bound as a freshly-placed note (see
+      // handleAnnotationClick) — dragging an existing label shouldn't be
+      // more restrictive than placing a new one.
+      const nx = Math.max(-annotationEdgeMarginDeckUnits, Math.min(deckWidth + annotationEdgeMarginDeckUnits, annotationDrag.startPos.x + deltaX))
+      const ny = Math.max(-annotationEdgeMarginDeckUnits, Math.min(deckLength + annotationEdgeMarginDeckUnits, annotationDrag.startPos.y + deltaY))
       onUpdateAnnotation(annotationDrag.id, { x: nx, y: ny })
     }
     if (pinDrag && onUpdatePinned) {

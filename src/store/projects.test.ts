@@ -243,6 +243,42 @@ describe('projects store', () => {
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
   })
 
+  // A free note is deliberately placeable OUTSIDE the deck rectangle (see
+  // DeckVisualization.tsx's handleAnnotationClick) — negative x/y is real
+  // data, not corruption, unlike every other deck-local coordinate in this
+  // file (cargo, zones, lashing points) which IS clamped non-negative.
+  it('round-trips a negative x/y for a free note placed off the deck edge', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        annotations: [{ id: 'a1', x: -1.5, y: -0.5, text: 'За бортом', kind: 'note' }],
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: -1.5, y: -0.5, text: 'За бортом', kind: 'note', leaderX: undefined, leaderY: undefined }])
+  })
+
   // A leader line needs BOTH endpoints to mean anything — normalizeAnnotations
   // treats a lone leaderX with no leaderY (e.g. a hand-edited/corrupted
   // project file) as "no leader" rather than round-tripping a half-drawn

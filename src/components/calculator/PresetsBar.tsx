@@ -188,7 +188,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
               }}
               onClick={() => setActivePresetCategory(ANNOTATIONS_CATEGORY_KEY)}
             >
-              Разметка
+              Заметки
               {annotations.length > 0 && (
                 <Badge variant="secondary" className="ml-1 text-[10px]">{annotations.length}</Badge>
               )}

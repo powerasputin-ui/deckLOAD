@@ -442,8 +442,13 @@ function normalizeAnnotations(value: unknown): DeckConfig['annotations'] {
     const leaderY = normalizeOptionalCoord(ann.leaderY)
     return {
       id: typeof ann.id === 'string' && ann.id ? ann.id : uuid(),
-      x: toFiniteNonNegative(ann.x, 0),
-      y: toFiniteNonNegative(ann.y, 0),
+      // Unlike every other deck-local x/y in this file, an annotation is
+      // deliberately allowed to sit OUTSIDE the deck rectangle (see
+      // DeckVisualization.tsx's handleAnnotationClick) — it's a free-form
+      // note, not cargo, so a negative or off-deck coordinate is real data,
+      // not corruption.
+      x: toFinite(ann.x, 0),
+      y: toFinite(ann.y, 0),
       text: typeof ann.text === 'string' ? ann.text : '',
       kind: typeof ann.kind === 'string' && ANNOTATION_KINDS.has(ann.kind) ? (ann.kind as AnnotationKind) : undefined,
       // A leader needs BOTH coordinates to mean anything — a lone leaderX
