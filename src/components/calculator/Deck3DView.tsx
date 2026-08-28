@@ -7,6 +7,7 @@ import { OrbitControls, Edges } from '@react-three/drei'
 import { Maximize, Minimize } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
+import { pipeNestTierOffsets } from '@/lib/pipeNest'
 
 interface PinData {
   itemId: string
@@ -244,6 +245,41 @@ export default function Deck3DView({
             color: p.color,
           })
         }
+        continue
+      }
+
+      // A real pipe штабель (shape 'pipe-nest') — a straight, uniform-tier
+      // stack (see src/lib/pipeNest.ts's own doc comment for why this is
+      // NOT the same shape as the pyramid pile a few branches below: every
+      // tier holds the same pipe count, stacked directly above the tier
+      // beneath it, on a timber crib of height p.nest.crateHeightM). Real
+      // per-pipe positions, not an approximation — same "across" axis
+      // convention (acrossIsX) the pyramid branch below uses, so a
+      // straight nest and a free pyramid pile orient identically.
+      if (p.shape === 'pipe-nest' && p.nest) {
+        const { pipeOuterDiameterM: od, pipeLengthM: pipeLen, pipesPerRow, tierCounts, crateHeightM } = p.nest
+        const radius = od / 2
+        const rot: [number, number, number] = p.width >= p.length ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0]
+        const acrossIsX = !(p.width >= p.length)
+        let seq = 0
+        tierCounts.forEach((count, tierIndex) => {
+          const tierY = crateHeightM + tierIndex * od + od / 2
+          for (const offsetUnits of pipeNestTierOffsets(pipesPerRow, count)) {
+            const across = offsetUnits * radius
+            out.push({
+              key: `${p.itemId}-${thisIdx}-${seq++}`,
+              placementId,
+              pinData,
+              radius,
+              cylLen: pipeLen,
+              rot,
+              x: cx + (acrossIsX ? across : 0),
+              y: tierY,
+              z: cz + (acrossIsX ? 0 : across),
+              color: p.color,
+            })
+          }
+        })
         continue
       }
 

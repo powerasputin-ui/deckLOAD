@@ -413,6 +413,11 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     category: partial?.category,
     shape: partial?.shape,
     outline: partial?.outline,
+    maxLayers: partial?.maxLayers,
+    maxStackHeightM: partial?.maxStackHeightM,
+    contents: partial?.contents,
+    stabilityOverride: partial?.stabilityOverride,
+    nest: partial?.nest,
   }
 }
 
@@ -488,13 +493,34 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200 },
       { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800 },
       { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, allowRotation: true, weight: 500 },
-      // Offshore/DNV 2.7-1 units — same "container" family as the two
-      // above, just certified/shaped for platform crane transfer.
+      // Offshore/DNV 2.7-1 20ft unit — no real registry equivalent on file,
+      // kept generic (see the note above the real registry block below for
+      // why 10ft/20ft real units replaced their generic namesakes instead).
       { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
-      { name: 'Офшорный контейнер 10ft (DNV 2.7-1)', width: 2.99, length: 2.44, height: 2.59, allowRotation: true, weight: 2000 },
-      { name: 'Грузовая корзина 20ft (открытая)', width: 6.06, length: 2.44, height: 1.1, allowRotation: true, weight: 1800 },
       { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900 },
       { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650 },
+      // Real certified offshore tare from the operator's own RMRS registry
+      // («Схемы укладки ТП … + тара + модули + МГС», лист «ТАРА»). Merged
+      // directly into this tab (not a separate "Тара (реестр)" category)
+      // so real and generic containers/baskets sit side by side where they
+      // mean the same thing — the generic DNV 2.7-1 10ft unit and the
+      // generic open 20ft basket are replaced outright by their real
+      // counterparts below; the 6ft container and 10ft basket had no
+      // generic equivalent, so they're pure additions. Dimensions are the
+      // registry's own mm figures converted to metres; `weight` is the
+      // unit's EMPTY (tare) weight — add the real contents on top before
+      // trusting any stability number. Each unit's certified payload
+      // capacity ("полезная нагрузка") is carried in `contents` so it
+      // shows on hover instead of being silently lost.
+      { name: "Контейнер 10' (2661)", width: 2.991, length: 2.438, height: 2.661, allowRotation: true, weight: 2100, contents: 'Тара 2100 кг · полезная нагрузка 7480 кг' },
+      { name: "Контейнер 10' (2591)", width: 2.991, length: 2.438, height: 2.591, allowRotation: true, weight: 2230, contents: 'Тара 2230 кг · полезная нагрузка 7770 кг' },
+      { name: "Корзина 10'", width: 2.991, length: 2.438, height: 1.345, allowRotation: true, weight: 1550, contents: 'Тара 1550 кг · полезная нагрузка 7750 кг' },
+      { name: "Корзина 20'", width: 6.058, length: 2.438, height: 1.438, allowRotation: true, weight: 3500, contents: 'Тара 3500–3600 кг · полезная нагрузка 16300 кг' },
+      { name: "Контейнер 6'", width: 1.6, length: 1.8, height: 2.82, allowRotation: true, weight: 1750, contents: 'Тара 1750 кг · полезная нагрузка 5250 кг' },
+      // Gas-cylinder units — dangerous goods, so they get a category that
+      // the existing separation-rule machinery can key off directly.
+      { name: 'Корзина для баллонов (РМРС)', width: 1.25, length: 1.25, height: 2.13, allowRotation: true, weight: 580, category: 'Опасный груз', contents: 'Баллоны с газом · тара ~580 кг · полезная нагрузка ~1940 кг' },
+      { name: 'Контейнер КО-3 (16 баллонов)', width: 1.15, length: 1.15, height: 2.13, allowRotation: true, weight: 560, category: 'Опасный груз', contents: 'Офшорный КО-3 на 16 баллонов · тара ~560 кг · полезная нагрузка ~1944 кг' },
     ],
   },
   pallets: {
@@ -529,8 +555,11 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   //
   // Note п. 2.1.2 of the same document: a pipe stack must not exceed 3.0 m
   // in height — set that as the clearance/height limit before stacking.
+  // Real line pipe — the catalogue-wide count, not a single project's
+  // manifest. Real transported products (see each item's own comment for
+  // source), not generic placeholders.
   pipes: {
-    label: 'Трубы (проект)',
+    label: 'Трубы',
     items: [
       // Ø813 × 30.2 SAWL 450 IFD, concrete-coated (НУБП-NN-СК)
       { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e' },
@@ -545,27 +574,11 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e' },
       // ОШ-D-1220 × 13, 3 mm coating → OD 1220 + 2×3 = 1226 mm
       { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c' },
-    ],
-  },
-  // Real certified offshore tare from the operator's own RMRS registry
-  // («Схемы укладки ТП … + тара + модули + МГС», лист «ТАРА»). Dimensions
-  // are the registry's own mm figures converted to metres; `weight` is the
-  // unit's EMPTY (tare) weight, which is what the registry lists — add the
-  // real contents on top before trusting any stability number. The payload
-  // capacity ("полезная нагрузка") each unit is certified for is carried in
-  // `contents` so it shows on hover instead of being silently lost.
-  offshoreTare: {
-    label: 'Тара (реестр)',
-    items: [
-      { name: "Контейнер 10' (2661)", width: 2.991, length: 2.438, height: 2.661, allowRotation: true, weight: 2100, contents: 'Тара 2100 кг · полезная нагрузка 7480 кг' },
-      { name: "Контейнер 10' (2591)", width: 2.991, length: 2.438, height: 2.591, allowRotation: true, weight: 2230, contents: 'Тара 2230 кг · полезная нагрузка 7770 кг' },
-      { name: "Корзина 10'", width: 2.991, length: 2.438, height: 1.345, allowRotation: true, weight: 1550, contents: 'Тара 1550 кг · полезная нагрузка 7750 кг' },
-      { name: "Корзина 20'", width: 6.058, length: 2.438, height: 1.438, allowRotation: true, weight: 3500, contents: 'Тара 3500–3600 кг · полезная нагрузка 16300 кг' },
-      { name: "Контейнер 6'", width: 1.6, length: 1.8, height: 2.82, allowRotation: true, weight: 1750, contents: 'Тара 1750 кг · полезная нагрузка 5250 кг' },
-      // Gas-cylinder units — dangerous goods, so they get a category that
-      // the existing separation-rule machinery can key off directly.
-      { name: 'Корзина для баллонов (РМРС)', width: 1.25, length: 1.25, height: 2.13, allowRotation: true, weight: 580, category: 'Опасный груз', contents: 'Баллоны с газом · тара ~580 кг · полезная нагрузка ~1940 кг' },
-      { name: 'Контейнер КО-3 (16 баллонов)', width: 1.15, length: 1.15, height: 2.13, allowRotation: true, weight: 560, category: 'Опасный груз', contents: 'Офшорный КО-3 на 16 баллонов · тара ~560 кг · полезная нагрузка ~1944 кг' },
+      // Real — «Схема Укладки ТП 2026.pdf», flexible flowline pipe. The
+      // source table gives its diameter (617 mm) but leaves weight blank
+      // ("Вес— 0000 m") — no real per-metre weight figure exists in any
+      // document on file, so `weight` is left unset rather than guessed.
+      { name: 'Труба шлейф D=617 мм (514×27 НУБП-51)', width: 12.38, length: 0.617, height: 0.617, allowRotation: true, shape: 'cylinder', color: '#78716c' },
     ],
   },
   // Real cargo with a non-rectangular footprint — 2D/3D actually draw its

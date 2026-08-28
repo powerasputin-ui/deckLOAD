@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin } from '@/lib/packing'
-import type { PipeNestSpec, DunnageSpec } from '@/lib/pipeNest'
+import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
 import { DEMO_DECK, createDemoItems } from './calculator'
@@ -326,22 +326,11 @@ function normalizeStabilityOverride(value: unknown): StabilityOverride | undefin
   return { vcgAboveDeckM, tcgOffsetM, lcgOffsetM }
 }
 
-function normalizeDunnageSpec(value: unknown): DunnageSpec | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const d = value as Record<string, unknown>
-  const bearerThicknessM = typeof d.bearerThicknessM === 'number' && Number.isFinite(d.bearerThicknessM) ? d.bearerThicknessM : undefined
-  const bearerCount = typeof d.bearerCount === 'number' && Number.isFinite(d.bearerCount) ? d.bearerCount : undefined
-  const interTierThicknessM = typeof d.interTierThicknessM === 'number' && Number.isFinite(d.interTierThicknessM) ? d.interTierThicknessM : undefined
-  const maxTierSpacingM = typeof d.maxTierSpacingM === 'number' && Number.isFinite(d.maxTierSpacingM) ? d.maxTierSpacingM : undefined
-  if (bearerThicknessM === undefined || bearerCount === undefined || interTierThicknessM === undefined || maxTierSpacingM === undefined) return undefined
-  return { bearerThicknessM, bearerCount, interTierThicknessM, maxTierSpacingM }
-}
-
 // A pipe штабель's computed geometry (src/lib/pipeNest.ts) — stored, not
 // recomputed on load, so a saved plan reproduces byte-identically even if
 // the geometry function is later refined. Dropped entirely (not
 // reconstructed from partial data) if any required numeric field is
-// missing/corrupt — a half-formed nest with no rowCounts is worse than no
+// missing/corrupt — a half-formed nest with no tierCounts is worse than no
 // nest at all, since it would silently fall back to the flat-column VCG
 // default while still claiming shape 'pipe-nest'.
 function normalizeNestSpec(value: unknown): PipeNestSpec | undefined {
@@ -351,32 +340,36 @@ function normalizeNestSpec(value: unknown): PipeNestSpec | undefined {
   const pipeLengthM = typeof n.pipeLengthM === 'number' && Number.isFinite(n.pipeLengthM) ? n.pipeLengthM : undefined
   const pipeWeightKg = typeof n.pipeWeightKg === 'number' && Number.isFinite(n.pipeWeightKg) ? n.pipeWeightKg : undefined
   const usableWidthM = typeof n.usableWidthM === 'number' && Number.isFinite(n.usableWidthM) ? n.usableWidthM : undefined
+  const pipesPerRow = typeof n.pipesPerRow === 'number' && Number.isFinite(n.pipesPerRow) ? n.pipesPerRow : undefined
   const heightM = typeof n.heightM === 'number' && Number.isFinite(n.heightM) ? n.heightM : undefined
   const vcgAboveDeckM = typeof n.vcgAboveDeckM === 'number' && Number.isFinite(n.vcgAboveDeckM) ? n.vcgAboveDeckM : undefined
+  const crateHeightM = typeof n.crateHeightM === 'number' && Number.isFinite(n.crateHeightM) ? n.crateHeightM : undefined
   const pipeCount = typeof n.pipeCount === 'number' && Number.isFinite(n.pipeCount) ? n.pipeCount : undefined
   const requestedPipeCount = typeof n.requestedPipeCount === 'number' && Number.isFinite(n.requestedPipeCount) ? n.requestedPipeCount : undefined
-  const interTierLayers = typeof n.interTierLayers === 'number' && Number.isFinite(n.interTierLayers) ? n.interTierLayers : undefined
-  const rowCounts = Array.isArray(n.rowCounts) && n.rowCounts.every((r) => typeof r === 'number' && Number.isFinite(r))
-    ? (n.rowCounts as number[])
+  const requestedTiers = typeof n.requestedTiers === 'number' && Number.isFinite(n.requestedTiers) ? n.requestedTiers : undefined
+  const tierCounts = Array.isArray(n.tierCounts) && n.tierCounts.every((r) => typeof r === 'number' && Number.isFinite(r))
+    ? (n.tierCounts as number[])
     : undefined
   if (
     pipeOuterDiameterM === undefined || pipeLengthM === undefined || pipeWeightKg === undefined ||
-    usableWidthM === undefined || heightM === undefined || vcgAboveDeckM === undefined ||
-    pipeCount === undefined || requestedPipeCount === undefined || interTierLayers === undefined || rowCounts === undefined
+    usableWidthM === undefined || pipesPerRow === undefined || heightM === undefined || vcgAboveDeckM === undefined ||
+    crateHeightM === undefined || pipeCount === undefined || requestedPipeCount === undefined ||
+    requestedTiers === undefined || tierCounts === undefined
   ) return undefined
   return {
     pipeOuterDiameterM,
     pipeLengthM,
     pipeWeightKg,
     usableWidthM,
-    rowCounts,
+    pipesPerRow,
+    tierCounts,
     pipeCount,
     heightM,
     vcgAboveDeckM,
-    dunnage: normalizeDunnageSpec(n.dunnage),
-    interTierLayers,
+    crateHeightM,
     limited: typeof n.limited === 'boolean' ? n.limited : false,
     requestedPipeCount,
+    requestedTiers,
     sourceNote: toOptionalString(n.sourceNote),
   }
 }

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL, convertLength } from '@/store/calculator'
 import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
+import { computePipeNest, REAL_CRATE_HEIGHT_M_OD1073M } from '@/lib/pipeNest'
 import { cn, fmtNumber } from '@/lib/utils'
 
 // Stable empty-array reference — see the same pattern's comment in
@@ -239,6 +240,12 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                       ))}
                     </>
                   )}
+                </>
+              )}
+              {activePresetCategory === 'pipes' && (
+                <>
+                  <div className="basis-full w-0" aria-hidden="true" />
+                  <PipeNestBuilder />
                 </>
               )}
             </div>
@@ -508,6 +515,117 @@ function ZoneChip({
       >
         <Trash2 className="h-3 w-3" />
       </button>
+    </div>
+  )
+}
+
+// Builds a real pipe штабель as ONE cargo item (shape 'pipe-nest') from a
+// chosen pipe type — see src/lib/pipeNest.ts for the geometry (straight,
+// equal-count tiers on a timber crib, ДВТК/638.362241.023 п. 2.1.2/2.1.3).
+// A pipe preset's own width/length/height describe a SINGLE pipe
+// (width = pipe length, length = height = outer diameter, per the pipes
+// category's own comment) — this builder reuses those three numbers as the
+// nest's pipeLengthM/pipeOuterDiameterM inputs, it does not duplicate them.
+function PipeNestBuilder() {
+  const deckWidth = useCalculator((s) => s.deck.width)
+  const deckClearance = useCalculator((s) => s.deck.clearance)
+  const unit = useCalculator((s) => s.deck.unit)
+  const addOrIncrementCargoFromTemplate = useCalculator((s) => s.addOrIncrementCargoFromTemplate)
+  const pipeItems = PRESETS.pipes?.items ?? []
+  const [pipeIndex, setPipeIndex] = useState(0)
+  // Usable width and pipe count are entered in the deck's OWN current unit
+  // (matching every other field in this bar), converted to metres only for
+  // the geometry call — computePipeNest works in real metres throughout.
+  const [widthText, setWidthText] = useState(() => fmtNumber(deckWidth))
+  const [countText, setCountText] = useState('')
+  const [prevDeckWidth, setPrevDeckWidth] = useState(deckWidth)
+  if (deckWidth !== prevDeckWidth) {
+    setPrevDeckWidth(deckWidth)
+    setWidthText(fmtNumber(deckWidth))
+  }
+
+  const tpl = pipeItems[pipeIndex]
+  if (!tpl) return null
+  const pipeOuterDiameterM = tpl.length ?? tpl.height ?? 0
+  const pipeLengthM = tpl.width ?? 0
+  const pipeWeightKg = tpl.weight
+  const usableWidthM = convertLength(parseFloat(widthText.replace(',', '.')) || deckWidth, unit, 'm')
+  const pipeCount = countText.trim() ? Math.max(1, Math.round(parseFloat(countText.replace(',', '.')))) : undefined
+  const maxStackHeightM = deckClearance > 0 ? convertLength(deckClearance, unit, 'm') : undefined
+
+  const nest =
+    pipeOuterDiameterM > 0 && pipeLengthM > 0 && usableWidthM > 0
+      ? computePipeNest({ pipeOuterDiameterM, pipeLengthM, pipeWeightKg: pipeWeightKg ?? 0, usableWidthM, pipeCount, maxStackHeightM })
+      : null
+  const color = PRESET_TEMPLATE_COLORS[tpl.name ?? ''] ?? PALETTE[pipeIndex % PALETTE.length]
+
+  const handleAdd = () => {
+    if (!nest || nest.pipeCount <= 0) return
+    const totalWeightKg = pipeWeightKg !== undefined ? nest.pipeCount * pipeWeightKg : undefined
+    addOrIncrementCargoFromTemplate({
+      name: `${tpl.name} — штабель ${nest.pipeCount} шт`,
+      width: nest.usableWidthM,
+      length: nest.pipeLengthM,
+      height: nest.heightM,
+      weight: totalWeightKg,
+      allowRotation: false,
+      shape: 'pipe-nest',
+      color,
+      nest,
+    })
+  }
+
+  return (
+    <div className="flex w-full flex-wrap items-end gap-2 rounded-lg border p-2">
+      <div className="flex flex-col gap-0.5">
+        <label className="text-[10px] text-muted-foreground">Тип трубы</label>
+        <select
+          value={pipeIndex}
+          onChange={(e) => setPipeIndex(Number(e.target.value))}
+          className="h-7 rounded border bg-background px-1.5 text-xs"
+        >
+          {pipeItems.map((it, i) => (
+            <option key={i} value={i}>{it.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="text-[10px] text-muted-foreground">Ширина палубы, {UNIT_LABEL[unit]}</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={widthText}
+          onChange={(e) => setWidthText(e.target.value)}
+          className="h-7 w-20 rounded border bg-background px-1.5 text-xs"
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="text-[10px] text-muted-foreground">Труб (пусто = 2 яруса)</label>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder={nest ? String(nest.pipesPerRow * 2) : ''}
+          value={countText}
+          onChange={(e) => setCountText(e.target.value)}
+          className="h-7 w-24 rounded border bg-background px-1.5 text-xs"
+        />
+      </div>
+      <Button size="sm" className="h-7 text-xs" disabled={!nest || nest.pipeCount <= 0} onClick={handleAdd}>
+        Добавить штабель
+      </Button>
+      {nest && (
+        <div className="basis-full text-[10px] text-muted-foreground">
+          {nest.pipesPerRow} труб/ряд × {nest.tierCounts.length} яр. = {nest.pipeCount} шт ·
+          {' '}высота {fmtNumber(nest.heightM)} м
+          {pipeWeightKg !== undefined && <> · вес {fmtNumber((nest.pipeCount * pipeWeightKg) / 1000)} т</>}
+          {nest.crateHeightM !== REAL_CRATE_HEIGHT_M_OD1073M && (
+            <> · высота клети {fmtNumber(nest.crateHeightM)} м — ОЦЕНКА, не измерена по чертежу для этого диаметра</>
+          )}
+          {nest.limited && (
+            <span className="text-red-600"> · превышен лимит высоты штабеля — уложено {nest.pipeCount} из {nest.requestedPipeCount} труб</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

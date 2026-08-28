@@ -242,7 +242,9 @@ export function buildCargoWeightMoments(
     rotated?: boolean
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
-    nestVcgAboveDeckM?: number
+    // Structurally matches (but doesn't import) packing.ts's PipeNestSpec —
+    // only the one number this module actually needs.
+    nest?: { vcgAboveDeckM: number }
   }[],
   deckWidth: number,
   deckLength: number,
@@ -259,7 +261,7 @@ export function buildCargoWeightMoments(
       // there is no universal convention tying the two together.
       const alongDeckFromMid = center.y - deckLength / 2
       const lcgAuto = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
-      const vcgM = shipFrame.heightAboveBaselineM + computeItemVCG(p)
+      const vcgM = shipFrame.heightAboveBaselineM + computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM })
       // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
       // (position-derived) arm, not an absolute value — unlike
       // vcgAboveDeckM, TCG/LCG move every time the item is dragged, so an
@@ -301,7 +303,7 @@ export function buildLoadingConditionFromPlacements(
     rotated?: boolean
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
-    nestVcgAboveDeckM?: number
+    nest?: { vcgAboveDeckM: number }
   }[]
 ): LoadingCondition {
   const lightship: WeightMoment = {

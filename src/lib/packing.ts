@@ -504,9 +504,9 @@ export interface PlacedItem {
   locked?: boolean // see PinnedPlacement.locked — only ever set on pin-sourced placements, never on freshly algorithm-placed ones
   stabilityOverride?: StabilityOverride // see CargoItem.stabilityOverride — resolved fresh from the source item
   // See CargoItem.nest — resolved fresh from the source item, same pattern
-  // as stabilityOverride above. Only the one number computeItemVCG actually
-  // needs travels this far; the rest of PipeNestSpec stays on the item.
-  nestVcgAboveDeckM?: number
+  // as stabilityOverride above. The 2D/3D renderers need the full spec
+  // (pipesPerRow/tierCounts) to draw the real stack, not just its VCG.
+  nest?: PipeNestSpec
 }
 
 export interface UnplacedItem {
@@ -993,11 +993,12 @@ export function packDeck(
   const stabilityOverrideByItemId = new Map(items.map((it) => [it.id, it.stabilityOverride]))
   // A 'pipe-nest' item's width/length/height/weight already describe the
   // WHOLE штабель (see PipeNestSpec's own doc comment) — nothing here needs
-  // to know that. The only thing packing can't derive on its own is the
-  // real nested-geometry VCG (vs the flat half-height default), so that one
-  // number is looked up by id and copied onto the placement, same pattern
-  // as every other per-item extra above.
-  const nestVcgByItemId = new Map(items.map((it) => [it.id, it.nest?.vcgAboveDeckM]))
+  // to know that. The only things packing/rendering can't derive on their
+  // own are the real nested-geometry VCG (vs the flat half-height default)
+  // and the row/tier layout for drawing — so the whole spec is looked up by
+  // id and copied onto the placement, same pattern as every other per-item
+  // extra above.
+  const nestByItemId = new Map(items.map((it) => [it.id, it.nest]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -1221,7 +1222,7 @@ export function packDeck(
       clearanceMargin: pin.clearanceMargin,
       locked: pin.locked,
       stabilityOverride: stabilityOverrideByItemId.get(pin.itemId),
-      nestVcgAboveDeckM: nestVcgByItemId.get(pin.itemId),
+      nest: nestByItemId.get(pin.itemId),
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
@@ -1415,7 +1416,7 @@ export function packDeck(
       outline: item.outline,
       contents: item.contents,
       stabilityOverride: item.stabilityOverride,
-      nestVcgAboveDeckM: item.nest?.vcgAboveDeckM,
+      nest: item.nest,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -2706,10 +2707,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number; stabilityOverride?: StabilityOverride; nestVcgAboveDeckM?: number }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number; stabilityOverride?: StabilityOverride; nest?: PipeNestSpec }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers, stabilityOverride: it.stabilityOverride, nestVcgAboveDeckM: it.nest?.vcgAboveDeckM })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers, stabilityOverride: it.stabilityOverride, nest: it.nest })
     }
   }
 
@@ -2732,7 +2733,7 @@ export function packingResultFromManual(
     contents: itemMap.get(p.itemId)?.contents,
     clearanceMargin: p.clearanceMargin,
     stabilityOverride: itemMap.get(p.itemId)?.stabilityOverride,
-    nestVcgAboveDeckM: itemMap.get(p.itemId)?.nestVcgAboveDeckM,
+    nest: itemMap.get(p.itemId)?.nest,
   }))
 
   // Breakdown by itemId

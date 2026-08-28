@@ -1,28 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { computePipeNest, pipesPerFullRow, DEFAULT_DUNNAGE, type PipeNestRow } from './pipeNest'
-
-// Every valley-nested row must sit exactly halfway between two adjacent
-// pipes of the row below it — same check as packing.test.ts's
-// isNestedInValleys, adapted for PipeNestRow (which carries `onDunnage`:
-// a row resting flat on inserted dunnage is NOT expected to nest).
-function isNestedInValleys(rows: PipeNestRow[]): boolean {
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i].onDunnage) continue
-    const below = rows[i - 1].offsets
-    for (const off of rows[i].offsets) {
-      const restsInValley = below.some((a, j) => {
-        const b = below[j + 1]
-        return b !== undefined && Math.abs((a + b) / 2 - off) < 1e-9
-      })
-      if (!restsInValley) return false
-    }
-  }
-  return true
-}
+import {
+  computePipeNest,
+  pipesPerFullRow,
+  pipeNestTierOffsets,
+  DEFAULT_TIERS,
+  DEFAULT_CRATE_HEIGHT_M,
+  REAL_CRATE_HEIGHT_M_OD1073M,
+} from './pipeNest'
 
 describe('pipesPerFullRow', () => {
-  it('matches the real ДВТК п. 2.1.7 figure: 16.9 m / 0.957 m OD = 17', () => {
+  it('matches the real ДВТК п. 2.1.6/2.1.7 figure: 16.9-17.0 m usable width / 0.957 m OD = 17', () => {
     expect(pipesPerFullRow(16.9, 0.957)).toBe(17)
+    expect(pipesPerFullRow(17.0, 0.957)).toBe(17)
   })
 
   it('returns 0 for non-positive inputs', () => {
@@ -31,11 +20,30 @@ describe('pipesPerFullRow', () => {
   })
 })
 
-describe('computePipeNest — real Ø813 НУБП-72 stack (17.06 m OD 0.957, 33 pipes)', () => {
-  // Real source: operator's own spreadsheet puts 33 pipes in this stack —
-  // this test proves it decomposes as 17 + 16 (full-width alternating
-  // rows), not a triangular pyramid (which decomposePipePyramid would give
-  // as 8-7-6-5-4-3 for 33 units — a different, wrong shape here).
+describe('pipeNestTierOffsets — a partial tier stays aligned with the full tier below it', () => {
+  it('centres a full tier symmetrically around 0', () => {
+    const offsets = pipeNestTierOffsets(4, 4)
+    expect(offsets).toEqual([-3, -1, 1, 3])
+  })
+
+  it('a partial tier keeps the SAME positions as a full tier, not its own centre', () => {
+    // Straight stacking: every tier's pipe at position j rests directly on
+    // the pipe at position j in the tier below. Re-centring a shorter top
+    // tier on its own count would slide it sideways off the pipes below —
+    // physically impossible for a straight (non-nested) stack.
+    const full = pipeNestTierOffsets(4, 4)
+    const partial = pipeNestTierOffsets(4, 2)
+    expect(partial).toEqual(full.slice(0, 2))
+  })
+})
+
+describe('computePipeNest — real Ø813 НУБП-72 stack (17 per row, OD 0.957)', () => {
+  // Real source: the operator's own spreadsheet puts 33 pipes in this
+  // stack. Under the document's own default (exactly 2 tiers, п. 2.1.2),
+  // 2 tiers x 17/row = 34 — one more than 33, i.e. the top tier is short
+  // by one pipe. This test proves the geometry decomposes as a straight
+  // 17+16 stack (same horizontal layout both tiers, one pipe short on
+  // top), NOT a valley-nested taper.
   const nest = computePipeNest({
     pipeOuterDiameterM: 0.957,
     pipeLengthM: 12.38,
@@ -44,72 +52,94 @@ describe('computePipeNest — real Ø813 НУБП-72 stack (17.06 m OD 0.957, 33
     pipeCount: 33,
   })
 
-  it('decomposes into rows of 17 then 16, not a shrinking pyramid', () => {
-    expect(nest.rowCounts).toEqual([17, 16])
+  it('decomposes into two EQUAL-width tiers (17, then 16 short by one), not a shrinking pyramid', () => {
+    expect(nest.pipesPerRow).toBe(17)
+    expect(nest.tierCounts).toEqual([17, 16])
     expect(nest.pipeCount).toBe(33)
     expect(nest.limited).toBe(false)
   })
 
-  it('reaches a real nest height of ≈1.936 m (bearer + OD + one √3/2 pitch)', () => {
-    // 0.15 (bearer) + 0.957 (row 0) + 0.957·√3/2 (row 1 pitch) ≈ 1.9358
-    expect(nest.heightM).toBeCloseTo(1.936, 3)
-    expect(nest.heightM).toBeLessThan(3.0)
+  it('uses the DEFAULT (estimated) crib height when none is given, clearly distinct from the real 1.0 m figure', () => {
+    expect(nest.crateHeightM).toBe(DEFAULT_CRATE_HEIGHT_M)
+    expect(nest.crateHeightM).not.toBe(REAL_CRATE_HEIGHT_M_OD1073M)
   })
 
-  it('has a real centroid at ≈1.030 m, strictly less than half the stack height', () => {
-    expect(nest.vcgAboveDeckM).toBeCloseTo(1.03, 2)
-    expect(nest.vcgAboveDeckM).toBeLessThan(nest.heightM / 2 + 0.5)
-    // The dangerous N×diameter model this replaces would have put VCG at
-    // (0.957 × 33) / 2 ≈ 15.8 m — over 15x too high. Pin the real number is
-    // nowhere near that regime.
-    expect(nest.vcgAboveDeckM).toBeLessThan(2)
+  it('reaches a straight-column height of crib + 2 x OD (no nesting pitch)', () => {
+    expect(nest.heightM).toBeCloseTo(DEFAULT_CRATE_HEIGHT_M + 2 * 0.957, 6)
+  })
+
+  it('has a uniform-column centroid at crib + OD (exactly, not approximately — every tier weighs the same)', () => {
+    expect(nest.vcgAboveDeckM).toBeCloseTo(DEFAULT_CRATE_HEIGHT_M + 0.957, 6)
+    // Sanity: strictly less than the full stack height (centroid can never
+    // reach the top of a stack with any weight below it).
+    expect(nest.vcgAboveDeckM).toBeLessThan(nest.heightM)
   })
 })
 
-describe('computePipeNest — the ДВТК п. 2.1.7 worked example (ТШ406,4, 126 pipes)', () => {
-  // ТШ406,4×22,2 with 45 mm concrete → OD = 406.4 + 2×45 = 496.4 mm.
-  // Document: P = 756 t, S = 16.9 × 12.37 = 209 m², 756/6 = 126 pipes.
+describe('computePipeNest — real crib height applied to its real drawing scheme (Ø813 НУБП-130, OD 1.073)', () => {
+  // ДВТК/638.362241.023 REV3 лист 9: "количество труб в штабеле – 29 шт,
+  // масса труб в штабеле – 647 т" (29 x ~22.3 t/pipe ≈ 647 t). This scheme
+  // is drawn as a SINGLE tier in the source image (not two) — the crib
+  // dimension "1000" was measured against that single-tier drawing, so
+  // this test only pins the one real, measured number: crib height 1.0 m.
   const nest = computePipeNest({
-    pipeOuterDiameterM: 0.4964,
-    pipeLengthM: 12.37,
-    pipeWeightKg: 6_000,
+    pipeOuterDiameterM: 1.073,
+    pipeLengthM: 12.38,
+    pipeWeightKg: 22_310, // 647_000 / 29, matching the document's own totals
     usableWidthM: 16.9,
-    pipeCount: 126,
+    tiers: 1,
+    crateHeightM: REAL_CRATE_HEIGHT_M_OD1073M,
   })
 
-  it('places all 126 pipes without hitting a height limit', () => {
-    expect(nest.pipeCount).toBe(126)
-    expect(nest.limited).toBe(false)
+  it('reproduces the drawn single-tier row count and total height (crib + one pipe diameter)', () => {
+    expect(nest.tierCounts.length).toBe(1)
+    expect(nest.heightM).toBeCloseTo(1.0 + 1.073, 6)
   })
 
-  it('every nested row rests in a real valley of the row below it', () => {
-    const rows = computePipeNest({
-      pipeOuterDiameterM: 0.4964,
-      pipeLengthM: 12.37,
-      pipeWeightKg: 6_000,
+  it('two full tiers of this diameter would exceed the 3.0 m stack-height limit (п. 2.1.2) — a real physical constraint, not a bug', () => {
+    const twoTiers = computePipeNest({
+      pipeOuterDiameterM: 1.073,
+      pipeLengthM: 12.38,
+      pipeWeightKg: 22_310,
       usableWidthM: 16.9,
-      rows: 8,
+      tiers: 2,
+      crateHeightM: REAL_CRATE_HEIGHT_M_OD1073M,
+      maxStackHeightM: 3.0,
     })
-    // Re-derive full PipeNestRow[] via the `rows` input (same geometry,
-    // guaranteed-complete alternating rows) to check valley nesting.
-    expect(rows.rowCounts.length).toBe(8)
-    expect(isNestedInValleys(reconstructRows(rows))).toBe(true)
+    // 1.0 + 2x1.073 = 3.146 m > 3.0 m — the second tier cannot fit given
+    // this diameter's real crib height, so the function must refuse it
+    // rather than silently reporting an over-height stack.
+    expect(twoTiers.limited).toBe(true)
+    expect(twoTiers.tierCounts.length).toBe(1)
   })
 })
 
-describe('computePipeNest — the 3.0 m limit (ДВТК п. 2.1.2) is a hard stop', () => {
+describe('computePipeNest — defaults and the 3.0 m limit (ДВТК п. 2.1.2)', () => {
+  it('defaults to exactly 2 tiers (the document\'s own stated rule) when neither pipeCount nor tiers is given', () => {
+    const nest = computePipeNest({
+      pipeOuterDiameterM: 0.957,
+      pipeLengthM: 12.38,
+      pipeWeightKg: 15_000,
+      usableWidthM: 16.9,
+    })
+    expect(nest.requestedTiers).toBe(DEFAULT_TIERS)
+    expect(nest.tierCounts.length).toBe(2)
+    expect(nest.tierCounts).toEqual([17, 17])
+    expect(nest.pipeCount).toBe(34)
+  })
+
   it('truncates a request that would exceed maxStackHeightM, and stays under it', () => {
     const nest = computePipeNest({
       pipeOuterDiameterM: 0.957,
       pipeLengthM: 12.38,
       pipeWeightKg: 15_000,
       usableWidthM: 16.9,
-      pipeCount: 200,
-      maxStackHeightM: 3.0,
+      tiers: 5,
+      maxStackHeightM: 1.0,
     })
     expect(nest.limited).toBe(true)
-    expect(nest.pipeCount).toBeLessThan(200)
-    expect(nest.heightM).toBeLessThanOrEqual(3.0 + 1e-9)
+    expect(nest.tierCounts.length).toBeLessThan(5)
+    expect(nest.heightM).toBeLessThanOrEqual(1.0 + 1e-9)
   })
 
   it('does not limit a request that already fits', () => {
@@ -118,56 +148,10 @@ describe('computePipeNest — the 3.0 m limit (ДВТК п. 2.1.2) is a hard sto
       pipeLengthM: 12.38,
       pipeWeightKg: 15_000,
       usableWidthM: 16.9,
-      pipeCount: 33,
+      tiers: 2,
       maxStackHeightM: 3.0,
     })
     expect(nest.limited).toBe(false)
-    expect(nest.pipeCount).toBe(33)
+    expect(nest.tierCounts.length).toBe(2)
   })
 })
-
-describe('computePipeNest — inter-tier dunnage (ДВТК п. 2.1.6)', () => {
-  it('inserts a dunnage layer whenever the vertical gap since the last one would exceed 0.7 m', () => {
-    // Small-diameter pipe (219.1 mm bare) nests very tightly — many rows
-    // fit within 0.7 m of vertical rise, so dunnage must appear well before
-    // every row, not once per row.
-    const nest = computePipeNest({
-      pipeOuterDiameterM: 0.2191,
-      pipeLengthM: 12.38,
-      pipeWeightKg: 1_300,
-      usableWidthM: 16.9,
-      rows: 12,
-      requiresInterTierDunnage: true,
-      dunnage: DEFAULT_DUNNAGE,
-    })
-    expect(nest.interTierLayers).toBeGreaterThan(0)
-    // With 12 rows at ~0.19 m pitch each (≈2.28 m of nested rise) and a
-    // 0.7 m ceiling, at least 3 dunnage layers are required.
-    expect(nest.interTierLayers).toBeGreaterThanOrEqual(3)
-  })
-
-  it('never inserts dunnage when requiresInterTierDunnage is false', () => {
-    const nest = computePipeNest({
-      pipeOuterDiameterM: 0.2191,
-      pipeLengthM: 12.38,
-      pipeWeightKg: 1_300,
-      usableWidthM: 16.9,
-      rows: 12,
-    })
-    expect(nest.interTierLayers).toBe(0)
-  })
-})
-
-// Helper: re-derive the full PipeNestRow[] (not just PipeNestSpec's summary
-// fields) by calling computePipeNest with `rows` and reading its internal
-// row list back out via a second pass over rowCounts/heightM — exercised
-// only for the valley-nesting geometry check above, which needs offsets.
-function reconstructRows(spec: ReturnType<typeof computePipeNest>): PipeNestRow[] {
-  const rows: PipeNestRow[] = []
-  spec.rowCounts.forEach((count, rowIndex) => {
-    const naturalCount = spec.rowCounts[0] - rowIndex
-    const offsets = Array.from({ length: count }, (_, j) => (j - (naturalCount - 1) / 2) * 2)
-    rows.push({ rowIndex, count, offsets, zM: 0, onDunnage: false })
-  })
-  return rows
-}

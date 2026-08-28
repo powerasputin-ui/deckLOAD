@@ -185,9 +185,14 @@ describe('stacked deck cargo contributes its FULL weight to the loading conditio
   })
 })
 
-describe('a real pipe штабель feeds its true nested VCG into the stability chain', () => {
+describe('a real pipe штабель feeds its true stack VCG into the stability chain', () => {
   // The Ø813 НУБП-72 stack from ДВТК Таблица 3 / the operator's own
-  // spreadsheet: 33 pipes, 17+16 rows, on the real 16.9 m usable width.
+  // spreadsheet: 33 pipes, on the real 16.9 m usable width, decomposing as
+  // two EQUAL-width tiers stacked straight (17, then 16 short by one) —
+  // see pipeNest.test.ts for why this is a straight column, not a
+  // valley-nested pyramid. crateHeightM is left at its ESTIMATED default
+  // here (0.15 m) — the one real drawing measurement (1.0 m,
+  // REAL_CRATE_HEIGHT_M_OD1073M) is for a different, larger pipe diameter.
   const nest = computePipeNest({
     pipeOuterDiameterM: 0.957,
     pipeLengthM: 12.38,
@@ -197,13 +202,16 @@ describe('a real pipe штабель feeds its true nested VCG into the stabilit
   })
   const frame: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
 
-  it('computeItemVCG uses the nest centroid (≈1.03 m), not the flat height*layers/2 default (≈0.97 m)', () => {
+  it('computeItemVCG uses the stack centroid (crib + one OD, ≈1.11 m), not the naive flat height*layers/2 default (≈1.03 m)', () => {
     const vcg = computeItemVCG({ height: nest.heightM, layers: 1, nestVcgAboveDeckM: nest.vcgAboveDeckM })
     expect(vcg).toBeCloseTo(nest.vcgAboveDeckM, 3)
     // Prove it actually diverges from the naive default (a same-ballpark
-    // number wouldn't prove the override path is even wired up).
+    // number wouldn't prove the override path is even wired up). The two
+    // stay close here specifically BECAUSE this is a straight, uniform
+    // column — computeItemVCG's own flat-column default would only be
+    // wrong by the crib height offset, not by the shape of the pile.
     const naiveDefault = nest.heightM / 2
-    expect(Math.abs(vcg - naiveDefault)).toBeGreaterThan(0.05)
+    expect(Math.abs(vcg - naiveDefault)).toBeCloseTo(nest.crateHeightM / 2, 3)
   })
 
   it('an explicit stabilityOverride still wins over the nest VCG', () => {
@@ -219,7 +227,7 @@ describe('a real pipe штабель feeds its true nested VCG into the stabilit
   it('carries the real nest weight (33 x 15 t) and VCG through buildCargoWeightMoments', () => {
     const stackWeightKg = nest.pipeCount * nest.pipeWeightKg
     const moments = buildCargoWeightMoments(
-      [{ x: 0, y: 0, width: nest.usableWidthM, length: nest.pipeLengthM, height: nest.heightM, layers: 1, weight: stackWeightKg, nestVcgAboveDeckM: nest.vcgAboveDeckM }],
+      [{ x: 0, y: 0, width: nest.usableWidthM, length: nest.pipeLengthM, height: nest.heightM, layers: 1, weight: stackWeightKg, nest: { vcgAboveDeckM: nest.vcgAboveDeckM } }],
       nest.usableWidthM,
       nest.pipeLengthM,
       frame,

@@ -221,6 +221,28 @@ describe('calculator store', () => {
     expect(state.deck.width).toBe(15)
   })
 
+  it('addOrIncrementCargoFromTemplate carries contents/nest/stabilityOverride through (regression: makeItem used to silently drop any template field it didn\'t explicitly whitelist)', () => {
+    const s = useCalculator.getState()
+    const nest = {
+      pipeOuterDiameterM: 0.957, pipeLengthM: 12.38, pipeWeightKg: 15000, usableWidthM: 16.9,
+      pipesPerRow: 17, tierCounts: [17, 16], pipeCount: 33, heightM: 2.064, vcgAboveDeckM: 1.107,
+      crateHeightM: 0.15, limited: false, requestedPipeCount: 33, requestedTiers: 2,
+    }
+    const id = s.addOrIncrementCargoFromTemplate({
+      name: 'Труба-тест — штабель',
+      width: 16.9,
+      length: 12.38,
+      height: 2.064,
+      shape: 'pipe-nest',
+      contents: 'тестовая полезная нагрузка',
+      nest,
+    })
+    const created = useCalculator.getState().items.find((it) => it.id === id)
+    expect(created?.contents).toBe('тестовая полезная нагрузка')
+    expect(created?.nest).toEqual(nest)
+    expect(created?.shape).toBe('pipe-nest')
+  })
+
   it('duplicates an item', () => {
     const s = useCalculator.getState()
     s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })

@@ -2656,6 +2656,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               w={itemPw}
               h={itemPh}
               scale={scale}
+              deckTransposed={rotated}
               hovered={isHover}
               selected={isSelected}
               showLabels={showLabels}
@@ -3303,6 +3304,7 @@ function FootprintShape({
   scale,
   pipeRowCount,
   pipeDivideAxis,
+  nestTiers,
 }: {
   shape?: PlacedItem['shape']
   x: number
@@ -3328,9 +3330,15 @@ function FootprintShape({
   // side instead of one solid box the width of a container.
   pipeRowCount?: number
   pipeDivideAxis?: 'w' | 'h'
+  // A real pipe штабель (shape 'pipe-nest') — how many tiers deep the
+  // stack is. Drawn as a small "×N яр." badge, since only the TOP tier is
+  // visible from directly above (straight stacking, see pipeNest.ts — the
+  // tiers sit exactly on top of one another, so a second row of capsules
+  // here would misleadingly suggest they're offset).
+  nestTiers?: number
 }) {
   const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
-  if (shape === 'cylinder') {
+  if (shape === 'cylinder' || shape === 'pipe-nest') {
     // A pipe lying flat is genuinely a thin rectangle from directly above
     // (only its END shows roundness) — a capsule (fully rounded short
     // ends) reads as "round stock" at a glance without pretending to show
@@ -3338,29 +3346,46 @@ function FootprintShape({
     // angle. When more than one pipe occupies this footprint's base row
     // (pipeRowCount > 1), divide the widened axis into that many capsules
     // with a hairline gap between them, so the true multi-pipe width
-    // drawn here (see pipePyramidSpreadMargin) doesn't just look like one
-    // wide solid block.
-    if (pipeRowCount && pipeRowCount > 1 && pipeDivideAxis) {
-      const isW = pipeDivideAxis === 'w'
-      const totalSpan = isW ? w : h
-      const crossSpan = isW ? h : w
-      const gap = Math.max(0.5, Math.min(2, totalSpan / pipeRowCount * 0.06))
-      const segSpan = (totalSpan - gap * (pipeRowCount - 1)) / pipeRowCount
-      const r = Math.min(segSpan, crossSpan) / 2
-      return (
-        <>
-          {Array.from({ length: pipeRowCount }).map((_, i) => {
-            const offset = i * (segSpan + gap)
-            const segX = isW ? x + offset : x
-            const segY = isW ? y : y + offset
-            const segW = isW ? segSpan : w
-            const segH = isW ? h : segSpan
-            return <rect key={i} x={segX} y={segY} width={segW} height={segH} rx={r} ry={r} {...common} />
-          })}
-        </>
-      )
-    }
-    return <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />
+    // drawn here (see pipePyramidSpreadMargin, or — for a real штабель —
+    // CargoItem.nest.pipesPerRow) doesn't just look like one wide solid
+    // block.
+    const shapeContent =
+      pipeRowCount && pipeRowCount > 1 && pipeDivideAxis
+        ? (() => {
+            const isW = pipeDivideAxis === 'w'
+            const totalSpan = isW ? w : h
+            const crossSpan = isW ? h : w
+            const gap = Math.max(0.5, Math.min(2, totalSpan / pipeRowCount * 0.06))
+            const segSpan = (totalSpan - gap * (pipeRowCount - 1)) / pipeRowCount
+            const r = Math.min(segSpan, crossSpan) / 2
+            return Array.from({ length: pipeRowCount }).map((_, i) => {
+              const offset = i * (segSpan + gap)
+              const segX = isW ? x + offset : x
+              const segY = isW ? y : y + offset
+              const segW = isW ? segSpan : w
+              const segH = isW ? h : segSpan
+              return <rect key={i} x={segX} y={segY} width={segW} height={segH} rx={r} ry={r} {...common} />
+            })
+          })()
+        : <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />
+    if (shape !== 'pipe-nest' || !nestTiers || nestTiers <= 1) return <>{shapeContent}</>
+    // "×2 яр." badge — small, bottom-right, same visual language as the
+    // stacked-count badge PlacedRect already draws for ordinary cargo.
+    const badgeW = 34
+    const badgeH = 13
+    return (
+      <>
+        {shapeContent}
+        {w >= 20 && h >= 20 && (
+          <g className="pointer-events-none">
+            <rect x={x + w - badgeW - 2} y={y + h - badgeH - 2} width={badgeW} height={badgeH} rx={3} fill="rgba(0,0,0,0.6)" />
+            <text x={x + w - badgeW / 2 - 2} y={y + h - badgeH / 2 + 3} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+              ×{nestTiers} яр.
+            </text>
+          </g>
+        )}
+      </>
+    )
   }
   if (shape === 'custom' && outline && outline.length >= 3 && scale) {
     const origWidth = rotated ? h / scale : w / scale
@@ -3423,6 +3448,7 @@ function PlacedRect({
   mergeTarget,
   dimmed,
   scale,
+  deckTransposed,
 }: {
   item: PlacedItem
   x: number
@@ -3430,6 +3456,14 @@ function PlacedRect({
   w: number
   h: number
   scale: number
+  // Whether the deck's own 2D view is currently transposed (elongated deck
+  // rendered landscape — see the `rotated` flag in the outer component).
+  // `item.width` maps to the screen `w` prop normally, but to `h` when the
+  // deck itself is transposed — anything dividing the widened pipe axis
+  // into segments needs this to pick the correct screen axis, or a pipe
+  // stack on a transposed (real-ship-shaped) deck divides along the wrong
+  // side.
+  deckTransposed?: boolean
   hovered: boolean
   showLabels: boolean
   fmt: (v: number) => string
@@ -3489,9 +3523,19 @@ function PlacedRect({
           const margin = pipePyramidSpreadMargin(item, item.stackedCount)
           const rowCount = Math.max(1, decomposePipePyramid(item.stackedCount)[0]?.offsets.length ?? 1)
           if (margin.onWidth === 0 && margin.onLength === 0) return null
-          return { rowCount, axis: margin.onWidth > 0 ? ('w' as const) : ('h' as const) }
+          // onWidth > 0 means the spread is along item.width — that maps to
+          // the screen `h` prop, not `w`, exactly when the deck is
+          // transposed (see deckTransposed's own doc comment above).
+          const widthIsScreenW = !deckTransposed
+          return { rowCount, axis: margin.onWidth > 0 ? (widthIsScreenW ? ('w' as const) : ('h' as const)) : widthIsScreenW ? ('h' as const) : ('w' as const) }
         })()
       : null
+  // A real pipe штабель (shape 'pipe-nest') — item.width/length already
+  // describe the WHOLE stack (see CargoItem.nest's own doc comment), so
+  // unlike pipeSpread above there is no separate widening to account for;
+  // this only tells FootprintShape how many pipes to draw across the
+  // stack's own width and how many tiers to badge.
+  const nestSpread = item.shape === 'pipe-nest' && item.nest ? { pipesPerRow: item.nest.pipesPerRow, axis: deckTransposed ? ('h' as const) : ('w' as const) } : null
   return (
     <g
       // A stacked pipe pyramid can render as several <rect> segments (see
@@ -3544,8 +3588,9 @@ function PlacedRect({
         outline={item.outline}
         rotated={item.rotated}
         scale={scale}
-        pipeRowCount={pipeSpread?.rowCount}
-        pipeDivideAxis={pipeSpread?.axis}
+        pipeRowCount={pipeSpread?.rowCount ?? nestSpread?.pipesPerRow}
+        pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
+        nestTiers={item.nest?.tierCounts.length}
       />
       {overLoadTitle && <title>{overLoadTitle}</title>}
       {overLoad && w >= 14 && h >= 14 && (
