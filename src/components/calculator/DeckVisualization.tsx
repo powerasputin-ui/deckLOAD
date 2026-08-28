@@ -1813,7 +1813,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               totalWeightKg: (p.weight ?? 0) * p.stackedCount,
             })),
             loadZones,
-            deckOutline
+            deckOutline,
+            unit
           ).map((z) => [z.zoneId, z])
         )
       : new Map<string, ReturnType<typeof checkZoneLoads>[number]>()

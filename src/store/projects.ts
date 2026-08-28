@@ -586,6 +586,7 @@ function normalizeProject(p: Partial<Project>): Project {
       gap: toFiniteNonNegative(p.deck?.gap, 0.1),
       boardOffset: toFiniteNonNegative(p.deck?.boardOffset, 0.2),
       clearance: toFiniteNonNegative(p.deck?.clearance, 0),
+      maxDeckCargoT: normalizeOptionalWeight(p.deck?.maxDeckCargoT),
       loadZones: normalizeLoadZones(p.deck?.loadZones),
       lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
       powerSockets: normalizePowerSockets(p.deck?.powerSockets),

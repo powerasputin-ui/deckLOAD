@@ -4,6 +4,7 @@
 // Reference: Jukka Jylänki - "A Thousand Ways to Pack the Bin".
 
 import type { PipeNestSpec } from './pipeNest'
+import { type Unit, toMeters } from './units'
 
 export interface Rect {
   x: number
@@ -190,16 +191,32 @@ export function zoneAreaWithinOutline(
 export function computeZoneLoads(
   placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
   zones: LoadZone[] | undefined,
-  deckOutline?: { x: number; y: number }[]
+  deckOutline?: { x: number; y: number }[],
+  // Zone/placement/outline x,y,width,length live in the deck's own display
+  // unit (deck.unit — see store/calculator.ts's setUnit, which converts all
+  // of them together on every unit switch), but `areaM2` below is a real
+  // t/m² denominator: comparing tonnes against a raw ft²/cm² number under
+  // that name silently mis-scales density by ~10.76x (ft) or 1e4x (cm)
+  // against `limitTPerM2`, which IS always real t/m². Convert every
+  // unit-bearing input to metres up front so the rest of this function can
+  // stay unit-agnostic. Defaults to 'm' (no-op) for existing metres-only
+  // callers/tests.
+  unit: Unit = 'm'
 ): ZoneLoadCheck[] {
   if (!zones || zones.length === 0) return []
+  const zonesM = unit === 'm' ? zones : zones.map((z) => ({ ...z, x: toMeters(z.x, unit), y: toMeters(z.y, unit), width: toMeters(z.width, unit), length: toMeters(z.length, unit) }))
+  const placementsM =
+    unit === 'm'
+      ? placements
+      : placements.map((p) => ({ ...p, x: toMeters(p.x, unit), y: toMeters(p.y, unit), width: toMeters(p.width, unit), length: toMeters(p.length, unit) }))
+  const outlineM = unit === 'm' || !deckOutline ? deckOutline : deckOutline.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) }))
   const results: ZoneLoadCheck[] = []
   const eps = 1e-9
-  for (const z of zones) {
-    const areaM2 = zoneAreaWithinOutline(z, deckOutline)
+  for (const z of zonesM) {
+    const areaM2 = zoneAreaWithinOutline(z, outlineM)
     if (areaM2 <= 0) continue
     let totalWeightKg = 0
-    for (const p of placements) {
+    for (const p of placementsM) {
       if (overlapsZone(p, z)) totalWeightKg += p.totalWeightKg
     }
     const densityTPerM2 = totalWeightKg / 1000 / areaM2
@@ -218,9 +235,60 @@ export function computeZoneLoads(
 export function checkZoneLoads(
   placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
   zones: LoadZone[] | undefined,
-  deckOutline?: { x: number; y: number }[]
+  deckOutline?: { x: number; y: number }[],
+  unit: Unit = 'm'
 ): ZoneLoadCheck[] {
-  return computeZoneLoads(placements, zones, deckOutline).filter((z) => z.exceeded)
+  return computeZoneLoads(placements, zones, deckOutline, unit).filter((z) => z.exceeded)
+}
+
+// Local pressure under ONE placement's own footprint — deliberately
+// different from computeZoneLoads above, which averages weight over a
+// whole zone. A real structural check cares about the footprint: ДВТК's
+// own worked example (п. 2.1.7) computes "756 т / (16,9×12,37 м) = 209 м²
+// → 3,62 т/м²" for a single pipe stack's own patch of deck, not the
+// average over some larger zone that happens to contain it. A zone-average
+// check alone can never catch a heavy stack on a small footprint sitting
+// inside a large, otherwise-empty zone. Compared against every zone the
+// footprint overlaps (the tightest limit, since every applicable limit
+// must hold — mirrors computeZoneLoads's own "counts fully toward every
+// zone it touches" rule). A footprint outside every zone isn't evaluated
+// (returns nothing for it) — same "not evaluated is not a failure"
+// convention as checkLashingBalance's null return, since there is no
+// deck-wide default limit in the data model to fall back to (the vessel
+// template's own deckStrengthTPerM2 is never persisted onto the deck after
+// the template is applied — inventing a fallback here would be exactly
+// the kind of fabricated number this audit is about removing, not adding).
+export interface FootprintPressureCheck {
+  index: number // index into the `placements` array passed in
+  areaM2: number
+  pressureTPerM2: number
+  limitTPerM2: number
+  exceeded: boolean
+}
+
+export function computeFootprintPressures(
+  placements: { x: number; y: number; width: number; length: number; totalWeightKg: number }[],
+  zones: LoadZone[] | undefined,
+  unit: Unit = 'm'
+): FootprintPressureCheck[] {
+  if (!zones || zones.length === 0) return []
+  const zonesM = unit === 'm' ? zones : zones.map((z) => ({ ...z, x: toMeters(z.x, unit), y: toMeters(z.y, unit), width: toMeters(z.width, unit), length: toMeters(z.length, unit) }))
+  const placementsM =
+    unit === 'm'
+      ? placements
+      : placements.map((p) => ({ ...p, x: toMeters(p.x, unit), y: toMeters(p.y, unit), width: toMeters(p.width, unit), length: toMeters(p.length, unit) }))
+  const eps = 1e-9
+  const results: FootprintPressureCheck[] = []
+  placementsM.forEach((p, index) => {
+    const areaM2 = p.width * p.length
+    if (areaM2 <= 0) return
+    const overlapping = zonesM.filter((z) => overlapsZone(p, z))
+    if (overlapping.length === 0) return
+    const limitTPerM2 = Math.min(...overlapping.map((z) => z.maxLoadPerArea))
+    const pressureTPerM2 = p.totalWeightKg / 1000 / areaM2
+    results.push({ index, areaM2, pressureTPerM2, limitTPerM2, exceeded: pressureTPerM2 > limitTPerM2 + eps })
+  })
+  return results
 }
 
 // Every zone id a single footprint overlaps — used to look up whether an
@@ -429,7 +497,7 @@ const G = 9.80665
 // there's nothing attached to check (an unsecured item isn't a "failure",
 // it's just not evaluated — callers should track that separately).
 export function checkLashingBalance(
-  placement: { x: number; y: number; width: number; length: number; weight?: number },
+  placement: { x: number; y: number; width: number; length: number; weight?: number; layers?: number },
   lashings: LashingPoint[],
   motion: VesselMotion
 ): LashingCheck | null {
@@ -437,7 +505,12 @@ export function checkLashingBalance(
     (l) => l.cornerX !== undefined && l.cornerY !== undefined && (l.mslKg ?? 0) > 0
   )
   if (attached.length === 0) return null
-  const weightKg = placement.weight ?? 0
+  // `weight` is per-unit (see PlacedItem.weight's doc comment); a 3-tier
+  // stack's real inertial force is 3x one unit's, not 1x — checking against
+  // the unweighted per-unit force let an under-secured multi-tier stack
+  // read as "OK" when it wasn't. Same class of bug already fixed once in
+  // stability.ts's buildCargoWeightMoments.
+  const weightKg = (placement.weight ?? 0) * Math.max(1, placement.layers ?? 1)
   const frictionForce = motion.friction * weightKg * G
 
   let transverseAvail = frictionForce
@@ -529,6 +602,14 @@ export interface PlacedItem {
   stackedCount: number // units actually placed here (layers)
   rotated: boolean
   color: string
+  // Weight of ONE unit, not the whole stack — every consumer that wants
+  // the stack's real weight multiplies by `layers`/`stackedCount` itself
+  // (result.totalWeight, breakdown[].weight, zone-load density,
+  // buildCargoWeightMoments). This has been the recurring source of bugs
+  // in this codebase: any new consumer of `weight` that forgets the
+  // multiplication silently understates the real load. Before adding one,
+  // check whether it needs `weight * stackedCount` (almost always yes for
+  // anything physical — inertial force, pressure, moment).
   weight?: number
   index: number
   shape?: CargoShape
@@ -916,7 +997,7 @@ export interface PinnedPlacement {
   layers: number
   rotated: boolean
   color: string
-  weight?: number
+  weight?: number // per-unit — see PlacedItem.weight's doc comment above; multiply by `layers` for the stack's real weight
   // Hard-blocking exclusion margin (deck units, e.g. meters) around this
   // placement — an alternative to individual lashing points, not a
   // combination of both (see clearLashingPointsFor in calculator.ts).
@@ -1785,7 +1866,7 @@ export interface ManualPlacement {
   layers: number // how many tiers stacked on this footprint
   rotated: boolean
   color: string
-  weight?: number
+  weight?: number // per-unit — see PlacedItem.weight's doc comment above; multiply by `layers` for the stack's real weight
   // See PinnedPlacement.clearanceMargin above — same meaning here.
   clearanceMargin?: ClearanceMargin
   // See PinnedPlacement.stabilityOverride above — same meaning here.

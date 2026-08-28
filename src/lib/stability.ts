@@ -18,6 +18,7 @@
 
 import type { StabilityOverride } from './packing'
 import { polygonCentroid, rotateOutline90 } from './packing'
+import { type Unit, toMeters } from './units'
 
 // ---- Vessel particulars (from the vessel's Stability Booklet) ----
 
@@ -109,12 +110,25 @@ export interface VesselStabilityData {
   variableWeights: VariableWeightItem[] // tanks/ballast/fuel/water/stores — see VariableWeightItem
 }
 
-// How the deck's own local (x,y) origin sits relative to the ship's own
-// centerline/midships/baseline. Without this, a cargo placed at deck-local
-// (x,y) has no meaningful transverse/longitudinal moment arm.
+// How the deck's own local (x,y) frame sits relative to the ship's own
+// centerline/midships-or-AP/baseline. Without this, a cargo placed at
+// deck-local (x,y) has no meaningful transverse/longitudinal moment arm.
+//
+// CORRECTNESS NOTE: both offsets below locate the deck rectangle's own
+// GEOMETRIC CENTRE on the ship's axes, not deck-local (x=0, y=0) as an
+// earlier version of this comment claimed — buildCargoWeightMoments
+// computes each item's arm as `originOffsetFromCenterlineM +
+// (center.x - deckWidth/2)` and `originOffsetFromMidshipsM +
+// (center.y - deckLength/2)`, i.e. the offset is added to a position
+// already re-centred on the deck's own middle. A value entered as "the
+// deck's aft edge is 3 m from the AP" is off by half the deck's own length
+// from what the formula actually uses. See vesselTemplates.ts's own note
+// on how the bundled Aleksey Kuznetsov figure was derived correctly by
+// reasoning in these (real) semantics rather than the comment's old
+// (wrong) ones.
 export interface DeckShipFrame {
-  originOffsetFromCenterlineM: number // deck-local x=0 is this far from centerline (+ = starboard)
-  originOffsetFromMidshipsM: number // deck-local y=0 is this far fwd(+)/aft(-) of midships/AP (per longitudinalOrigin)
+  originOffsetFromCenterlineM: number // the deck rectangle's own CENTRE is this far from centerline (+ = starboard)
+  originOffsetFromMidshipsM: number // the deck rectangle's own CENTRE is this far fwd(+)/aft(-) of midships/AP (per longitudinalOrigin)
   heightAboveBaselineM: number // deck surface (deck-local z=0) is this high above the keel/baseline
 }
 
@@ -153,9 +167,23 @@ export function computeItemVCG(p: {
   nestVcgAboveDeckM?: number
 }): number {
   if (p.stabilityOverride?.vcgAboveDeckM !== undefined) return p.stabilityOverride.vcgAboveDeckM
-  if (p.nestVcgAboveDeckM !== undefined) return p.nestVcgAboveDeckM
   const layers = Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1
   const height = Number.isFinite(p.height) && p.height > 0 ? p.height : 0
+  if (p.nestVcgAboveDeckM !== undefined) {
+    // Defense in depth: a nest-shaped item is meant to always have
+    // `layers === 1` (PresetsBar.tsx pins `maxLayers: 1` on every штабель
+    // it creates), but if one somehow ends up stacked N-high anyway (a
+    // hand-edited/imported project, a future caller that forgets the cap),
+    // `nestVcgAboveDeckM` alone describes only ONE штабель's own internal
+    // VCG — silently ignoring `layers` would apply the full N-tier weight
+    // at a single штабель's height, understating KG. Each additional
+    // identical штабель sits a full `height` higher than the one below it,
+    // so the weighted average VCG across N equal-weight tiers is the base
+    // штабель's VCG plus half the added height: for tier k (0-indexed),
+    // VCG_k = k*height + nestVcgAboveDeckM; averaging k=0..layers-1 gives
+    // nestVcgAboveDeckM + height*(layers-1)/2.
+    return p.nestVcgAboveDeckM + (height * (layers - 1)) / 2
+  }
   return (height * layers) / 2
 }
 
@@ -304,7 +332,17 @@ export function buildLoadingConditionFromPlacements(
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
     nest?: { vcgAboveDeckM: number }
-  }[]
+  }[],
+  // The deck's own unit of display (`deck.unit` in the store) — deck
+  // dimensions and every placement's x/y/width/length/height/outline are
+  // stored in THIS unit (see store/calculator.ts's setUnit, which converts
+  // them on every unit switch), while shipFrame and every vessel figure
+  // (lightshipLCG, hydrostatics, etc.) are always real metres. Without
+  // converting here, switching the deck to feet or centimetres would add
+  // metres to feet/cm arms and silently corrupt GM/list/trim — see
+  // toMeters below. Defaults to 'm' (a no-op) so every existing caller/test
+  // that already passes real metres keeps working unchanged.
+  unit: Unit = 'm'
 ): LoadingCondition {
   const lightship: WeightMoment = {
     weightKg: vessel.particulars.lightshipWeightKg,
@@ -312,7 +350,35 @@ export function buildLoadingConditionFromPlacements(
     tcgM: vessel.particulars.lightshipTCG,
     lcgM: vessel.particulars.lightshipLCG,
   }
-  const cargo = buildCargoWeightMoments(placements, deck.width, deck.length, shipFrame, deckForwardIsPositiveY)
+  const deckM = { width: toMeters(deck.width, unit), length: toMeters(deck.length, unit) }
+  const placementsM =
+    unit === 'm'
+      ? placements
+      : placements.map((p) => ({
+          ...p,
+          x: toMeters(p.x, unit),
+          y: toMeters(p.y, unit),
+          width: toMeters(p.width, unit),
+          length: toMeters(p.length, unit),
+          height: toMeters(p.height, unit),
+          outline: p.outline?.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) })),
+          // stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are typed
+          // in metres but actually stored in the deck's display unit (see
+          // ItemList.tsx's StabilityOverrideField, which labels the input
+          // with `unit` and writes the raw typed number with no
+          // conversion) — same leak, same fix.
+          stabilityOverride: p.stabilityOverride && {
+            vcgAboveDeckM:
+              p.stabilityOverride.vcgAboveDeckM !== undefined ? toMeters(p.stabilityOverride.vcgAboveDeckM, unit) : undefined,
+            tcgOffsetM:
+              p.stabilityOverride.tcgOffsetM !== undefined ? toMeters(p.stabilityOverride.tcgOffsetM, unit) : undefined,
+            lcgOffsetM:
+              p.stabilityOverride.lcgOffsetM !== undefined ? toMeters(p.stabilityOverride.lcgOffsetM, unit) : undefined,
+          },
+          // nest.vcgAboveDeckM is computed by pipeNest.ts in real metres
+          // throughout (independent of deck display unit) — left as-is.
+        }))
+  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY)
   const variable = variableWeightsToMoments(vessel.variableWeights)
   return computeLoadingCondition(lightship, [...variable, ...cargo])
 }

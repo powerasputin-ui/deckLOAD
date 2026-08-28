@@ -813,7 +813,13 @@ function LashingPointsSection() {
     : 0
   const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
   const selectedRequiredLashing = selectedPlacement
-    ? requiredLashingCount(selectedPlacement.weight ?? 0, WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN)
+    ? requiredLashingCount(
+        // `weight` is per-unit; requiredLashingCount wants the whole
+        // stack's weight (РД 31.11.21.23-96 п. 2.2.3 is a per-штабель
+        // figure) — multiply by `layers`, same fix as checkLashingBalance.
+        (selectedPlacement.weight ?? 0) * Math.max(1, selectedPlacement.layers ?? 1),
+        WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN
+      )
     : 0
 
   return (
@@ -1040,6 +1046,29 @@ function VesselStabilitySection() {
   const [knError, setKnError] = useState<string | null>(null)
 
   const particulars = vessel?.particulars ?? DEFAULT_VESSEL_PARTICULARS
+  // Soft plausibility check, not a hard validation — `longitudinalOrigin`
+  // is a label on how the user is READING their own booklet's numbers,
+  // never converted or enforced anywhere in the calculation (see
+  // buildLoadingConditionFromPlacements — lightshipLCG goes in raw). If
+  // Лёгкий LCG falls well outside the range that convention could
+  // plausibly produce for this hull length, the two most likely
+  // explanations are: the wrong convention is selected here, or the value
+  // was copied in from a source using the other one — either way, silently
+  // computing a confident-looking wrong trim is worse than a warning.
+  const lcgPlausibilityWarning = (() => {
+    const lbp = particulars.lengthBpp
+    const lcg = particulars.lightshipLCG
+    if (!(lbp > 0) || lcg === 0) return null
+    const margin = Math.max(5, lbp * 0.1)
+    const [lo, hi] =
+      particulars.longitudinalOrigin === 'aft-perpendicular' ? [-margin, lbp + margin] : [-lbp / 2 - margin, lbp / 2 + margin]
+    if (lcg < lo || lcg > hi) {
+      return `Лёгкий LCG ${fmtNumber(lcg)} м не похож на «${
+        particulars.longitudinalOrigin === 'aft-perpendicular' ? 'от кормового перпендикуляра' : 'от миделя'
+      }» при LBP ${fmtNumber(lbp)} м — проверьте точку отсчёта.`
+    }
+    return null
+  })()
   const points = vessel?.hydrostatics.points ?? []
   const knCurves = vessel?.knCurves
   const variableWeights = vessel?.variableWeights ?? []
@@ -1124,6 +1153,14 @@ function VesselStabilitySection() {
                 <SelectItem value="aft-perpendicular">От кормового перпендикуляра</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-[9px] text-muted-foreground">
+              Это относится ТОЛЬКО к подписи в этом разделе — Лёгкий LCG, LCG переменных грузов и «Смещ. центра
+              палубы» ниже должны быть заданы на одной и той же оси, иначе судно и груз молча окажутся на разных
+              шкалах.
+            </p>
+            {lcgPlausibilityWarning && (
+              <p className="text-[9px] text-amber-600 dark:text-amber-500">⚠ {lcgPlausibilityWarning}</p>
+            )}
           </div>
         </div>
 
@@ -1176,13 +1213,17 @@ function VesselStabilitySection() {
           <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Система координат палубы</p>
           <div className="grid grid-cols-3 gap-1">
             <MiniNumField
-              label="Смещ. от ДП"
+              label="Центр палубы от ДП"
               value={shipFrame?.originOffsetFromCenterlineM ?? 0}
               unit="м"
               onChange={(v) => setShipFrame({ originOffsetFromCenterlineM: v })}
             />
             <MiniNumField
-              label="Смещ. от миделя"
+              // Follows the "Точка отсчёта LCG/LCF/LCB" selection above —
+              // this offset locates the DECK RECTANGLE'S OWN CENTRE (not
+              // its aft/forward edge) on whichever axis that selection
+              // names, per DeckShipFrame's own doc comment in stability.ts.
+              label={particulars.longitudinalOrigin === 'aft-perpendicular' ? 'Центр палубы от КП' : 'Центр палубы от миделя'}
               value={shipFrame?.originOffsetFromMidshipsM ?? 0}
               unit="м"
               onChange={(v) => setShipFrame({ originOffsetFromMidshipsM: v })}

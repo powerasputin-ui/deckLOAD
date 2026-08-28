@@ -54,6 +54,9 @@ server.log
 # Skills directory
 /skills/
 
+# Graphify-generated knowledge graph (regenerate with `python -m graphify update .`)
+/graphify-out/
+
 # Database (generated, not tracked)
 db/*.db
 db/*.db-journal

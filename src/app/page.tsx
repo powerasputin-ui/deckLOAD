@@ -473,7 +473,7 @@ export default function Home() {
       length: p.length,
       totalWeightKg: (p.weight ?? 0) * p.stackedCount,
     }))
-    const overloadedZones = checkZoneLoads(placements, zones, deck.outline)
+    const overloadedZones = checkZoneLoads(placements, zones, deck.outline, deck.unit)
     if (overloadedZones.length > prevOverloadedZoneCountRef.current) {
       toast.warning(
         overloadedZones.length === 1
@@ -482,7 +482,7 @@ export default function Home() {
       )
     }
     prevOverloadedZoneCountRef.current = overloadedZones.length
-  }, [result.placed, deck.loadZones, deck.outline])
+  }, [result.placed, deck.loadZones, deck.outline, deck.unit])
 
   // Every load zone's LIVE density, exceeded or not — threaded into the
   // sidebar so a user setting up a zone limit can see the actual current
@@ -499,8 +499,8 @@ export default function Home() {
       length: p.length,
       totalWeightKg: (p.weight ?? 0) * p.stackedCount,
     }))
-    return computeZoneLoads(placements, deck.loadZones, deck.outline)
-  }, [result.placed, deck.loadZones, deck.outline])
+    return computeZoneLoads(placements, deck.loadZones, deck.outline, deck.unit)
+  }, [result.placed, deck.loadZones, deck.outline, deck.unit])
 
   const categoryByItemId = useMemo(
     () => new Map(items.map((it) => [it.id, it.category])),
@@ -549,7 +549,12 @@ export default function Home() {
     const lashingRequirements = allPlacements
       .map((p) => {
         const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
-        const requiredCount = requiredLashingCount(p.weight ?? 0, WIRE_ROPE_SPECS[wireType].breakingLoadKN)
+        // `weight` is per-unit; the stack's real weight is what РД
+        // 31.11.21.23-96 п. 2.2.3 wants — same fix as Sidebar.tsx's copy.
+        const requiredCount = requiredLashingCount(
+          (p.weight ?? 0) * Math.max(1, p.layers ?? 1),
+          WIRE_ROPE_SPECS[wireType].breakingLoadKN
+        )
         if (requiredCount <= 0) return null
         return {
           name: p.name,
@@ -637,6 +642,12 @@ export default function Home() {
         // number was already shown in the picker as a promise, so applying
         // the template must actually make it bind, not just display it.
         clearance: tpl.limits?.maxStackHeightM ?? 0,
+        // Same reasoning as clearance above — the picker already shows
+        // "груз до N т" as a promise; without binding it here, the app can
+        // silently let a user load far past the vessel's own approved
+        // total-deck-cargo capacity with zero warning (this WAS the case —
+        // maxDeckCargoT existed only as picker text, never checked).
+        maxDeckCargoT: tpl.limits?.maxDeckCargoT,
         vessel: tpl.vessel,
         shipFrame: tpl.shipFrame,
         deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
@@ -1993,11 +2004,18 @@ export default function Home() {
                 internal scroll), Грузы keeps its own fixed-height scroll
                 list as before. Not height-matched to each other. */}
             <div className="xl:col-span-8 self-start space-y-4">
-              <StatsPanel result={result} unit={deck.unit} loadZones={deck.loadZones} deckOutline={deck.outline} />
+              <StatsPanel
+                result={result}
+                unit={deck.unit}
+                loadZones={deck.loadZones}
+                deckOutline={deck.outline}
+                maxDeckCargoT={deck.maxDeckCargoT}
+              />
               <StabilityPanel
                 result={result}
                 deckWidth={deck.width}
                 deckLength={deck.length}
+                unit={deck.unit}
                 vessel={deck.vessel}
                 shipFrame={deck.shipFrame}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY}

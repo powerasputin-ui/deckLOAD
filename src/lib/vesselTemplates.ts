@@ -127,10 +127,12 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
     },
     shipFrame: {
       originOffsetFromCenterlineM: 0, // TCG values above are already "from centerline" — no shift needed
-      // Estimated: places deck-local y=0 (the aft edge of the modeled
-      // deck rectangle) at ~3 m from the aft perpendicular, matching
-      // where the source drawing's cargo area appears to begin. Not a
-      // measured figure — see `note`.
+      // Estimated: places the modeled deck rectangle's own CENTRE (see
+      // DeckShipFrame's doc comment in stability.ts — offsets locate the
+      // deck's centre, not its y=0 edge) at 27.5 m from the aft
+      // perpendicular, i.e. its aft edge at 27.5 − 49.1/2 ≈ 2.95 m from
+      // AP, matching where the source drawing's cargo area appears to
+      // begin. Not a measured figure — see `note`.
       originOffsetFromMidshipsM: 27.5,
       heightAboveBaselineM: 8.40, // real — "Высота борта на миделе" (depth at midships)
     },

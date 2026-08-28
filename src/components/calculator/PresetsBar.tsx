@@ -598,6 +598,17 @@ function PipeNestBuilder() {
       weight: totalWeightKg,
       allowRotation: false,
       shape: 'pipe-nest',
+      // A штабель already IS every tier of the nest (nest.tierCounts has
+      // one entry per real tier) — its own `layers`/`maxLayers` must stay
+      // 1, or the deck packer can stack whole штабели on top of each other
+      // when clearance allows it. That would multiply weight correctly
+      // (packDeck always does) but NOT scale computeItemVCG's
+      // nestVcgAboveDeckM, which stays pinned to one штабель's own VCG
+      // regardless of `layers` — silently understating KG under a
+      // multi-штабель stack. The hand-authored pipe presets in
+      // calculator.ts already set this; the builder-generated штабель here
+      // did not.
+      maxLayers: 1,
       color,
       nest:
         waterWeightKg !== undefined

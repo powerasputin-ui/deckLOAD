@@ -80,6 +80,18 @@ describe('buildLoadingConditionFromPlacements', () => {
     expect(cargoContribution).toBeCloseTo(0, 6)
   })
 
+  it('deckForwardIsPositiveY=true: a placement further along +y (toward the bow, per DeckConfig\'s own doc comment) gets a MORE POSITIVE lcgM than one nearer y=0', () => {
+    // Pins the ABSOLUTE sign, not just "forward and aft give opposite
+    // signs" (the pre-existing test below is symmetric under swapping
+    // which literal each ternary branch returns, so it cannot catch that
+    // specific mutation on its own).
+    const nearBow = { x: 9, y: 7, width: 2, length: 1, height: 1, layers: 1, weight: 10_000 } // y close to deckLength=8
+    const nearStern = { x: 9, y: 0, width: 2, length: 1, height: 1, layers: 1, weight: 10_000 } // y close to 0
+    const bow = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, [nearBow])
+    const stern = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, [nearStern])
+    expect(bow.overallLCG).toBeGreaterThan(stern.overallLCG)
+  })
+
   it('respects deckForwardIsPositiveY sign convention for LCG', () => {
     const placements = [{ x: 0, y: 0, width: 2, length: 2, height: 1, layers: 1, weight: 10_000 }]
     // Footprint center (1,1), deck center (10,4) -> alongDeckFromMid = 1-4 = -3
@@ -579,5 +591,165 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     const initialGm = checkIMOCriteria(gz, stability).find((c) => c.id === 'initial-gm')!
     expect(initialGm.pass).toBe(false)
     expect(initialGm.actualValue).toBeCloseTo(stability.GM_fluid, 6)
+  })
+})
+
+// ---- Golden + mutation-guard tests from the "logical errors" audit ----
+// Expected values below are computed BY HAND in each comment, independent
+// of the functions under test (never `expected = productionSolver(input)`)
+// — that's the whole point of a golden test. Run alongside a mutation pass
+// (flip a sign, drop a multiplier, change a divisor) to confirm at least
+// one of these fails for every such intentional break; if one doesn't,
+// that's a real gap, not a passing suite.
+describe('golden: mass, KG, GM, TCG direction (audit §35)', () => {
+  it('mass: 1000 t + 200 t = 1200 t', () => {
+    const lightship: WeightMoment = { weightKg: 1_000_000, vcgM: 5, tcgM: 0, lcgM: 0 }
+    const cargo: WeightMoment[] = [{ weightKg: 200_000, vcgM: 10, tcgM: 0, lcgM: 0 }]
+    const res = computeLoadingCondition(lightship, cargo)
+    expect(res.totalDisplacementKg).toBe(1_200_000)
+  })
+
+  it('KG = (1000×5 + 200×10) / 1200 = 5.8333...', () => {
+    const lightship: WeightMoment = { weightKg: 1_000_000, vcgM: 5, tcgM: 0, lcgM: 0 }
+    const cargo: WeightMoment[] = [{ weightKg: 200_000, vcgM: 10, tcgM: 0, lcgM: 0 }]
+    const res = computeLoadingCondition(lightship, cargo)
+    expect(res.KG).toBeCloseTo(35 / 6, 9) // (1000*5 + 200*10)/1200 = 7000/1200 = 35/6 = 5.8333...
+  })
+
+  it('KG direction: raising a cargo item\'s own VCG raises overall KG, never lowers it', () => {
+    const lightship: WeightMoment = { weightKg: 1_000_000, vcgM: 5, tcgM: 0, lcgM: 0 }
+    const low = computeLoadingCondition(lightship, [{ weightKg: 200_000, vcgM: 6, tcgM: 0, lcgM: 0 }])
+    const high = computeLoadingCondition(lightship, [{ weightKg: 200_000, vcgM: 12, tcgM: 0, lcgM: 0 }])
+    expect(high.KG).toBeGreaterThan(low.KG)
+  })
+
+  it('GM direction: raising KG at a fixed KM lowers GM (GM = KM − KG)', () => {
+    const vessel: VesselStabilityData = {
+      particulars: {
+        lengthBpp: 80, breadth: 18, lightshipWeightKg: 2_000_000, lightshipKG: 5, lightshipLCG: 0, lightshipTCG: 0,
+        longitudinalOrigin: 'midships',
+      },
+      hydrostatics: { points: [{ displacementKg: 2_000_000, draftM: 4, KM: 8, LCB: 0, LCF: 0, MTC: 100 }] },
+      variableWeights: [],
+    }
+    const lowKG = computeStabilityResult(vessel, { totalDisplacementKg: 2_000_000, KG: 6, overallTCG: 0, overallLCG: 0 })!
+    const highKG = computeStabilityResult(vessel, { totalDisplacementKg: 2_000_000, KG: 7, overallTCG: 0, overallLCG: 0 })!
+    expect(highKG.GM_solid).toBeLessThan(lowKG.GM_solid)
+    expect(lowKG.GM_solid).toBeCloseTo(2, 9) // 8 - 6
+    expect(highKG.GM_solid).toBeCloseTo(1, 9) // 8 - 7
+  })
+
+  it('TCG = +2 and TCG = −2 give opposite list sides (starboard vs port)', () => {
+    const vessel: VesselStabilityData = {
+      particulars: {
+        lengthBpp: 80, breadth: 18, lightshipWeightKg: 2_000_000, lightshipKG: 5, lightshipLCG: 0, lightshipTCG: 0,
+        longitudinalOrigin: 'midships',
+      },
+      hydrostatics: { points: [{ displacementKg: 2_000_000, draftM: 4, KM: 7, LCB: 0, LCF: 0, MTC: 100 }] },
+      variableWeights: [],
+    }
+    const starboard = computeStabilityResult(vessel, { totalDisplacementKg: 2_000_000, KG: 6, overallTCG: 2, overallLCG: 0 })!
+    const port = computeStabilityResult(vessel, { totalDisplacementKg: 2_000_000, KG: 6, overallTCG: -2, overallLCG: 0 })!
+    expect(starboard.listSide).toBe('starboard')
+    expect(port.listSide).toBe('port')
+    expect(starboard.listDeg).toBeCloseTo(port.listDeg, 9) // same magnitude, opposite side
+  })
+})
+
+describe('golden: TCG sign convention is pinned, not just symmetric (audit §mutation)', () => {
+  // The existing "dead center -> TCG=0" test is sign-blind: flipping
+  // `originOffsetFromCenterlineM + (center.x - deckWidth/2)` to a MINUS
+  // still passes it, since 0 negated is still 0. This test uses a
+  // genuinely off-center placement so a sign flip changes the SIGN of the
+  // result, not just its magnitude.
+  const deckFrame: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
+
+  it('a placement past the deck\'s starboard half (larger x) gets a positive tcgM', () => {
+    // Deck width 20 -> centre at x=10. Footprint at x=14..16, center x=15,
+    // well to the +x side of centre.
+    const placement = { x: 14, y: 0, width: 2, length: 1, height: 1, layers: 1, weight: 1000 }
+    const [m] = buildCargoWeightMoments([placement], 20, 8, deckFrame, true)
+    expect(m.tcgM).toBeCloseTo(5, 6) // 15 - 10
+    expect(m.tcgM).toBeGreaterThan(0)
+  })
+
+  it('a placement past the deck\'s port half (smaller x) gets a negative tcgM', () => {
+    const placement = { x: 4, y: 0, width: 2, length: 1, height: 1, layers: 1, weight: 1000 }
+    const [m] = buildCargoWeightMoments([placement], 20, 8, deckFrame, true)
+    expect(m.tcgM).toBeCloseTo(-5, 6) // 5 - 10
+    expect(m.tcgM).toBeLessThan(0)
+  })
+})
+
+describe('golden: multi-tier stack weight scales EVERY consumer identically (audit §2)', () => {
+  const deckFrame: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
+
+  it('buildCargoWeightMoments multiplies weight by layers, not just the footprint area', () => {
+    const oneTier = { x: 9, y: 3, width: 2, length: 2, height: 1, layers: 1, weight: 10_000 }
+    const threeTier = { ...oneTier, layers: 3 }
+    const [m1] = buildCargoWeightMoments([oneTier], 20, 8, deckFrame, true)
+    const [m3] = buildCargoWeightMoments([threeTier], 20, 8, deckFrame, true)
+    expect(m1.weightKg).toBe(10_000)
+    expect(m3.weightKg).toBe(30_000) // exactly 3x, not 1x
+  })
+})
+
+describe('golden: unit-safety regression — deck-unit geometry must convert to metres before it reaches the solver (audit §1)', () => {
+  const vessel: VesselStabilityData = {
+    particulars: {
+      lengthBpp: 80, breadth: 18, lightshipWeightKg: 2_000_000, lightshipKG: 5, lightshipLCG: 0, lightshipTCG: 0,
+      longitudinalOrigin: 'midships',
+    },
+    hydrostatics: { points: [] },
+    variableWeights: [],
+  }
+  const shipFrame: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 4 }
+
+  it('the SAME real deck/cargo geometry gives identical KG/TCG/LCG whether described in metres or feet', () => {
+    // A 20m x 8m deck with a 2m x 2m, 1000kg box off-center at (0,0) — real
+    // metres. Deliberately NOT the deck's own centre (unlike the existing
+    // "box centered" fixture at x=9,y=3), so TCG/LCG come out genuinely
+    // nonzero and the conversion actually has something to get wrong.
+    const placementsM = [{ x: 0, y: 0, width: 2, length: 2, height: 1, layers: 1, weight: 10_000 }]
+    const metres = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, placementsM, 'm')
+
+    // The identical real geometry, re-expressed in feet (1 m = 1/0.3048 ft).
+    // This is what store/calculator.ts's setUnit actually produces when a
+    // user switches the deck's display unit — real geometry preserved,
+    // only the numbers' unit changes.
+    const FT_PER_M = 1 / 0.3048
+    const placementsFt = [{ x: 0, y: 0, width: 2 * FT_PER_M, length: 2 * FT_PER_M, height: 1 * FT_PER_M, layers: 1, weight: 10_000 }]
+    const feet = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20 * FT_PER_M, length: 8 * FT_PER_M }, true, placementsFt, 'ft')
+
+    expect(feet.KG).toBeCloseTo(metres.KG, 6)
+    expect(feet.overallTCG).toBeCloseTo(metres.overallTCG, 6)
+    expect(feet.overallLCG).toBeCloseTo(metres.overallLCG, 6)
+    // Sanity check that this test isn't passing by coincidence (e.g. both
+    // sides happening to be ~0): the cargo is genuinely off-center, so the
+    // shared value itself must be meaningfully nonzero.
+    expect(Math.abs(metres.overallTCG)).toBeGreaterThan(1e-6)
+  })
+
+  it('stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM (stored in the deck\'s display unit) also convert correctly', () => {
+    const placementsM = [{ x: 9, y: 3, width: 2, length: 2, height: 1, layers: 1, weight: 10_000, stabilityOverride: { vcgAboveDeckM: 1.5, tcgOffsetM: 0.5, lcgOffsetM: -0.25 } }]
+    const metres = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, placementsM, 'm')
+
+    const FT_PER_M = 1 / 0.3048
+    const placementsFt = [{
+      x: 9 * FT_PER_M, y: 3 * FT_PER_M, width: 2 * FT_PER_M, length: 2 * FT_PER_M, height: 1 * FT_PER_M, layers: 1, weight: 10_000,
+      stabilityOverride: { vcgAboveDeckM: 1.5 * FT_PER_M, tcgOffsetM: 0.5 * FT_PER_M, lcgOffsetM: -0.25 * FT_PER_M },
+    }]
+    const feet = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20 * FT_PER_M, length: 8 * FT_PER_M }, true, placementsFt, 'ft')
+
+    expect(feet.KG).toBeCloseTo(metres.KG, 6)
+    expect(feet.overallTCG).toBeCloseTo(metres.overallTCG, 6)
+    expect(feet.overallLCG).toBeCloseTo(metres.overallLCG, 6)
+  })
+
+  it('defaults to metres (no-op) when `unit` is omitted — every existing metres-only caller keeps working unchanged', () => {
+    const placements = [{ x: 9, y: 3, width: 2, length: 2, height: 1, layers: 1, weight: 10_000 }]
+    const withDefault = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, placements)
+    const explicitM = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, placements, 'm')
+    expect(withDefault).toEqual(explicitM)
   })
 })

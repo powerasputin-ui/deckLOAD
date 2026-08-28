@@ -9,7 +9,7 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card'
-import { checkZoneLoads, type PackingResult, type LoadZone } from '@/lib/packing'
+import { checkZoneLoads, computeFootprintPressures, type PackingResult, type LoadZone } from '@/lib/packing'
 import { fmtNumber } from '@/lib/utils'
 import { UNIT_LABEL, type Unit } from '@/store/calculator'
 
@@ -18,9 +18,14 @@ interface StatsPanelProps {
   unit: Unit
   loadZones?: LoadZone[]
   deckOutline?: { x: number; y: number }[]
+  // The vessel's own approved total deck-cargo capacity (t) — see
+  // DeckConfig.maxDeckCargoT's doc comment. Undefined = not shown, not
+  // "unlimited"; this used to exist only as text in the vessel picker and
+  // was never actually checked against anything.
+  maxDeckCargoT?: number
 }
 
-export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -48,8 +53,29 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
             totalWeightKg: (p.weight ?? 0) * p.stackedCount,
           })),
           loadZones,
-          deckOutline
+          deckOutline,
+          unit
         ).length
+      : 0
+  // Zone-average density (above) can absorb a heavy stack on a small
+  // footprint without ever tripping — this is the complementary check
+  // against each placement's OWN footprint pressure (see
+  // computeFootprintPressures's doc comment; matches ДВТК п. 2.1.7's real
+  // methodology). Shown separately, not merged with the zone count above,
+  // since they're genuinely different numbers.
+  const overPressureFootprintCount =
+    loadZones && loadZones.length > 0
+      ? computeFootprintPressures(
+          placed.map((p) => ({
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            length: p.length,
+            totalWeightKg: (p.weight ?? 0) * p.stackedCount,
+          })),
+          loadZones,
+          unit
+        ).filter((c) => c.exceeded).length
       : 0
 
   return (
@@ -159,6 +185,41 @@ export function StatsPanel({ result, unit, loadZones, deckOutline }: StatsPanelP
               Превышена нагрузка на зону
             </span>
             <span className="font-bold tabular-nums">{overLoadedZoneCount} зон(ы)</span>
+          </div>
+        )}
+
+        {overPressureFootprintCount > 0 && (
+          <div className="rounded-lg border border-red-300 bg-red-50/50 dark:bg-red-950/20 p-2.5 text-xs flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Давление под грузом выше лимита зоны
+            </span>
+            <span className="font-bold tabular-nums">{overPressureFootprintCount} груз(ов)</span>
+          </div>
+        )}
+
+        {/* result is one trip's cargo (see StatsPanel's totalWeight above,
+            same caveat) — maxDeckCargoT is the vessel's own per-trip deck
+            capacity, so comparing them directly is correct. */}
+        {maxDeckCargoT !== undefined && (
+          <div
+            className={`rounded-lg border p-2.5 text-xs flex items-center justify-between ${
+              totalWeight / 1000 > maxDeckCargoT
+                ? 'border-red-300 bg-red-50/50 dark:bg-red-950/20'
+                : 'bg-muted/30'
+            }`}
+          >
+            <span
+              className={`flex items-center gap-1.5 ${
+                totalWeight / 1000 > maxDeckCargoT ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'
+              }`}
+            >
+              {totalWeight / 1000 > maxDeckCargoT && <AlertTriangle className="h-3.5 w-3.5" />}
+              Груз на палубе / лимит судна
+            </span>
+            <span className="font-bold tabular-nums">
+              {fmtNumber(totalWeight / 1000)} / {fmtNumber(maxDeckCargoT)} т
+            </span>
           </div>
         )}
 

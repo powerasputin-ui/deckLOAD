@@ -15,6 +15,7 @@ import {
   resolveSnappedDragPosition,
   checkZoneLoads,
   computeZoneLoads,
+  computeFootprintPressures,
   zoneAreaWithinOutline,
   zoneIdsOverlapping,
   checkLashingBalance,
@@ -1707,6 +1708,39 @@ describe('checkZoneLoads', () => {
     const p = [placement({ x: 5, y: 5, width: 1, length: 1, totalWeightKg: 100000 })]
     expect(checkZoneLoads(p, zones, outline)).toEqual([])
   })
+
+  // GOLDEN + UNIT-SAFETY REGRESSION: `maxLoadPerArea` is always real t/m²,
+  // but a zone/placement's own x/y/width/length live in the deck's display
+  // unit (see store/calculator.ts's setUnit). Before the `unit` parameter
+  // was threaded through, this same 1x1m/2000kg zone reported 2 t/m² in
+  // metres but ~0.186 t/m² if the SAME real geometry were merely re-labeled
+  // in feet without conversion (1 m = 3.2808 ft, so area in ft² is
+  // 3.2808^2 = 10.76x the m² figure, understating density by that factor)
+  // — silently hiding a real overload the moment a user switched units.
+  it("reports the identical density in feet as in metres for the SAME real geometry (unit-safety regression)", () => {
+    const zonesM = [zone({ id: 'z1', x: 0, y: 0, width: 1, length: 1, maxLoadPerArea: 1 })]
+    const pM = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 2000 })]
+    const metresResult = checkZoneLoads(pM, zonesM, undefined, 'm')
+    expect(metresResult).toHaveLength(1)
+    expect(metresResult[0].densityTPerM2).toBe(2)
+
+    // Same real-world 1m x 1m zone/footprint, expressed in feet (1 m =
+    // 1/0.3048 ft ≈ 3.280839895 ft). maxLoadPerArea is NOT converted — it's
+    // always a real t/m² figure, independent of the deck's display unit.
+    const FT_PER_M = 1 / 0.3048
+    const zonesFt = [zone({ id: 'z1', x: 0, y: 0, width: FT_PER_M, length: FT_PER_M, maxLoadPerArea: 1 })]
+    const pFt = [placement({ x: 0, y: 0, width: FT_PER_M, length: FT_PER_M, totalWeightKg: 2000 })]
+    const feetResult = checkZoneLoads(pFt, zonesFt, undefined, 'ft')
+    expect(feetResult).toHaveLength(1)
+    expect(feetResult[0].densityTPerM2).toBeCloseTo(2, 6)
+    expect(feetResult[0].areaM2).toBeCloseTo(1, 6)
+
+    // The bug this guards against: treating width*length as if it were
+    // already m² without converting from feet first would have reported
+    // ~0.186 t/m² (10.76x too low, area mistaken for ~10.76x larger than
+    // it really is) here instead of the correct 2 t/m².
+    expect(feetResult[0].densityTPerM2).not.toBeCloseTo(2 / (FT_PER_M * FT_PER_M), 3)
+  })
 })
 
 describe('computeZoneLoads', () => {
@@ -1751,6 +1785,60 @@ describe('computeZoneLoads', () => {
     const p = [placement({ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 1000 })]
     expect(computeZoneLoads(p, undefined)).toEqual([])
     expect(computeZoneLoads(p, [])).toEqual([])
+  })
+})
+
+describe('computeFootprintPressures', () => {
+  const zone = (partial: Partial<LoadZone> & { id: string }): LoadZone => ({
+    x: 0, y: 0, width: 20, length: 60, maxLoadPerArea: 5, ...partial,
+  })
+
+  // GOLDEN: reproduces the real ДВТК/638.362241.023 п. 2.1.7 worked
+  // example — "756 т на S = 16,9 × 12,37 = 209 м²" — a single stack's own
+  // footprint pressure, independently computed from the source document,
+  // not from this codebase's own solver (see the plan's §36 constraint).
+  it('reproduces the ДВТК п. 2.1.7 worked example: 756 t / (16,9 × 12,37 m) ≈ 3,62 t/m²', () => {
+    const zones = [zone({ id: 'deck', width: 20, length: 60, maxLoadPerArea: 5 })]
+    const placements = [{ x: 0, y: 0, width: 16.9, length: 12.37, totalWeightKg: 756_000 }]
+    const result = computeFootprintPressures(placements, zones)
+    expect(result).toHaveLength(1)
+    expect(result[0].areaM2).toBeCloseTo(209.053, 2) // 16.9 * 12.37
+    expect(result[0].pressureTPerM2).toBeCloseTo(3.616, 2) // 756 / 209.053
+    expect(result[0].exceeded).toBe(false) // under the zone's 5 t/m² limit
+  })
+
+  it('flags a heavy stack on a small footprint even though the ZONE average would never trip (the case computeZoneLoads structurally cannot catch)', () => {
+    // A large, mostly-empty 1200m² zone at 1 t/m² easily absorbs 30t
+    // averaged — but concentrated on a 10m² footprint, that's 3 t/m² LOCAL
+    // pressure, well over the 1 t/m² the deck is actually rated for there.
+    const zones = [zone({ id: 'deck', x: 0, y: 0, width: 40, length: 30, maxLoadPerArea: 1 })]
+    const placements = [{ x: 0, y: 0, width: 5, length: 2, totalWeightKg: 30_000 }]
+    const zoneAvg = computeZoneLoads(placements, zones)
+    expect(zoneAvg[0].exceeded).toBe(false) // 30t / 1200m² = 0.025 t/m² — looks fine
+    const footprint = computeFootprintPressures(placements, zones)
+    expect(footprint[0].exceeded).toBe(true) // 30t / 10m² = 3 t/m² — is NOT fine
+  })
+
+  it('takes the tightest limit when a footprint overlaps two zones with different limits', () => {
+    const zones = [
+      zone({ id: 'loose', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 5 }),
+      zone({ id: 'tight', x: 5, y: 0, width: 10, length: 10, maxLoadPerArea: 1 }),
+    ]
+    const placements = [{ x: 0, y: 0, width: 6, length: 1, totalWeightKg: 2000 }] // 2 t / 6m² ≈ 0.33 t/m²
+    const result = computeFootprintPressures(placements, zones)
+    expect(result[0].limitTPerM2).toBe(1) // the tighter of the two, not the looser
+    expect(result[0].exceeded).toBe(false)
+  })
+
+  it('returns nothing for a footprint outside every zone — not evaluated, not a pass', () => {
+    const zones = [zone({ id: 'z1', x: 100, y: 100, width: 1, length: 1, maxLoadPerArea: 1 })]
+    const placements = [{ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 999_000 }]
+    expect(computeFootprintPressures(placements, zones)).toEqual([])
+  })
+
+  it('returns nothing with no zones configured (no deck-wide default to fall back to)', () => {
+    const placements = [{ x: 0, y: 0, width: 1, length: 1, totalWeightKg: 999_000 }]
+    expect(computeFootprintPressures(placements, undefined)).toEqual([])
   })
 })
 
@@ -1828,6 +1916,28 @@ describe('requiredLashingCount (РД 31.11.21.23-96 п. 2.2.3, n = 0,3·P/BL)', 
     // 0.3 * 1 t / (203/9.80665) kN-as-t = 0.0145 -> ceil to 1, not 0.
     expect(requiredLashingCount(1_000, 203)).toBe(1)
   })
+
+  // GOLDEN + regression: `requiredLashingCount` takes the STACK's weight,
+  // not one unit's — callers (Sidebar.tsx, page.tsx's PDF export) must
+  // multiply per-unit weight by `layers` themselves before calling this
+  // (both call sites once didn't, silently under-reporting for any
+  // multi-tier stack). This pins the exact three counts a 100t-per-unit
+  // stack of Ø813 pipe would need at 1/2/3 tiers against the real wire
+  // rope (BL 203 kN) — independently computed here in the comment, not
+  // derived from the function under test: breakingLoadT = 203/9.80665 ≈
+  // 20.7014 t; n = ceil(0.3·stackWeightT / 20.7014). A caller that forgot
+  // to multiply by `layers` would report "2" for all three tiers instead
+  // of this strictly-increasing sequence.
+  it('a caller multiplying weight by layers gets a strictly increasing count as the stack gets taller (100t/unit, 1/2/3 tiers)', () => {
+    const oneTier = requiredLashingCount(100_000 * 1, 203)
+    const twoTier = requiredLashingCount(100_000 * 2, 203)
+    const threeTier = requiredLashingCount(100_000 * 3, 203)
+    expect(oneTier).toBe(2) // ceil(30 / 20.7014) = ceil(1.449) = 2
+    expect(twoTier).toBe(3) // ceil(60 / 20.7014) = ceil(2.898) = 3
+    expect(threeTier).toBe(5) // ceil(90 / 20.7014) = ceil(4.347) = 5
+    expect(twoTier).toBeGreaterThan(oneTier)
+    expect(threeTier).toBeGreaterThan(twoTier)
+  })
 })
 
 describe('checkLashingBalance', () => {
@@ -1864,6 +1974,29 @@ describe('checkLashingBalance', () => {
     const openSea = checkLashingBalance(placement, lashings, { ...VESSEL_MOTION_PRESETS['open-sea'], preset: 'open-sea' })
     expect(coastal!.transverse.ok).toBe(true)
     expect(openSea!.transverse.ok).toBe(false)
+  })
+
+  // REGRESSION: `weight` on a placement is per-unit; `layers` says how many
+  // units share this footprint (see PlacedItem.weight's doc comment in
+  // packing.ts). Before this fix, `layers` wasn't part of the parameter
+  // type at all — a 3-tier stack's real inertial force (3x one unit's) was
+  // checked against only 1x, so an under-secured multi-tier stack could
+  // read "ok: true" when it genuinely wasn't. A single lashing point that
+  // is only barely enough for ONE unit must fail once the same footprint
+  // is declared as a multi-tier stack.
+  it("a lashing barely sufficient for ONE tier fails once `layers` says the stack is taller (real weight is layers×heavier)", () => {
+    const oneLashing = [lashing({ id: 'l1', mslKg: 250 })]
+    const singleTier = checkLashingBalance({ ...placement, weight: 2000, layers: 1 }, oneLashing, DEFAULT_VESSEL_MOTION)
+    const threeTier = checkLashingBalance({ ...placement, weight: 2000, layers: 3 }, oneLashing, DEFAULT_VESSEL_MOTION)
+    expect(singleTier!.ok).toBe(true)
+    expect(threeTier!.ok).toBe(false)
+  })
+
+  it('omitting `layers` entirely still works and behaves as a single tier (backward-compatible default)', () => {
+    const lashings = [lashing({ id: 'l1' })]
+    const withoutLayers = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
+    const withLayersOne = checkLashingBalance({ ...placement, layers: 1 }, lashings, DEFAULT_VESSEL_MOTION)
+    expect(withoutLayers).toEqual(withLayersOne)
   })
 })
 

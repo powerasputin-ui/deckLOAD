@@ -18,12 +18,18 @@ import {
   type VesselStabilityData,
   type DeckShipFrame,
 } from '@/lib/stability'
+import type { Unit } from '@/lib/units'
 import { fmtNumber } from '@/lib/utils'
 
 interface StabilityPanelProps {
   result: PackingResult
   deckWidth: number
   deckLength: number
+  // The unit deckWidth/deckLength/result.placed are actually stored in
+  // (deck.unit in the store) — required, not defaulted, so a caller can't
+  // forget it and silently feed feet/centimetres into a metres-only solver.
+  // See buildLoadingConditionFromPlacements's own doc comment.
+  unit: Unit
   vessel?: VesselStabilityData
   shipFrame?: DeckShipFrame
   deckForwardIsPositiveY?: boolean
@@ -60,7 +66,7 @@ function NoFreeSurfaceDataWarning() {
   )
 }
 
-export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
+export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
   if (!vessel) {
     return (
       <Card>
@@ -79,7 +85,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, vessel, shipFram
   }
 
   const frame: DeckShipFrame = shipFrame ?? { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
-  const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deckWidth, length: deckLength }, deckForwardIsPositiveY ?? true, result.placed)
+  const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deckWidth, length: deckLength }, deckForwardIsPositiveY ?? true, result.placed, unit)
   const stability = computeStabilityResult(vessel, loading)
   const gz = stability ? computeGZCurve(vessel, loading) : null
   const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg
