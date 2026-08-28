@@ -331,6 +331,28 @@ export interface PowerSocket {
   label?: string
 }
 
+// A free-form text annotation — AutoCAD-style leader note. Purely
+// documentation/communication, never read by any calculation (unlike
+// deckForwardIsPositiveY, which is the real, separately-set direction the
+// stability solver uses). `kind` only changes which quick-stamp button in
+// PresetsBar pre-filled its text — it never changes behavior or rendering.
+export type AnnotationKind = 'bow' | 'stern' | 'port' | 'starboard' | 'note'
+
+export interface DeckAnnotation {
+  id: string
+  x: number // deck-local — where the TEXT sits; freely draggable, independent of leaderX/Y
+  y: number
+  text: string
+  kind?: AnnotationKind
+  // Optional point this annotation points AT via a thin leader line — any
+  // deck-local coordinate: empty space, on top of a cargo footprint, off
+  // the deck outline. NOT bound to a placement id — dragging the cargo it
+  // once pointed at does not move the leader (this is simple documentation
+  // markup, not a physics attachment like LashingPoint).
+  leaderX?: number
+  leaderY?: number
+}
+
 // A hard-blocking obstacle zone (crane, bulwark, superstructure, etc.) —
 // cargo can never be placed/dragged/rotated into it, in manual OR auto mode.
 // For the 4 basic PPT-style shapes the outline polygon is never stored —

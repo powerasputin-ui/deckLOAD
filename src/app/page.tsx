@@ -179,6 +179,10 @@ export default function Home() {
   const setPlacingPowerSocket = useCalculator((s) => s.setPlacingPowerSocket)
   const addPowerSocket = useCalculator((s) => s.addPowerSocket)
   const updatePowerSocket = useCalculator((s) => s.updatePowerSocket)
+  const placingAnnotation = useCalculator((s) => s.placingAnnotation)
+  const setPlacingAnnotation = useCalculator((s) => s.setPlacingAnnotation)
+  const addAnnotation = useCalculator((s) => s.addAnnotation)
+  const updateAnnotation = useCalculator((s) => s.updateAnnotation)
   const addLashingPoint = useCalculator((s) => s.addLashingPoint)
   const updateLashingPoint = useCalculator((s) => s.updateLashingPoint)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
@@ -310,11 +314,12 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !placingPowerSocket && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
+    if (!placingLashingPoint && !placingPowerSocket && !placingAnnotation && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
       if (placingPowerSocket) setPlacingPowerSocket(false)
+      if (placingAnnotation) setPlacingAnnotation(null)
       if (activeStampId) setActiveStamp(null)
       if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
       if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
@@ -325,7 +330,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, placingAnnotation, setPlacingAnnotation, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -1966,6 +1971,33 @@ export default function Home() {
                       addPowerSocket({ x, y, label: `Розетка ${count}` })
                     }}
                     onUpdatePowerSocket={updatePowerSocket}
+                    annotations={deck.annotations}
+                    placingAnnotation={placingAnnotation}
+                    onPlaceAnnotation={(x, y, leader) => {
+                      if (!placingAnnotation) return
+                      const defaultText: Record<typeof placingAnnotation.kind, string> = {
+                        bow: 'Нос',
+                        stern: 'Корма',
+                        port: 'Лево борт',
+                        starboard: 'Право борт',
+                        note: '',
+                      }
+                      addAnnotation({
+                        x,
+                        y,
+                        text: defaultText[placingAnnotation.kind],
+                        kind: placingAnnotation.kind,
+                        leaderX: leader?.x,
+                        leaderY: leader?.y,
+                      })
+                      // The four orientation stamps are normally placed
+                      // once each — auto-disarm so a second stray click
+                      // doesn't drop a duplicate. A free "Заметка" stays
+                      // armed so the user can drop several notes in a row,
+                      // same as placingLashingPoint's "Готово" pattern.
+                      if (placingAnnotation.kind !== 'note') setPlacingAnnotation(null)
+                    }}
+                    onUpdateAnnotation={updateAnnotation}
                     restrictionZones={deck.restrictionZones}
                     drawingRestrictionShape={drawingRestrictionShape}
                     onAddRestrictionZone={addRestrictionZone}

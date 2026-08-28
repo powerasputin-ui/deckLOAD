@@ -210,6 +210,7 @@ describe('projects store', () => {
         loadZones: [{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }],
         lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
         powerSockets: [{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }],
+        annotations: [{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }],
         vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
       },
       items: [
@@ -236,9 +237,46 @@ describe('projects store', () => {
     expect(reloaded.deck.loadZones).toEqual([{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }])
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
     expect(reloaded.deck.powerSockets).toEqual([{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }])
+    expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }])
     expect(reloaded.items[0].category).toBe('hazard')
     expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
+  })
+
+  // A leader line needs BOTH endpoints to mean anything — normalizeAnnotations
+  // treats a lone leaderX with no leaderY (e.g. a hand-edited/corrupted
+  // project file) as "no leader" rather than round-tripping a half-drawn
+  // line that would point nowhere.
+  it('drops a leader with only one of leaderX/leaderY set, keeping the annotation itself', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        annotations: [{ id: 'a1', x: 2, y: 2, text: 'Осторожно', leaderX: 5 } as unknown as { id: string; x: number; y: number; text: string }],
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 2, y: 2, text: 'Осторожно', kind: undefined, leaderX: undefined, leaderY: undefined }])
   })
 
   it('falls back to a valid default when vesselMotion is absent or malformed', () => {

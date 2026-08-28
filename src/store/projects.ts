@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind } from '@/lib/packing'
 import { WIRE_ROPE_SPECS } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
@@ -428,6 +428,33 @@ function normalizePowerSockets(value: unknown): DeckConfig['powerSockets'] {
   return sockets.length > 0 ? sockets : undefined
 }
 
+const ANNOTATION_KINDS = new Set(['bow', 'stern', 'port', 'starboard', 'note'])
+
+function normalizeOptionalCoord(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function normalizeAnnotations(value: unknown): DeckConfig['annotations'] {
+  if (!Array.isArray(value)) return undefined
+  const annotations = value.map((a) => {
+    const ann = a as Record<string, unknown>
+    const leaderX = normalizeOptionalCoord(ann.leaderX)
+    const leaderY = normalizeOptionalCoord(ann.leaderY)
+    return {
+      id: typeof ann.id === 'string' && ann.id ? ann.id : uuid(),
+      x: toFiniteNonNegative(ann.x, 0),
+      y: toFiniteNonNegative(ann.y, 0),
+      text: typeof ann.text === 'string' ? ann.text : '',
+      kind: typeof ann.kind === 'string' && ANNOTATION_KINDS.has(ann.kind) ? (ann.kind as AnnotationKind) : undefined,
+      // A leader needs BOTH coordinates to mean anything — a lone leaderX
+      // with no leaderY isn't half a leader, it's no leader.
+      leaderX: leaderX !== undefined && leaderY !== undefined ? leaderX : undefined,
+      leaderY: leaderX !== undefined && leaderY !== undefined ? leaderY : undefined,
+    }
+  })
+  return annotations.length > 0 ? annotations : undefined
+}
+
 const RESTRICTION_ZONE_SHAPES = new Set(['rect', 'triangle', 'oval', 'diamond', 'custom'])
 
 function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones'] {
@@ -590,6 +617,7 @@ function normalizeProject(p: Partial<Project>): Project {
       loadZones: normalizeLoadZones(p.deck?.loadZones),
       lashingPoints: normalizeLashingPoints(p.deck?.lashingPoints),
       powerSockets: normalizePowerSockets(p.deck?.powerSockets),
+      annotations: normalizeAnnotations(p.deck?.annotations),
       restrictionZones: normalizeRestrictionZones(p.deck?.restrictionZones),
       backgroundImage: toOptionalString(p.deck?.backgroundImage),
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),

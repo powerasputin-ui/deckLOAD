@@ -1,12 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Square, Triangle, Circle, Diamond, Ban } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plug, Sparkles, Trash2, Square, Triangle, Circle, Diamond, Ban, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL, convertLength } from '@/store/calculator'
-import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
+import { type CargoShape, type RestrictionZoneShape, type AnnotationKind } from '@/lib/packing'
 import { computePipeNest, REAL_CRATE_HEIGHT_M_OD1073M } from '@/lib/pipeNest'
 import { cn, fmtNumber } from '@/lib/utils'
 
@@ -15,12 +15,23 @@ import { cn, fmtNumber } from '@/lib/utils'
 // changed" to useSyncExternalStore and re-renders forever).
 const EMPTY_POWER_SOCKETS: never[] = []
 const EMPTY_RESTRICTION_ZONES: never[] = []
+const EMPTY_ANNOTATIONS: never[] = []
 
 // Restriction zones aren't a cargo-template category (no CargoItem-shaped
 // entries), so they get their own pseudo-key alongside PRESETS' real
 // category keys rather than living inside one of those categories' item
 // lists — a separate top-level button, not nested under "Объекты".
 const RESTRICTION_ZONE_CATEGORY_KEY = '__restriction_zones__'
+// Same reasoning as RESTRICTION_ZONE_CATEGORY_KEY — annotations aren't
+// CargoItem-shaped either.
+const ANNOTATIONS_CATEGORY_KEY = '__annotations__'
+
+const ANNOTATION_STAMPS: { kind: Exclude<AnnotationKind, 'note'>; label: string }[] = [
+  { kind: 'bow', label: 'Нос' },
+  { kind: 'stern', label: 'Корма' },
+  { kind: 'port', label: 'Лево борт' },
+  { kind: 'starboard', label: 'Право борт' },
+]
 
 const RESTRICTION_ZONE_SHAPES: { shapeType: RestrictionZoneShape; label: string; Icon: typeof Square }[] = [
   { shapeType: 'rect', label: 'Прямоугольник', Icon: Square },
@@ -62,6 +73,30 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
   const setDrawingRestrictionShape = useCalculator((s) => s.setDrawingRestrictionShape)
   const drawingRestrictionZoneFreeform = useCalculator((s) => s.drawingRestrictionZoneFreeform)
   const setDrawingRestrictionZoneFreeform = useCalculator((s) => s.setDrawingRestrictionZoneFreeform)
+  // Annotations (bow/stern/port/starboard labels + AutoCAD-style leader
+  // notes) — purely visual, same armed-tool shape as power sockets above.
+  const annotations = useCalculator((s) => s.deck.annotations ?? EMPTY_ANNOTATIONS)
+  const removeAnnotation = useCalculator((s) => s.removeAnnotation)
+  const updateAnnotation = useCalculator((s) => s.updateAnnotation)
+  const placingAnnotation = useCalculator((s) => s.placingAnnotation)
+  const setPlacingAnnotation = useCalculator((s) => s.setPlacingAnnotation)
+  // Whether the NEXT "Заметка" note is armed with a leader — a local UI
+  // preference, not store state, since it only matters at the moment of
+  // arming (see toggleWithLeader below, which also live-updates an
+  // already-armed note tool).
+  const [withLeader, setWithLeader] = useState(false)
+  const toggleWithLeader = () => {
+    // Calling the Zustand setter from INSIDE a useState updater function
+    // (the `setWithLeader(v => ...)` form) runs it during React's render
+    // phase, not as a plain event-handler side effect — that's exactly
+    // what triggers "Cannot update a component while rendering a
+    // different component" (Home, via the store, while PresetsBar
+    // renders). Compute `next` first and call both setters as two
+    // ordinary statements in the event handler body instead.
+    const next = !withLeader
+    setWithLeader(next)
+    if (placingAnnotation?.kind === 'note') setPlacingAnnotation({ kind: 'note', withLeader: next })
+  }
   const [drawName, setDrawName] = useState('')
   const [drawWeight, setDrawWeight] = useState('')
   // Reset the finalize form's fields once the pending shape is cleared
@@ -144,8 +179,22 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 <Badge variant="secondary" className="ml-1 text-[10px]">{restrictionZones.length}</Badge>
               )}
             </Button>
+            <Button
+              variant={activePresetCategory === ANNOTATIONS_CATEGORY_KEY ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onMouseEnter={() => {
+                if (!activePresetCategory) setActivePresetCategory(ANNOTATIONS_CATEGORY_KEY)
+              }}
+              onClick={() => setActivePresetCategory(ANNOTATIONS_CATEGORY_KEY)}
+            >
+              Разметка
+              {annotations.length > 0 && (
+                <Badge variant="secondary" className="ml-1 text-[10px]">{annotations.length}</Badge>
+              )}
+            </Button>
           </div>
-          {activePresetCategory && activePresetCategory !== RESTRICTION_ZONE_CATEGORY_KEY && (
+          {activePresetCategory && activePresetCategory !== RESTRICTION_ZONE_CATEGORY_KEY && activePresetCategory !== ANNOTATIONS_CATEGORY_KEY && (
             <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
               {PRESETS[activePresetCategory]?.items.map((tpl, i) => {
                 // One fixed color per template NAME (PRESET_TEMPLATE_COLORS),
@@ -316,6 +365,80 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
               )}
             </div>
           )}
+          {activePresetCategory === ANNOTATIONS_CATEGORY_KEY && (
+            <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
+                <span className="px-0.5 text-[10px] text-muted-foreground">Метка:</span>
+                {ANNOTATION_STAMPS.map(({ kind, label }) => (
+                  <button
+                    key={kind}
+                    onClick={() => setPlacingAnnotation(placingAnnotation?.kind === kind ? null : { kind, withLeader: false })}
+                    className={cn(
+                      'h-6 px-2 flex items-center justify-center rounded-md border text-[10px]',
+                      placingAnnotation?.kind === kind
+                        ? 'border-slate-400 bg-slate-100 text-slate-700 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:text-slate-200 dark:ring-slate-600'
+                        : 'border-border hover:bg-accent'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setPlacingAnnotation(placingAnnotation?.kind === 'note' ? null : { kind: 'note', withLeader })}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border p-2 text-left transition-all shrink-0',
+                  placingAnnotation?.kind === 'note'
+                    ? 'border-sky-400 bg-sky-50 ring-1 ring-sky-300 dark:bg-sky-950/30 dark:ring-sky-700'
+                    : 'border-border hover:bg-accent'
+                )}
+              >
+                <span className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md border border-dashed border-black/20 text-sky-600">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium truncate">Заметка</span>
+                  <span className="block text-[10px] text-muted-foreground">свободный текст</span>
+                </span>
+              </button>
+              <button
+                onClick={toggleWithLeader}
+                title="Со сноской — клик 1: точка, на которую указывает (можно на груз); клик 2: где встанет текст"
+                className={cn(
+                  'h-7 px-2 flex items-center gap-1 rounded-md border text-[10px] shrink-0 self-center',
+                  withLeader
+                    ? 'border-sky-400 bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300'
+                    : 'border-border hover:bg-accent text-muted-foreground'
+                )}
+              >
+                Со сноской
+              </button>
+              {annotations.length > 0 && (
+                <>
+                  <div className="basis-full w-0" aria-hidden="true" />
+                  {annotations.map((a) => (
+                    <AnnotationChip
+                      key={a.id}
+                      text={a.text}
+                      hasLeader={a.leaderX !== undefined}
+                      onTextChange={(text) => updateAnnotation(a.id, { text })}
+                      onRemoveLeader={() => updateAnnotation(a.id, { leaderX: undefined, leaderY: undefined })}
+                      onRemove={() => removeAnnotation(a.id)}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+          {placingAnnotation && (
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              {placingAnnotation.withLeader
+                ? 'Клик 1 — точка, на которую указывает сноска (можно на груз). Клик 2 — где встанет текст.'
+                : placingAnnotation.kind === 'note'
+                  ? 'Кликните по палубе — текст встанет в этой точке. Текст задайте после, в списке ниже.'
+                  : 'Кликните по палубе — метка встанет в этой точке.'}
+            </p>
+          )}
           {pendingPresetStamp && (
             <p className="text-[10px] text-muted-foreground leading-tight">
               «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
@@ -436,6 +559,66 @@ function PresetTemplateChip({
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
     </button>
+  )
+}
+
+// A placed annotation's chip — editable text (text entry happens here, not
+// on the SVG canvas itself, since an inline-editable SVG label would need a
+// foreignObject, which taints the PDF export's canvas rasterization — see
+// the comment on PowerSocketGlyph in DeckVisualization.tsx), an optional
+// "убрать линию" control (keeps the text, drops just the leader), and the
+// same delete control every other chip in this file uses.
+function AnnotationChip({
+  text,
+  hasLeader,
+  onTextChange,
+  onRemoveLeader,
+  onRemove,
+}: {
+  text: string
+  hasLeader: boolean
+  onTextChange: (text: string) => void
+  onRemoveLeader: () => void
+  onRemove: () => void
+}) {
+  const [draft, setDraft] = useState(text)
+  const [prevText, setPrevText] = useState(text)
+  if (text !== prevText) {
+    setPrevText(text)
+    setDraft(text)
+  }
+  const commit = () => {
+    if (draft !== text) onTextChange(draft)
+  }
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 rounded-lg border px-1.5 py-1 text-xs">
+      <MessageSquare className="h-3 w-3 text-sky-600 shrink-0" />
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+        placeholder="Текст"
+        className="h-5 w-24 rounded border bg-background px-1 text-[10px]"
+      />
+      {hasLeader && (
+        <button
+          onClick={onRemoveLeader}
+          title="Убрать сноску (текст останется)"
+          className="text-[9px] text-muted-foreground hover:text-foreground underline shrink-0"
+        >
+          без линии
+        </button>
+      )}
+      <button
+        onClick={onRemove}
+        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
+        title="Удалить"
+      >
+        <Trash2 className="h-3 w-3" />
+      </button>
+    </div>
   )
 }
 

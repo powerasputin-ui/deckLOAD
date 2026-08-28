@@ -341,6 +341,35 @@ describe('calculator store', () => {
     expect(useCalculator.getState().placingPowerSocket).toBe(false)
   })
 
+  it('adds, updates and removes an annotation', () => {
+    const s = useCalculator.getState()
+    s.addAnnotation({ x: 4, y: 2, text: 'Нос', kind: 'bow' })
+    let annotations = useCalculator.getState().deck.annotations
+    expect(annotations).toHaveLength(1)
+    expect(annotations![0].text).toBe('Нос')
+    const id = annotations![0].id
+    s.updateAnnotation(id, { x: 6, y: 3, text: 'Нос судна' })
+    annotations = useCalculator.getState().deck.annotations
+    expect(annotations![0].x).toBe(6)
+    expect(annotations![0].text).toBe('Нос судна')
+    s.removeAnnotation(id)
+    expect(useCalculator.getState().deck.annotations).toHaveLength(0)
+  })
+
+  it('arming placingAnnotation disarms placingLashingPoint/placingPowerSocket, and vice versa', () => {
+    const s = useCalculator.getState()
+    s.setPlacingPowerSocket(true)
+    s.setPlacingAnnotation({ kind: 'note', withLeader: false })
+    expect(useCalculator.getState().placingAnnotation).toEqual({ kind: 'note', withLeader: false })
+    expect(useCalculator.getState().placingPowerSocket).toBe(false)
+    s.setPlacingLashingPoint(true)
+    expect(useCalculator.getState().placingLashingPoint).toBe(true)
+    expect(useCalculator.getState().placingAnnotation).toBeNull()
+    s.setPlacingAnnotation({ kind: 'bow', withLeader: false })
+    s.setActiveStamp('some-id')
+    expect(useCalculator.getState().placingAnnotation).toBeNull()
+  })
+
   // Regression: a full placement replace (auto-redistribute, or switching
   // manual<->auto mode) hands every placement a brand-new id, so a lashing
   // point's old placementId never matches anything afterward. Without a

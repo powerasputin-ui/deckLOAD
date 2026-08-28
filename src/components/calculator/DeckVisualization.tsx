@@ -34,6 +34,8 @@ import {
   type SeparationRule,
   type LashingPoint,
   type PowerSocket,
+  type DeckAnnotation,
+  type AnnotationKind,
   nearestPointOnPolygon,
   type VesselMotion,
   type ClearanceMargin,
@@ -127,6 +129,19 @@ interface DeckVisualizationProps {
   placingPowerSocket?: boolean
   onPlacePowerSocket?: (x: number, y: number) => void
   onUpdatePowerSocket?: (id: string, patch: { x?: number; y?: number }) => void
+  // Free-text annotations (AutoCAD-style leader notes + bow/stern/port/
+  // starboard labels) — purely visual, never affect collision/placement or
+  // any calculation. `withLeader` picks a two-click flow (first click = the
+  // point being pointed AT, any deck-local coordinate including on top of
+  // cargo; second click = where the text sits) vs. a single click that
+  // just drops the text with no leader. This component stays "dumb" about
+  // what TEXT a placement gets — that's decided by the caller from
+  // placingAnnotation.kind, same reasoning as drawingCustomShape/
+  // onFinishDrawing leaving CargoItem creation to the caller.
+  annotations?: DeckAnnotation[]
+  placingAnnotation?: { kind: AnnotationKind; withLeader: boolean } | null
+  onPlaceAnnotation?: (x: number, y: number, leader?: { x: number; y: number }) => void
+  onUpdateAnnotation?: (id: string, patch: { x?: number; y?: number }) => void
   onUpdateLoadZone?: (id: string, patch: { x?: number; y?: number; width?: number; length?: number }) => void
   // Custom hand-drawn cargo outline ("Нарисовать"): armed boolean + finish
   // callback, mirroring placingLashingPoint/onPlaceLashingPoint. Points are
@@ -215,6 +230,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   placingPowerSocket,
   onPlacePowerSocket,
   onUpdatePowerSocket,
+  annotations,
+  placingAnnotation,
+  onPlaceAnnotation,
+  onUpdateAnnotation,
   restrictionZones,
   drawingRestrictionShape,
   onAddRestrictionZone,
@@ -353,6 +372,25 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startMouse: { x: number; y: number }
     startPos: { x: number; y: number }
   } | null>(null)
+  // Annotation placement: same two-step split as pendingLashingCorner, but
+  // the "pending" point is ANY deck-local coordinate (no findAttachableCorner
+  // restriction — the whole point is being able to point at empty space,
+  // cargo, or nothing at all). withLeader=false skips straight to a single
+  // click. Reset on disarm via the same "compare against previous prop"
+  // pattern as placingLashingPoint.
+  const [annotationHoverPos, setAnnotationHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [pendingAnnotationLeaderPoint, setPendingAnnotationLeaderPoint] = useState<{ x: number; y: number } | null>(null)
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
+  const [annotationDrag, setAnnotationDrag] = useState<{
+    id: string
+    startMouse: { x: number; y: number }
+    startPos: { x: number; y: number }
+  } | null>(null)
+  const [prevPlacingAnnotation, setPrevPlacingAnnotation] = useState(placingAnnotation)
+  if (placingAnnotation !== prevPlacingAnnotation) {
+    setPrevPlacingAnnotation(placingAnnotation)
+    if (!placingAnnotation && pendingAnnotationLeaderPoint) setPendingAnnotationLeaderPoint(null)
+  }
   // Custom-shape drawing: confirmed points + live cursor position, same
   // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
   // disarm via the same "compare against previous prop" render-time pattern
@@ -867,6 +905,29 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return true
   }
 
+  // Annotation placement. withLeader=false: single click drops the text
+  // right there, no leader — used by the quick bow/stern/port/starboard
+  // stamps and a plain "Заметка" without a pointer line. withLeader=true:
+  // AutoCAD-style two-click leader — first click is the point being
+  // pointed AT (deliberately no attach-to-cargo restriction, unlike
+  // handleLashingClick's findAttachableCorner — this can be literally any
+  // deck-local coordinate, on top of a cargo footprint or on open deck),
+  // second click is where the text itself sits.
+  const handleAnnotationClick = (e: React.MouseEvent): boolean => {
+    if (!placingAnnotation || !onPlaceAnnotation) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    const x = Math.max(0, Math.min(deckWidth, pos.x))
+    const y = Math.max(0, Math.min(deckLength, pos.y))
+    if (placingAnnotation.withLeader && !pendingAnnotationLeaderPoint) {
+      setPendingAnnotationLeaderPoint({ x, y })
+      return true
+    }
+    onPlaceAnnotation(x, y, pendingAnnotationLeaderPoint ?? undefined)
+    setPendingAnnotationLeaderPoint(null)
+    return true
+  }
+
   const CLOSE_LOOP_PIXEL_RADIUS = 10
 
   // Point-by-point outline drawing: each click appends a vertex; clicking
@@ -1038,6 +1099,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (handleOutlineEditClick(e)) return
     if (handleLashingClick(e)) return
     if (handlePowerSocketClick(e)) return
+    if (handleAnnotationClick(e)) return
     if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return
@@ -1347,6 +1409,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setSocketHoverPos(pos ? nearestPointOnPolygon(pos, deckPerimeter) : null)
     }
+    if (placingAnnotation) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      setAnnotationHoverPos(pos)
+    }
     if (drawingCustomShape || drawingRestrictionZoneFreeform) {
       const pos = screenToDeck(e.clientX, e.clientY)
       setDrawHoverPos(pos)
@@ -1584,6 +1650,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const snapped = nearestPointOnPolygon({ x: nx, y: ny }, deckPerimeter)
       onUpdatePowerSocket(socketDrag.id, { x: snapped.x, y: snapped.y })
     }
+    if (annotationDrag && onUpdateAnnotation) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      if (!pos) return
+      const startDeck = screenToDeck(annotationDrag.startMouse.x, annotationDrag.startMouse.y)
+      if (!startDeck) return
+      const deltaX = pos.x - startDeck.x
+      const deltaY = pos.y - startDeck.y
+      const nx = Math.max(0, Math.min(deckWidth, annotationDrag.startPos.x + deltaX))
+      const ny = Math.max(0, Math.min(deckLength, annotationDrag.startPos.y + deltaY))
+      onUpdateAnnotation(annotationDrag.id, { x: nx, y: ny })
+    }
     if (pinDrag && onUpdatePinned) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
@@ -1703,6 +1780,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPanDrag(null)
     setLashingAnchorDrag(null)
     setSocketDrag(null)
+    setAnnotationDrag(null)
     setDraggingVertexIndex(null)
   }
 
@@ -1727,6 +1805,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setMergeTargetId(null)
     setLashingAnchorDrag(null)
     setSocketDrag(null)
+    setAnnotationDrag(null)
     setDraggingVertexIndex(null)
   }
 
@@ -1823,7 +1902,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline
+      : placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline
         ? 'crosshair'
         : 'default'
 
@@ -1938,7 +2017,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2499,6 +2578,30 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })()}
 
+        {/* Annotation placement preview (follows cursor while armed) */}
+        {placingAnnotation && annotationHoverPos && (() => {
+          const hover = deckToScreen(annotationHoverPos.x, annotationHoverPos.y)
+          return (
+            <g className="pointer-events-none" opacity={0.55}>
+              {pendingAnnotationLeaderPoint && (() => {
+                const leader = deckToScreen(pendingAnnotationLeaderPoint.x, pendingAnnotationLeaderPoint.y)
+                return (
+                  <line
+                    x1={leader.sx}
+                    y1={leader.sy}
+                    x2={hover.sx}
+                    y2={hover.sy}
+                    stroke="rgba(71,85,105,0.9)"
+                    strokeWidth={1.2}
+                    strokeDasharray="3 2"
+                  />
+                )
+              })()}
+              <circle cx={hover.sx} cy={hover.sy} r={4} fill="rgba(71,85,105,0.9)" stroke="#fff" strokeWidth={1.2} />
+            </g>
+          )
+        })()}
+
         {/* Custom-shape drawing preview: confirmed points + a dashed segment
             to the cursor, with the first vertex highlighted once the loop
             can be closed (>=3 points placed). */}
@@ -2790,6 +2893,83 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   {pt.label}
                 </text>
               )}
+            </g>
+          )
+        })}
+
+        {annotations?.map((a) => {
+          const { sx: px, sy: py } = deckToScreen(a.x, a.y)
+          const hasLeader = a.leaderX !== undefined && a.leaderY !== undefined
+          const leaderScreen = hasLeader ? deckToScreen(a.leaderX!, a.leaderY!) : null
+          const isSelected = selectedAnnotationId === a.id
+          const interactive = !!onUpdateAnnotation
+          const text = a.text || '…'
+          // No real text-measurement (getBBox would need a post-render
+          // effect pass) — a rough per-character estimate is enough for a
+          // readable background pill, same "good enough" spirit as every
+          // other pure-SVG label in this file.
+          const textWidth = Math.max(16, text.length * 6.2)
+          return (
+            <g key={`ann-${a.id}`}>
+              {leaderScreen && (
+                <>
+                  <line
+                    x1={leaderScreen.sx}
+                    y1={leaderScreen.sy}
+                    x2={px}
+                    y2={py}
+                    stroke="rgba(71,85,105,0.85)"
+                    strokeWidth={isSelected ? 1.8 : 1.2}
+                    strokeDasharray="3 2"
+                  />
+                  <circle cx={leaderScreen.sx} cy={leaderScreen.sy} r={3} fill="rgba(71,85,105,0.85)" />
+                </>
+              )}
+              {isSelected && (
+                <rect
+                  x={px - textWidth / 2 - 5}
+                  y={py - 13}
+                  width={textWidth + 10}
+                  height={20}
+                  rx={4}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={1.2}
+                  strokeDasharray="2 2"
+                />
+              )}
+              <rect
+                x={px - textWidth / 2 - 3}
+                y={py - 10}
+                width={textWidth + 6}
+                height={16}
+                rx={3}
+                fill="rgba(255,255,255,0.88)"
+                stroke="rgba(15,23,42,0.15)"
+                strokeWidth={0.75}
+                style={{ cursor: interactive ? 'move' : 'default' }}
+                onPointerDown={
+                  interactive
+                    ? (e) => {
+                        e.stopPropagation()
+                        setSelectedAnnotationId(a.id)
+                        setAnnotationDrag({ id: a.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: a.x, y: a.y } })
+                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                      }
+                    : undefined
+                }
+              />
+              <text
+                x={px}
+                y={py + 3}
+                textAnchor="middle"
+                fontSize={10}
+                fontWeight={600}
+                fill="#0f172a"
+                className="select-none pointer-events-none"
+              >
+                {text}
+              </text>
             </g>
           )
         })}

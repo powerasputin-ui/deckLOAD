@@ -19,6 +19,8 @@ import {
   type SeparationRule,
   type LashingPoint,
   type PowerSocket,
+  type DeckAnnotation,
+  type AnnotationKind,
   type ClearanceMargin,
   type VesselMotion,
   type RestrictionZone,
@@ -73,6 +75,7 @@ export interface DeckConfig {
   loadZones?: LoadZone[] // rated deck zones with their own max load (t/m²) — soft warning only
   lashingPoints?: LashingPoint[] // pins, optionally attached to a placement for a securing-force check
   powerSockets?: PowerSocket[] // visual-only markers showing where deck electrical outlets are
+  annotations?: DeckAnnotation[] // free-text leader notes / bow-stern-port-starboard labels — purely documentation, never read by any calculation
   restrictionZones?: RestrictionZone[] // hard-blocked obstacle zones (crane, bulwark, etc.) — never placeable
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
   backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
@@ -159,6 +162,14 @@ interface CalculatorState {
   stampRotated: boolean
   placingLashingPoint: boolean
   placingPowerSocket: boolean
+  // Armed "place an annotation" mode — same mutual-exclusion web as the
+  // other armed-placement modes. `kind` decides the default text a new
+  // annotation is pre-filled with (see AnnotationKind); `withLeader` picks
+  // between a plain floating note (one click) and an AutoCAD-style leader
+  // note (two clicks: first the point it points AT, then where the text
+  // sits) — the in-progress first-click point is local component state in
+  // DeckVisualization, same split as pendingLashingCorner.
+  placingAnnotation: { kind: AnnotationKind; withLeader: boolean } | null
   // Armed "draw a custom cargo outline" mode — mutually exclusive with
   // activeStampId/pendingPresetStamp/placingLashingPoint (arming any of the
   // four disarms the other three). The in-progress point list itself is
@@ -242,6 +253,14 @@ interface CalculatorState {
   updatePowerSocket: (id: string, patch: Partial<PowerSocket>) => void
   removePowerSocket: (id: string) => void
   setPlacingPowerSocket: (v: boolean) => void
+
+  // Free-text annotations (bow/stern/port/starboard labels + AutoCAD-style
+  // leader notes) — purely visual, never affect collision/placement or any
+  // calculation.
+  addAnnotation: (a: Omit<DeckAnnotation, 'id'>) => void
+  updateAnnotation: (id: string, patch: Partial<DeckAnnotation>) => void
+  removeAnnotation: (id: string) => void
+  setPlacingAnnotation: (v: { kind: AnnotationKind; withLeader: boolean } | null) => void
   setPlacingLashingPoint: (v: boolean) => void
   setDrawingCustomShape: (v: boolean) => void
   setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
@@ -682,6 +701,7 @@ export const useCalculator = create<CalculatorState>()(
   stampRotated: false,
   placingLashingPoint: false,
   placingPowerSocket: false,
+  placingAnnotation: null,
   drawingCustomShape: false,
   pendingCustomShape: null,
   editingDeckOutline: false,
@@ -879,6 +899,13 @@ export const useCalculator = create<CalculatorState>()(
             x: conv(p.x),
             y: conv(p.y),
           })),
+          annotations: s.deck.annotations?.map((a) => ({
+            ...a,
+            x: conv(a.x),
+            y: conv(a.y),
+            leaderX: a.leaderX === undefined ? undefined : conv(a.leaderX),
+            leaderY: a.leaderY === undefined ? undefined : conv(a.leaderY),
+          })),
           outline: s.deck.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
         },
         items: s.items.map((it) => ({
@@ -1069,6 +1096,7 @@ export const useCalculator = create<CalculatorState>()(
       editingDeckOutline: false,
       placingLashingPoint: false,
       placingPowerSocket: false,
+      placingAnnotation: null,
       drawingRestrictionShape: null,
       drawingRestrictionZoneFreeform: false,
     }),
@@ -1080,6 +1108,7 @@ export const useCalculator = create<CalculatorState>()(
       editingDeckOutline: false,
       placingLashingPoint: false,
       placingPowerSocket: false,
+      placingAnnotation: null,
       drawingRestrictionShape: null,
       drawingRestrictionZoneFreeform: false,
     }),
@@ -1312,6 +1341,27 @@ export const useCalculator = create<CalculatorState>()(
         powerSockets: (s.deck.powerSockets ?? []).filter((p) => p.id !== id),
       },
     })),
+  addAnnotation: (a) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        annotations: [...(s.deck.annotations ?? []), { id: uuid(), ...a }],
+      },
+    })),
+  updateAnnotation: (id, patch) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        annotations: (s.deck.annotations ?? []).map((a) => (a.id === id ? { ...a, ...patch } : a)),
+      },
+    })),
+  removeAnnotation: (id) =>
+    set((s) => ({
+      deck: {
+        ...s.deck,
+        annotations: (s.deck.annotations ?? []).filter((a) => a.id !== id),
+      },
+    })),
   clearLashingPointsFor: (placementId) =>
     set((s) => ({
       deck: {
@@ -1359,18 +1409,23 @@ export const useCalculator = create<CalculatorState>()(
   setPlacingLashingPoint: (v) =>
     set({
       placingLashingPoint: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setPlacingPowerSocket: (v) =>
     set({
       placingPowerSocket: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+    }),
+  setPlacingAnnotation: (v) =>
+    set({
+      placingAnnotation: v,
+      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingPowerSocket: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
@@ -1378,7 +1433,7 @@ export const useCalculator = create<CalculatorState>()(
     set({
       editingDeckOutline: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setDrawingRestrictionShape: (shape) =>
@@ -1386,7 +1441,7 @@ export const useCalculator = create<CalculatorState>()(
       drawingRestrictionShape: shape,
       drawingRestrictionZoneFreeform: false,
       ...(shape
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, editingDeckOutline: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
         : {}),
     }),
   setDrawingRestrictionZoneFreeform: (v) =>
@@ -1394,7 +1449,7 @@ export const useCalculator = create<CalculatorState>()(
       drawingRestrictionZoneFreeform: v,
       drawingRestrictionShape: null,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, drawingCustomShape: false, editingDeckOutline: false }
+        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
         : {}),
     }),
   addRestrictionZone: (zone) =>
