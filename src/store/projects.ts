@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin } from '@/lib/packing'
+import type { PipeNestSpec, DunnageSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
 import { DEMO_DECK, createDemoItems } from './calculator'
@@ -133,7 +134,7 @@ function toOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom'])
+const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom', 'pipe-nest'])
 function normalizeShape(value: unknown): CargoShape | undefined {
   return typeof value === 'string' && VALID_SHAPES.has(value as CargoShape) ? (value as CargoShape) : undefined
 }
@@ -323,6 +324,61 @@ function normalizeStabilityOverride(value: unknown): StabilityOverride | undefin
   const lcgOffsetM = typeof o.lcgOffsetM === 'number' && Number.isFinite(o.lcgOffsetM) ? o.lcgOffsetM : undefined
   if (vcgAboveDeckM === undefined && tcgOffsetM === undefined && lcgOffsetM === undefined) return undefined
   return { vcgAboveDeckM, tcgOffsetM, lcgOffsetM }
+}
+
+function normalizeDunnageSpec(value: unknown): DunnageSpec | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const d = value as Record<string, unknown>
+  const bearerThicknessM = typeof d.bearerThicknessM === 'number' && Number.isFinite(d.bearerThicknessM) ? d.bearerThicknessM : undefined
+  const bearerCount = typeof d.bearerCount === 'number' && Number.isFinite(d.bearerCount) ? d.bearerCount : undefined
+  const interTierThicknessM = typeof d.interTierThicknessM === 'number' && Number.isFinite(d.interTierThicknessM) ? d.interTierThicknessM : undefined
+  const maxTierSpacingM = typeof d.maxTierSpacingM === 'number' && Number.isFinite(d.maxTierSpacingM) ? d.maxTierSpacingM : undefined
+  if (bearerThicknessM === undefined || bearerCount === undefined || interTierThicknessM === undefined || maxTierSpacingM === undefined) return undefined
+  return { bearerThicknessM, bearerCount, interTierThicknessM, maxTierSpacingM }
+}
+
+// A pipe штабель's computed geometry (src/lib/pipeNest.ts) — stored, not
+// recomputed on load, so a saved plan reproduces byte-identically even if
+// the geometry function is later refined. Dropped entirely (not
+// reconstructed from partial data) if any required numeric field is
+// missing/corrupt — a half-formed nest with no rowCounts is worse than no
+// nest at all, since it would silently fall back to the flat-column VCG
+// default while still claiming shape 'pipe-nest'.
+function normalizeNestSpec(value: unknown): PipeNestSpec | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const n = value as Record<string, unknown>
+  const pipeOuterDiameterM = typeof n.pipeOuterDiameterM === 'number' && Number.isFinite(n.pipeOuterDiameterM) ? n.pipeOuterDiameterM : undefined
+  const pipeLengthM = typeof n.pipeLengthM === 'number' && Number.isFinite(n.pipeLengthM) ? n.pipeLengthM : undefined
+  const pipeWeightKg = typeof n.pipeWeightKg === 'number' && Number.isFinite(n.pipeWeightKg) ? n.pipeWeightKg : undefined
+  const usableWidthM = typeof n.usableWidthM === 'number' && Number.isFinite(n.usableWidthM) ? n.usableWidthM : undefined
+  const heightM = typeof n.heightM === 'number' && Number.isFinite(n.heightM) ? n.heightM : undefined
+  const vcgAboveDeckM = typeof n.vcgAboveDeckM === 'number' && Number.isFinite(n.vcgAboveDeckM) ? n.vcgAboveDeckM : undefined
+  const pipeCount = typeof n.pipeCount === 'number' && Number.isFinite(n.pipeCount) ? n.pipeCount : undefined
+  const requestedPipeCount = typeof n.requestedPipeCount === 'number' && Number.isFinite(n.requestedPipeCount) ? n.requestedPipeCount : undefined
+  const interTierLayers = typeof n.interTierLayers === 'number' && Number.isFinite(n.interTierLayers) ? n.interTierLayers : undefined
+  const rowCounts = Array.isArray(n.rowCounts) && n.rowCounts.every((r) => typeof r === 'number' && Number.isFinite(r))
+    ? (n.rowCounts as number[])
+    : undefined
+  if (
+    pipeOuterDiameterM === undefined || pipeLengthM === undefined || pipeWeightKg === undefined ||
+    usableWidthM === undefined || heightM === undefined || vcgAboveDeckM === undefined ||
+    pipeCount === undefined || requestedPipeCount === undefined || interTierLayers === undefined || rowCounts === undefined
+  ) return undefined
+  return {
+    pipeOuterDiameterM,
+    pipeLengthM,
+    pipeWeightKg,
+    usableWidthM,
+    rowCounts,
+    pipeCount,
+    heightM,
+    vcgAboveDeckM,
+    dunnage: normalizeDunnageSpec(n.dunnage),
+    interTierLayers,
+    limited: typeof n.limited === 'boolean' ? n.limited : false,
+    requestedPipeCount,
+    sourceNote: toOptionalString(n.sourceNote),
+  }
 }
 
 function normalizeClearanceMargin(value: unknown): ClearanceMargin | undefined {
@@ -555,8 +611,10 @@ function normalizeProject(p: Partial<Project>): Project {
           shape: normalizeShape(it.shape),
           outline: normalizeOutline(it.outline),
           maxLayers: typeof it.maxLayers === 'number' && Number.isFinite(it.maxLayers) && it.maxLayers > 0 ? Math.floor(it.maxLayers) : undefined,
+          maxStackHeightM: typeof it.maxStackHeightM === 'number' && Number.isFinite(it.maxStackHeightM) && it.maxStackHeightM > 0 ? it.maxStackHeightM : undefined,
           contents: toOptionalString(it.contents),
           stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
+          nest: normalizeNestSpec((it as { nest?: unknown }).nest),
         }))
       : [],
     manualPlacements: normalizeManualPlacements(p.manualPlacements),

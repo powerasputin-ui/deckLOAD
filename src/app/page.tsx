@@ -610,7 +610,11 @@ export default function Home() {
         unit: 'm',
         gap: 0.1,
         boardOffset: 0.2,
-        clearance: 0,
+        // Seed the deck-wide stack-height budget from the vessel's own
+        // approved limit (e.g. 3.0 m for a pipe stack, ДВТК п. 2.1.2) — the
+        // number was already shown in the picker as a promise, so applying
+        // the template must actually make it bind, not just display it.
+        clearance: tpl.limits?.maxStackHeightM ?? 0,
         vessel: tpl.vessel,
         shipFrame: tpl.shipFrame,
         deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
@@ -628,7 +632,12 @@ export default function Home() {
       showCargoContents: true,
     })
     toast.success(`Судно «${tpl.label}» загружено`)
-    toast.info(tpl.note, { duration: 12000 })
+    toast.info(
+      tpl.limits?.maxStackHeightM
+        ? `${tpl.note} Максимальная высота штабеля палубы установлена в ${tpl.limits.maxStackHeightM} м.`
+        : tpl.note,
+      { duration: 12000 }
+    )
   }
 
   // Shared by handleRotatePinned/handleRotateManual below — these two were

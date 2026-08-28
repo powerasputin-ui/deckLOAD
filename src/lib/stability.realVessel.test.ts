@@ -18,13 +18,17 @@ import {
   computeStabilityResult,
   computeFreeSurfaceCorrection,
   checkIMOCriteria,
+  buildCargoWeightMoments,
+  computeItemVCG,
   G_METACENTRIC_MIN_SAFE,
   type VesselStabilityData,
   type WeightMoment,
   type GZCurveResult,
   type StabilityResult,
+  type DeckShipFrame,
 } from './stability'
 import { VESSEL_TEMPLATES } from './vesselTemplates'
+import { computePipeNest } from './pipeNest'
 
 const kuznetsov = VESSEL_TEMPLATES.find((t) => t.id === 'aleksey-kuznetsov')!
 
@@ -126,6 +130,106 @@ describe('real approved loading calculation — А. Кузнецов, LC51 Max d
     // the real per-vessel minimum, interpolated from the ship's own
     // Min GM table in Final Stability Calculation No. 4749-152-006.
     expect(result.GM_fluid).toBeGreaterThan(1.22)
+  })
+})
+
+describe('stacked deck cargo contributes its FULL weight to the loading condition', () => {
+  // PlacedItem.weight is the PER-UNIT weight — packing.ts writes
+  // `weight: item.weight` while counting units in `layers`/`stackedCount`.
+  // Every other consumer in the app multiplies the two (page.tsx,
+  // StatsPanel, DeckVisualization, packing.ts's own breakdown builder, and
+  // packing.invariants.test.ts). buildCargoWeightMoments did not, so a
+  // multi-tier stack contributed a single unit's weight to displacement,
+  // KG, list and trim — understating the load, which errs UNSAFE.
+  const frame: DeckShipFrame = {
+    originOffsetFromCenterlineM: 0,
+    originOffsetFromMidshipsM: 0,
+    heightAboveBaselineM: 0,
+  }
+
+  it('counts a 3-tier stack of 20 t units as 60 t, not 20 t', () => {
+    const moments = buildCargoWeightMoments(
+      [{ x: 0, y: 0, width: 2, length: 2, height: 1, layers: 3, weight: 20_000 }],
+      10,
+      10,
+      frame,
+      true
+    )
+    expect(moments).toHaveLength(1)
+    expect(moments[0].weightKg).toBe(60_000)
+  })
+
+  it('leaves a single-tier placement untouched', () => {
+    const moments = buildCargoWeightMoments(
+      [{ x: 0, y: 0, width: 2, length: 2, height: 1, layers: 1, weight: 20_000 }],
+      10,
+      10,
+      frame,
+      true
+    )
+    expect(moments[0].weightKg).toBe(20_000)
+  })
+
+  it('carries the stacked weight through into displacement', () => {
+    const lightship: WeightMoment = { weightKg: 1_000_000, lcgM: 0, tcgM: 0, vcgM: 5 }
+    const cargo = buildCargoWeightMoments(
+      [{ x: 0, y: 0, width: 2, length: 2, height: 1, layers: 4, weight: 50_000 }],
+      10,
+      10,
+      frame,
+      true
+    )
+    const loading = computeLoadingCondition(lightship, cargo)
+    // 1000 t lightship + 4 tiers x 50 t = 1200 t, not 1050 t.
+    expect(loading.totalDisplacementKg).toBe(1_200_000)
+  })
+})
+
+describe('a real pipe штабель feeds its true nested VCG into the stability chain', () => {
+  // The Ø813 НУБП-72 stack from ДВТК Таблица 3 / the operator's own
+  // spreadsheet: 33 pipes, 17+16 rows, on the real 16.9 m usable width.
+  const nest = computePipeNest({
+    pipeOuterDiameterM: 0.957,
+    pipeLengthM: 12.38,
+    pipeWeightKg: 15_000,
+    usableWidthM: 16.9,
+    pipeCount: 33,
+  })
+  const frame: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
+
+  it('computeItemVCG uses the nest centroid (≈1.03 m), not the flat height*layers/2 default (≈0.97 m)', () => {
+    const vcg = computeItemVCG({ height: nest.heightM, layers: 1, nestVcgAboveDeckM: nest.vcgAboveDeckM })
+    expect(vcg).toBeCloseTo(nest.vcgAboveDeckM, 3)
+    // Prove it actually diverges from the naive default (a same-ballpark
+    // number wouldn't prove the override path is even wired up).
+    const naiveDefault = nest.heightM / 2
+    expect(Math.abs(vcg - naiveDefault)).toBeGreaterThan(0.05)
+  })
+
+  it('an explicit stabilityOverride still wins over the nest VCG', () => {
+    const vcg = computeItemVCG({
+      height: nest.heightM,
+      layers: 1,
+      nestVcgAboveDeckM: nest.vcgAboveDeckM,
+      stabilityOverride: { vcgAboveDeckM: 2.5 },
+    })
+    expect(vcg).toBe(2.5)
+  })
+
+  it('carries the real nest weight (33 x 15 t) and VCG through buildCargoWeightMoments', () => {
+    const stackWeightKg = nest.pipeCount * nest.pipeWeightKg
+    const moments = buildCargoWeightMoments(
+      [{ x: 0, y: 0, width: nest.usableWidthM, length: nest.pipeLengthM, height: nest.heightM, layers: 1, weight: stackWeightKg, nestVcgAboveDeckM: nest.vcgAboveDeckM }],
+      nest.usableWidthM,
+      nest.pipeLengthM,
+      frame,
+      true
+    )
+    expect(moments[0].weightKg).toBe(495_000) // 33 x 15,000 kg
+    expect(moments[0].vcgM).toBeCloseTo(nest.vcgAboveDeckM, 3)
+    // The dangerous N-x-diameter model this replaces would have put VCG at
+    // (0.957 x 33) / 2 ~= 15.8 m — pin that the real number stays far from it.
+    expect(moments[0].vcgM).toBeLessThan(2)
   })
 })
 

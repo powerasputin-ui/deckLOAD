@@ -124,6 +124,25 @@ describe('maxLayersFor', () => {
   it('still returns 1 with no clearance AND no explicit maxLayers', () => {
     expect(maxLayersFor({ height: 1 }, 0)).toBe(1)
   })
+
+  // maxStackHeightM — a per-ITEM metre-valued ceiling (e.g. "pipes of this
+  // type cap at 3.0 m"), independent of the deck-wide clearance setting.
+  it('applies the item-specific maxStackHeightM when clearance is unset (0)', () => {
+    expect(maxLayersFor({ height: 1, maxStackHeightM: 3 }, 0)).toBe(3)
+  })
+
+  it('takes the tighter of clearance and maxStackHeightM when both are set', () => {
+    expect(maxLayersFor({ height: 1, maxStackHeightM: 3 }, 5)).toBe(3)
+    expect(maxLayersFor({ height: 1, maxStackHeightM: 5 }, 3)).toBe(3)
+  })
+
+  it('an explicit maxLayers still wins outright when it is the tightest constraint', () => {
+    expect(maxLayersFor({ height: 1, maxStackHeightM: 3, maxLayers: 2 }, 5)).toBe(2)
+  })
+
+  it('ignores maxStackHeightM <= 0 as no override, same as maxLayers', () => {
+    expect(maxLayersFor({ height: 1.5, maxStackHeightM: 0 }, 4.5)).toBe(3)
+  })
 })
 
 describe('packDeck', () => {

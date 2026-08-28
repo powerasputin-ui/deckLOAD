@@ -48,6 +48,17 @@ export interface VesselParticulars {
   // constant everywhere the criteria and UI are checked.
   // undefined = not known; the generic reference is used and labelled as such.
   minGM?: number
+  // Windage ("парусность") — the lateral area the wind acts on, and the
+  // height of its centre above the waterline. Together with a navigation
+  // area's wind pressure they give the wind heeling arm used by the
+  // РД 31.11.21.23-96 cargo non-shift criterion. Both come from the
+  // vessel's own approved calculation; neither is derivable from anything
+  // else the app knows, so undefined means "not available", never zero.
+  windageAreaM2?: number
+  windageLeverM?: number
+  // Block coefficient Cb — needed for the roll-amplitude multiplier X2 in
+  // РД 31.11.21.16-2003 Приложение 5, табл. 5.3.
+  blockCoefficient?: number
 }
 
 // A generic "everything that is not lightship and not deck cargo" weight —
@@ -129,13 +140,20 @@ export const DEFAULT_SHIP_FRAME: DeckShipFrame = {
 // ---- Cargo VCG ----
 
 // Default: half the stacked height above the deck surface — a conservative
-// flat-centroid assumption. An explicit override always wins.
+// flat-centroid assumption, correct for a plain column of identical units.
+// A real nested pipe штабель (src/lib/pipeNest.ts) is NOT a uniform
+// column — its true weighted centroid sits well below half the stack
+// height, since more pipes sit in the lower, wider rows — so a nest's own
+// computed VCG (`nestVcgAboveDeckM`) takes precedence over this default
+// whenever it's present. An explicit user override always wins over both.
 export function computeItemVCG(p: {
   height: number
   layers: number
   stabilityOverride?: StabilityOverride
+  nestVcgAboveDeckM?: number
 }): number {
   if (p.stabilityOverride?.vcgAboveDeckM !== undefined) return p.stabilityOverride.vcgAboveDeckM
+  if (p.nestVcgAboveDeckM !== undefined) return p.nestVcgAboveDeckM
   const layers = Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1
   const height = Number.isFinite(p.height) && p.height > 0 ? p.height : 0
   return (height * layers) / 2
@@ -224,6 +242,7 @@ export function buildCargoWeightMoments(
     rotated?: boolean
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
+    nestVcgAboveDeckM?: number
   }[],
   deckWidth: number,
   deckLength: number,
@@ -248,7 +267,15 @@ export function buildCargoWeightMoments(
       // move. An offset stays correct relative to wherever the item is now.
       const tcgM = tcgAuto + (p.stabilityOverride?.tcgOffsetM ?? 0)
       const lcgM = lcgAuto + (p.stabilityOverride?.lcgOffsetM ?? 0)
-      return { weightKg: p.weight ?? 0, vcgM, tcgM, lcgM }
+      // `weight` on a placement is the PER-UNIT weight and `layers` is how
+      // many units share this one footprint (packing.ts writes
+      // `weight: item.weight` alongside `layers: unitsInStack`). Every other
+      // consumer in the app multiplies the two — page.tsx, StatsPanel,
+      // DeckVisualization, packing.ts's own breakdown builder. This one did
+      // not, so a multi-tier stack contributed a single unit's weight to
+      // displacement, KG, list and trim: the load came out UNDERstated,
+      // which makes the vessel look more stable than it is.
+      return { weightKg: (p.weight ?? 0) * Math.max(1, p.layers ?? 1), vcgM, tcgM, lcgM }
     })
 }
 
@@ -274,6 +301,7 @@ export function buildLoadingConditionFromPlacements(
     rotated?: boolean
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
+    nestVcgAboveDeckM?: number
   }[]
 ): LoadingCondition {
   const lightship: WeightMoment = {

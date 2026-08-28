@@ -3,6 +3,8 @@
 // Best Short Side Fit (BSSF) heuristic and optional 90deg rotation.
 // Reference: Jukka Jylänki - "A Thousand Ways to Pack the Bin".
 
+import type { PipeNestSpec } from './pipeNest'
+
 export interface Rect {
   x: number
   y: number
@@ -18,7 +20,13 @@ export interface Rect {
 // collidesPrecisely() for direct manual placement/drag/rotate, while the
 // auto-packer still only ever reserves its bounding box, same as every
 // other shape.
-export type CargoShape = 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond' | 'custom'
+// 'pipe-nest' is a render hint only, same rule as every other shape here:
+// the item's width/length/height/weight already describe the WHOLE
+// штабель (a real nest of round pipes spanning the deck's usable width —
+// see src/lib/pipeNest.ts), so packing/collision needs no special case at
+// all, exactly like 'box'. Only the 2D/3D renderers and computeItemVCG (via
+// CargoItem.nest.vcgAboveDeckM) need to know it's there.
+export type CargoShape = 'box' | 'cylinder' | 'circle' | 'oval' | 'triangle' | 'diamond' | 'custom' | 'pipe-nest'
 
 export interface CargoItem {
   id: string
@@ -43,6 +51,11 @@ export interface CargoItem {
   // combined with the clearance-height ceiling via maxLayersFor() (whichever
   // is more restrictive wins). Unset/0 = no override, height ceiling only.
   maxLayers?: number
+  // A stack-height ceiling in METRES for THIS cargo type specifically — a
+  // fact about the cargo/stowage method (e.g. "3,0 м" for a pipe stack per
+  // ДВТК п. 2.1.2), independent of the deck-wide `clearance` setting. See
+  // maxLayersFor() for how the two combine. Unset = no item-specific cap.
+  maxStackHeightM?: number
   // Free-text cargo contents, shown as a hover tooltip on placed instances
   // (gated by the global "Содержимое груза" setting) — never affects packing.
   contents?: string
@@ -50,6 +63,13 @@ export interface CargoItem {
   // estimate (half the stacked height above the deck) — see
   // computeItemVCG() in src/lib/stability.ts. Never affects packing/collision.
   stabilityOverride?: StabilityOverride
+  // Present when shape === 'pipe-nest': this item's width/length/height/
+  // weight already describe the WHOLE штабель the nest spec was computed
+  // for (see src/lib/pipeNest.ts's own doc comment) — quantity counts how
+  // many such stacks there are. Packing/collision reads none of this; only
+  // computeItemVCG (via the copy on PlacedItem, see nestVcgByItemId below)
+  // and the 2D/3D renderers need it.
+  nest?: PipeNestSpec
 }
 
 // Overrides the stability calculator's geometric default for a cargo unit's
@@ -483,6 +503,10 @@ export interface PlacedItem {
   contents?: string // see CargoItem.contents — resolved fresh from the source item, shown as a hover tooltip
   locked?: boolean // see PinnedPlacement.locked — only ever set on pin-sourced placements, never on freshly algorithm-placed ones
   stabilityOverride?: StabilityOverride // see CargoItem.stabilityOverride — resolved fresh from the source item
+  // See CargoItem.nest — resolved fresh from the source item, same pattern
+  // as stabilityOverride above. Only the one number computeItemVCG actually
+  // needs travels this far; the rest of PipeNestSpec stays on the item.
+  nestVcgAboveDeckM?: number
 }
 
 export interface UnplacedItem {
@@ -888,14 +912,28 @@ export interface PinnedPlacement {
 // signal than that blanket default, so it wins outright when clearance is
 // unset — previously it was silently intersected down to 1 regardless of
 // what the user typed, which read as "the Ярусов field does nothing."
-export function maxLayersFor(item: { height: number; maxLayers?: number }, clearance: number): number {
+// A per-item stack-height ceiling in METRES — e.g. "трубы этого типа
+// нельзя штабелировать выше 3,0 м" (ДВТК п. 2.1.2), which is a fact about
+// the cargo/method, not about the deck. Deliberately separate from the
+// deck-wide `clearance`: that field is one number for the WHOLE deck, so it
+// cannot express "this pipe type is capped at 3 m but that container isn't"
+// — previously the only way to get a 3 m cap at all was to set clearance
+// itself, which then silently capped every other cargo type too.
+export function maxLayersFor(
+  item: { height: number; maxLayers?: number; maxStackHeightM?: number },
+  clearance: number
+): number {
   const h = toFinite(item.height, 0)
   const c = toFinite(clearance, 0)
+  const itemCapM = toFinite(item.maxStackHeightM ?? 0, 0)
   const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : undefined
-  if (c <= 0) return userCap ?? 1
+  // Whichever height budget is actually configured (and tighter) wins; a
+  // budget of 0 means "not configured", not "zero metres allowed".
+  const budget = c > 0 && itemCapM > 0 ? Math.min(c, itemCapM) : c > 0 ? c : itemCapM > 0 ? itemCapM : 0
+  if (budget <= 0) return userCap ?? 1
   let heightCap = 1
   if (h > 0) {
-    const raw = c / h
+    const raw = budget / h
     // A tiny epsilon prevents values like 1.9999999999999998 from losing a layer.
     if (Number.isFinite(raw)) heightCap = Math.max(1, Math.floor(raw + 1e-9))
   }
@@ -953,6 +991,13 @@ export function packDeck(
   const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
   const contentsByItemId = new Map(items.map((it) => [it.id, it.contents]))
   const stabilityOverrideByItemId = new Map(items.map((it) => [it.id, it.stabilityOverride]))
+  // A 'pipe-nest' item's width/length/height/weight already describe the
+  // WHOLE штабель (see PipeNestSpec's own doc comment) — nothing here needs
+  // to know that. The only thing packing can't derive on its own is the
+  // real nested-geometry VCG (vs the flat half-height default), so that one
+  // number is looked up by id and copied onto the placement, same pattern
+  // as every other per-item extra above.
+  const nestVcgByItemId = new Map(items.map((it) => [it.id, it.nest?.vcgAboveDeckM]))
   const requestedCount = items.reduce((s, it) => s + it.quantity, 0)
   const result: PackingResult = {
     placed: [],
@@ -1176,6 +1221,7 @@ export function packDeck(
       clearanceMargin: pin.clearanceMargin,
       locked: pin.locked,
       stabilityOverride: stabilityOverrideByItemId.get(pin.itemId),
+      nestVcgAboveDeckM: nestVcgByItemId.get(pin.itemId),
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
@@ -1369,6 +1415,7 @@ export function packDeck(
       outline: item.outline,
       contents: item.contents,
       stabilityOverride: item.stabilityOverride,
+      nestVcgAboveDeckM: item.nest?.vcgAboveDeckM,
     })
     result.usedArea += visW * visL
     result.placedCount += unitsInStack
@@ -2659,10 +2706,10 @@ export function packingResultFromManual(
   // own height, only the source item does; without this every manual
   // placement reports height 0, which is invisible/flat in any 3D view even
   // though the 2D top-down view never needed it).
-  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number; stabilityOverride?: StabilityOverride }>()
+  const itemMap = new Map<string, { quantity: number; height: number; shape?: CargoShape; outline?: { x: number; y: number }[]; contents?: string; maxLayers?: number; stabilityOverride?: StabilityOverride; nestVcgAboveDeckM?: number }>()
   if (items) {
     for (const it of items) {
-      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers, stabilityOverride: it.stabilityOverride })
+      itemMap.set(it.id, { quantity: it.quantity, height: it.height ?? 0, shape: it.shape, outline: it.outline, contents: it.contents, maxLayers: it.maxLayers, stabilityOverride: it.stabilityOverride, nestVcgAboveDeckM: it.nest?.vcgAboveDeckM })
     }
   }
 
@@ -2685,6 +2732,7 @@ export function packingResultFromManual(
     contents: itemMap.get(p.itemId)?.contents,
     clearanceMargin: p.clearanceMargin,
     stabilityOverride: itemMap.get(p.itemId)?.stabilityOverride,
+    nestVcgAboveDeckM: itemMap.get(p.itemId)?.nestVcgAboveDeckM,
   }))
 
   // Breakdown by itemId

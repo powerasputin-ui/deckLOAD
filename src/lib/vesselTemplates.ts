@@ -62,14 +62,19 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
   {
     id: 'aleksey-kuznetsov',
     label: 'Алексей Кузнецов (ПБУ, IMO 9692648)',
-    // Real total/usable cargo-deck AREA (860/830 m²) is now confirmed by TWO
-    // independent real sources (the ДВТК project document and FEMCO's own
-    // technical specification sheet, both giving 860/830 m² exactly), but
-    // neither gives a published or GA-drawing exact width×length split —
-    // estimated as width ≈ 17 m (typical clear deck width for this beam
-    // class, main-deck breadth 20 m minus bulwark/walkway) and
-    // length = 830/17 ≈ 49 m. Flagged to the user in `note`.
-    deck: { width: 17, length: 49 },
+    // Width is REAL, read off the document's own worked deck-pressure check
+    // (п. 2.1.7): a 756 t stack of ТШ406,4 pipes is laid on
+    // "S = 16,9 · 12,37 = 209 м²", where 12.37 m is the pipe length and the
+    // pipes are stowed "между внутренними бортовыми стенками" — so 16.9 m is
+    // the clear width between the bulwarks. It cross-checks twice over:
+    // 16.9 / 0.957 = 17 pipes per row for Ø813 НУБП-72, and the operator's
+    // own spreadsheet puts 33 pipes in that stack — exactly 17 + 16, a
+    // two-row nest spanning the full width.
+    //
+    // Length remains an ESTIMATE: 830 m² effective area / 16.9 m ≈ 49.1 m.
+    // Total/usable deck AREA (860/830 m²) is itself confirmed by two
+    // independent sources (ДВТК and the FEMCO specification sheet).
+    deck: { width: 16.9, length: 49.1 },
     vessel: {
       particulars: {
         name: 'Алексей Кузнецов',
@@ -99,6 +104,13 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
         // reference, so without this the app would show a comfortable green
         // PASS at, say, GM = 1.0 m where the real approved criterion FAILS.
         minGM: 1.22,
+        // Real — Приложение Г, п. Г.3.3: "Av = 854,4 м² - парусность" and
+        // "zv = 10,347 м – плечо парусности, измеренное от центра
+        // парусности до площади действующей ватерлинии".
+        windageAreaM2: 854.4,
+        windageLeverM: 10.347,
+        // Real — FEMCO technical specification, "Block Coefficient 0.814".
+        blockCoefficient: 0.814,
       },
       hydrostatics: {
         points: [
@@ -135,8 +147,9 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
       reeferSocketCount: 8, // реестр: точек подключения рефконтейнеров
     },
     note:
-      'ОЦЕНКА: размеры палубы 17×49 м и её продольное положение на корпусе. Реальна только площадь (860/830 м²), ' +
-      'подтверждённая двумя независимыми источниками (ДВТК и FEMCO); ни один не даёт GA-чертёж с разбивкой ширина×длина. ' +
+      'ОЦЕНКА: длина палубы 49,1 м (площадь 830 м² ÷ ширину) и продольное положение палубы на корпусе. ' +
+      'Ширина 16,9 м — РЕАЛЬНАЯ, из проверочного расчёта давления (п. 2.1.7: штабель 756 т на S = 16,9 × 12,37 = 209 м², ' +
+      'груз уложен между внутренними бортовыми стенками); сходится с укладкой 17+16 труб Ø813 НУБП-72 в штабеле. ' +
       'КОНФЛИКТ ИСТОЧНИКОВ: допустимая нагрузка на палубу — 10 т/м² по FEMCO против 5,0 т/м² в рабочем примере ДВТК. ' +
       'Приложение НЕ выбирает за вас: задавая зону нагрузки, поставьте тот лимит, который актуален для вашей операции. ' +
       'НЕТ ДАННЫХ: кросс-кривые KN отсутствуют в обоих документах — полная кривая GZ и критерии IMO Part A недоступны, ' +
