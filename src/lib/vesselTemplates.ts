@@ -190,39 +190,34 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
     //
     // Real, printed on the drawing: Length o.a. 92.95 m, LBP 86.60 m,
     // Breadth 19.70 m, Depth maindeck 7.70 m. Cargo deck area is labelled
-    // directly: "LxB=51mx16m = 815 m2".
+    // directly: "LxB=51mx16m = 815 m2" — used here AS-IS for both
+    // deck.width and deck.length; no outline needed, the cargo deck really
+    // is a plain rectangle (see correction note below).
     //
-    // deck.length is NOT the printed 51 m — that figure describes the deck's
-    // full-WIDTH run only (stern to about frame 80). Past that, the
-    // accommodation block (locker room/coffee shop/ROV workshop/ROV control
-    // room) eats into the starboard side, and only a narrower port-side
-    // strip continues to about frame 103. Modelling that narrower strip
-    // (deck.outline below) means the deck's own bounding length has to be
-    // the FULL extent (~62 m), not just the full-width run — outline points
-    // beyond deck.length would be silently clipped by every packing/
-    // exclusion computation, which trusts width/length as the hard bound.
-    // 815 m^2 most likely nets the full block's own internal cutouts (see
-    // restrictionZones below) against the extra narrow-strip area — it is
-    // NOT expected to equal this polygon's own area exactly.
+    // CORRECTED (previous version of this template used deck.length=62 and
+    // a narrowing outline — that was wrong, not a "wrong deck" mistake but a
+    // bad frame-spacing guess). The first pass assumed ~0.6 m/frame without
+    // checking it against any printed number. A pixel-accurate re-check of
+    // the actual PDF render (numpy analysis of the frame-ruler tick spacing
+    // and the yellow cargo-deck fill) gives a consistent ~94.12 px/m in BOTH
+    // axes, confirmed two independent ways: the deck's own pixel width
+    // against the printed 16 m, and the pixel length of the full-width run
+    // against the printed "51 m" — i.e. the real spacing is ~0.729 m/frame,
+    // not 0.6. Under the wrong 0.6 figure the deck's full-width run looked
+    // like it ended at frame 80 (48 m) with a narrow strip continuing to
+    // frame 103 (62 m); under the correct spacing the full-width run ends
+    // EXACTLY at frame 70 (=51 m, matching the printed figure almost
+    // exactly: 51x16=816 m^2 vs printed 815 m^2). What's actually past frame
+    // 70 is not a narrow continuation of open deck at all — it's enclosed
+    // superstructure (ROV-Workshop, EL-Workshop, ROV-Control Room, Coffee
+    // Shop, Locker room, Laundry), with both "net opening" cutouts and an
+    // unlabelled "FLUSH HATCH" sitting inside THAT block, not on the cargo
+    // deck. So the honest model is the plain printed rectangle, full stop —
+    // no outline, and the two net-opening restriction zones are dropped
+    // (they were never really on this deck to begin with).
     deck: {
       width: 16, // real, printed
-      length: 62, // digitized total extent (see comment above) — NOT the printed "51 m" figure
-      // Deck-local (0,0) = port/stern corner (frame 0 sits at the stern per
-      // the drawing's own "Removable Stern Section" label; frame numbers
-      // grow toward the bow, confirmed against the bow shape on the plan).
-      // Digitized by eye against the drawing's own printed frame ruler
-      // (0..145) using an ESTIMATED ~0.6 m/frame spacing (145 frames x
-      // 0.6 = 87 m ~= the real 86.60 m LBP — consistent, but no spacing
-      // figure is printed as text anywhere on the drawing, so this stays an
-      // estimate, same status as the Kuznetsov шпация gap above).
-      outline: [
-        { x: 0, y: 0 },
-        { x: 16, y: 0 },
-        { x: 16, y: 48 }, // ~frame 80 — full-width run ends, accommodation block starts eating the starboard side
-        { x: 7, y: 48 }, // narrows to a ~7 m port-side strip
-        { x: 7, y: 62 }, // ~frame 103 — cargo deck ends at the engine casing/superstructure
-        { x: 0, y: 62 },
-      ],
+      length: 51, // real, printed (LxB=51x16=815 m^2)
     },
     // No stability booklet on hand for this vessel — a GA drawing carries
     // none of lightship weight/KG/LCG, hydrostatics, GMmin, or KN curves.
@@ -235,51 +230,39 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
     restrictionZones: [
       {
         id: 'og-hatch',
-        // No printed dimensions for this one (unlike the two net openings
-        // below) — position and size both estimated off the drawing.
+        // No printed dimensions for this one — position and size both
+        // measured directly off pixels in a numpy-analyzed render of the
+        // PDF (edge-detected against the drawing's own frame ruler, at the
+        // corrected ~94.12 px/m scale established above), not eyeballed.
+        // Sits almost exactly centered across the deck's 16 m width.
         name: 'Люк/вырез в палубе (оценка размера и позиции)',
         shapeType: 'rect',
-        x: 4,
-        y: 41, // ~frame 68
-        width: 8,
-        length: 7, // ~frame 68-80
-      },
-      {
-        id: 'og-net-opening-1',
-        // Real printed dimensions ("net opening 1300 1600"); position
-        // (which frame, how far from the port strip's edge) is estimated.
-        name: 'Net opening 1,3×1,6 м (реальный размер, позиция — оценка)',
-        shapeType: 'rect',
-        x: 5.5,
-        y: 56,
-        width: 1.3,
-        length: 1.6,
-      },
-      {
-        id: 'og-net-opening-2',
-        // Real printed dimensions ("net opening 2108 4376"); position estimated.
-        name: 'Net opening 2,108×4,376 м (реальный размер, позиция — оценка)',
-        shapeType: 'rect',
-        x: 4.5,
-        y: 57.6,
-        width: 2.108,
-        length: 4.376,
+        x: 5,
+        y: 41, // ~frame 56
+        width: 6,
+        length: 7, // ~frame 56-66
       },
     ],
     note:
-      'Источник: реальный GA-чертёж (Marin Teknikk, проект MT6016, «101-100 (1960-11)_A GA Commander.pdf»), план Main Deck. ' +
-      'РЕАЛЬНОЕ: длина 92,95 м, LBP 86,60 м, ширина 19,70 м, площадь грузовой палубы подписана как 51×16 = 815 м² ' +
-      '(это ширина 16 м — использована как есть; длина 62 м в приложении — не то же самое число, см. комментарий в коде: ' +
-      'печатные 51 м — это только участок полной ширины, дальше в нос палуба сужается под надстройку, и это тоже часть ' +
-      'реальной грузовой площади на чертеже). Контур сужения и оба выреза «net opening» (реальные размеры: 1,3×1,6 м и ' +
-      '2,108×4,376 м, оба подписаны на чертеже) — оцифрованы на глаз по напечатанной шкале шпангоутов (0…145) при ' +
-      'ОЦЕНОЧНОЙ шпации ~0,6 м/шп. (нигде не подписана текстом). Большой люк/вырез в средней части палубы — оценка и ' +
-      'позиции, и размера (без подписанных размеров на чертеже). НЕТ ДАННЫХ ОБ ОСТОЙЧИВОСТИ: это чертёж общего ' +
-      'расположения, не книга остойчивости — лёгкий вес, ЦТ, гидростатика, допустимый GM, кросс-кривые KN на нём не ' +
-      'приведены и здесь не заполнены (не выдуманы). Расчёт остойчивости для этого судна будет недоступен, пока такие ' +
-      'данные не появятся — раздел палубы/груза/автораспределения на это никак не завязан. Лимиты по нагрузке на палубу ' +
-      '(т/м²) и общей грузоподъёмности палубы также не заполнены — это отдельный документ (loading manual), которого нет на руках. ' +
-      'Не включены в эту версию (сознательно отложено): 4 мелких объекта у кормы (склады/вентшахты) и основания кранов — ' +
-      'на чертеже без размеров, точность оценки ниже.',
+      'Источник: реальный GA-чертёж (Marin Teknikk, проект MT6016, «101-100 (1960-11)_A GA Commander.pdf»), план Main Deck ' +
+      '(подпись рамкой «MAIN DECK» на самом плане, порядок палуб в профиле судна подтверждает — Shelter Deck выше по чертежу). ' +
+      'РЕАЛЬНОЕ: длина 92,95 м, LBP 86,60 м, ширина 19,70 м, грузовая палуба подписана прямо как 51×16 = 815 м² — ' +
+      'использовано как есть, палуба ПРОСТОЙ прямоугольник (51×16=816 м² почти точно сходится с печатной цифрой). ' +
+      'ИСПРАВЛЕНО: в первой версии здесь стояла длина 62 м и контур с сужением до узкой полосы за шп. 80 — это была ошибка ' +
+      'неверно угаданной шпации (~0,6 м/шп. без проверки по печатным числам), а не спутанная палуба. Повторная пиксель-точная ' +
+      'проверка (numpy-анализ рендера чертежа, а не «на глаз») даёт согласованную шпацию ~0,729 м/шп. (сверено дважды: ' +
+      'ширина палубы в пикселях против печатных 16 м, и длина участка полной ширины в пикселях против печатных 51 м) — ' +
+      'участок полной ширины на самом деле заканчивается ровно на шп. 70 (=51 м). То, что дальше похоже на «узкую полосу», ' +
+      'на самом деле не открытая палуба, а закрытые помещения (ROV-Workshop, EL-Workshop, ROV-Control Room, Coffee Shop, ' +
+      'Locker room, Laundry) — оба «net opening» и неразмеченный «FLUSH HATCH» физически лежат ВНУТРИ этого блока, не на ' +
+      'грузовой палубе, поэтому убраны из модели вместе с контуром. Единственный реальный вырез ВНУТРИ честных 0–51 м — ' +
+      'люк/moon pool без подписанных размеров; позиция и размер измерены пиксель-точно по тому же методу (не «на глаз»), ' +
+      'сидит почти строго по центру ширины палубы. НЕТ ДАННЫХ ОБ ОСТОЙЧИВОСТИ: это чертёж общего расположения, не книга ' +
+      'остойчивости — лёгкий вес, ЦТ, гидростатика, допустимый GM, кросс-кривые KN на нём не приведены и здесь не заполнены ' +
+      '(не выдуманы). Расчёт остойчивости для этого судна будет недоступен, пока такие данные не появятся — раздел ' +
+      'палубы/груза/автораспределения на это никак не завязан. Лимиты по нагрузке на палубу (т/м²) и общей грузоподъёмности ' +
+      'также не заполнены — это отдельный документ (loading manual), которого нет на руках. Не включены в эту версию ' +
+      '(сознательно отложено): 4 мелких объекта у кормы (склады/вентшахты) в пределах честных 0–51 м — на чертеже без ' +
+      'подписанных размеров, точность оценки ниже; и основания кранов.',
   },
 ]
