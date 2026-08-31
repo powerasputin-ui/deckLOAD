@@ -687,12 +687,6 @@ export default function Home() {
       showCargoContents: true,
     })
     toast.success(`Судно «${tpl.label}» загружено`)
-    toast.info(
-      tpl.limits?.maxStackHeightM
-        ? `${tpl.note} Максимальная высота штабеля палубы установлена в ${tpl.limits.maxStackHeightM} м.`
-        : tpl.note,
-      { duration: 12000 }
-    )
     // Deck-strength limit is a genuinely conflicting range for some vessels
     // (see VesselTemplate.limits.deckStrengthTPerM2's own doc comment) —
     // never auto-picked. Offer both real sourced values as an explicit
