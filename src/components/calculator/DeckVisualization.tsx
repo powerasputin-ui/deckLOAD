@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
-import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PhotoCropDialog } from './PhotoCropDialog'
@@ -43,6 +43,7 @@ import {
   type RestrictionZoneShape,
   restrictionZoneExclusions,
   restrictionZonePolygon,
+  polygonArea,
 } from '@/lib/packing'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber, cn } from '@/lib/utils'
@@ -62,6 +63,11 @@ interface DeckVisualizationProps {
   backgroundImageOpacity?: number
   onSetBackgroundImage?: (dataUrl: string | null) => void
   onSetBackgroundImageOpacity?: (opacity: number) => void
+  // See PhotoCropDialogProps's own doc comment — lets the "Измерить размер
+  // палубы по фото" tool inside the crop dialog write straight to
+  // deck.width/deck.length instead of the user hand-computing it outside
+  // the app and typing it into the Sidebar fields.
+  onMeasureDeckDimension?: (value: number, axis: 'width' | 'length') => void
   // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
   // in calculator.ts. Undefined = plain rectangle, today's behavior.
   deckOutline?: { x: number; y: number }[]
@@ -182,6 +188,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   backgroundImageOpacity,
   onSetBackgroundImage,
   onSetBackgroundImageOpacity,
+  onMeasureDeckDimension,
   deckOutline,
   editingDeckOutline,
   onSetDeckOutline,
@@ -390,6 +397,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   if (placingAnnotation !== prevPlacingAnnotation) {
     setPrevPlacingAnnotation(placingAnnotation)
     if (!placingAnnotation && pendingAnnotationLeaderPoint) setPendingAnnotationLeaderPoint(null)
+  }
+  // Ruler: purely local, measurement-only tool — click two points anywhere
+  // on the deck (over the background photo or not) to read off the real
+  // distance between them, for spot-checking a trace against a known
+  // dimension without leaving the main canvas. Never touches any deck data.
+  const [rulerMode, setRulerMode] = useState(false)
+  const [rulerPoints, setRulerPoints] = useState<{ x: number; y: number }[]>([])
+  const [rulerHoverPos, setRulerHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const handleRulerClick = (e: React.MouseEvent): boolean => {
+    if (!rulerMode) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    setRulerPoints((pts) => (pts.length >= 2 ? [pos] : [...pts, pos]))
+    return true
   }
   // Custom-shape drawing: confirmed points + live cursor position, same
   // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
@@ -787,6 +808,33 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // as screenToDeck's inverse above — the single pairing point for anything
   // that currently does `{ x: toX(p.x), y: toY(p.y) }`.
   const deckToScreen = (x: number, y: number) => ({ sx: toX(rotated ? y : x), sy: toY(rotated ? x : y) })
+  const SNAP_PIXEL_RADIUS = 9
+  // Every vertex worth aligning a newly-added or dragged point to: the
+  // deck's own outline (if it's a custom polygon, not the plain rectangle)
+  // and every restriction zone's own corners — keeps a hand-traced zone's
+  // edge exactly flush with the deck contour or another zone instead of a
+  // few invisible sub-pixel stray px of gap/overlap that only shows up as a
+  // hairline seam once zoomed in.
+  const snapCandidateVertices = useMemo(() => {
+    const pts: { x: number; y: number }[] = []
+    if (deckOutline) pts.push(...deckOutline)
+    for (const rz of restrictionZones ?? []) pts.push(...restrictionZonePolygon(rz))
+    return pts
+  }, [deckOutline, restrictionZones])
+  const snapToNearbyVertex = (x: number, y: number): { x: number; y: number } => {
+    let best: { x: number; y: number } | null = null
+    let bestDistPx = SNAP_PIXEL_RADIUS
+    const q = deckToScreen(x, y)
+    for (const p of snapCandidateVertices) {
+      const s = deckToScreen(p.x, p.y)
+      const d = Math.hypot(s.sx - q.sx, s.sy - q.sy)
+      if (d < bestDistPx) {
+        bestDistPx = d
+        best = p
+      }
+    }
+    return best ?? { x, y }
+  }
   // Screen-pixel width/height from a deck-local footprint size.
   const screenSpanW = (width: number, length: number) => (rotated ? length : width) * scale
   const screenSpanH = (width: number, length: number) => (rotated ? width : length) * scale
@@ -1018,7 +1066,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         return true
       }
     }
-    setZoneFreeformPoints((pts) => [...pts, { x, y }])
+    const snapped = snapToNearbyVertex(x, y)
+    setZoneFreeformPoints((pts) => [...pts, snapped])
     return true
   }
 
@@ -1055,7 +1104,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       }
     }
     if (bestIndex >= 0 && bestDistPx <= EDGE_INSERT_PIXEL_RADIUS) {
-      setEditingOutline((pts) => [...pts.slice(0, bestIndex + 1), { x, y }, ...pts.slice(bestIndex + 1)])
+      const snapped = snapToNearbyVertex(x, y)
+      setEditingOutline((pts) => [...pts.slice(0, bestIndex + 1), snapped, ...pts.slice(bestIndex + 1)])
     }
     return true
   }
@@ -1117,6 +1167,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       panMovedRef.current = false
       return
     }
+    if (handleRulerClick(e)) return
     if (drawingRestrictionShape) return // handled entirely via pointerdown/up drag-to-create
     if (handleZoneFreeformClick(e)) return
     if (handleDrawClick(e)) return
@@ -1441,12 +1492,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const pos = screenToDeck(e.clientX, e.clientY)
       setDrawHoverPos(pos)
     }
+    if (rulerMode && rulerPoints.length === 1) {
+      setRulerHoverPos(screenToDeck(e.clientX, e.clientY))
+    }
     if (draggingVertexIndex !== null) {
       const pos = screenToDeck(e.clientX, e.clientY)
       if (pos) {
         const x = Math.max(0, Math.min(deckWidth, pos.x))
         const y = Math.max(0, Math.min(deckLength, pos.y))
-        setEditingOutline((pts) => pts.map((p, i) => (i === draggingVertexIndex ? { x, y } : p)))
+        const snapped = snapToNearbyVertex(x, y)
+        setEditingOutline((pts) => pts.map((p, i) => (i === draggingVertexIndex ? snapped : p)))
       }
     }
     if (activeStamp && !dragState && !pinDrag) {
@@ -1929,7 +1984,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline
+      : placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || rulerMode
         ? 'crosshair'
         : 'default'
 
@@ -1973,6 +2028,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           onClick={resetZoom}
         >
           <Maximize className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant={rulerMode ? 'secondary' : 'ghost'}
+          className="h-7 w-7 pointer-events-auto"
+          title="Линейка — измерить расстояние на палубе"
+          onClick={() => { setRulerMode((v) => !v); setRulerPoints([]); setRulerHoverPos(null) }}
+        >
+          <Ruler className="h-4 w-4" />
         </Button>
         <input
           ref={backgroundFileInputRef}
@@ -2044,7 +2109,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform || rulerMode ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2541,18 +2606,34 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               strokeWidth={1.5}
             />
             {drawHoverPos && (() => {
-              const last = deckToScreen(zoneFreeformPoints[zoneFreeformPoints.length - 1].x, zoneFreeformPoints[zoneFreeformPoints.length - 1].y)
+              const lastPt = zoneFreeformPoints[zoneFreeformPoints.length - 1]
+              const last = deckToScreen(lastPt.x, lastPt.y)
               const hover = deckToScreen(drawHoverPos.x, drawHoverPos.y)
+              const segmentLen = Math.hypot(drawHoverPos.x - lastPt.x, drawHoverPos.y - lastPt.y)
+              const previewArea = zoneFreeformPoints.length >= 2 ? polygonArea([...zoneFreeformPoints, drawHoverPos]) : 0
               return (
-                <line
-                  x1={last.sx}
-                  y1={last.sy}
-                  x2={hover.sx}
-                  y2={hover.sy}
-                  stroke="#dc2626"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
+                <>
+                  <line
+                    x1={last.sx}
+                    y1={last.sy}
+                    x2={hover.sx}
+                    y2={hover.sy}
+                    stroke="#dc2626"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                  />
+                  <text
+                    x={hover.sx + 10}
+                    y={hover.sy - 10}
+                    fontSize={11}
+                    fill="#dc2626"
+                    className="pointer-events-none"
+                    style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                  >
+                    {fmtNumber(segmentLen)} {UNIT_LABEL[unit]}
+                    {zoneFreeformPoints.length >= 2 && ` · S ${fmtNumber(previewArea)} ${UNIT_LABEL[unit]}²`}
+                  </text>
+                </>
               )
             })()}
             {zoneFreeformPoints.map((p, i) => { const { sx, sy } = deckToScreen(p.x, p.y); return (
@@ -2568,6 +2649,40 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             )})}
           </g>
         )}
+
+        {/* Ruler: two clicked points + the real distance between them, live
+            while placing the second point. Pure measurement HUD — never
+            written to any deck data, so it works identically over a
+            background photo, a traced outline, or plain empty deck. */}
+        {rulerMode && rulerPoints.length > 0 && (() => {
+          const p0 = deckToScreen(rulerPoints[0].x, rulerPoints[0].y)
+          const second = rulerPoints[1] ?? rulerHoverPos
+          if (!second) return (
+            <circle cx={p0.sx} cy={p0.sy} r={5} fill="#2563eb" stroke="#fff" strokeWidth={1.5} className="pointer-events-none" />
+          )
+          const p1 = deckToScreen(second.x, second.y)
+          const dist = Math.hypot(second.x - rulerPoints[0].x, second.y - rulerPoints[0].y)
+          const midX = (p0.sx + p1.sx) / 2
+          const midY = (p0.sy + p1.sy) / 2
+          return (
+            <g className="pointer-events-none">
+              <line x1={p0.sx} y1={p0.sy} x2={p1.sx} y2={p1.sy} stroke="#2563eb" strokeWidth={1.5} strokeDasharray={rulerPoints.length < 2 ? '4 3' : undefined} />
+              <circle cx={p0.sx} cy={p0.sy} r={5} fill="#2563eb" stroke="#fff" strokeWidth={1.5} />
+              <circle cx={p1.sx} cy={p1.sy} r={5} fill="#2563eb" stroke="#fff" strokeWidth={1.5} />
+              <text
+                x={midX}
+                y={midY - 10}
+                textAnchor="middle"
+                fontSize={12}
+                fontWeight={600}
+                fill="#2563eb"
+                style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+              >
+                {fmtNumber(dist)} {UNIT_LABEL[unit]}
+              </text>
+            </g>
+          )
+        })()}
 
         {/* Lashing-point placement preview (follows cursor while armed) */}
         {placingLashingPoint && lashingHoverPos && (() => {
@@ -2712,6 +2827,51 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 )}
               </g>
             )})}
+            {/* Live area readout, so a mismatch against a known printed area
+                (a GA drawing's own cargo-deck figure, say) shows up while
+                still dragging vertices, not only after confirming and
+                checking StatsPanel afterward. */}
+            {editingOutline.length >= 3 && (() => {
+              const first = deckToScreen(editingOutline[0].x, editingOutline[0].y)
+              return (
+                <text
+                  x={first.sx}
+                  y={first.sy - 18}
+                  fontSize={11}
+                  fill="rgba(37,99,235,0.95)"
+                  fontWeight={600}
+                  className="pointer-events-none"
+                  style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                >
+                  S {fmtNumber(polygonArea(editingOutline))} {UNIT_LABEL[unit]}²
+                </text>
+              )
+            })()}
+            {/* While actively dragging one vertex, label its two adjacent
+                edge lengths — the numbers that matter most for lining a
+                vertex up against a printed frame/dimension on a background
+                photo. */}
+            {draggingVertexIndex !== null && editingOutline.length >= 3 && (() => {
+              const n = editingOutline.length
+              const cur = editingOutline[draggingVertexIndex]
+              const prev = editingOutline[(draggingVertexIndex - 1 + n) % n]
+              const next = editingOutline[(draggingVertexIndex + 1) % n]
+              const curScreen = deckToScreen(cur.x, cur.y)
+              const lenPrev = Math.hypot(cur.x - prev.x, cur.y - prev.y)
+              const lenNext = Math.hypot(next.x - cur.x, next.y - cur.y)
+              return (
+                <text
+                  x={curScreen.sx + 12}
+                  y={curScreen.sy + 16}
+                  fontSize={11}
+                  fill="rgba(37,99,235,0.95)"
+                  className="pointer-events-none"
+                  style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                >
+                  {fmtNumber(lenPrev)} / {fmtNumber(lenNext)} {UNIT_LABEL[unit]}
+                </text>
+              )
+            })()}
           </g>
         )}
 
@@ -3302,6 +3462,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         unit={unit}
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
+        onMeasureDeckDimension={onMeasureDeckDimension}
       />
       {contentsTooltip && (
         <div

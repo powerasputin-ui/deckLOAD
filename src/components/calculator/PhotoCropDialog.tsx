@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { clampCrop, computeCalibratedZoom, cropAndCompressToDataUrl, type CropState } from '@/lib/imageCrop'
+import { clampCrop, computeCalibratedZoom, computeRealDistance, cropAndCompressToDataUrl, type CropState } from '@/lib/imageCrop'
 import { UNIT_LABEL, type Unit } from '@/store/calculator'
 
 interface PhotoCropDialogProps {
@@ -23,6 +23,12 @@ interface PhotoCropDialogProps {
   unit: Unit
   onConfirm: (dataUrl: string) => void
   onCancel: () => void
+  // Optional: lets the user derive deck.width/deck.length directly from the
+  // photo (click a known reference distance, then click the deck's own
+  // extent) instead of measuring it outside the app by hand. Omitted where
+  // the caller doesn't wire it up — the "Измерить размер" entry point then
+  // just doesn't render, same optional-prop pattern as onSetBackgroundImage.
+  onMeasureDeckDimension?: (value: number, axis: 'width' | 'length') => void
 }
 
 // Fallback viewport-max before the adaptive size (below) has measured the
@@ -31,7 +37,7 @@ interface PhotoCropDialogProps {
 const FALLBACK_MAX_W = 380
 const FALLBACK_MAX_H = 280
 
-type InteractionMode = 'pan' | 'calibrate'
+type InteractionMode = 'pan' | 'calibrate' | 'measure'
 
 // Small numeric text input for the calibration distance — mirrors this
 // codebase's established small-numeric-field convention (MiniNumField in
@@ -72,6 +78,7 @@ export function PhotoCropDialog({
   unit,
   onConfirm,
   onCancel,
+  onMeasureDeckDimension,
 }: PhotoCropDialogProps) {
   // Adaptive viewport cap: sized off the actual browser window (not a fixed
   // constant) so the crop/calibration canvas is genuinely usable instead of
@@ -160,6 +167,25 @@ export function PhotoCropDialog({
   // ceiling. Raised on-demand only when a calibration actually needs it.
   const [calibratedMaxZoom, setCalibratedMaxZoom] = useState<number | null>(null)
 
+  // "Измерить размер палубы по фото": a separate two-step tool, independent
+  // of the fit-photo calibration above (that one only ever changes crop.zoom
+  // — it never reports the underlying px/unit scale it derived). Step 1
+  // establishes a real-world scale from ANY reference distance in the photo
+  // (a printed dimension, a scale bar — not necessarily the deck itself).
+  // Step 2 reuses that scale to convert further click-pairs into real
+  // distances, so the deck's own extent can be read off directly instead of
+  // hand-computing px/m outside the app.
+  const [measureRefScale, setMeasureRefScale] = useState<number | null>(null) // bitmap px per 1 real unit
+  const [measurePoints, setMeasurePoints] = useState<{ x: number; y: number }[]>([])
+  const [measureRefDistanceText, setMeasureRefDistanceText] = useState('')
+  const measureResult = useMemo(() => {
+    if (measureRefScale === null || measurePoints.length !== 2 || !calibrationView) return null
+    const b0 = { x: (measurePoints[0].x - calibrationView.offsetX) / calibrationView.zoom, y: (measurePoints[0].y - calibrationView.offsetY) / calibrationView.zoom }
+    const b1 = { x: (measurePoints[1].x - calibrationView.offsetX) / calibrationView.zoom, y: (measurePoints[1].y - calibrationView.offsetY) / calibrationView.zoom }
+    const pxDist = Math.hypot(b1.x - b0.x, b1.y - b0.y)
+    return computeRealDistance(pxDist, measureRefScale, 1)
+  }, [measureRefScale, measurePoints, calibrationView])
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = canvasRef.current
@@ -169,7 +195,7 @@ export function PhotoCropDialog({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, viewport.w, viewport.h)
-    if (mode === 'calibrate' && calibrationView) {
+    if ((mode === 'calibrate' || mode === 'measure') && calibrationView) {
       // Whole photo, letterboxed to fit — not the deck-aspect-locked crop
       // frame — so any two reference points are reachable regardless of
       // the current pan/zoom state.
@@ -184,25 +210,26 @@ export function PhotoCropDialog({
       ctx.drawImage(bitmap, crop.offsetX, crop.offsetY, bitmap.width * crop.zoom, bitmap.height * crop.zoom)
     }
 
-    if (mode === 'calibrate' && calPoints.length > 0) {
+    const pointsToDraw = mode === 'calibrate' ? calPoints : mode === 'measure' ? measurePoints : []
+    if (pointsToDraw.length > 0) {
       ctx.save()
-      ctx.strokeStyle = '#ef4444'
-      ctx.fillStyle = '#ef4444'
+      ctx.strokeStyle = mode === 'measure' ? '#2563eb' : '#ef4444'
+      ctx.fillStyle = mode === 'measure' ? '#2563eb' : '#ef4444'
       ctx.lineWidth = 2
-      if (calPoints.length === 2) {
+      if (pointsToDraw.length === 2) {
         ctx.beginPath()
-        ctx.moveTo(calPoints[0].x, calPoints[0].y)
-        ctx.lineTo(calPoints[1].x, calPoints[1].y)
+        ctx.moveTo(pointsToDraw[0].x, pointsToDraw[0].y)
+        ctx.lineTo(pointsToDraw[1].x, pointsToDraw[1].y)
         ctx.stroke()
       }
-      for (const p of calPoints) {
+      for (const p of pointsToDraw) {
         ctx.beginPath()
         ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
         ctx.fill()
       }
       ctx.restore()
     }
-  }, [bitmap, crop, viewport, mode, calPoints, calibrationView])
+  }, [bitmap, crop, viewport, mode, calPoints, measurePoints, calibrationView])
 
   if (!bitmap) return null
 
@@ -224,11 +251,21 @@ export function PhotoCropDialog({
       setCalPoints((pts) => [...pts, { x, y }])
       return
     }
+    if (mode === 'measure') {
+      // Reference step reuses this same click pair while measureRefScale is
+      // still unset (see the reference-vs-target branch in the JSX below) —
+      // one click-two-points-and-type-a-distance flow serves both.
+      const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      setMeasurePoints((pts) => (pts.length >= 2 ? [{ x, y }] : [...pts, { x, y }]))
+      return
+    }
     dragRef.current = { startX: e.clientX, startY: e.clientY, startOffsetX: crop.offsetX, startOffsetY: crop.offsetY }
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (mode === 'calibrate') return
+    if (mode === 'calibrate' || mode === 'measure') return
     const drag = dragRef.current
     if (!drag || !bitmap) return
     const nextOffsetX = drag.startOffsetX + (e.clientX - drag.startX)
@@ -236,7 +273,7 @@ export function PhotoCropDialog({
     setCrop((c) => clampCrop({ ...c, offsetX: nextOffsetX, offsetY: nextOffsetY }, bitmap.width, bitmap.height, viewport.w, viewport.h))
   }
   const handlePointerUp = () => {
-    if (mode === 'calibrate') return
+    if (mode === 'calibrate' || mode === 'measure') return
     dragRef.current = null
   }
 
@@ -303,6 +340,32 @@ export function PhotoCropDialog({
     resetCalibration()
   }
 
+  const resetMeasure = () => {
+    setMode('pan')
+    setMeasureRefScale(null)
+    setMeasurePoints([])
+    setMeasureRefDistanceText('')
+  }
+
+  const handleApplyMeasureReference = () => {
+    if (!calibrationView || measurePoints.length !== 2) return
+    const realDistance = Number(measureRefDistanceText.replace(',', '.'))
+    if (isNaN(realDistance) || realDistance <= 0) return
+    const b0 = { x: (measurePoints[0].x - calibrationView.offsetX) / calibrationView.zoom, y: (measurePoints[0].y - calibrationView.offsetY) / calibrationView.zoom }
+    const b1 = { x: (measurePoints[1].x - calibrationView.offsetX) / calibrationView.zoom, y: (measurePoints[1].y - calibrationView.offsetY) / calibrationView.zoom }
+    const pxDist = Math.hypot(b1.x - b0.x, b1.y - b0.y)
+    if (pxDist <= 0) return
+    setMeasureRefScale(pxDist / realDistance) // px per 1 real unit
+    setMeasurePoints([])
+    setMeasureRefDistanceText('')
+  }
+
+  const handleUseMeasureResult = (axis: 'width' | 'length') => {
+    if (measureResult === null || measureResult <= 0) return
+    onMeasureDeckDimension?.(measureResult, axis)
+    setMeasurePoints([])
+  }
+
   const handleConfirm = () => {
     const dataUrl = cropAndCompressToDataUrl(bitmap, crop, viewport.w, viewport.h, aspectRatio)
     onConfirm(dataUrl)
@@ -329,17 +392,30 @@ export function PhotoCropDialog({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
           />
-          {mode === 'pan' ? (
+          {mode === 'pan' && (
             <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="self-start h-7 text-xs"
-                onClick={() => { setMode('calibrate'); setCalPoints([]); setCalDistanceText('') }}
-              >
-                Откалибровать по известному расстоянию
-              </Button>
+              <div className="flex gap-2 self-start">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => { setMode('calibrate'); setCalPoints([]); setCalDistanceText('') }}
+                >
+                  Откалибровать по известному расстоянию
+                </Button>
+                {onMeasureDeckDimension && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => { setMode('measure'); setMeasurePoints([]); setMeasureRefDistanceText('') }}
+                  >
+                    Измерить размер палубы по фото
+                  </Button>
+                )}
+              </div>
               <div className="w-full space-y-1.5">
                 <div className="text-xs text-muted-foreground">Масштаб</div>
                 <input
@@ -353,7 +429,8 @@ export function PhotoCropDialog({
                 />
               </div>
             </>
-          ) : (
+          )}
+          {mode === 'calibrate' && (
             <div className="w-full space-y-2 rounded-md border p-2">
               <p className="text-xs text-muted-foreground">
                 {calPoints.length < 2
@@ -377,6 +454,70 @@ export function PhotoCropDialog({
                   Применить калибровку
                 </Button>
               </div>
+            </div>
+          )}
+          {mode === 'measure' && (
+            <div className="w-full space-y-2 rounded-md border p-2">
+              {measureRefScale === null ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Шаг 1 из 2: отметьте на фото две точки ИЗВЕСТНОГО расстояния — печатный размер, отметку шкалы шпангоутов
+                    и т.п. ({measurePoints.length}/2)
+                  </p>
+                  {measurePoints.length === 2 && (
+                    <CalDistanceInput value={measureRefDistanceText} unit={UNIT_LABEL[unit]} onChange={setMeasureRefDistanceText} />
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={resetMeasure}>
+                      Отмена
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={measurePoints.length < 2 || !isValidDistance(measureRefDistanceText)}
+                      onClick={handleApplyMeasureReference}
+                    >
+                      Далее: отметить палубу
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Шаг 2 из 2: отметьте на фото две крайние точки палубы вдоль ширины или длины ({measurePoints.length}/2)
+                  </p>
+                  {measureResult !== null && (
+                    <div className="rounded-md bg-muted/60 p-2 space-y-1.5">
+                      <div className="text-sm font-medium tabular-nums">
+                        {measureResult.toFixed(2)} {UNIT_LABEL[unit]}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" className="h-7 text-xs" onClick={() => handleUseMeasureResult('width')}>
+                          Это ширина палубы
+                        </Button>
+                        <Button type="button" size="sm" className="h-7 text-xs" onClick={() => handleUseMeasureResult('length')}>
+                          Это длина палубы
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={resetMeasure}>
+                      Готово
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => { setMeasureRefScale(null); setMeasurePoints([]) }}
+                    >
+                      Пересчитать эталон
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
