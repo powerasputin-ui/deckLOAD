@@ -1845,7 +1845,7 @@ export default function Home() {
                     backgroundImageOpacity={deck.backgroundImageOpacity}
                     onSetBackgroundImage={setDeckBackgroundImage}
                     onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
-                    onMeasureDeckDimension={(value, axis) => setDeck(axis === 'width' ? { width: value } : { length: value })}
+                    onSetDeckSize={(width, length) => setDeck({ width, length })}
                     deckOutline={deck.outline}
                     editingDeckOutline={editingDeckOutline}
                     onSetDeckOutline={(outline) => setDeck({ outline })}

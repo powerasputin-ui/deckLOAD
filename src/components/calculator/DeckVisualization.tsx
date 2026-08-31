@@ -63,11 +63,13 @@ interface DeckVisualizationProps {
   backgroundImageOpacity?: number
   onSetBackgroundImage?: (dataUrl: string | null) => void
   onSetBackgroundImageOpacity?: (opacity: number) => void
-  // See PhotoCropDialogProps's own doc comment — lets the "Измерить размер
-  // палубы по фото" tool inside the crop dialog write straight to
-  // deck.width/deck.length instead of the user hand-computing it outside
-  // the app and typing it into the Sidebar fields.
-  onMeasureDeckDimension?: (value: number, axis: 'width' | 'length') => void
+  // Set when the crop dialog reports the user changed the deck's real
+  // width/length while measuring it against the uploaded photo/drawing (see
+  // PhotoCropDialog's own onConfirm doc comment) — handleCropConfirm calls
+  // this BEFORE onSetBackgroundImage so the deck is already the right shape
+  // by the time the (now correctly-cropped) photo lands, instead of the
+  // photo briefly rendering into a stale/wrong-aspect rect.
+  onSetDeckSize?: (width: number, length: number) => void
   // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
   // in calculator.ts. Undefined = plain rectangle, today's behavior.
   deckOutline?: { x: number; y: number }[]
@@ -188,7 +190,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   backgroundImageOpacity,
   onSetBackgroundImage,
   onSetBackgroundImageOpacity,
-  onMeasureDeckDimension,
+  onSetDeckSize,
   deckOutline,
   editingDeckOutline,
   onSetDeckOutline,
@@ -285,7 +287,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       toast.error('Не удалось загрузить фото палубы')
     }
   }
-  const handleCropConfirm = (dataUrl: string) => {
+  const handleCropConfirm = (dataUrl: string, dimensions?: { width: number; length: number }) => {
+    // Deck size first: if the user measured a new width/length against the
+    // photo inside the dialog, the deck must already be the right shape
+    // before the (now correctly-cropped-to-that-shape) photo lands, or the
+    // photo would render into a stale-aspect rect for one frame.
+    if (dimensions) onSetDeckSize?.(dimensions.width, dimensions.length)
     onSetBackgroundImage?.(dataUrl)
     cropBitmap?.close?.()
     setCropBitmap(null)
@@ -398,41 +405,24 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPrevPlacingAnnotation(placingAnnotation)
     if (!placingAnnotation && pendingAnnotationLeaderPoint) setPendingAnnotationLeaderPoint(null)
   }
-  // Ruler: click two points anywhere on the deck (over the background photo
-  // or not) to read off the real distance between them — for spot-checking
-  // a trace against a known dimension without leaving the main canvas. Also
-  // doubles as the deck-size calibration tool: the line it draws is read-
-  // only by default (computed from whatever deck.width/length currently
-  // are, which may well be wrong right after uploading a photo — that's the
-  // whole problem this second role solves), but once two points are placed,
-  // an editable field lets the user overwrite that reading with the real
-  // distance and write it straight to deck.width/deck.length via
-  // onMeasureDeckDimension. One line = one axis: the line is meant to be
-  // drawn corner-to-corner along that axis, so its typed real length
-  // becomes the new dimension directly — no separate reference/scale step.
+  // Ruler: purely local, measurement-only tool — click two points anywhere
+  // on the deck (over the background photo or not) to read off the real
+  // distance between them, for spot-checking a trace against a known
+  // dimension without leaving the main canvas. Never touches any deck data
+  // — deriving deck.width/deck.length from a photo lives in the upload/crop
+  // dialog instead (PhotoCropDialog), where the frame can be previewed
+  // before anything is committed; doing it here, live against the already-
+  // placed photo, showed a badly distorted intermediate frame the instant
+  // only one axis was set.
   const [rulerMode, setRulerMode] = useState(false)
   const [rulerPoints, setRulerPoints] = useState<{ x: number; y: number }[]>([])
   const [rulerHoverPos, setRulerHoverPos] = useState<{ x: number; y: number } | null>(null)
-  const [rulerCalibrateText, setRulerCalibrateText] = useState('')
   const handleRulerClick = (e: React.MouseEvent): boolean => {
     if (!rulerMode) return false
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return true
     setRulerPoints((pts) => (pts.length >= 2 ? [pos] : [...pts, pos]))
-    setRulerCalibrateText('')
     return true
-  }
-  // Prefill the calibration field with the live-computed distance the
-  // moment the second point lands — render-time "compare previous length"
-  // adjustment (this file's established pattern instead of a useEffect, see
-  // the drawingCustomShape reset above for precedent).
-  const [prevRulerPointsLength, setPrevRulerPointsLength] = useState(0)
-  if (rulerPoints.length !== prevRulerPointsLength) {
-    setPrevRulerPointsLength(rulerPoints.length)
-    if (rulerPoints.length === 2) {
-      const d = Math.hypot(rulerPoints[1].x - rulerPoints[0].x, rulerPoints[1].y - rulerPoints[0].y)
-      setRulerCalibrateText(fmtNumber(d))
-    }
   }
   // Custom-shape drawing: confirmed points + live cursor position, same
   // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
@@ -2056,7 +2046,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           size="icon"
           variant={rulerMode ? 'secondary' : 'ghost'}
           className="h-7 w-7 pointer-events-auto"
-          title="Линейка / калибровка размера палубы"
+          title="Линейка — измерить расстояние на палубе"
           onClick={() => { setRulerMode((v) => !v); setRulerPoints([]); setRulerHoverPos(null) }}
         >
           <Ruler className="h-4 w-4" />
@@ -3478,7 +3468,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       <PhotoCropDialog
         open={!!cropBitmap}
         bitmap={cropBitmap}
-        aspectRatio={deckWidth / deckLength}
         deckWidth={deckWidth}
         deckLength={deckLength}
         unit={unit}
@@ -3580,53 +3569,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )}
         </div>
       )}
-      {rulerMode && rulerPoints.length === 2 && (() => {
-        const currentDist = Math.hypot(rulerPoints[1].x - rulerPoints[0].x, rulerPoints[1].y - rulerPoints[0].y)
-        const typed = Number(rulerCalibrateText.replace(',', '.'))
-        const validTyped = !isNaN(typed) && typed > 0
-        const applyAxis = (axis: 'width' | 'length') => {
-          if (!validTyped) return
-          onMeasureDeckDimension?.(typed, axis)
-          setRulerPoints([])
-          setRulerCalibrateText('')
-        }
-        return (
-          <div
-            className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm w-56"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <div className="text-[10px] text-muted-foreground">
-              Сейчас (по текущему масштабу): {fmtNumber(currentDist)} {UNIT_LABEL[unit]}
-            </div>
-            <div className="space-y-0.5">
-              <label className="text-[9px] text-muted-foreground leading-none block">
-                Реальная длина этой линии ({UNIT_LABEL[unit]})
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                autoFocus
-                value={rulerCalibrateText}
-                onChange={(e) => setRulerCalibrateText(e.target.value)}
-                className="h-7 w-full rounded-md border bg-background px-2 text-xs"
-              />
-            </div>
-            {onMeasureDeckDimension && (
-              <div className="flex gap-1.5">
-                <Button type="button" size="sm" className="h-7 flex-1 text-xs" disabled={!validTyped} onClick={() => applyAxis('width')}>
-                  = Ширина палубы
-                </Button>
-                <Button type="button" size="sm" className="h-7 flex-1 text-xs" disabled={!validTyped} onClick={() => applyAxis('length')}>
-                  = Длина палубы
-                </Button>
-              </div>
-            )}
-            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setRulerPoints([]); setRulerCalibrateText('') }}>
-              Новая линия
-            </Button>
-          </div>
-        )
-      })()}
       {pendingZoneDraft && (
         <div
           className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm"
