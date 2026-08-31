@@ -1636,7 +1636,7 @@ export default function Home() {
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8">
                   <Ship className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">Судно</span>
+                  <span className="hidden sm:inline">Библиотека судов</span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-72 p-1.5" align="end">

@@ -78,7 +78,7 @@ const kuznetsovVariableWeights: VariableWeightItem[] = [
 export const VESSEL_TEMPLATES: VesselTemplate[] = [
   {
     id: 'aleksey-kuznetsov',
-    label: 'Алексей Кузнецов (ПБУ, IMO 9692648)',
+    label: 'Алексей Кузнецов (IMO 9692648)',
     // Width is REAL, read off the document's own worked deck-pressure check
     // (п. 2.1.7): a 756 t stack of ТШ406,4 pipes is laid on
     // "S = 16,9 · 12,37 = 209 м²", where 12.37 m is the pipe length and the
@@ -182,7 +182,7 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
   },
   {
     id: 'olympic-commander',
-    label: 'Olympic Commander (MT6016, ROV Support Vessel)',
+    label: 'Коммандер (IMO 9340609)',
     // Source: real GA (General Arrangement) drawing — "101-100 (1960-11)_A
     // GA Commander.pdf" (Marin Teknikk, project MT6016, Olympic Shipping
     // A.S.), Main Deck plan. This is a GEOMETRY drawing, not a stability
