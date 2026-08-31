@@ -1416,8 +1416,16 @@ export default function Home() {
   }
 
   // Generate several packing variants so the user can choose the best one.
-  // Each click produces a fresh set (new seed) — repeated clicks give different options.
+  // Each click produces a fresh set (new seed) — repeated clicks give
+  // different options, so this deliberately doesn't disable the button or
+  // block re-clicks outright — only a short debounce window (below) to
+  // collapse an accidental double/spam-click into one run instead of
+  // stacking one duplicate toast + repack per click.
+  const lastAutoRedistributeRef = useRef(0)
   const handleAutoRedistribute = () => {
+    const now = Date.now()
+    if (now - lastAutoRedistributeRef.current < 500) return
+    lastAutoRedistributeRef.current = now
     const effectiveItems = globalRotation
       ? items
       : items.map((it) => ({ ...it, allowRotation: false }))

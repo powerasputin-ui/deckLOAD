@@ -53,7 +53,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, roundForDisplay, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
@@ -102,6 +102,13 @@ interface SidebarProps {
   zoneLoads?: ZoneLoadCheck[]
 }
 
+// No real vessel's cargo deck comes anywhere close to this — the largest
+// container ships afloat run well under 500 m LOA. Without a cap, a stray
+// extra digit (e.g. typing "999999999" instead of "20") silently collapses
+// the whole deck to a sliver a few px tall on screen and every placed item
+// becomes unplaceable, with no error explaining why — this clamp turns that
+// into a normal, explained validation instead.
+const MAX_DECK_DIMENSION_M = 1000
 export function Sidebar({
   collapsed,
   onToggle,
@@ -480,9 +487,15 @@ function DeckSettings() {
             <Input
               type="number"
               min={0.1}
+              max={convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)}
               step={0.1}
               value={roundForDisplay(deck.width)}
-              onChange={(e) => { const v = Number(e.target.value); setDeck({ width: !isNaN(v) && v > 0 ? v : 0.1 }) }}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                const maxInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
+                if (v > maxInUnit) toast.warning(`Максимальная ширина палубы — ${fmtNumber(maxInUnit)} ${UNIT_LABEL[deck.unit]}`)
+                setDeck({ width: !isNaN(v) && v > 0 ? Math.min(v, maxInUnit) : 0.1 })
+              }}
               className="h-8 text-xs"
             />
           </div>
@@ -491,9 +504,15 @@ function DeckSettings() {
             <Input
               type="number"
               min={0.1}
+              max={convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)}
               step={0.1}
               value={roundForDisplay(deck.length)}
-              onChange={(e) => { const v = Number(e.target.value); setDeck({ length: !isNaN(v) && v > 0 ? v : 0.1 }) }}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                const maxInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
+                if (v > maxInUnit) toast.warning(`Максимальная длина палубы — ${fmtNumber(maxInUnit)} ${UNIT_LABEL[deck.unit]}`)
+                setDeck({ length: !isNaN(v) && v > 0 ? Math.min(v, maxInUnit) : 0.1 })
+              }}
               className="h-8 text-xs"
             />
           </div>
