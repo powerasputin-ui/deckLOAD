@@ -1,10 +1,10 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
-import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler, Move, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { PhotoCropDialog } from './PhotoCropDialog'
+import { compressImageToDataUrl } from '@/lib/imageCompression'
 import {
   computeGridStep,
   clampToDeck,
@@ -61,15 +61,14 @@ interface DeckVisualizationProps {
   showCargoContents: boolean
   backgroundImage?: string
   backgroundImageOpacity?: number
-  onSetBackgroundImage?: (dataUrl: string | null) => void
+  // Where/how big the photo is drawn — see DeckConfig.backgroundImageRect's
+  // own doc comment. Undefined with backgroundImage set means a project
+  // saved before this field existed; DeckVisualization falls back to the
+  // deck's own rect in that one legacy case.
+  backgroundImageRect?: { x: number; y: number; width: number; length: number }
+  onSetBackgroundImage?: (dataUrl: string | null, rect?: { x: number; y: number; width: number; length: number }) => void
   onSetBackgroundImageOpacity?: (opacity: number) => void
-  // Set when the crop dialog reports the user changed the deck's real
-  // width/length while measuring it against the uploaded photo/drawing (see
-  // PhotoCropDialog's own onConfirm doc comment) — handleCropConfirm calls
-  // this BEFORE onSetBackgroundImage so the deck is already the right shape
-  // by the time the (now correctly-cropped) photo lands, instead of the
-  // photo briefly rendering into a stale/wrong-aspect rect.
-  onSetDeckSize?: (width: number, length: number) => void
+  onSetBackgroundImageRect?: (rect: { x: number; y: number; width: number; length: number }) => void
   // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
   // in calculator.ts. Undefined = plain rectangle, today's behavior.
   deckOutline?: { x: number; y: number }[]
@@ -188,9 +187,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   showCargoContents,
   backgroundImage,
   backgroundImageOpacity,
+  backgroundImageRect,
   onSetBackgroundImage,
   onSetBackgroundImageOpacity,
-  onSetDeckSize,
+  onSetBackgroundImageRect,
   deckOutline,
   editingDeckOutline,
   onSetDeckOutline,
@@ -268,38 +268,88 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // viewBox), all existing click/drag placement math keeps working unchanged.
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  // Deck background photo: file picker opens the crop dialog with the raw
-  // decoded bitmap (no compression yet — that happens once, on crop
-  // confirm, against the already-cropped region). Compressed data
-  // URL/opacity live in the store (deck.backgroundImage), threaded in as
-  // plain props like every other deck setting this component never reaches
-  // into useCalculator for.
+  // Deck background photo: uploaded WHOLE, never cropped — only downscaled/
+  // re-encoded for storage size (compressImageToDataUrl). It lands as a free
+  // rectangle (backgroundImageRect) in the same deck-local coordinate space
+  // as everything else, sized to fit the deck's current width at the
+  // photo's own natural aspect ratio and vertically centered — a starting
+  // guess the user then drags/resizes/calibrates into place (below), not a
+  // forced fit.
   const backgroundFileInputRef = useRef<HTMLInputElement>(null)
-  const [cropBitmap, setCropBitmap] = useState<ImageBitmap | null>(null)
   const handleBackgroundFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file later
     if (!file) return
     try {
-      const bitmap = await createImageBitmap(file)
-      setCropBitmap(bitmap)
+      const { dataUrl, width: pxW, height: pxH } = await compressImageToDataUrl(file)
+      const rectWidth = deckWidth
+      const rectLength = rectWidth * (pxH / pxW)
+      onSetBackgroundImage?.(dataUrl, { x: 0, y: (deckLength - rectLength) / 2, width: rectWidth, length: rectLength })
     } catch {
       toast.error('Не удалось загрузить фото палубы')
     }
   }
-  const handleCropConfirm = (dataUrl: string, dimensions?: { width: number; length: number }) => {
-    // Deck size first: if the user measured a new width/length against the
-    // photo inside the dialog, the deck must already be the right shape
-    // before the (now correctly-cropped-to-that-shape) photo lands, or the
-    // photo would render into a stale-aspect rect for one frame.
-    if (dimensions) onSetDeckSize?.(dimensions.width, dimensions.length)
-    onSetBackgroundImage?.(dataUrl)
-    cropBitmap?.close?.()
-    setCropBitmap(null)
+  // Position/scale editing for the placed photo: armed explicitly (button in
+  // the photo popover), independent of every other deck-editing tool this
+  // file has — local state, same as rulerMode, rather than routed through
+  // the store's mutual-exclusion web (editingDeckOutline & co.), since this
+  // is a self-contained overlay that doesn't share a canvas gesture with
+  // any of those.
+  const [editingBackgroundImage, setEditingBackgroundImage] = useState(false)
+  const effectiveBgRect = backgroundImageRect ?? (backgroundImage ? { x: 0, y: 0, width: deckWidth, length: deckLength } : null)
+  type BgImageDrag = {
+    kind: 'move' | 'resize'
+    corner?: 'nw' | 'ne' | 'sw' | 'se'
+    startMouse: { x: number; y: number }
+    startRect: { x: number; y: number; width: number; length: number }
   }
-  const handleCropCancel = () => {
-    cropBitmap?.close?.()
-    setCropBitmap(null)
+  const [bgImageDrag, setBgImageDrag] = useState<BgImageDrag | null>(null)
+  const handleBgImageBodyPointerDown = (e: React.PointerEvent) => {
+    if (!editingBackgroundImage || !effectiveBgRect) return
+    e.stopPropagation()
+    setBgImageDrag({ kind: 'move', startMouse: { x: e.clientX, y: e.clientY }, startRect: effectiveBgRect })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+  const handleBgImageCornerPointerDown = (e: React.PointerEvent, corner: 'nw' | 'ne' | 'sw' | 'se') => {
+    if (!editingBackgroundImage || !effectiveBgRect) return
+    e.stopPropagation()
+    setBgImageDrag({ kind: 'resize', corner, startMouse: { x: e.clientX, y: e.clientY }, startRect: effectiveBgRect })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+  // Calibrate-by-distance: click two points on the placed photo whose real
+  // distance you know, type it, and the whole rect is uniformly rescaled
+  // (aspect preserved, no per-axis stretch) around the clicked segment's own
+  // midpoint — that point stays visually put, everything else scales
+  // around it. Reuses the same click-two-points mechanic as the ruler,
+  // operating directly in deck coordinates since the photo already lives
+  // there (no separate letterboxed dialog view needed anymore).
+  const [bgCalibrateMode, setBgCalibrateMode] = useState(false)
+  const [bgCalibratePoints, setBgCalibratePoints] = useState<{ x: number; y: number }[]>([])
+  const [bgCalibrateText, setBgCalibrateText] = useState('')
+  const handleBgCalibrateClick = (e: React.MouseEvent): boolean => {
+    if (!bgCalibrateMode) return false
+    const pos = screenToDeck(e.clientX, e.clientY)
+    if (!pos) return true
+    setBgCalibratePoints((pts) => (pts.length >= 2 ? [pos] : [...pts, pos]))
+    return true
+  }
+  const applyBgCalibration = () => {
+    if (bgCalibratePoints.length !== 2 || !effectiveBgRect) return
+    const real = Number(bgCalibrateText.replace(',', '.'))
+    if (isNaN(real) || real <= 0) return
+    const cur = Math.hypot(bgCalibratePoints[1].x - bgCalibratePoints[0].x, bgCalibratePoints[1].y - bgCalibratePoints[0].y)
+    if (cur <= 0) return
+    const scale = real / cur
+    const midX = (bgCalibratePoints[0].x + bgCalibratePoints[1].x) / 2
+    const midY = (bgCalibratePoints[0].y + bgCalibratePoints[1].y) / 2
+    const r = effectiveBgRect
+    const newWidth = r.width * scale
+    const newLength = r.length * scale
+    const fracX = (midX - r.x) / r.width
+    const fracY = (midY - r.y) / r.length
+    onSetBackgroundImageRect?.({ x: midX - fracX * newWidth, y: midY - fracY * newLength, width: newWidth, length: newLength })
+    setBgCalibratePoints([])
+    setBgCalibrateText('')
   }
   // Right-click menu for an individual cargo item — lock/unlock (auto mode
   // only; manual placements have no separate "pinned/locked" concept, so a
@@ -1179,6 +1229,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       panMovedRef.current = false
       return
     }
+    if (handleBgCalibrateClick(e)) return
     if (handleRulerClick(e)) return
     if (drawingRestrictionShape) return // handled entirely via pointerdown/up drag-to-create
     if (handleZoneFreeformClick(e)) return
@@ -1506,6 +1557,46 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     if (rulerMode && rulerPoints.length === 1) {
       setRulerHoverPos(screenToDeck(e.clientX, e.clientY))
+    }
+    if (bgImageDrag) {
+      const pos = screenToDeck(e.clientX, e.clientY)
+      const startPos = screenToDeck(bgImageDrag.startMouse.x, bgImageDrag.startMouse.y)
+      if (pos && startPos) {
+        const dx = pos.x - startPos.x
+        const dy = pos.y - startPos.y
+        const r = bgImageDrag.startRect
+        if (bgImageDrag.kind === 'move') {
+          onSetBackgroundImageRect?.({ ...r, x: r.x + dx, y: r.y + dy })
+        } else if (bgImageDrag.corner) {
+          // Anchor = the FIXED opposite corner; the dragged corner follows
+          // the cursor delta, and the whole rect scales UNIFORMLY (never
+          // per-axis) from the anchor so the photo's own aspect ratio never
+          // distorts — only its overall size and position change.
+          const logical = cornerKey(bgImageDrag.corner)
+          let anchorX: number, anchorY: number, cornerX: number, cornerY: number
+          switch (logical) {
+            case 'nw': anchorX = r.x + r.width; anchorY = r.y + r.length; cornerX = r.x; cornerY = r.y; break
+            case 'ne': anchorX = r.x; anchorY = r.y + r.length; cornerX = r.x + r.width; cornerY = r.y; break
+            case 'sw': anchorX = r.x + r.width; anchorY = r.y; cornerX = r.x; cornerY = r.y + r.length; break
+            case 'se': anchorX = r.x; anchorY = r.y; cornerX = r.x + r.width; cornerY = r.y + r.length; break
+          }
+          const origDist = Math.hypot(cornerX - anchorX, cornerY - anchorY) || 1
+          const newCornerX = cornerX + dx
+          const newCornerY = cornerY + dy
+          const newDist = Math.hypot(newCornerX - anchorX, newCornerY - anchorY)
+          const scale = Math.max(0.05, newDist / origDist)
+          const newWidth = r.width * scale
+          const newLength = r.length * scale
+          let newX: number, newY: number
+          switch (logical) {
+            case 'nw': newX = anchorX - newWidth; newY = anchorY - newLength; break
+            case 'ne': newX = anchorX; newY = anchorY - newLength; break
+            case 'sw': newX = anchorX - newWidth; newY = anchorY; break
+            case 'se': newX = anchorX; newY = anchorY; break
+          }
+          onSetBackgroundImageRect?.({ x: newX, y: newY, width: newWidth, length: newLength })
+        }
+      }
     }
     if (draggingVertexIndex !== null) {
       const pos = screenToDeck(e.clientX, e.clientY)
@@ -1876,6 +1967,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setSocketDrag(null)
     setAnnotationDrag(null)
     setDraggingVertexIndex(null)
+    setBgImageDrag(null)
   }
 
   // A cancelled gesture (browser gesture, tab switch, context menu) never fires
@@ -1901,6 +1993,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setSocketDrag(null)
     setAnnotationDrag(null)
     setDraggingVertexIndex(null)
+    setBgImageDrag(null)
   }
 
   const handleManualLeave = () => {
@@ -1996,7 +2089,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ? 'grabbing'
     : zoom > 1
       ? 'grab'
-      : placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || rulerMode
+      : placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || rulerMode || bgCalibrateMode
         ? 'crosshair'
         : 'default'
 
@@ -2103,6 +2196,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </div>
                 <Button
                   type="button"
+                  variant={editingBackgroundImage ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="w-full h-8 text-xs"
+                  onClick={() => setEditingBackgroundImage((v) => !v)}
+                >
+                  <Move className="h-3.5 w-3.5 mr-1.5" />
+                  {editingBackgroundImage ? 'Готово' : 'Переместить / масштабировать'}
+                </Button>
+                <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   className="w-full h-8 text-xs text-destructive hover:text-destructive"
@@ -2121,7 +2224,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         className="w-full h-auto"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
-        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform || rulerMode ? handleDeckClick : undefined}
+        onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform || rulerMode || bgCalibrateMode ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2171,30 +2274,39 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             stroke="#1e293b"
             strokeWidth={2}
           />
+        </g>
 
-          {/* Optional real deck photo, aligned to the exact same rect the deck
-              background/grid use so it rescales in lockstep with deck-size and
-              zoom changes. Drawn AFTER the opaque white background rect (an
-              SVG rect fill is fully opaque — an image behind it would just be
-              hidden) but before the grid overlay and everything else.
-              Stretch-to-fill (not slice) is intentional — the goal is
-              aligning a real photo to the deck's real rectangle corner-to-
-              corner, and slicing would crop it unpredictably depending on the
-              source aspect ratio. pointer-events:none keeps every existing
-              pan/drag/click handler working through it. */}
-          {backgroundImage && (
+        {/* Optional real deck photo/drawing — a free rectangle in its OWN
+            position/size (backgroundImageRect), deliberately NOT clipped to
+            the deck outline: the whole point of this shape is that it's
+            allowed to extend past the deck's own edges (a real photo
+            usually shows more than just the deck — surrounding hull,
+            water), same as the user drags/resizes it via the handles
+            below. preserveAspectRatio="none" is safe here because width/
+            height are always kept in the photo's own aspect ratio by the
+            move/resize/calibrate math (never independently stretched).
+            pointer-events stay off unless the position/scale editor is
+            armed, so it never intercepts ordinary cargo-placement clicks. */}
+        {backgroundImage && effectiveBgRect && (() => {
+          const { sx, sy } = deckToScreen(effectiveBgRect.x, effectiveBgRect.y)
+          const bw = screenSpanW(effectiveBgRect.width, effectiveBgRect.length)
+          const bh = screenSpanH(effectiveBgRect.width, effectiveBgRect.length)
+          return (
             <image
               href={backgroundImage}
-              x={offX}
-              y={offY}
-              width={w}
-              height={h}
+              x={sx}
+              y={sy}
+              width={bw}
+              height={bh}
               opacity={backgroundImageOpacity ?? 0.5}
               preserveAspectRatio="none"
-              style={{ pointerEvents: 'none' }}
+              style={{ pointerEvents: editingBackgroundImage ? 'auto' : 'none', cursor: editingBackgroundImage ? 'move' : undefined }}
+              onPointerDown={handleBgImageBodyPointerDown}
             />
-          )}
+          )
+        })()}
 
+        <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
           {showGrid && hasContent && (
             <rect data-deck-background="true" x={offX} y={offY} width={w} height={h} rx={6} fill="url(#deck-grid)" />
           )}
@@ -2795,6 +2907,69 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             )})}
           </g>
         )}
+
+        {/* Background-photo position/scale editor: dashed bounding box + 4
+            corner handles (uniform-scale resize, see handlePointerMove's
+            bgImageDrag branch) around the free rect from the block above.
+            The rect itself already has pointer-events enabled (move) while
+            this is armed — this overlay only adds the resize corners and a
+            visual boundary so the rect's current extent is legible even
+            past the deck's own edges. */}
+        {editingBackgroundImage && effectiveBgRect && (() => {
+          const { sx, sy } = deckToScreen(effectiveBgRect.x, effectiveBgRect.y)
+          const bw = screenSpanW(effectiveBgRect.width, effectiveBgRect.length)
+          const bh = screenSpanH(effectiveBgRect.width, effectiveBgRect.length)
+          const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
+            { key: 'nw', cx: sx, cy: sy },
+            { key: 'ne', cx: sx + bw, cy: sy },
+            { key: 'sw', cx: sx, cy: sy + bh },
+            { key: 'se', cx: sx + bw, cy: sy + bh },
+          ]
+          return (
+            <g>
+              <rect
+                x={sx}
+                y={sy}
+                width={bw}
+                height={bh}
+                fill="none"
+                stroke="#2563eb"
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
+                className="pointer-events-none"
+              />
+              {corners.map((c) => (
+                <circle
+                  key={c.key}
+                  cx={c.cx}
+                  cy={c.cy}
+                  r={7}
+                  fill="rgba(37,99,235,0.9)"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                  style={{ cursor: (c.key === 'nw' || c.key === 'se') ? 'nwse-resize' : 'nesw-resize' }}
+                  onPointerDown={(e) => handleBgImageCornerPointerDown(e, c.key)}
+                />
+              ))}
+            </g>
+          )
+        })()}
+
+        {/* Background-photo calibrate-by-distance: two clicked points +
+            live line, same visual language as the ruler. */}
+        {bgCalibrateMode && bgCalibratePoints.length > 0 && (() => {
+          const p0 = deckToScreen(bgCalibratePoints[0].x, bgCalibratePoints[0].y)
+          const second = bgCalibratePoints[1]
+          if (!second) return <circle cx={p0.sx} cy={p0.sy} r={5} fill="#16a34a" stroke="#fff" strokeWidth={1.5} className="pointer-events-none" />
+          const p1 = deckToScreen(second.x, second.y)
+          return (
+            <g className="pointer-events-none">
+              <line x1={p0.sx} y1={p0.sy} x2={p1.sx} y2={p1.sy} stroke="#16a34a" strokeWidth={1.5} />
+              <circle cx={p0.sx} cy={p0.sy} r={5} fill="#16a34a" stroke="#fff" strokeWidth={1.5} />
+              <circle cx={p1.sx} cy={p1.sy} r={5} fill="#16a34a" stroke="#fff" strokeWidth={1.5} />
+            </g>
+          )
+        })()}
 
         {/* Deck outline editor: live closed polygon, draggable vertex
             handles, and a small "×" per vertex to remove it (min 3 kept).
@@ -3465,15 +3640,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           {fmt(rotated ? deckWidth : deckLength)} {UNIT_LABEL[unit]}
         </text>
       </svg>
-      <PhotoCropDialog
-        open={!!cropBitmap}
-        bitmap={cropBitmap}
-        deckWidth={deckWidth}
-        deckLength={deckLength}
-        unit={unit}
-        onConfirm={handleCropConfirm}
-        onCancel={handleCropCancel}
-      />
       {contentsTooltip && (
         <div
           className="pointer-events-none fixed z-50 max-w-64 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-card-foreground shadow-md"
@@ -3567,6 +3733,68 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               Открепить
             </button>
           )}
+        </div>
+      )}
+      {editingBackgroundImage && (
+        <div
+          className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm w-64"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="text-[10px] text-muted-foreground">
+            Перетащите фото, чтобы переместить · тяните за угол, чтобы масштабировать
+          </div>
+          {!bgCalibrateMode ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => { setBgCalibrateMode(true); setBgCalibratePoints([]); setBgCalibrateText('') }}
+            >
+              <Ratio className="h-3.5 w-3.5 mr-1.5" />
+              Калибровать по известному расстоянию
+            </Button>
+          ) : (
+            <>
+              <div className="text-[10px] text-muted-foreground">
+                {bgCalibratePoints.length < 2
+                  ? `Отметьте на фото две точки известного расстояния (${bgCalibratePoints.length}/2)`
+                  : 'Введите реальное расстояние между точками'}
+              </div>
+              {bgCalibratePoints.length === 2 && (
+                <div className="space-y-0.5">
+                  <label className="text-[9px] text-muted-foreground leading-none block">
+                    Реальное расстояние ({UNIT_LABEL[unit]})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoFocus
+                    value={bgCalibrateText}
+                    onChange={(e) => setBgCalibrateText(e.target.value)}
+                    className="h-7 w-full rounded-md border bg-background px-2 text-xs"
+                  />
+                </div>
+              )}
+              <div className="flex gap-1.5 justify-end">
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setBgCalibrateMode(false); setBgCalibratePoints([]); setBgCalibrateText('') }}>
+                  Отмена
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={bgCalibratePoints.length < 2 || isNaN(Number(bgCalibrateText.replace(',', '.'))) || Number(bgCalibrateText.replace(',', '.')) <= 0}
+                  onClick={applyBgCalibration}
+                >
+                  Применить
+                </Button>
+              </div>
+            </>
+          )}
+          <Button type="button" size="sm" className="h-7 text-xs" onClick={() => { setEditingBackgroundImage(false); setBgCalibrateMode(false); setBgCalibratePoints([]) }}>
+            Готово
+          </Button>
         </div>
       )}
       {pendingZoneDraft && (

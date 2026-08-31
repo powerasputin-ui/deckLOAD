@@ -88,8 +88,21 @@ export interface DeckConfig {
   annotations?: DeckAnnotation[] // free-text leader notes / bow-stern-port-starboard labels — purely documentation, never read by any calculation
   restrictionZones?: RestrictionZone[] // hard-blocked obstacle zones (crane, bulwark, etc.) — never placeable
   vesselMotion?: VesselMotion // acceleration coefficients + friction used by the lashing check
-  backgroundImage?: string // compressed JPEG data URL of a real deck photo, aligned under the 2D plan
+  backgroundImage?: string // compressed JPEG data URL of a real deck photo/drawing — the WHOLE upload, never cropped
   backgroundImageOpacity?: number // 0..1, seeded to 0.5 the first time a photo is attached
+  // Where/how big the photo is drawn, in the SAME deck-local coordinate
+  // space as everything else (x/y/width/length in deck.unit) — a free
+  // rectangle the user drags to move and corner-drags to (uniformly) scale,
+  // independent of deck.width/deck.length. Deliberately allowed to extend
+  // past [0,width]x[0,length]: a real photo usually shows more than just
+  // the deck itself (surrounding hull, water), and forcing it to fit inside
+  // the deck rect is exactly the forced-crop behavior this replaced.
+  // Undefined only for a project saved before this field existed AND still
+  // carrying a `backgroundImage` from that older, crop-to-deck-rect version
+  // — DeckVisualization falls back to treating the deck rect itself as the
+  // image's rect in that one legacy case, so an old saved photo doesn't
+  // just disappear.
+  backgroundImageRect?: { x: number; y: number; width: number; length: number }
   // Real (possibly non-rectangular) deck silhouette, in deck-meter coords,
   // always within [0,width]×[0,length]. width/length stay the authoritative
   // bounding rectangle every packing/collision function already trusts —
@@ -220,8 +233,12 @@ interface CalculatorState {
   toggleGrid: () => void
   toggleLabels: () => void
   toggleCargoContents: () => void
-  setDeckBackgroundImage: (dataUrl: string | null) => void
+  // rect is the initial placement for a NEW photo (computed by the caller
+  // from the image's natural aspect ratio) — omitted/ignored when clearing
+  // (dataUrl null).
+  setDeckBackgroundImage: (dataUrl: string | null, rect?: { x: number; y: number; width: number; length: number }) => void
   setDeckBackgroundImageOpacity: (opacity: number) => void
+  setDeckBackgroundImageRect: (rect: { x: number; y: number; width: number; length: number }) => void
   setMode: (m: Mode) => void
   setActiveStamp: (id: string | null) => void
   setPendingPresetStamp: (template: Partial<CargoItem> | null) => void
@@ -1075,16 +1092,19 @@ export const useCalculator = create<CalculatorState>()(
   // Built directly, not routed through setDeck — a photo/opacity change must
   // never trigger setDeck's boundsChanged/reflow logic, since it has no
   // effect on placement geometry.
-  setDeckBackgroundImage: (dataUrl) =>
+  setDeckBackgroundImage: (dataUrl, rect) =>
     set((s) => ({
       deck: {
         ...s.deck,
         backgroundImage: dataUrl ?? undefined,
         backgroundImageOpacity: dataUrl ? (s.deck.backgroundImageOpacity ?? 0.5) : s.deck.backgroundImageOpacity,
+        backgroundImageRect: dataUrl ? (rect ?? s.deck.backgroundImageRect) : undefined,
       },
     })),
   setDeckBackgroundImageOpacity: (opacity) =>
     set((s) => ({ deck: { ...s.deck, backgroundImageOpacity: Math.min(1, Math.max(0, opacity)) } })),
+  setDeckBackgroundImageRect: (rect) =>
+    set((s) => ({ deck: { ...s.deck, backgroundImageRect: rect } })),
   setMode: (m) =>
     set(() => ({
       mode: m,

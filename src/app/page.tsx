@@ -133,6 +133,7 @@ export default function Home() {
   const showCargoContents = useCalculator((s) => s.showCargoContents)
   const setDeckBackgroundImage = useCalculator((s) => s.setDeckBackgroundImage)
   const setDeckBackgroundImageOpacity = useCalculator((s) => s.setDeckBackgroundImageOpacity)
+  const setDeckBackgroundImageRect = useCalculator((s) => s.setDeckBackgroundImageRect)
   const mode = useCalculator((s) => s.mode)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
   const updateManualPlacement = useCalculator((s) => s.updateManualPlacement)
@@ -1843,9 +1844,10 @@ export default function Home() {
                     showCargoContents={showCargoContents}
                     backgroundImage={deck.backgroundImage}
                     backgroundImageOpacity={deck.backgroundImageOpacity}
+                    backgroundImageRect={deck.backgroundImageRect}
                     onSetBackgroundImage={setDeckBackgroundImage}
                     onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
-                    onSetDeckSize={(width, length) => setDeck({ width, length })}
+                    onSetBackgroundImageRect={setDeckBackgroundImageRect}
                     deckOutline={deck.outline}
                     editingDeckOutline={editingDeckOutline}
                     onSetDeckOutline={(outline) => setDeck({ outline })}

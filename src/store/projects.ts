@@ -207,6 +207,20 @@ function toFinite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+// x/y may legitimately be negative (the photo rect is allowed to extend
+// past the deck's own [0,width]x[0,length] bounds — see DeckConfig's own
+// doc comment on backgroundImageRect), so toFinite (not toFiniteNonNegative)
+// for those two; width/length must stay strictly positive or the rect
+// degenerates.
+function normalizeBackgroundImageRect(value: unknown): { x: number; y: number; width: number; length: number } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const r = value as Record<string, unknown>
+  const width = toFinitePositive(r.width, NaN)
+  const length = toFinitePositive(r.length, NaN)
+  if (isNaN(width) || isNaN(length)) return undefined
+  return { x: toFinite(r.x, 0), y: toFinite(r.y, 0), width, length }
+}
+
 const VALID_LONGITUDINAL_ORIGINS = new Set(['midships', 'aft-perpendicular'])
 
 function normalizeVesselParticulars(value: unknown): VesselStabilityData['particulars'] | undefined {
@@ -627,6 +641,7 @@ function normalizeProject(p: Partial<Project>): Project {
       restrictionZones: normalizeRestrictionZones(p.deck?.restrictionZones),
       backgroundImage: toOptionalString(p.deck?.backgroundImage),
       backgroundImageOpacity: toFiniteNonNegative(p.deck?.backgroundImageOpacity, 0.5),
+      backgroundImageRect: normalizeBackgroundImageRect(p.deck?.backgroundImageRect),
       outline: normalizeOutline(p.deck?.outline),
       vesselMotion: normalizeVesselMotion(p.deck?.vesselMotion),
       vessel: normalizeVessel(p.deck?.vessel),

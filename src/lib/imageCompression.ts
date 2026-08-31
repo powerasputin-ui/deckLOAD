@@ -7,7 +7,12 @@
 const MAX_DIMENSION = 1600
 const JPEG_QUALITY = 0.8
 
-export async function compressImageToDataUrl(file: File): Promise<string> {
+// Returns the compressed output's own pixel dimensions alongside the data
+// URL — callers that place the image as a free-floating rect (deck
+// background photo) need its aspect ratio to size that rect sensibly, and
+// re-decoding the already-compressed data URL just to read its dimensions
+// back out would be wasteful when this function already has them on hand.
+export async function compressImageToDataUrl(file: File): Promise<{ dataUrl: string; width: number; height: number }> {
   const bitmap = await createImageBitmap(file)
   const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height))
   const w = Math.round(bitmap.width * scale)
@@ -21,5 +26,5 @@ export async function compressImageToDataUrl(file: File): Promise<string> {
   ctx.drawImage(bitmap, 0, 0, w, h)
   bitmap.close?.()
 
-  return canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+  return { dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), width: w, height: h }
 }
