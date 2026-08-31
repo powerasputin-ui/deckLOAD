@@ -1650,24 +1650,6 @@ export default function Home() {
                     className="w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
                   >
                     <span className="block">{tpl.label}</span>
-                    {/* The vessel's real operational limits, shown BEFORE
-                        selection and every time the picker is opened — a
-                        toast that fires once and is dismissed is not where
-                        a deck-strength conflict should live. */}
-                    {tpl.limits && (
-                      <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
-                        {[
-                          tpl.limits.deckStrengthTPerM2 &&
-                            `нагрузка ${tpl.limits.deckStrengthTPerM2.min}–${tpl.limits.deckStrengthTPerM2.max} т/м² (${tpl.limits.deckStrengthTPerM2.sources})`,
-                          tpl.limits.maxDeckCargoT && `груз до ${tpl.limits.maxDeckCargoT} т`,
-                          tpl.limits.maxStackHeightM && `штабель до ${tpl.limits.maxStackHeightM} м`,
-                          tpl.limits.tenFootContainerCapacity && `10ф: ${tpl.limits.tenFootContainerCapacity} шт`,
-                          tpl.limits.reeferSocketCount && `рефрозеток ${tpl.limits.reeferSocketCount}`,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    )}
                   </button>
                 ))}
                 <p className="px-1.5 pt-1 text-[10px] text-muted-foreground">
