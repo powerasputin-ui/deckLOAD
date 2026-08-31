@@ -81,19 +81,6 @@ export function computeCalibratedZoom(
   return { zoom: idealZoom, clampedToMinCover: false }
 }
 
-// A second, independent use of the same two-point-click mechanic as
-// computeCalibratedZoom: once a real-world scale has been established from
-// one reference distance (a printed dimension, a known object), convert any
-// OTHER clicked pixel distance into a real-world one — e.g. measuring the
-// deck's own extent in the photo, instead of guessing a px/m ratio by eye
-// and hand-computing it outside the app (see vesselTemplates.ts's own
-// Olympic Commander history for exactly what that manual process gets
-// wrong: a spacing guessed once, never cross-checked, silently propagated).
-export function computeRealDistance(bitmapPxDistance: number, refPxDistance: number, refRealDistance: number): number {
-  if (refPxDistance <= 0) return 0
-  return (bitmapPxDistance / refPxDistance) * refRealDistance
-}
-
 // Composites exactly the region visible inside the viewport frame (in
 // source-bitmap coordinates, derived from the current pan/zoom) onto an
 // output canvas sized to the deck's aspect ratio, capped at

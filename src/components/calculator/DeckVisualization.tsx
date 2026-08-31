@@ -398,19 +398,41 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setPrevPlacingAnnotation(placingAnnotation)
     if (!placingAnnotation && pendingAnnotationLeaderPoint) setPendingAnnotationLeaderPoint(null)
   }
-  // Ruler: purely local, measurement-only tool — click two points anywhere
-  // on the deck (over the background photo or not) to read off the real
-  // distance between them, for spot-checking a trace against a known
-  // dimension without leaving the main canvas. Never touches any deck data.
+  // Ruler: click two points anywhere on the deck (over the background photo
+  // or not) to read off the real distance between them — for spot-checking
+  // a trace against a known dimension without leaving the main canvas. Also
+  // doubles as the deck-size calibration tool: the line it draws is read-
+  // only by default (computed from whatever deck.width/length currently
+  // are, which may well be wrong right after uploading a photo — that's the
+  // whole problem this second role solves), but once two points are placed,
+  // an editable field lets the user overwrite that reading with the real
+  // distance and write it straight to deck.width/deck.length via
+  // onMeasureDeckDimension. One line = one axis: the line is meant to be
+  // drawn corner-to-corner along that axis, so its typed real length
+  // becomes the new dimension directly — no separate reference/scale step.
   const [rulerMode, setRulerMode] = useState(false)
   const [rulerPoints, setRulerPoints] = useState<{ x: number; y: number }[]>([])
   const [rulerHoverPos, setRulerHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const [rulerCalibrateText, setRulerCalibrateText] = useState('')
   const handleRulerClick = (e: React.MouseEvent): boolean => {
     if (!rulerMode) return false
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return true
     setRulerPoints((pts) => (pts.length >= 2 ? [pos] : [...pts, pos]))
+    setRulerCalibrateText('')
     return true
+  }
+  // Prefill the calibration field with the live-computed distance the
+  // moment the second point lands — render-time "compare previous length"
+  // adjustment (this file's established pattern instead of a useEffect, see
+  // the drawingCustomShape reset above for precedent).
+  const [prevRulerPointsLength, setPrevRulerPointsLength] = useState(0)
+  if (rulerPoints.length !== prevRulerPointsLength) {
+    setPrevRulerPointsLength(rulerPoints.length)
+    if (rulerPoints.length === 2) {
+      const d = Math.hypot(rulerPoints[1].x - rulerPoints[0].x, rulerPoints[1].y - rulerPoints[0].y)
+      setRulerCalibrateText(fmtNumber(d))
+    }
   }
   // Custom-shape drawing: confirmed points + live cursor position, same
   // local-state split as pendingLashingCorner/lashingHoverPos. Reset on
@@ -2034,7 +2056,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           size="icon"
           variant={rulerMode ? 'secondary' : 'ghost'}
           className="h-7 w-7 pointer-events-auto"
-          title="Линейка — измерить расстояние на палубе"
+          title="Линейка / калибровка размера палубы"
           onClick={() => { setRulerMode((v) => !v); setRulerPoints([]); setRulerHoverPos(null) }}
         >
           <Ruler className="h-4 w-4" />
@@ -3462,7 +3484,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         unit={unit}
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
-        onMeasureDeckDimension={onMeasureDeckDimension}
       />
       {contentsTooltip && (
         <div
@@ -3559,6 +3580,53 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )}
         </div>
       )}
+      {rulerMode && rulerPoints.length === 2 && (() => {
+        const currentDist = Math.hypot(rulerPoints[1].x - rulerPoints[0].x, rulerPoints[1].y - rulerPoints[0].y)
+        const typed = Number(rulerCalibrateText.replace(',', '.'))
+        const validTyped = !isNaN(typed) && typed > 0
+        const applyAxis = (axis: 'width' | 'length') => {
+          if (!validTyped) return
+          onMeasureDeckDimension?.(typed, axis)
+          setRulerPoints([])
+          setRulerCalibrateText('')
+        }
+        return (
+          <div
+            className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm w-56"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="text-[10px] text-muted-foreground">
+              Сейчас (по текущему масштабу): {fmtNumber(currentDist)} {UNIT_LABEL[unit]}
+            </div>
+            <div className="space-y-0.5">
+              <label className="text-[9px] text-muted-foreground leading-none block">
+                Реальная длина этой линии ({UNIT_LABEL[unit]})
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                autoFocus
+                value={rulerCalibrateText}
+                onChange={(e) => setRulerCalibrateText(e.target.value)}
+                className="h-7 w-full rounded-md border bg-background px-2 text-xs"
+              />
+            </div>
+            {onMeasureDeckDimension && (
+              <div className="flex gap-1.5">
+                <Button type="button" size="sm" className="h-7 flex-1 text-xs" disabled={!validTyped} onClick={() => applyAxis('width')}>
+                  = Ширина палубы
+                </Button>
+                <Button type="button" size="sm" className="h-7 flex-1 text-xs" disabled={!validTyped} onClick={() => applyAxis('length')}>
+                  = Длина палубы
+                </Button>
+              </div>
+            )}
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setRulerPoints([]); setRulerCalibrateText('') }}>
+              Новая линия
+            </Button>
+          </div>
+        )
+      })()}
       {pendingZoneDraft && (
         <div
           className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm"
