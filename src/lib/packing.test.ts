@@ -1259,6 +1259,17 @@ describe('dedupePolygonVertices', () => {
       { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 0, y: 6 },
     ])
   })
+
+  // Regression: the old 1% threshold was ~21cm on a 20x8m deck — larger
+  // than a real, deliberately-drawn cut corner (here a 12cm x 12cm notch,
+  // its two new vertices 17cm apart) would ever have been, silently
+  // deleting it as if it were accidental drag noise instead.
+  it('keeps a deliberately-drawn small cut-corner notch (12cm) on a multi-meter deck', () => {
+    const withCutCorner = [
+      { x: 0.12, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 8 }, { x: 0, y: 8 }, { x: 0, y: 0.12 },
+    ]
+    expect(dedupePolygonVertices(withCutCorner)).toEqual(withCutCorner)
+  })
 })
 
 describe('erodePolygon', () => {
@@ -1353,6 +1364,19 @@ describe('collidesPrecisely', () => {
     const separate = { x: 10, y: 10, width: 2, length: 2 }
     expect(collidesPrecisely(a, [overlapping])).toBe(collidesWith(a, [overlapping]))
     expect(collidesPrecisely(a, [separate])).toBe(collidesWith(a, [separate]))
+  })
+
+  // Regression: a comment here used to claim custom shapes treat touching
+  // as colliding, but the actual code never enforced that — and the
+  // project's chosen policy (confirmed) is the opposite anyway: touching is
+  // allowed everywhere, consistent with plain collidesWith. Two axis-aligned
+  // outlined boxes placed exactly flush against each other (shared edge, no
+  // overlap) must not collide.
+  it('allows two custom-outline placements flush against each other (touching, not overlapping)', () => {
+    const box = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }]
+    const left = { x: 0, y: 0, width: 2, length: 2, outline: box }
+    const rightFlush = { x: 2, y: 0, width: 2, length: 2, outline: box }
+    expect(collidesPrecisely(left, [rightFlush])).toBe(false)
   })
 })
 
@@ -1975,6 +1999,16 @@ describe('zoneIdsOverlapping', () => {
 
   it('returns an empty array with no zones', () => {
     expect(zoneIdsOverlapping({ x: 0, y: 0, width: 1, length: 1 }, undefined)).toEqual([])
+  })
+
+  // Regression: overlapsZone (which this calls internally) previously had
+  // no eps guard at all, unlike collidesWith's — a footprint placed exactly
+  // flush against a zone's edge is meant to NOT overlap it (same
+  // touching-is-allowed policy everywhere else), but without a guard that
+  // could flip on floating-point noise alone.
+  it('does not count a footprint placed exactly flush against a zone edge as overlapping it', () => {
+    const zones = [zone({ id: 'a', x: 0, y: 0, width: 5, length: 5 })]
+    expect(zoneIdsOverlapping({ x: 5, y: 0, width: 2, length: 2 }, zones)).toEqual([])
   })
 })
 

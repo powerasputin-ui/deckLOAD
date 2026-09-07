@@ -105,8 +105,14 @@ export interface ZoneLoadCheck {
   exceeded: boolean
 }
 
+// Same eps guard as collidesWith below, same reason: without it, an exact
+// flush-against-the-zone-edge position can flip in or out of "overlapping"
+// on floating-point noise alone. Touching (not overlapping) is the
+// deliberate, consistent policy across every boundary/collision check in
+// this file — see collidesPrecisely's own comment.
 function overlapsZone(f: { x: number; y: number; width: number; length: number }, z: LoadZone): boolean {
-  return f.x < z.x + z.width && f.x + f.width > z.x && f.y < z.y + z.length && f.y + f.length > z.y
+  const eps = 1e-9
+  return f.x < z.x + z.width - eps && f.x + f.width > z.x + eps && f.y < z.y + z.length - eps && f.y + f.length > z.y + eps
 }
 
 // Sutherland-Hodgman: clips `poly` (subject, may be concave — the deck
@@ -2425,7 +2431,17 @@ function segmentsIntersect(
   const d2 = d(p3, p4, p2)
   const d3 = d(p1, p2, p3)
   const d4 = d(p1, p2, p4)
-  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  // eps guard, same reasoning as collidesWith's own: without it, two edges
+  // that are meant to exactly touch (d == 0) can land on either side of 0
+  // from floating-point noise alone and get spuriously flagged as crossing.
+  // Touching itself is already excluded either way (strict > / < on either
+  // side of eps never fires exactly at 0) — this only makes that exclusion
+  // robust against noise, consistent with the touching-is-allowed policy
+  // used everywhere else in this file.
+  const eps = 1e-9
+  return (
+    ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
+  )
 }
 
 function pointInPolygon(pt: { x: number; y: number }, poly: { x: number; y: number }[]): boolean {
@@ -2588,11 +2604,14 @@ export function dedupePolygonVertices(
   const xs = poly.map((p) => p.x)
   const ys = poly.map((p) => p.y)
   const diag = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
-  // 1% of the polygon's own diagonal — generous enough to catch a stray
-  // vertex a drag interaction drops a few cm from its neighbor on a
-  // multi-meter deck (the real case this exists for), while still being far
-  // below any deliberately-drawn feature on a deck-scale outline.
-  const eps = Math.max(1e-9, diag * 0.01)
+  // 0.25% of the polygon's own diagonal (was 1% — on a 20x8m deck that was
+  // ~21cm, easily larger than a real, deliberately-drawn small notch or cut
+  // corner, e.g. 10-15cm, silently deleting it instead of only catching
+  // accidental drag noise). 0.25% is ~5cm on that same deck: still safely
+  // catches the real case this exists for (a stray vertex a drag drops a
+  // couple cm from its neighbor — see the regression test pinning a 3.6cm
+  // case), with real margin below anything a user drew on purpose.
+  const eps = Math.max(1e-9, diag * 0.0025)
   const out: { x: number; y: number }[] = []
   for (const p of poly) {
     const prev = out[out.length - 1]
@@ -2665,7 +2684,12 @@ export function erodePolygon(
 // every shape except the new hand-drawn 'custom' one. `gap` is only applied
 // during the bbox pre-check (a Minkowski-expanded gap around an arbitrary
 // polygon isn't worth the complexity here) — a custom shape's own true
-// boundary is treated as touching-is-colliding.
+// boundary follows the SAME touching-is-allowed policy as collidesWith and
+// overlapsZone: cargo can be placed flush against another cargo's edge or
+// a zone/deck boundary without that counting as a collision.
+// segmentsIntersect below carries the same eps guard collidesWith does, so
+// an exact touching edge resolves the same way regardless of which
+// primitive happens to run it.
 export function collidesPrecisely(
   a: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[] },
   others: { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[] }[],
