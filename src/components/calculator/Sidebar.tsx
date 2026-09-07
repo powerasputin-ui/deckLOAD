@@ -633,7 +633,7 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const removeLoadZone = useCalculator((s) => s.removeLoadZone)
 
   return (
-    <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false}>
+    <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false} tourId="load-zones">
       <div className="space-y-2">
         <p className="text-[10px] text-muted-foreground">
           Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
@@ -705,7 +705,7 @@ function SeparationRulesSection() {
   )
 
   return (
-    <Section icon={<ShieldAlert className="h-4 w-4" />} title="Сепарация груза" badge={rules.length} defaultOpen={false}>
+    <Section icon={<ShieldAlert className="h-4 w-4" />} title="Сепарация груза" badge={rules.length} defaultOpen={false} tourId="separation">
       <div className="space-y-2">
         <p className="text-[10px] text-muted-foreground">
           Минимальное расстояние (в метрах) между грузами двух категорий. Нарушение блокирует размещение.
@@ -847,7 +847,7 @@ function LashingPointsSection() {
     : 0
 
   return (
-    <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false}>
+    <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false} tourId="lashing">
       <div className="space-y-3">
         <p className="text-[10px] text-muted-foreground">
           Клик по грузу, затем по палубе — привязывает линию крепления с расчётом усилия по IMO CSS Code

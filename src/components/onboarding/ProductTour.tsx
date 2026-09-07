@@ -56,12 +56,17 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
     const update = () => {
       const el = document.querySelector(step.selector)
       const box = el?.getBoundingClientRect()
-      // A target can be present in the DOM but squeezed unusably thin — the
-      // sidebar doesn't collapse on narrow viewports, so the main content
+      // A target can be present in the DOM but squeezed unusably thin — on
+      // narrow viewports the sidebar doesn't collapse, so the main content
       // grid it shares a flex row with gets crushed to a sliver rather than
-      // stacking. Spotlighting that sliver would be worse than no spotlight,
-      // so treat it the same as a missing target.
-      if (box && box.width > 40 && box.height > 40 && box.width > window.innerWidth * 0.25) {
+      // stacking. Spotlighting that sliver would be worse than no spotlight.
+      // This only happens below the sidebar's own collapse breakpoint —
+      // gating it on viewport width keeps it from misfiring on ordinary
+      // small controls (a toolbar button, a card action) that are legitimately
+      // narrower than a quarter of a normal desktop window.
+      const isNarrowViewport = window.innerWidth < 768
+      const looksCrushed = isNarrowViewport && box ? box.width < window.innerWidth * 0.25 : false
+      if (box && box.width > 4 && box.height > 4 && !looksCrushed) {
         setRect(box)
         setMissingTarget(false)
       } else {
