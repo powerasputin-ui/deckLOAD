@@ -55,7 +55,7 @@ import {
   computeZoneLoads,
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
-  requiredLashingCount,
+  assessLashingRequirement,
   type ManualPlacement,
   type PinnedPlacement,
   type PackVariant,
@@ -675,28 +675,36 @@ export default function Home() {
       ...manualPlacements,
       ...Object.values(pinnedPlacementsByTrip).flat(),
     ]
+    const dangerousGoodsNames: string[] = []
     const lashingRequirements = allPlacements
       .map((p) => {
         const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+        const category = items.find((it) => it.id === p.itemId)?.category
         // `weight` is per-unit; the stack's real weight is what РД
         // 31.11.21.23-96 п. 2.2.3 wants — same fix as Sidebar.tsx's copy.
-        const requiredCount = requiredLashingCount(
+        const assessment = assessLashingRequirement(
+          category,
           (p.weight ?? 0) * Math.max(1, p.layers ?? 1),
           WIRE_ROPE_SPECS[wireType].breakingLoadKN
         )
-        if (requiredCount <= 0) return null
+        if (assessment.status === 'not-applicable') {
+          dangerousGoodsNames.push(p.name)
+          return null
+        }
+        if (assessment.status !== 'calculated' || !assessment.requiredCount) return null
         return {
           name: p.name,
-          requiredCount,
+          requiredCount: assessment.requiredCount,
           attachedCount: points.filter((pt) => pt.placementId === p.id).length,
           wireLabel: WIRE_ROPE_SPECS[wireType].label,
           justification: p.lashingJustification,
-          category: items.find((it) => it.id === p.itemId)?.category,
+          category,
+          methodology: assessment.methodology,
         }
       })
       .filter((r): r is NonNullable<typeof r> => r !== null)
     try {
-      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements })
+      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames })
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')

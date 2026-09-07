@@ -110,11 +110,13 @@ export interface LashingRequirementRow {
   wireLabel: string
   justification?: string
   category?: string
+  // 'metal-rd' rows are the real, cited РД 31.11.21.23-96 figure;
+  // 'general' rows are the same formula used as an unlabeled ballpark for
+  // non-metal cargo — see lashingMethodologyFor/assessLashingRequirement in
+  // packing.ts. Rows are never built for 'dangerous-goods' cargo at all —
+  // those are listed separately via dangerousGoodsNames below instead.
+  methodology: 'metal-rd' | 'general'
 }
-
-// РД 31.11.21.23-96 only actually covers metal products — see
-// lashingMethodologyFor in packing.ts for the same list used in the UI.
-const DANGEROUS_GOODS_CATEGORIES = new Set(['Опасный груз', 'Химикаты', 'Взрывоопасный'])
 
 interface ExportDeckPlanToPdfOptions {
   svgEl: SVGSVGElement
@@ -123,6 +125,11 @@ interface ExportDeckPlanToPdfOptions {
   result: PackingResult
   projectName: string
   lashingRequirements?: LashingRequirementRow[]
+  // Names of placed cargo whose category routes to the dangerous-goods
+  // methodology (assessLashingRequirement returns 'not-applicable' for
+  // these) — listed by name in the PDF instead of getting a fabricated
+  // number, so the report doesn't silently drop them either.
+  dangerousGoodsNames?: string[]
 }
 
 export async function exportDeckPlanToPdf({
@@ -132,6 +139,7 @@ export async function exportDeckPlanToPdf({
   result,
   projectName,
   lashingRequirements,
+  dangerousGoodsNames,
 }: ExportDeckPlanToPdfOptions): Promise<void> {
   const { dataUrl: img, width: imgWidthPx, height: imgHeightPx } = await rasterizeSvg(svgEl)
   const unitLabel = UNIT_LABEL[unit]
@@ -254,78 +262,89 @@ export async function exportDeckPlanToPdf({
     },
   })
 
-  // --- Lashing count table, only when at least one placement actually
-  // carries a computed requirement. Title stays neutral because the
-  // РД 31.11.21.23-96 figure is only literally correct for metal-products
-  // cargo — see the footnote below and lashingMethodologyFor in packing.ts. ---
-  if (lashingRequirements && lashingRequirements.length > 0) {
+  // --- Lashing count table + dangerous-goods notice. Runs whenever there's
+  // something to report — a calculated row, a dangerous-goods cargo name,
+  // or both — so a project with ONLY dangerous-goods cargo (no calculable
+  // rows at all) still gets the warning instead of silently showing nothing.
+  const hasLashingRows = !!lashingRequirements && lashingRequirements.length > 0
+  const hasDangerousGoods = !!dangerousGoodsNames && dangerousGoodsNames.length > 0
+  if (hasLashingRows || hasDangerousGoods) {
     y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 22
     pdf.setFont(FONT_FAMILY, 'bold')
     pdf.setFontSize(10)
     pdf.setTextColor(...INK)
-    pdf.text('Крепление груза (расчётная оценка)', margin, y)
+    pdf.text('Крепление груза', margin, y)
     y += 8
 
-    autoTable(pdf, {
-      startY: y,
-      margin: { left: margin, right: margin, bottom: 36 },
-      head: [['Груз', 'Категория', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
-      body: lashingRequirements.map((r) => [
-        r.name,
-        r.category || '—',
-        r.wireLabel,
-        String(r.requiredCount),
-        String(r.attachedCount),
-        r.attachedCount < r.requiredCount ? (r.justification || '—') : '—',
-      ]),
-      theme: 'grid',
-      styles: {
-        font: FONT_FAMILY,
-        fontSize: 9,
-        cellPadding: 6,
-        lineColor: BORDER,
-        lineWidth: 0.5,
-        textColor: INK,
-      },
-      headStyles: {
-        font: FONT_FAMILY,
-        fillColor: INK,
-        textColor: 255,
-        fontStyle: 'bold',
-        halign: 'left',
-      },
-      alternateRowStyles: { fillColor: CARD_BG },
-      columnStyles: {
-        0: { halign: 'left' },
-        1: { halign: 'left' },
-        2: { halign: 'left' },
-        3: { halign: 'right' },
-        4: { halign: 'right' },
-        5: { halign: 'left' },
-      },
-      didParseCell: (data) => {
-        if (data.section === 'body' && data.column.index === 4) {
-          const row = lashingRequirements[data.row.index]
-          if (row && row.attachedCount < row.requiredCount) data.cell.styles.textColor = WARN
-        }
-      },
-    })
+    if (hasLashingRows && lashingRequirements) {
+      autoTable(pdf, {
+        startY: y,
+        margin: { left: margin, right: margin, bottom: 36 },
+        head: [['Груз', 'Категория', 'Статус', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
+        body: lashingRequirements.map((r) => [
+          r.name,
+          r.category || '—',
+          r.methodology === 'metal-rd' ? 'Норматив (РД 31.11.21.23-96)' : 'Инженерная оценка',
+          r.wireLabel,
+          String(r.requiredCount),
+          String(r.attachedCount),
+          r.attachedCount < r.requiredCount ? (r.justification || '—') : '—',
+        ]),
+        theme: 'grid',
+        styles: {
+          font: FONT_FAMILY,
+          fontSize: 9,
+          cellPadding: 6,
+          lineColor: BORDER,
+          lineWidth: 0.5,
+          textColor: INK,
+        },
+        headStyles: {
+          font: FONT_FAMILY,
+          fillColor: INK,
+          textColor: 255,
+          fontStyle: 'bold',
+          halign: 'left',
+        },
+        alternateRowStyles: { fillColor: CARD_BG },
+        columnStyles: {
+          0: { halign: 'left' },
+          1: { halign: 'left' },
+          2: { halign: 'left' },
+          3: { halign: 'left' },
+          4: { halign: 'right' },
+          5: { halign: 'right' },
+          6: { halign: 'left' },
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const row = lashingRequirements[data.row.index]
+            if (row && row.attachedCount < row.requiredCount) data.cell.styles.textColor = WARN
+          }
+        },
+      })
 
-    y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14
-    pdf.setFont(FONT_FAMILY, 'normal')
-    pdf.setFontSize(7.5)
-    pdf.setTextColor(...MUTED)
-    pdf.text('* Формула РД 31.11.21.23-96 применена буквально только к категории «Металлопродукция»; для остального груза — ориентировочно.', margin, y)
-
-    const hasDangerousGoods = lashingRequirements.some((r) => r.category && DANGEROUS_GOODS_CATEGORIES.has(r.category))
-    if (hasDangerousGoods) {
-      y += 11
-      pdf.setFont(FONT_FAMILY, 'bold')
-      pdf.setTextColor(...DANGER)
+      y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14
+      pdf.setFont(FONT_FAMILY, 'normal')
+      pdf.setFontSize(7.5)
+      pdf.setTextColor(...MUTED)
       pdf.text(
-        '⚠ Груз категории «Опасный груз/Химикаты/Взрывоопасный» требует отдельного расчёта по IMDG Code (сегрегация, размещение, классификация) — не входит в этот отчёт.',
+        '* «Норматив» — формула РД 31.11.21.23-96 применена по назначению (категория «Металлопродукция»). «Инженерная оценка» — та же формула как ориентир для другого груза, не нормативный расчёт крепления.',
         margin,
         y
+      )
+    }
+
+    if (hasDangerousGoods && dangerousGoodsNames) {
+      y += hasLashingRows ? 11 : 0
+      pdf.setFont(FONT_FAMILY, 'bold')
+      pdf.setFontSize(hasLashingRows ? 7.5 : 9)
+      pdf.setTextColor(...DANGER)
+      pdf.text(
+        `РАСЧЁТ НЕ ВЫПОЛНЕН — ТРЕБУЕТСЯ ОТДЕЛЬНАЯ ПРОВЕРКА: ${dangerousGoodsNames.join(', ')}. Классификация, сегрегация и документация — по IMDG Code (вне этого приложения); прочность крепления — отдельная проверка, число не подменяет ни то, ни другое.`,
+        margin,
+        y,
+        { maxWidth: contentWidth }
       )
     }
   }

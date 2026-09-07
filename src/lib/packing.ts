@@ -491,6 +491,35 @@ export function lashingMethodologyFor(category?: string): LashingMethodology {
   return 'general'
 }
 
+// Wraps requiredLashingCount with an honest result status instead of a bare
+// number, so a caller can never confuse "0" with "not calculated" or with
+// "this methodology doesn't apply here" — see this file's own notes above
+// requiredLashingCount and lashingMethodologyFor for why each branch exists.
+// requiredLashingCount itself stays untouched; this only decides whether it
+// gets called at all and what the result means.
+export type LashingResultStatus = 'calculated' | 'insufficient-data' | 'not-applicable'
+// A discriminated union (not one interface with optional fields) so a
+// caller that's checked `status === 'calculated'` gets `methodology`
+// narrowed to 'metal-rd' | 'general' automatically — 'dangerous-goods'
+// always resolves to 'not-applicable' below and never reaches that branch.
+export type LashingAssessment =
+  | { status: 'calculated'; methodology: 'metal-rd' | 'general'; requiredCount: number }
+  | { status: 'insufficient-data'; methodology: 'metal-rd' | 'general'; missingInputs: string[] }
+  | { status: 'not-applicable'; methodology: 'dangerous-goods' }
+export function assessLashingRequirement(
+  category: string | undefined,
+  stackWeightKg: number,
+  breakingLoadKN: number
+): LashingAssessment {
+  const methodology = lashingMethodologyFor(category)
+  if (methodology === 'dangerous-goods') return { status: 'not-applicable', methodology }
+  const missing: string[] = []
+  if (!(stackWeightKg > 0)) missing.push('вес груза')
+  if (!(breakingLoadKN > 0)) missing.push('характеристики троса (BL)')
+  if (missing.length > 0) return { status: 'insufficient-data', methodology, missingInputs: missing }
+  return { status: 'calculated', methodology, requiredCount: requiredLashingCount(stackWeightKg, breakingLoadKN) }
+}
+
 // Vessel motion coefficients (in g) used by the simplified static-equivalent
 // lashing check below, plus the deck/cargo friction coefficient. Presets
 // stand in for a full GM/roll-period calculation, which real-world lashing

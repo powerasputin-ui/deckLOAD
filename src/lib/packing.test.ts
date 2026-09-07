@@ -21,6 +21,7 @@ import {
   checkLashingBalance,
   requiredLashingCount,
   lashingMethodologyFor,
+  assessLashingRequirement,
   WIRE_ROPE_SPECS,
   violatesSeparation,
   rotateOutline90,
@@ -2011,6 +2012,49 @@ describe('lashingMethodologyFor', () => {
     expect(lashingMethodologyFor('Обычный')).toBe('general')
     expect(lashingMethodologyFor(undefined)).toBe('general')
     expect(lashingMethodologyFor('Что-то своё')).toBe('general')
+  })
+})
+
+describe('assessLashingRequirement', () => {
+  const BL = WIRE_ROPE_SPECS.wire_19_5_g1zhn_1670.breakingLoadKN
+
+  it('metal-rd with sufficient data: calculated, citing the real formula', () => {
+    const a = assessLashingRequirement('Металлопродукция', 756_000, BL)
+    if (a.status !== 'calculated') throw new Error(`expected calculated, got ${a.status}`)
+    expect(a.methodology).toBe('metal-rd')
+    expect(a.requiredCount).toBe(11)
+  })
+
+  it('general with sufficient data: calculated, same math, general methodology', () => {
+    const a = assessLashingRequirement('Обычный', 756_000, BL)
+    if (a.status !== 'calculated') throw new Error(`expected calculated, got ${a.status}`)
+    expect(a.methodology).toBe('general')
+    expect(a.requiredCount).toBe(11)
+  })
+
+  it('missing weight: insufficient-data regardless of category, names the missing input', () => {
+    const a = assessLashingRequirement('Металлопродукция', 0, BL)
+    if (a.status !== 'insufficient-data') throw new Error(`expected insufficient-data, got ${a.status}`)
+    expect(a.missingInputs).toContain('вес груза')
+  })
+
+  it('missing breaking load (e.g. "Свой канат" left at 0): insufficient-data, names it', () => {
+    const a = assessLashingRequirement('Обычный', 756_000, 0)
+    if (a.status !== 'insufficient-data') throw new Error(`expected insufficient-data, got ${a.status}`)
+    expect(a.missingInputs).toContain('характеристики троса (BL)')
+  })
+
+  it('dangerous-goods categories: not-applicable even with full data — never a fabricated number', () => {
+    for (const category of ['Опасный груз', 'Химикаты', 'Взрывоопасный']) {
+      const a = assessLashingRequirement(category, 756_000, BL)
+      expect(a.status).toBe('not-applicable')
+      expect(a.methodology).toBe('dangerous-goods')
+    }
+  })
+
+  it('dangerous-goods categories: still not-applicable (not insufficient-data) even with no weight/BL at all', () => {
+    const a = assessLashingRequirement('Взрывоопасный', 0, 0)
+    expect(a.status).toBe('not-applicable')
   })
 })
 

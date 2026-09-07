@@ -57,8 +57,7 @@ import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, type Unit } 
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
-  requiredLashingCount,
-  lashingMethodologyFor,
+  assessLashingRequirement,
   type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
@@ -839,21 +838,19 @@ function LashingPointsSection() {
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
     : 0
   const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
-  const selectedRequiredLashing = selectedPlacement
-    ? requiredLashingCount(
-        // `weight` is per-unit; requiredLashingCount wants the whole
-        // stack's weight (РД 31.11.21.23-96 п. 2.2.3 is a per-штабель
-        // figure) — multiply by `layers`, same fix as checkLashingBalance.
-        (selectedPlacement.weight ?? 0) * Math.max(1, selectedPlacement.layers ?? 1),
-        WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN
-      )
-    : 0
-  // The РД 31.11.21.23-96 formula only actually covers metal products —
-  // showing it unlabeled for every category made it look like an official
-  // compliance figure for cargo it was never written for (dangerous goods
-  // especially). See lashingMethodologyFor's own doc comment.
   const selectedItem = items.find((i) => i.id === selectedPlacement?.itemId)
-  const selectedLashingMethodology = lashingMethodologyFor(selectedItem?.category)
+  // assessLashingRequirement wraps requiredLashingCount with an honest
+  // status — see its own doc comment in packing.ts for why a bare number
+  // can't tell "0 required", "not enough data to say", and "this
+  // methodology doesn't apply to this cargo" apart.
+  const selectedAssessment = assessLashingRequirement(
+    selectedItem?.category,
+    // `weight` is per-unit; the calc wants the whole stack's weight
+    // (РД 31.11.21.23-96 п. 2.2.3 is a per-штабель figure) — multiply by
+    // `layers`, same fix as checkLashingBalance.
+    (selectedPlacement?.weight ?? 0) * Math.max(1, selectedPlacement?.layers ?? 1),
+    WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN
+  )
 
   return (
     <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false} tourId="lashing">
@@ -948,30 +945,39 @@ function LashingPointsSection() {
           </div>
         )}
 
-        {selectedPlacement && selectedRequiredLashing > 0 && selectedLashingMethodology === 'dangerous-goods' && (
+        {selectedPlacement && selectedAssessment.status === 'not-applicable' && (
           <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
             <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             <span>
-              <b>Категория «{selectedItem?.category}» — груз для IMDG Code.</b> РД 31.11.21.23-96 рассчитан для
-              металлопродукции и здесь не применим; классификацию, сегрегацию и место размещения на палубе приложение
-              не считает — согласуйте с грузоотправителем/капитаном по опасным грузам. Дистанции от другого груза
-              задаются в разделе «Сепарация груза». Число ниже — только механическая проверка на сдвиг, не
-              соответствие IMDG.
+              <b>Категория «{selectedItem?.category}» — груз для IMDG Code.</b> Это два разных контура: классификация,
+              сегрегация и документация — по IMDG Code (вне этого приложения, согласуйте с грузоотправителем/капитаном
+              по опасным грузам); механическая прочность самого крепления — отдельная проверка, не подменяет IMDG.
+              РД 31.11.21.23-96 к этой категории не применим, числа не показываем. Дистанции от другого груза
+              задаются в разделе «Сепарация груза». Для проверки прочности крепления смотрите индикатор у
+              прикреплённых точек на схеме (силовой баланс по IMO CSS Code Annex 13 считается уже сейчас).
             </span>
           </div>
         )}
 
-        {selectedPlacement && selectedRequiredLashing > 0 && (
+        {selectedPlacement && selectedAssessment.status === 'insufficient-data' && (
+          <div className="rounded-md border p-2 text-[11px] text-muted-foreground">
+            Недостаточно данных для оценки: {selectedAssessment.missingInputs?.join(', ')}.
+          </div>
+        )}
+
+        {selectedPlacement && selectedAssessment.status === 'calculated' && (
           <div className="rounded-md border p-2 space-y-1.5">
             <div className="text-[10px] font-medium text-muted-foreground">
-              {selectedLashingMethodology === 'metal-rd' && (
-                <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedRequiredLashing}</>
+              {selectedAssessment.methodology === 'metal-rd' && (
+                <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedAssessment.requiredCount}</>
               )}
-              {selectedLashingMethodology === 'general' && (
-                <>Оценочно, по аналогии с РД 31.11.21.23-96 (груз не металлопродукция) — найтовов: {selectedRequiredLashing}</>
-              )}
-              {selectedLashingMethodology === 'dangerous-goods' && (
-                <>Механическая проверка на сдвиг (не соответствие IMDG) — найтовов: {selectedRequiredLashing}</>
+              {selectedAssessment.methodology === 'general' && (
+                <>
+                  Ориентировочное количество найтовов: {selectedAssessment.requiredCount}
+                  <div className="font-normal text-muted-foreground/70 mt-0.5">
+                    Не является нормативным расчётом крепления.
+                  </div>
+                </>
               )}
             </div>
             <Select
@@ -988,7 +994,7 @@ function LashingPointsSection() {
             <div className="text-[10px] text-muted-foreground">
               Прикреплено точек к этому грузу: {selectedPointsCount}
             </div>
-            {selectedPointsCount < selectedRequiredLashing && (
+            {selectedPointsCount < (selectedAssessment.requiredCount ?? 0) && (
               <div className="space-y-1">
                 <div className="text-[10px] text-destructive">
                   Меньше расчётного числа — укажите обоснование (идёт в PDF)
