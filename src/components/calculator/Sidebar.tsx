@@ -1259,7 +1259,16 @@ function VesselStabilitySection() {
                   label="Момент своб. пов."
                   value={w.freeSurfaceMomentTm ?? 0}
                   unit="т·м"
-                  onChange={(v) => updateVariableWeight(w.id, { freeSurfaceMomentTm: v !== 0 ? v : undefined })}
+                  // Store whatever the user typed, 0 included — the check
+                  // this field feeds (StabilityPanel's NoFreeSurfaceDataWarning,
+                  // keyed on `(w.freeSurfaceMomentTm ?? 0) !== 0`) exists
+                  // specifically to tell "confirmed genuinely zero" apart
+                  // from "never entered." Coercing 0 back to undefined (as
+                  // this used to) made that distinction impossible to
+                  // express through this form at all — every zero silently
+                  // became "not entered," so the tank could never leave the
+                  // "unconfirmed" bucket the warning is built to flag.
+                  onChange={(v) => updateVariableWeight(w.id, { freeSurfaceMomentTm: v })}
                 />
               </div>
             </div>

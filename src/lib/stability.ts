@@ -208,13 +208,25 @@ export function computeLoadingCondition(
   cargoItems: WeightMoment[]
 ): LoadingCondition {
   const items = [lightship, ...cargoItems]
-  const totalDisplacementKg = items.reduce((s, i) => s + Math.max(0, i.weightKg), 0)
+  // Every current caller already pre-filters non-positive weight before
+  // building a WeightMoment (buildCargoWeightMoments/variableWeightsToMoments
+  // filter `weight > 0`; lightshipWeightKg is normalized non-negative on
+  // load) — so this Math.max never actually fires today. It stays here as
+  // this function's own contract, not a dead line: a negative weightKg used
+  // to be excluded from displacement (via this same clamp) but still counted
+  // in full in the KG/TCG/LCG moment sums below, which would silently let a
+  // negative weight move the reported KG despite contributing nothing to the
+  // displacement it's supposed to be weighted against. Clamping once, up
+  // front, and reusing the clamped weight everywhere keeps that impossible
+  // regardless of what a future caller passes in.
+  const weightOf = (i: WeightMoment) => Math.max(0, i.weightKg)
+  const totalDisplacementKg = items.reduce((s, i) => s + weightOf(i), 0)
   if (totalDisplacementKg <= 0) {
     return { totalDisplacementKg: 0, KG: lightship.vcgM, overallTCG: 0, overallLCG: lightship.lcgM }
   }
-  const KG = items.reduce((s, i) => s + i.weightKg * i.vcgM, 0) / totalDisplacementKg
-  const overallTCG = items.reduce((s, i) => s + i.weightKg * i.tcgM, 0) / totalDisplacementKg
-  const overallLCG = items.reduce((s, i) => s + i.weightKg * i.lcgM, 0) / totalDisplacementKg
+  const KG = items.reduce((s, i) => s + weightOf(i) * i.vcgM, 0) / totalDisplacementKg
+  const overallTCG = items.reduce((s, i) => s + weightOf(i) * i.tcgM, 0) / totalDisplacementKg
+  const overallLCG = items.reduce((s, i) => s + weightOf(i) * i.lcgM, 0) / totalDisplacementKg
   return { totalDisplacementKg, KG, overallTCG, overallLCG }
 }
 

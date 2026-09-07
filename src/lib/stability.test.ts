@@ -54,6 +54,24 @@ describe('computeLoadingCondition', () => {
     expect(res.KG).toBe(6.0)
     expect(res.overallLCG).toBe(1.5)
   })
+
+  // Regression: a negative weightKg used to be excluded from displacement
+  // (via Math.max(0, ...)) but still counted in full in the KG moment sum,
+  // so it could move the reported KG despite contributing nothing to the
+  // displacement it was weighted against. Every current caller already
+  // pre-filters non-positive weight before this point, so this is a
+  // defense-in-depth fix for the function's own contract, not a live-path
+  // fix — this test calls it directly with a negative weight to pin that
+  // contract regardless of what any future caller passes in.
+  it('a negative weightKg contributes nothing to displacement OR to the KG/TCG/LCG moments', () => {
+    const lightship: WeightMoment = { weightKg: 100_000, vcgM: 6.0, tcgM: 0, lcgM: 0 }
+    const withNegative = computeLoadingCondition(lightship, [{ weightKg: -10_000, vcgM: 50, tcgM: 50, lcgM: 50 }])
+    const withoutIt = computeLoadingCondition(lightship, [])
+    expect(withNegative.totalDisplacementKg).toBe(withoutIt.totalDisplacementKg)
+    expect(withNegative.KG).toBeCloseTo(withoutIt.KG, 9)
+    expect(withNegative.overallTCG).toBeCloseTo(withoutIt.overallTCG, 9)
+    expect(withNegative.overallLCG).toBeCloseTo(withoutIt.overallLCG, 9)
+  })
 })
 
 describe('buildLoadingConditionFromPlacements', () => {
