@@ -115,6 +115,7 @@ export function PlacementPanel({
           onClick={onAutoRedistribute}
           className="w-full"
           title="Сгенерировать несколько вариантов раскладки"
+          data-tour="auto-redistribute"
         >
           <Wand2 className="h-3.5 w-3.5 mr-1.5" />
           Автораспределение (варианты)

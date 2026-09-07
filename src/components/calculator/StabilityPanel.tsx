@@ -69,7 +69,7 @@ function NoFreeSurfaceDataWarning() {
 export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
   if (!vessel) {
     return (
-      <Card>
+      <Card data-tour="stability">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Ship className="h-4 w-4 text-primary" />
@@ -95,7 +95,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
 
   if (!stability) {
     return (
-      <Card>
+      <Card data-tour="stability">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Ship className="h-4 w-4 text-primary" />
@@ -118,7 +118,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   const listSideLabel = stability.listSide === 'starboard' ? 'на правый борт' : stability.listSide === 'port' ? 'на левый борт' : ''
 
   return (
-    <Card>
+    <Card data-tour="stability">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Ship className="h-4 w-4 text-primary" />

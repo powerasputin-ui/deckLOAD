@@ -415,16 +415,21 @@ function Section({
   badge,
   children,
   defaultOpen = true,
+  tourId,
 }: {
   icon: React.ReactNode
   title: string
   badge?: number
   children: React.ReactNode
   defaultOpen?: boolean
+  // Optional anchor for ProductTour (src/components/onboarding/ProductTour.tsx)
+  // — placed on the outer div so the section stays a valid tour target even
+  // collapsed (children unmount when `open` is false, the header never does).
+  tourId?: string
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div>
+    <div data-tour={tourId}>
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 w-full text-left mb-1.5 group"
@@ -479,7 +484,7 @@ function DeckSettings() {
   const setSortStrategy = useCalculator((s) => s.setSortStrategy)
 
   return (
-    <Section icon={<Settings2 className="h-4 w-4" />} title="Палуба">
+    <Section icon={<Settings2 className="h-4 w-4" />} title="Палуба" tourId="deck-settings">
       <div className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">

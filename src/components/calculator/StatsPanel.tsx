@@ -88,7 +88,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
   const tenFootPlacedCount = placed.filter((p) => p.name.includes("10'")).reduce((s, p) => s + p.stackedCount, 0)
 
   return (
-    <Card>
+    <Card data-tour="stats">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <TrendingUp className="h-4 w-4 text-primary" />

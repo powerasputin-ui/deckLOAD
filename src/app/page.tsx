@@ -10,6 +10,7 @@ import {
   Download,
   Upload,
   AlertTriangle,
+  HelpCircle,
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
@@ -76,12 +77,81 @@ import { PlacementPanel } from '@/components/calculator/PlacementPanel'
 import { Sidebar } from '@/components/calculator/Sidebar'
 import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
+import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { toast } from 'sonner'
 
 // Once a visitor clicks through the intro, this survives reloads/new tabs
 // so the video doesn't replay every time they come back.
 const INTRO_SEEN_KEY = 'deckload-intro-seen'
+
+// Separate flag from INTRO_SEEN_KEY on purpose — the video intro and the
+// interactive product tour are different first-run experiences (one is
+// atmospheric/passive, the other walks the real working UI) with
+// independent "seen" states: skipping the tour shouldn't require rewatching
+// the video, and vice versa.
+const TOUR_SEEN_KEY = 'deckload-tour-seen'
+const getTourSeenSnapshot = () => window.localStorage.getItem(TOUR_SEEN_KEY) === '1'
+const getTourSeenServerSnapshot = () => false
+
+// Each `selector` targets a `data-tour="..."` attribute placed directly on
+// the real element elsewhere in the app (Sidebar's "Палуба" Section,
+// DeckVisualization's card, PlacementPanel's auto-redistribute button,
+// StatsPanel/StabilityPanel's own Card, the header's library/export
+// buttons) — the tour never needs its own copy of those elements, just a
+// stable hook into the ones that already exist. Order and wording were
+// approved as a first pass; both are easy to revise here without touching
+// ProductTour.tsx itself.
+const TOUR_STEPS: TourStep[] = [
+  {
+    id: 'vessel-library',
+    selector: '[data-tour="vessel-library"]',
+    title: 'Библиотека судов',
+    body: 'Начните с реального судна из библиотеки или используйте демо-палубу по умолчанию.',
+  },
+  {
+    id: 'deck-settings',
+    selector: '[data-tour="deck-settings"]',
+    title: 'Параметры палубы',
+    body: 'Здесь задаётся ширина и длина палубы — в метрах, сантиметрах или футах.',
+  },
+  {
+    id: 'cargo-list',
+    selector: '[data-tour="cargo-list"]',
+    title: 'Список груза',
+    body: 'Добавьте свой груз или используйте один из демо-предметов.',
+  },
+  {
+    id: 'deck-view',
+    selector: '[data-tour="deck-view"]',
+    title: 'Схема палубы',
+    body: 'Кликните по грузу слева, затем по палубе — груз встанет на это место. В авто-режиме грузы расставляются сами.',
+  },
+  {
+    id: 'auto-redistribute',
+    selector: '[data-tour="auto-redistribute"]',
+    title: 'Автораспределение',
+    body: 'Одна кнопка — несколько вариантов раскладки на выбор.',
+  },
+  {
+    id: 'stats',
+    selector: '[data-tour="stats"]',
+    title: 'Статистика загрузки',
+    body: 'Видно, сколько груза уместилось и сколько свободного места осталось.',
+  },
+  {
+    id: 'stability',
+    selector: '[data-tour="stability"]',
+    title: 'Остойчивость судна',
+    body: 'Если выбрано судно с реальными данными — здесь считаются крен, дифферент и метацентрическая высота.',
+  },
+  {
+    id: 'export',
+    selector: '[data-tour="export"]',
+    title: 'Экспорт',
+    body: 'Сохраните расчёт себе или отправьте коллегам.',
+  },
+]
 
 // useSyncExternalStore (not useState+useEffect) to read this: it's the hook
 // React designed exactly for "a value that lives outside React and may
@@ -118,6 +188,26 @@ export default function Home() {
     setReplayIntro(false)
   }
   const handleReplayIntro = () => setReplayIntro(true)
+  const tourSeen = useSyncExternalStore(noopSubscribe, getTourSeenSnapshot, getTourSeenServerSnapshot)
+  const [tourActive, setTourActive] = useState(false)
+  // Auto-arm the tour once per mount as soon as we know both `entered` and
+  // `tourSeen` for real. Deliberately NOT a "compare previous `entered`"
+  // transition check (this file's usual pattern, e.g. PhotoCropDialog.tsx's
+  // prevBitmap): that only fires on a false→true EDGE, which a returning
+  // visitor who already has INTRO_SEEN_KEY set from a past visit (so
+  // `entered` is already true on the very first render, no edge to catch)
+  // would never cross — this simpler "haven't auto-triggered yet" guard
+  // fires correctly whether `entered` starts true or becomes true later.
+  const [tourAutoTriggered, setTourAutoTriggered] = useState(false)
+  if (entered && !tourSeen && !tourAutoTriggered) {
+    setTourAutoTriggered(true)
+    setTourActive(true)
+  }
+  const handleCloseTour = () => {
+    window.localStorage.setItem(TOUR_SEEN_KEY, '1')
+    setTourActive(false)
+  }
+  const handleShowTour = () => setTourActive(true)
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
@@ -1640,9 +1730,19 @@ export default function Home() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleShowTour}
+              title="Показать обучение"
+              aria-label="Показать обучение"
+            >
+              <HelpCircle className="h-4 w-4" />
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8">
+                <Button variant="outline" size="sm" className="h-8" data-tour="vessel-library">
                   <Ship className="h-3.5 w-3.5 sm:mr-1" />
                   <span className="hidden sm:inline">Библиотека судов</span>
                 </Button>
@@ -1666,7 +1766,7 @@ export default function Home() {
               </PopoverContent>
             </Popover>
 
-            <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson}>
+            <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson} data-tour="export">
               <Download className="h-3.5 w-3.5 sm:mr-1" />
               <span className="hidden sm:inline">Скачать JSON</span>
             </Button>
@@ -1757,7 +1857,7 @@ export default function Home() {
         <main ref={mainRef} className="flex-1 min-w-0 overflow-auto">
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
             {/* Visualization */}
-            <div className="xl:col-span-8">
+            <div className="xl:col-span-8" data-tour="deck-view">
               <Card className="h-full">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -2061,7 +2161,7 @@ export default function Home() {
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY}
               />
             </div>
-            <div className="xl:col-span-4 self-start">
+            <div className="xl:col-span-4 self-start" data-tour="cargo-list">
               <ItemList
                 result={result}
                 unit={deck.unit}
@@ -2073,6 +2173,7 @@ export default function Home() {
           </div>
         </main>
       </div>
+      <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />
     </div>
   )
 }
