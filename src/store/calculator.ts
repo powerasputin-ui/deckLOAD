@@ -997,31 +997,86 @@ export const useCalculator = create<CalculatorState>()(
     set((s) => ({ items: [...s.items, makeItem(s.items, partial)] })),
   updateItem: (id, patch) =>
     set((s) => {
+      // Live state used to accept a patch as-is — only normalizeProject (the
+      // persistence layer, in projects.ts) actually validated these fields,
+      // so a NaN/negative/fractional value pushed through updateItem (a form
+      // bug, a future caller, anything bypassing the existing NumField
+      // clamps) would sit in live state until the next save/reload instead
+      // of being rejected immediately. Same validity rules as
+      // normalizeProject's own, so the two layers can't disagree.
+      const sanitizedPatch: Partial<CargoItem> = { ...patch }
+      if ('maxLayers' in sanitizedPatch) {
+        const v = sanitizedPatch.maxLayers
+        sanitizedPatch.maxLayers = typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+      }
+      if ('maxStackHeightM' in sanitizedPatch) {
+        const v = sanitizedPatch.maxStackHeightM
+        sanitizedPatch.maxStackHeightM = typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined
+      }
+      if ('weight' in sanitizedPatch) {
+        const v = sanitizedPatch.weight
+        sanitizedPatch.weight = typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined
+      }
+      if ('quantity' in sanitizedPatch) {
+        const v = sanitizedPatch.quantity
+        // quantity is a required field (unlike maxLayers/weight above, which
+        // are optional and undefined = "no override") — an invalid value
+        // can't become undefined, so it's dropped from the patch entirely,
+        // leaving the item's existing quantity untouched instead. Same
+        // NOT-toPositiveInt rule as packing.ts/projects.ts: 0 is a
+        // legitimate "none of this cargo left", not corrupted input.
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+          sanitizedPatch.quantity = Math.round(v)
+        } else {
+          delete sanitizedPatch.quantity
+        }
+      }
+
       const prevItem = s.items.find((it) => it.id === id)
-      const items = s.items.map((it) => (it.id === id ? { ...it, ...patch } : it))
+      const items = s.items.map((it) => (it.id === id ? { ...it, ...sanitizedPatch } : it))
       if (!prevItem) return { items }
 
-      const weightChanged = patch.weight !== undefined && patch.weight !== prevItem.weight
-      const widthChanged = patch.width !== undefined && patch.width !== prevItem.width
-      const lengthChanged = patch.length !== undefined && patch.length !== prevItem.length
+      // Reducing quantity below what's already on the deck (manual +
+      // pinned, across every trip) is a real mismatch worth surfacing —
+      // but auto-deleting the user's own placements to force agreement
+      // would be destructive and could remove work they deliberately did.
+      // AUTO mode's own pin-acceptance clamp (packing.ts) already prevents
+      // this from silently inflating displayed totals; this is purely
+      // about telling the user, not fixing it for them.
+      if (sanitizedPatch.quantity !== undefined && sanitizedPatch.quantity < prevItem.quantity) {
+        const placedCount =
+          s.manualPlacements.filter((m) => m.itemId === id).reduce((sum, m) => sum + Math.max(1, m.layers ?? 1), 0) +
+          Object.values(s.pinnedPlacementsByTrip)
+            .flat()
+            .filter((p) => p.itemId === id)
+            .reduce((sum, p) => sum + Math.max(1, p.layers ?? 1), 0)
+        if (placedCount > sanitizedPatch.quantity) {
+          toast.warning(
+            `На палубе уже размещено больше груза «${prevItem.name}» (${placedCount} ед.), чем новое количество (${sanitizedPatch.quantity}). Расстановка не изменена — уберите лишнее вручную.`
+          )
+        }
+      }
+      const weightChanged = sanitizedPatch.weight !== undefined && sanitizedPatch.weight !== prevItem.weight
+      const widthChanged = sanitizedPatch.width !== undefined && sanitizedPatch.width !== prevItem.width
+      const lengthChanged = sanitizedPatch.length !== undefined && sanitizedPatch.length !== prevItem.length
       const layerCapChanged =
-        (patch.maxLayers !== undefined && patch.maxLayers !== prevItem.maxLayers) ||
-        (patch.height !== undefined && patch.height !== prevItem.height) ||
+        (sanitizedPatch.maxLayers !== undefined && sanitizedPatch.maxLayers !== prevItem.maxLayers) ||
+        (sanitizedPatch.height !== undefined && sanitizedPatch.height !== prevItem.height) ||
         // maxLayersFor() (below) factors maxStackHeightM into the same cap
         // maxLayers/height already trigger a re-clamp for — a tightened
         // height ceiling used to silently do nothing to placements already
         // on the deck until the next full repack.
-        (patch.maxStackHeightM !== undefined && patch.maxStackHeightM !== prevItem.maxStackHeightM)
+        (sanitizedPatch.maxStackHeightM !== undefined && sanitizedPatch.maxStackHeightM !== prevItem.maxStackHeightM)
       if (!weightChanged && !widthChanged && !lengthChanged && !layerCapChanged) return { items }
 
       // Existing placements snapshot their own width/length/weight at the
       // time they were placed — without this, editing an item after it's
       // already on the deck leaves stale placements (wrong drawn size,
       // wrong weight in totals, collision checks against outdated geometry).
-      const newWidth = patch.width ?? prevItem.width
-      const newLength = patch.length ?? prevItem.length
+      const newWidth = sanitizedPatch.width ?? prevItem.width
+      const newLength = sanitizedPatch.length ?? prevItem.length
       const applyWeight = <T extends { itemId: string; weight?: number }>(p: T): T =>
-        p.itemId === id && weightChanged ? { ...p, weight: patch.weight } : p
+        p.itemId === id && weightChanged ? { ...p, weight: sanitizedPatch.weight } : p
 
       let manualPlacements = s.manualPlacements.map(applyWeight)
       let pinnedPlacementsByTrip: typeof s.pinnedPlacementsByTrip = Object.fromEntries(

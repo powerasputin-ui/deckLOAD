@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useCalculator, clearCalculatorHistory, roundForDisplay } from './calculator'
+import { toast } from 'sonner'
 
 describe('calculator store', () => {
   beforeEach(() => {
@@ -173,6 +174,41 @@ describe('calculator store', () => {
     expect(useCalculator.getState().activeStampId).toBeNull()
     s.setMode('auto')
     expect(useCalculator.getState().activeStampId).toBeNull()
+  })
+
+  // Regression coverage: setMode is a pure flag flip with zero reconciliation
+  // between manualPlacements and pinnedPlacementsByTrip — this was previously
+  // asserted only informally, with no test proving an AUTO<->MANUAL round
+  // trip preserves both representations (placement count, mass, which trip
+  // each pin belongs to) untouched.
+  it('preserves manualPlacements and pinnedPlacementsByTrip exactly across an AUTO -> MANUAL -> AUTO round trip', () => {
+    useCalculator.setState({
+      manualPlacements: [
+        { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 1, layers: 3, rotated: false, color: '#000', weight: 500 },
+      ],
+      pinnedPlacementsByTrip: {
+        0: [{ id: 'p1', itemId: 'a', name: 'A', x: 5, y: 5, width: 2, length: 1, layers: 2, rotated: false, color: '#000', weight: 500 }],
+        2: [{ id: 'p2', itemId: 'a', name: 'A', x: 8, y: 8, width: 2, length: 1, layers: 4, rotated: true, color: '#000', weight: 500 }],
+      },
+    })
+    const before = {
+      manual: useCalculator.getState().manualPlacements,
+      pinned: useCalculator.getState().pinnedPlacementsByTrip,
+    }
+
+    const s = useCalculator.getState()
+    s.setMode('manual')
+    s.setMode('auto')
+
+    const after = {
+      manual: useCalculator.getState().manualPlacements,
+      pinned: useCalculator.getState().pinnedPlacementsByTrip,
+    }
+    expect(after).toEqual(before)
+    const totalLayers =
+      after.manual.reduce((sum, m) => sum + m.layers, 0) +
+      Object.values(after.pinned).flat().reduce((sum, p) => sum + p.layers, 0)
+    expect(totalLayers).toBe(3 + 2 + 4)
   })
 
   it('arming a preset template clears an active item stamp and vice versa', () => {
@@ -717,6 +753,57 @@ describe('calculator store', () => {
     })
     s.updateItem(item.id, { maxLayers: 8 })
     expect(useCalculator.getState().manualPlacements[0].layers).toBe(2)
+  })
+
+  // Regression: updateItem applied its patch to live state as-is — only
+  // normalizeProject (persistence layer) validated maxLayers/weight/quantity.
+  // A NaN/negative/fractional value pushed through updateItem sat in live
+  // state until the next save/reload instead of being rejected immediately.
+  it('rejects invalid maxLayers/weight/quantity in the live patch instead of storing them', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 5, maxLayers: 3, weight: 100 })
+    const item = useCalculator.getState().items[0]
+
+    s.updateItem(item.id, { maxLayers: -5 })
+    expect(useCalculator.getState().items[0].maxLayers).toBeUndefined()
+
+    s.updateItem(item.id, { maxLayers: 3 }) // reset to a valid value for the next check
+    s.updateItem(item.id, { maxLayers: NaN })
+    expect(useCalculator.getState().items[0].maxLayers).toBeUndefined()
+
+    s.updateItem(item.id, { weight: -100 })
+    expect(useCalculator.getState().items[0].weight).toBeUndefined()
+
+    s.updateItem(item.id, { quantity: -1 })
+    expect(useCalculator.getState().items[0].quantity).toBe(5) // rejected -> unchanged, never undefined (required field)
+
+    s.updateItem(item.id, { quantity: 2.7 })
+    expect(useCalculator.getState().items[0].quantity).toBe(3) // valid -> rounded, same rule as normalizeProject
+  })
+
+  // Regression: reducing quantity below what's already placed (manual +
+  // pinned, across every trip) used to do nothing at all — the deck kept
+  // showing more units than the item now claims to have, with no
+  // indication anything was wrong. Placements are deliberately NOT
+  // auto-removed (that would risk destroying deliberate manual work); this
+  // only covers that the mismatch is surfaced.
+  it('warns (without touching placements) when quantity drops below what is already placed', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 10 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 4, rotated: false, color: '#000',
+    })
+    s.pinFromPlaced(0, { itemId: item.id, name: 'Box', x: 5, y: 5, width: 1, length: 1, layers: 3, rotated: false, color: '#000' })
+    const warnSpy = vi.spyOn(toast, 'warning')
+
+    s.updateItem(item.id, { quantity: 5 })
+
+    expect(warnSpy).toHaveBeenCalled()
+    expect(useCalculator.getState().manualPlacements[0].layers).toBe(4)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].layers).toBe(3)
+    expect(useCalculator.getState().items[0].quantity).toBe(5)
+    warnSpy.mockRestore()
   })
 
   it('reflows existing placements when the item width/length changes', () => {
