@@ -268,7 +268,11 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     // `undefined` after any save/reload, quietly falling back to generic
     // defaults for values that exist specifically because the generic
     // default is wrong for this vessel.
-    minGM: typeof p.minGM === 'number' && Number.isFinite(p.minGM) ? p.minGM : undefined,
+    // minGM REPLACES the generic G_METACENTRIC_MIN_SAFE reference wherever
+    // it's set (see this field's own doc comment) — a negative value used
+    // to pass straight through, making `GM_fluid >= minGM` a near-guaranteed
+    // false PASS regardless of how unstable the loading actually is.
+    minGM: typeof p.minGM === 'number' && Number.isFinite(p.minGM) && p.minGM >= 0 ? p.minGM : undefined,
     windageAreaM2: typeof p.windageAreaM2 === 'number' && Number.isFinite(p.windageAreaM2) ? p.windageAreaM2 : undefined,
     windageLeverM: typeof p.windageLeverM === 'number' && Number.isFinite(p.windageLeverM) ? p.windageLeverM : undefined,
     blockCoefficient: typeof p.blockCoefficient === 'number' && Number.isFinite(p.blockCoefficient) ? p.blockCoefficient : undefined,
@@ -286,8 +290,15 @@ function normalizeVariableWeights(value: unknown): VariableWeightItem[] {
       vcgM: toFiniteNonNegative(w.vcgM, 0),
       tcgM: toFinite(w.tcgM, 0),
       lcgM: toFinite(w.lcgM, 0),
+      // >= 0, not just finite — computeFreeSurfaceCorrection sums this
+      // directly into the correction subtracted from GM_solid; a negative
+      // value would REDUCE that correction, artificially inflating the
+      // reported GM_fluid instead of ever correctly increasing it (a real
+      // free surface moment only ever costs stability, never adds it).
       freeSurfaceMomentTm:
-        typeof w.freeSurfaceMomentTm === 'number' && Number.isFinite(w.freeSurfaceMomentTm) ? w.freeSurfaceMomentTm : undefined,
+        typeof w.freeSurfaceMomentTm === 'number' && Number.isFinite(w.freeSurfaceMomentTm) && w.freeSurfaceMomentTm >= 0
+          ? w.freeSurfaceMomentTm
+          : undefined,
     }))
 }
 
@@ -724,7 +735,12 @@ function normalizeProject(p: Partial<Project>): Project {
           quantity: toQuantity(it.quantity, 1),
           color: typeof it.color === 'string' ? it.color : '#0ea5e9',
           allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
-          weight: typeof it.weight === 'number' && Number.isFinite(it.weight) ? it.weight : undefined,
+          // >= 0 — a negative cargo weight isn't a smaller/lighter cargo,
+          // it's corrupted input. buildCargoWeightMoments already filters
+          // it out of the stability calc either way (`weight > 0`), but
+          // packing totals/UI/PDF have no such guard and would otherwise
+          // happily subtract it from real weight sums.
+          weight: typeof it.weight === 'number' && Number.isFinite(it.weight) && it.weight >= 0 ? it.weight : undefined,
           category: toOptionalString(it.category),
           shape: normalizeShape(it.shape),
           outline: normalizeOutline(it.outline),

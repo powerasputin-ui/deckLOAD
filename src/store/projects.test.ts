@@ -735,6 +735,144 @@ describe('projects store', () => {
     expect(useProjects.getState().projects[0].deck.vessel?.particulars.downfloodingAngleDeg).toBeUndefined()
   })
 
+  // Regression: minGM REPLACES the generic stability reference minimum
+  // wherever it's set — a negative value used to pass straight through,
+  // making `GM_fluid >= minGM` a near-guaranteed false PASS.
+  it('rejects a negative minGM instead of storing it', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
+            longitudinalOrigin: 'midships',
+            minGM: -10,
+          },
+          hydrostatics: { points: [] },
+          knCurves: { headingAngles: [], points: [] },
+          variableWeights: [],
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    expect(useProjects.getState().projects[0].deck.vessel?.particulars.minGM).toBeUndefined()
+  })
+
+  // Regression: a negative freeSurfaceMomentTm used to pass straight
+  // through — computeFreeSurfaceCorrection sums it directly, so a negative
+  // value would REDUCE the correction subtracted from GM_solid, artificially
+  // inflating the reported GM_fluid instead of ever correctly costing
+  // stability.
+  it('rejects a negative freeSurfaceMomentTm instead of storing it (0 itself still round-trips)', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
+            longitudinalOrigin: 'midships',
+          },
+          hydrostatics: { points: [] },
+          knCurves: { headingAngles: [], points: [] },
+          variableWeights: [
+            { id: 'w1', name: 'Танк A (отрицательный)', weightKg: 10000, vcgM: 1, tcgM: 0, lcgM: 0, freeSurfaceMomentTm: -5 },
+            { id: 'w2', name: 'Танк B (подтверждённый ноль)', weightKg: 10000, vcgM: 1, tcgM: 0, lcgM: 0, freeSurfaceMomentTm: 0 },
+          ],
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const weights = useProjects.getState().projects[0].deck.vessel?.variableWeights
+    expect(weights?.find((w) => w.id === 'w1')?.freeSurfaceMomentTm).toBeUndefined()
+    expect(weights?.find((w) => w.id === 'w2')?.freeSurfaceMomentTm).toBe(0)
+  })
+
+  // Regression: a negative cargo weight used to pass straight through.
+  // buildCargoWeightMoments already excludes it from the stability calc
+  // either way, but packing totals/UI/PDF had no such guard.
+  it('rejects a negative cargo weight instead of storing it', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [
+        { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, weight: -50000 },
+      ],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    expect(useProjects.getState().projects[0].items[0].weight).toBeUndefined()
+  })
+
   // Regression: normalizeProject used toPositiveInt for quantity, which
   // treats 0 the same as "no value given" and falls back to 1 — turning a
   // deliberately zeroed-out cargo (e.g. after deleting every placed unit)
