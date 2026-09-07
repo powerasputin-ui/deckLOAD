@@ -671,10 +671,17 @@ export default function Home() {
     }
     const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
     const points = deck.lashingPoints ?? []
-    const allPlacements: (ManualPlacement | PinnedPlacement)[] = [
-      ...manualPlacements,
-      ...Object.values(pinnedPlacementsByTrip).flat(),
-    ]
+    // Mode-scoped, not "everything in state" — switching mode never clears
+    // or migrates either array (see setMode's own comment), so pinned data
+    // left over from a prior AUTO session stays in pinnedPlacementsByTrip
+    // even while the user has since moved to MANUAL and abandoned it. Used
+    // to combine both regardless of mode, which billed lashing-gear
+    // requirements for cargo that isn't part of the plan currently being
+    // exported. In AUTO, all trips are still included — a multi-trip
+    // shipment's lashing gear is bought once for the whole operation, not
+    // separately per trip.
+    const allPlacements: (ManualPlacement | PinnedPlacement)[] =
+      mode === 'manual' ? manualPlacements : Object.values(pinnedPlacementsByTrip).flat()
     const dangerousGoodsNames: string[] = []
     const lashingRequirements = allPlacements
       .map((p) => {
