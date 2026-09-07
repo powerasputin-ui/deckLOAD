@@ -50,7 +50,7 @@ interface ItemListProps {
   onScrollPageToTop?: () => void
 }
 
-export const DEFAULT_CATEGORIES = ['Обычный', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
+export const DEFAULT_CATEGORIES = ['Обычный', 'Металлопродукция', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
 
 export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToTop }: ItemListProps) {
   const items = useCalculator((s) => s.items)

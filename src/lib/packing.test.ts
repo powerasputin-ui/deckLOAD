@@ -20,6 +20,7 @@ import {
   zoneIdsOverlapping,
   checkLashingBalance,
   requiredLashingCount,
+  lashingMethodologyFor,
   WIRE_ROPE_SPECS,
   violatesSeparation,
   rotateOutline90,
@@ -1992,6 +1993,24 @@ describe('requiredLashingCount (РД 31.11.21.23-96 п. 2.2.3, n = 0,3·P/BL)', 
     expect(threeTier).toBe(5) // ceil(90 / 20.7014) = ceil(4.347) = 5
     expect(twoTier).toBeGreaterThan(oneTier)
     expect(threeTier).toBeGreaterThan(twoTier)
+  })
+})
+
+describe('lashingMethodologyFor', () => {
+  it('routes "Металлопродукция" to the cited РД 31.11.21.23-96 methodology', () => {
+    expect(lashingMethodologyFor('Металлопродукция')).toBe('metal-rd')
+  })
+
+  it('routes each dangerous-goods category to the IMDG warning path', () => {
+    expect(lashingMethodologyFor('Опасный груз')).toBe('dangerous-goods')
+    expect(lashingMethodologyFor('Химикаты')).toBe('dangerous-goods')
+    expect(lashingMethodologyFor('Взрывоопасный')).toBe('dangerous-goods')
+  })
+
+  it('falls back to the unlabeled general estimate for "Обычный", no category, and arbitrary custom text', () => {
+    expect(lashingMethodologyFor('Обычный')).toBe('general')
+    expect(lashingMethodologyFor(undefined)).toBe('general')
+    expect(lashingMethodologyFor('Что-то своё')).toBe('general')
   })
 })
 

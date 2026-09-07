@@ -131,7 +131,7 @@ const TOUR_STEPS: TourStep[] = [
     id: 'lashing',
     selector: '[data-tour="lashing"]',
     title: 'Крепление груза',
-    body: 'Здесь система считает необходимое количество найтовов и тросов по РД 31.11.21.23-96 и позволяет отметить точки крепления прямо на грузе.',
+    body: 'Формула РД 31.11.21.23-96 точна для категории «Металлопродукция»; для остального груза — ориентировочная оценка. Для опасных грузов (химикаты, взрывоопасное) вместо числа показывается предупреждение — здесь нужен отдельный расчёт по IMDG Code.',
   },
   {
     id: 'cargo-list',
@@ -691,6 +691,7 @@ export default function Home() {
           attachedCount: points.filter((pt) => pt.placementId === p.id).length,
           wireLabel: WIRE_ROPE_SPECS[wireType].label,
           justification: p.lashingJustification,
+          category: items.find((it) => it.id === p.itemId)?.category,
         }
       })
       .filter((r): r is NonNullable<typeof r> => r !== null)

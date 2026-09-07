@@ -474,6 +474,23 @@ export function requiredLashingCount(stackWeightKg: number, breakingLoadKN: numb
   return Math.max(0, Math.ceil((0.3 * stackWeightT) / breakingLoadT))
 }
 
+// Which lashing-requirement methodology a cargo's free-text category maps
+// to. requiredLashingCount's formula is the real, cited РД 31.11.21.23-96
+// figure only for metal products (that's what the regulation covers) —
+// everything else gets the same number as an unlabeled ballpark, and
+// dangerous-goods categories get a hazard warning instead of a number that
+// would otherwise look like an official compliance figure it isn't. Full
+// IMDG Code segregation/classification/stowage-location rules are not
+// something this app calculates — this only decides which label to show,
+// never blocks or silently "fixes" anything.
+export type LashingMethodology = 'metal-rd' | 'general' | 'dangerous-goods'
+const DANGEROUS_GOODS_CATEGORIES = new Set(['Опасный груз', 'Химикаты', 'Взрывоопасный'])
+export function lashingMethodologyFor(category?: string): LashingMethodology {
+  if (category === 'Металлопродукция') return 'metal-rd'
+  if (category && DANGEROUS_GOODS_CATEGORIES.has(category)) return 'dangerous-goods'
+  return 'general'
+}
+
 // Vessel motion coefficients (in g) used by the simplified static-equivalent
 // lashing check below, plus the deck/cargo friction coefficient. Presets
 // stand in for a full GM/roll-period calculation, which real-world lashing

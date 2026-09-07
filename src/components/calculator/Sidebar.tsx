@@ -58,6 +58,7 @@ import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
   requiredLashingCount,
+  lashingMethodologyFor,
   type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
@@ -847,6 +848,12 @@ function LashingPointsSection() {
         WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN
       )
     : 0
+  // The РД 31.11.21.23-96 formula only actually covers metal products —
+  // showing it unlabeled for every category made it look like an official
+  // compliance figure for cargo it was never written for (dangerous goods
+  // especially). See lashingMethodologyFor's own doc comment.
+  const selectedItem = items.find((i) => i.id === selectedPlacement?.itemId)
+  const selectedLashingMethodology = lashingMethodologyFor(selectedItem?.category)
 
   return (
     <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false} tourId="lashing">
@@ -941,10 +948,31 @@ function LashingPointsSection() {
           </div>
         )}
 
+        {selectedPlacement && selectedRequiredLashing > 0 && selectedLashingMethodology === 'dangerous-goods' && (
+          <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+            <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>
+              <b>Категория «{selectedItem?.category}» — груз для IMDG Code.</b> РД 31.11.21.23-96 рассчитан для
+              металлопродукции и здесь не применим; классификацию, сегрегацию и место размещения на палубе приложение
+              не считает — согласуйте с грузоотправителем/капитаном по опасным грузам. Дистанции от другого груза
+              задаются в разделе «Сепарация груза». Число ниже — только механическая проверка на сдвиг, не
+              соответствие IMDG.
+            </span>
+          </div>
+        )}
+
         {selectedPlacement && selectedRequiredLashing > 0 && (
           <div className="rounded-md border p-2 space-y-1.5">
             <div className="text-[10px] font-medium text-muted-foreground">
-              РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedRequiredLashing}
+              {selectedLashingMethodology === 'metal-rd' && (
+                <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedRequiredLashing}</>
+              )}
+              {selectedLashingMethodology === 'general' && (
+                <>Оценочно, по аналогии с РД 31.11.21.23-96 (груз не металлопродукция) — найтовов: {selectedRequiredLashing}</>
+              )}
+              {selectedLashingMethodology === 'dangerous-goods' && (
+                <>Механическая проверка на сдвиг (не соответствие IMDG) — найтовов: {selectedRequiredLashing}</>
+              )}
             </div>
             <Select
               value={selectedWireType}

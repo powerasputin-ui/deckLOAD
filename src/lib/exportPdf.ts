@@ -13,6 +13,7 @@ const BORDER: [number, number, number] = [226, 232, 240]
 const MUTED: [number, number, number] = [100, 116, 139]
 const GOOD: [number, number, number] = [5, 150, 105]
 const WARN: [number, number, number] = [217, 119, 6]
+const DANGER: [number, number, number] = [220, 38, 38]
 
 const FONT_FAMILY = 'PTSans'
 
@@ -108,7 +109,12 @@ export interface LashingRequirementRow {
   attachedCount: number
   wireLabel: string
   justification?: string
+  category?: string
 }
+
+// РД 31.11.21.23-96 only actually covers metal products — see
+// lashingMethodologyFor in packing.ts for the same list used in the UI.
+const DANGEROUS_GOODS_CATEGORIES = new Set(['Опасный груз', 'Химикаты', 'Взрывоопасный'])
 
 interface ExportDeckPlanToPdfOptions {
   svgEl: SVGSVGElement
@@ -248,22 +254,25 @@ export async function exportDeckPlanToPdf({
     },
   })
 
-  // --- Lashing count table (РД 31.11.21.23-96 п. 2.2.3), only when at
-  // least one placement actually carries a computed requirement ---
+  // --- Lashing count table, only when at least one placement actually
+  // carries a computed requirement. Title stays neutral because the
+  // РД 31.11.21.23-96 figure is only literally correct for metal-products
+  // cargo — see the footnote below and lashingMethodologyFor in packing.ts. ---
   if (lashingRequirements && lashingRequirements.length > 0) {
     y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 22
     pdf.setFont(FONT_FAMILY, 'bold')
     pdf.setFontSize(10)
     pdf.setTextColor(...INK)
-    pdf.text('Крепление — РД 31.11.21.23-96 (п. 2.2.3)', margin, y)
+    pdf.text('Крепление груза (расчётная оценка)', margin, y)
     y += 8
 
     autoTable(pdf, {
       startY: y,
       margin: { left: margin, right: margin, bottom: 36 },
-      head: [['Груз', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
+      head: [['Груз', 'Категория', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
       body: lashingRequirements.map((r) => [
         r.name,
+        r.category || '—',
         r.wireLabel,
         String(r.requiredCount),
         String(r.attachedCount),
@@ -289,17 +298,36 @@ export async function exportDeckPlanToPdf({
       columnStyles: {
         0: { halign: 'left' },
         1: { halign: 'left' },
-        2: { halign: 'right' },
+        2: { halign: 'left' },
         3: { halign: 'right' },
-        4: { halign: 'left' },
+        4: { halign: 'right' },
+        5: { halign: 'left' },
       },
       didParseCell: (data) => {
-        if (data.section === 'body' && data.column.index === 3) {
+        if (data.section === 'body' && data.column.index === 4) {
           const row = lashingRequirements[data.row.index]
           if (row && row.attachedCount < row.requiredCount) data.cell.styles.textColor = WARN
         }
       },
     })
+
+    y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14
+    pdf.setFont(FONT_FAMILY, 'normal')
+    pdf.setFontSize(7.5)
+    pdf.setTextColor(...MUTED)
+    pdf.text('* Формула РД 31.11.21.23-96 применена буквально только к категории «Металлопродукция»; для остального груза — ориентировочно.', margin, y)
+
+    const hasDangerousGoods = lashingRequirements.some((r) => r.category && DANGEROUS_GOODS_CATEGORIES.has(r.category))
+    if (hasDangerousGoods) {
+      y += 11
+      pdf.setFont(FONT_FAMILY, 'bold')
+      pdf.setTextColor(...DANGER)
+      pdf.text(
+        '⚠ Груз категории «Опасный груз/Химикаты/Взрывоопасный» требует отдельного расчёта по IMDG Code (сегрегация, размещение, классификация) — не входит в этот отчёт.',
+        margin,
+        y
+      )
+    }
   }
 
   // --- Footer on every page ---
