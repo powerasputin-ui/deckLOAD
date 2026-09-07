@@ -88,6 +88,19 @@ describe('sanitizeCargoMaxLayers', () => {
     expect(sanitizeCargoMaxLayers(NaN)).toBeUndefined()
     expect(sanitizeCargoMaxLayers(undefined)).toBeUndefined()
   })
+  // Regression: `value > 0` used to be checked BEFORE flooring, so any
+  // fraction strictly between 0 and 1 passed the check and then floored
+  // down to a stored 0 — violating the function's own "positive integer or
+  // undefined" contract silently.
+  it('returns undefined for a fraction between 0 and 1 (does not floor to a stored 0)', () => {
+    expect(sanitizeCargoMaxLayers(0.1)).toBeUndefined()
+    expect(sanitizeCargoMaxLayers(0.9)).toBeUndefined()
+    expect(sanitizeCargoMaxLayers(0.999)).toBeUndefined()
+  })
+  it('still floors a fraction >= 1 down to the integer part', () => {
+    expect(sanitizeCargoMaxLayers(1.9)).toBe(1)
+    expect(sanitizeCargoMaxLayers(2.1)).toBe(2)
+  })
 })
 
 describe('sanitizeCargoMaxStackHeightM', () => {

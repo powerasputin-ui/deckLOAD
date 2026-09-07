@@ -1049,8 +1049,7 @@ export const useCalculator = create<CalculatorState>()(
       }
 
       const prevItem = s.items.find((it) => it.id === id)
-      const items = s.items.map((it) => (it.id === id ? { ...it, ...sanitizedPatch } : it))
-      if (!prevItem) return { items }
+      if (!prevItem) return { items: s.items.map((it) => (it.id === id ? { ...it, ...sanitizedPatch } : it)) }
 
       // Reducing quantity below what's already on the deck (manual +
       // pinned, across every trip) is a real mismatch worth surfacing —
@@ -1072,6 +1071,42 @@ export const useCalculator = create<CalculatorState>()(
           )
         }
       }
+
+      // maxDeckCargoT is a hard limit in both AUTO and MANUAL (contract A) —
+      // but placement-creation call sites (wouldExceedMaxDeckCargo in
+      // page.tsx) and AUTO's own pack-time check (packing.ts's
+      // runningTotalWeightKg, which starts FROM the pinned total and never
+      // re-validates the pins themselves) only ever gate NEW placements.
+      // Raising an item's weight after it's already placed used to bypass
+      // both entirely, since applyWeight below would silently overwrite
+      // every existing placement's weight with no bound. Block the edit
+      // itself before it's applied, checking manualPlacements and each
+      // trip's pins independently — maxDeckCargoT is the vessel's own
+      // PER-TRIP capacity (see StatsPanel's comment on this same field),
+      // and MANUAL has no trip concept of its own, so summing across all
+      // trips together would incorrectly reject valid multi-trip plans.
+      if (
+        sanitizedPatch.weight !== undefined &&
+        sanitizedPatch.weight !== prevItem.weight &&
+        s.deck.maxDeckCargoT !== undefined
+      ) {
+        const maxKg = s.deck.maxDeckCargoT * 1000
+        const newWeight = sanitizedPatch.weight
+        const weightOf = (p: { itemId: string; weight?: number; layers?: number }) =>
+          (p.itemId === id ? newWeight : (p.weight ?? 0)) * Math.max(1, p.layers ?? 1)
+        const overManual = s.manualPlacements.reduce((sum, p) => sum + weightOf(p), 0) > maxKg
+        const overSomeTrip = Object.values(s.pinnedPlacementsByTrip).some(
+          (list) => list.reduce((sum, p) => sum + weightOf(p), 0) > maxKg
+        )
+        if (overManual || overSomeTrip) {
+          toast.error(
+            `Новый вес груза «${prevItem.name}» (${newWeight} кг/ед.) превысит лимит палубы (${s.deck.maxDeckCargoT} т) для уже размещённых единиц — вес не изменён.`
+          )
+          delete sanitizedPatch.weight
+        }
+      }
+
+      const items = s.items.map((it) => (it.id === id ? { ...it, ...sanitizedPatch } : it))
       const weightChanged = sanitizedPatch.weight !== undefined && sanitizedPatch.weight !== prevItem.weight
       const widthChanged = sanitizedPatch.width !== undefined && sanitizedPatch.width !== prevItem.width
       const lengthChanged = sanitizedPatch.length !== undefined && sanitizedPatch.length !== prevItem.length

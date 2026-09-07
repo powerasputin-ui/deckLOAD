@@ -42,7 +42,13 @@ export function sanitizeCargoWeight(value: unknown): number | undefined {
 }
 
 export function sanitizeCargoMaxLayers(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined
+  // Flooring BEFORE the range check (not after) matters: a fractional input
+  // between 0 and 1 (e.g. 0.1) used to pass `value > 0` and then floor down
+  // to 0, silently storing an out-of-contract 0 instead of falling back to
+  // undefined like every other invalid input does.
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const floored = Math.floor(value)
+  return floored >= 1 ? floored : undefined
 }
 
 export function sanitizeCargoMaxStackHeightM(value: unknown): number | undefined {

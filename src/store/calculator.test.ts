@@ -888,6 +888,94 @@ describe('calculator store', () => {
     warnSpy.mockRestore()
   })
 
+  // Regression: updateItem's weight propagation to existing placements
+  // (below) used to be completely unguarded — raising an item's weight
+  // after it was already placed could push the deck's total weight past
+  // deck.maxDeckCargoT with zero check, silently defeating the "hard limit
+  // in both AUTO and MANUAL" contract for anything already on the deck.
+  it('blocks a weight increase that would push MANUAL placements over maxDeckCargoT, leaving weight and placements untouched', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 2, weight: 4000 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 2, rotated: false, color: '#000', weight: 4000,
+    })
+    // 4000 * 2 layers = 8000kg on deck, under the 10000kg cap.
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    s.updateItem(item.id, { weight: 6000 }) // 6000 * 2 = 12000kg > 10000kg cap
+
+    expect(errorSpy).toHaveBeenCalled()
+    expect(useCalculator.getState().items[0].weight).toBe(4000)
+    expect(useCalculator.getState().manualPlacements[0].weight).toBe(4000)
+    errorSpy.mockRestore()
+  })
+
+  it('blocks a weight increase that would push a PINNED trip over maxDeckCargoT, checking each trip independently', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 4, weight: 3000 })
+    const item = useCalculator.getState().items[0]
+    s.pinFromPlaced(0, { itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 3, rotated: false, color: '#000', weight: 3000 })
+    // 3000 * 3 = 9000kg on trip 0, under the 10000kg cap.
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    s.updateItem(item.id, { weight: 4000 }) // 4000 * 3 = 12000kg > 10000kg cap on trip 0
+
+    expect(errorSpy).toHaveBeenCalled()
+    expect(useCalculator.getState().items[0].weight).toBe(3000)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].weight).toBe(3000)
+    errorSpy.mockRestore()
+  })
+
+  it('allows a weight increase that stays within maxDeckCargoT', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 2, weight: 1000 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 2, rotated: false, color: '#000', weight: 1000,
+    })
+
+    s.updateItem(item.id, { weight: 2000 }) // 2000 * 2 = 4000kg, well under cap
+
+    expect(useCalculator.getState().items[0].weight).toBe(2000)
+    expect(useCalculator.getState().manualPlacements[0].weight).toBe(2000)
+  })
+
+  it('does not check maxDeckCargoT when the deck has no limit configured', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: undefined })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 1, weight: 100 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000', weight: 100,
+    })
+
+    s.updateItem(item.id, { weight: 999999 })
+
+    expect(useCalculator.getState().items[0].weight).toBe(999999)
+  })
+
+  it('still applies other patch fields (e.g. width) when only the weight portion of a patch is rejected by maxDeckCargoT', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 10 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 1, weight: 8000 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000', weight: 8000,
+    })
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    s.updateItem(item.id, { weight: 12000, width: 2 })
+
+    expect(errorSpy).toHaveBeenCalled()
+    expect(useCalculator.getState().items[0].weight).toBe(8000) // rejected
+    expect(useCalculator.getState().items[0].width).toBe(2) // still applied
+    errorSpy.mockRestore()
+  })
+
   it('reflows existing placements when the item width/length changes', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 10, length: 10, boardOffset: 0, gap: 0 })
