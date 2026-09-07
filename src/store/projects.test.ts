@@ -443,6 +443,114 @@ describe('projects store', () => {
     expect(reloaded.items[0].stabilityOverride).toEqual({ vcgAboveDeckM: 0.7, tcgOffsetM: 0.4, lcgOffsetM: -0.6 })
   })
 
+  // Regression: normalizeVesselParticulars silently dropped these four
+  // fields entirely — minGM especially, since it REPLACES the generic
+  // stability reference minimum everywhere it's set (see VesselParticulars'
+  // own doc comment in stability.ts). Losing it on reload meant the app
+  // quietly fell back to a generic minimum the vessel's own booklet had
+  // already overridden, with no indication anything changed.
+  it('round-trips minGM, windageAreaM2, windageLeverM, and blockCoefficient through a reload', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
+            longitudinalOrigin: 'midships',
+            minGM: 1.22,
+            windageAreaM2: 450,
+            windageLeverM: 6.5,
+            blockCoefficient: 0.68,
+          },
+          hydrostatics: { points: [] },
+          knCurves: { headingAngles: [], points: [] },
+          variableWeights: [],
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.vessel?.particulars.minGM).toBe(1.22)
+    expect(reloaded.deck.vessel?.particulars.windageAreaM2).toBe(450)
+    expect(reloaded.deck.vessel?.particulars.windageLeverM).toBe(6.5)
+    expect(reloaded.deck.vessel?.particulars.blockCoefficient).toBe(0.68)
+  })
+
+  // Regression: normalizeProject used toPositiveInt for quantity, which
+  // treats 0 the same as "no value given" and falls back to 1 — turning a
+  // deliberately zeroed-out cargo (e.g. after deleting every placed unit)
+  // back into a phantom quantity of 1 on every reload/import.
+  it('preserves cargo quantity 0 through a reload (does not resurrect it to 1)', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      items: [
+        { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 0, color: '#0ea5e9', allowRotation: true },
+      ],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    expect(useProjects.getState().projects[0].items[0].quantity).toBe(0)
+  })
+
+  // Regression: a top-level JSON.parse failure (corrupted localStorage
+  // record, not "nothing saved yet") used to be indistinguishable from a
+  // first visit — hydrate() seeded a demo project AND called saveToStorage,
+  // permanently overwriting whatever was actually in localStorage before
+  // the user had any chance to notice or recover it.
+  it('does not overwrite a corrupted top-level localStorage record with a fresh demo', () => {
+    storage['deckload-projects'] = '{not valid json'
+    useProjects.getState().hydrate()
+
+    // The app still shows a usable demo in memory...
+    expect(useProjects.getState().projects).toHaveLength(1)
+    // ...but the corrupted string in storage must be left untouched, not
+    // clobbered by an automatic save of that in-memory demo.
+    expect(storage['deckload-projects']).toBe('{not valid json')
+  })
+
   it('normalizes cleanly to vessel:undefined for a legacy project with no vessel field at all', () => {
     useProjects.getState().hydrate()
     const project = useProjects.getState().projects[0]

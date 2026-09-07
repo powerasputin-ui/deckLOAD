@@ -127,6 +127,17 @@ function toPositiveInt(value: unknown, fallback: number): number {
   return Math.max(1, Math.round(v))
 }
 
+// Cargo quantity is NOT toPositiveInt — 0 is a legitimate "none of this
+// cargo left" (e.g. after deleting the last placed unit), not a corrupted
+// value, same rule packing.ts's own sanitization already follows. Using
+// toPositiveInt here (as this used to) silently turned a deliberately
+// zeroed-out quantity back into 1 on every reload/import.
+function toQuantity(value: unknown, fallback: number): number {
+  const v = typeof value === 'number' ? value : fallback
+  if (!Number.isFinite(v) || v < 0) return fallback
+  return Math.round(v)
+}
+
 function toBool(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
@@ -241,6 +252,16 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     longitudinalOrigin,
     downfloodingAngleDeg:
       typeof p.downfloodingAngleDeg === 'number' && Number.isFinite(p.downfloodingAngleDeg) ? p.downfloodingAngleDeg : undefined,
+    // These four used to be silently dropped here — every consumer that
+    // reads VesselParticulars.minGM/windageAreaM2/windageLeverM/
+    // blockCoefficient (see their own doc comments in stability.ts) got
+    // `undefined` after any save/reload, quietly falling back to generic
+    // defaults for values that exist specifically because the generic
+    // default is wrong for this vessel.
+    minGM: typeof p.minGM === 'number' && Number.isFinite(p.minGM) ? p.minGM : undefined,
+    windageAreaM2: typeof p.windageAreaM2 === 'number' && Number.isFinite(p.windageAreaM2) ? p.windageAreaM2 : undefined,
+    windageLeverM: typeof p.windageLeverM === 'number' && Number.isFinite(p.windageLeverM) ? p.windageLeverM : undefined,
+    blockCoefficient: typeof p.blockCoefficient === 'number' && Number.isFinite(p.blockCoefficient) ? p.blockCoefficient : undefined,
   }
 }
 
@@ -655,7 +676,7 @@ function normalizeProject(p: Partial<Project>): Project {
           width: toFinitePositive(it.width, 1),
           length: toFinitePositive(it.length, 1),
           height: toFiniteNonNegative(it.height, 0),
-          quantity: toPositiveInt(it.quantity, 1),
+          quantity: toQuantity(it.quantity, 1),
           color: typeof it.color === 'string' ? it.color : '#0ea5e9',
           allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
           weight: typeof it.weight === 'number' && Number.isFinite(it.weight) ? it.weight : undefined,
@@ -690,12 +711,26 @@ function normalizeProject(p: Partial<Project>): Project {
 // just decodes to []) — `projects.length === 0` alone can't tell those
 // apart, which used to make a deleted last project silently come back as
 // the demo on the next reload.
-function loadFromStorage(): { projects: Project[]; activeId: string | null; hasStoredData: boolean } {
-  if (typeof window === 'undefined') return { projects: [], activeId: null, hasStoredData: false }
+function loadFromStorage(): { projects: Project[]; activeId: string | null; hasStoredData: boolean; corrupted: boolean } {
+  if (typeof window === 'undefined') return { projects: [], activeId: null, hasStoredData: false, corrupted: false }
+  const raw = window.localStorage.getItem(STORAGE_KEY)
+  if (!raw) return { projects: [], activeId: null, hasStoredData: false, corrupted: false }
+  // JSON.parse failing here means the top-level record itself is corrupt
+  // (truncated write, bad bytes) — distinct from `!raw` (truly nothing
+  // saved yet). This used to share one catch with the parse below, so a
+  // corrupt top-level record came back as hasStoredData: false — hydrate()
+  // then treated it as first-run and overwrote the corrupt-but-possibly-
+  // recoverable string with a fresh demo project, permanently destroying
+  // whatever was there. Per-project corruption (one bad entry inside an
+  // otherwise-valid `projects` array) is handled separately below and
+  // isn't affected by this — that's already isolated per-item.
+  let parsed: unknown
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { projects: [], activeId: null, hasStoredData: false }
-    const parsed = JSON.parse(raw)
+    parsed = JSON.parse(raw)
+  } catch {
+    return { projects: [], activeId: null, hasStoredData: false, corrupted: true }
+  }
+  try {
     // Normalize each project independently — a single malformed/corrupted
     // entry (e.g. from a future field this build doesn't know about yet)
     // must not throw away every OTHER perfectly good project. Before this
@@ -703,7 +738,8 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null; hasS
     // caught it, and hydrate() then treated the whole thing as "first
     // visit" and silently reseeded a fresh demo — indistinguishable from
     // "everything got reset".
-    const rawProjects: unknown[] = Array.isArray(parsed.projects) ? parsed.projects : []
+    const record = (parsed && typeof parsed === 'object' ? parsed : {}) as { projects?: unknown; activeId?: unknown }
+    const rawProjects: unknown[] = Array.isArray(record.projects) ? record.projects : []
     const projects: Project[] = []
     for (const p of rawProjects) {
       try {
@@ -714,11 +750,12 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null; hasS
     }
     return {
       projects,
-      activeId: parsed.activeId ?? null,
+      activeId: typeof record.activeId === 'string' ? record.activeId : null,
       hasStoredData: true,
+      corrupted: false,
     }
   } catch {
-    return { projects: [], activeId: null, hasStoredData: false }
+    return { projects: [], activeId: null, hasStoredData: false, corrupted: true }
   }
 }
 
@@ -758,8 +795,17 @@ export const useProjects = create<ProjectsState>((set, get) => ({
 
   hydrate: () => {
     if (get().hydrated) return
-    const { projects, activeId, hasStoredData } = loadFromStorage()
-    if (!hasStoredData) {
+    const { projects, activeId, hasStoredData, corrupted } = loadFromStorage()
+    if (corrupted) {
+      // The saved record exists but doesn't parse — NOT the same as a
+      // fresh visit. Seed an in-memory demo so the app isn't blank, but
+      // deliberately skip saveToStorage: overwriting now would permanently
+      // destroy whatever is actually sitting in localStorage, however
+      // corrupted, before the user has any chance to notice or recover it.
+      toast.error('Сохранённые данные повреждены и не читаются. Чтобы не потерять их случайно, автосохранение временно не перезапишет старые данные — работа сейчас идёт с демо-проектом в памяти.')
+      const p = freshProject('Демо-расчёт', true)
+      set({ projects: [p], activeId: p.id, hydrated: true })
+    } else if (!hasStoredData) {
       // Truly the first visit ever (nothing saved yet) — seed a demo project
       // so the app isn't empty. If the user later deletes it, `hasStoredData`
       // will be true next time (the key still exists, just with an empty

@@ -401,6 +401,12 @@ export interface HydrostaticLookup {
   LCB?: number
   LCF?: number
   MTC?: number
+  // true when displacementKg fell outside the table's range. Despite the
+  // name, this is NOT a real slope-based extrapolation — lookupHydrostatics
+  // below just clamps to the nearest endpoint's value (extrapolating a
+  // vessel's own hydrostatics past its tested range is not something to do
+  // silently, so clamping is the right behavior; the flag exists so callers
+  // can say so honestly rather than claiming a computed extrapolation).
   extrapolated: boolean
 }
 
@@ -642,6 +648,18 @@ function simpsonComposite(nodes: { xRad: number; GZ: number }[]): number {
 export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCondition): GZCurveResult | null {
   const kn = vessel.knCurves
   if (!kn || kn.headingAngles.length === 0) return null
+  // The rest of this function (and callers reading angleOfVanishingStability
+  // — see its own comment below) rely on two invariants the KN table itself
+  // never enforced: angles strictly ascending with no duplicates, and the
+  // first angle being exactly 0° (so GZ(0°) really is 0 "by construction",
+  // KN(0°) - KG·sin(0°) = KN(0°) - 0). A table entered out of order, with a
+  // duplicate, or missing 0° silently breaks that assumption instead of
+  // producing an obviously-wrong number — same treatment as "no KN data at
+  // all" (null) rather than a confidently-wrong curve.
+  for (let i = 1; i < kn.headingAngles.length; i++) {
+    if (!(kn.headingAngles[i] > kn.headingAngles[i - 1])) return null
+  }
+  if (Math.abs(kn.headingAngles[0]) > 1e-6) return null
   // Free surface must reduce the WHOLE righting-arm curve, not just the
   // single initial-GM scalar — the standard treatment is a "virtual rise
   // of G" (effective KG = KG + FSC) applied everywhere GZ is computed.

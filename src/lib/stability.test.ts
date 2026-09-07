@@ -434,6 +434,35 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     expect(computeGZCurve(noKn, loading)).toBeNull()
   })
 
+  // Regression: computeGZCurve trusted the KN table's angle array without
+  // checking it — the whole curve (and angleOfVanishingStability especially,
+  // which relies on GZ(0°) being exactly 0 "by construction") is built on
+  // an invariant the table never actually enforced. A malformed table used
+  // to silently produce a confidently-wrong curve instead of refusing it.
+  it('returns null when headingAngles are not strictly ascending (unsorted or duplicate)', () => {
+    const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+    const unsorted: VesselStabilityData = {
+      ...vessel,
+      knCurves: { headingAngles: [0, 20, 10, 30, 40], points: vessel.knCurves!.points },
+    }
+    expect(computeGZCurve(unsorted, loading)).toBeNull()
+
+    const duplicate: VesselStabilityData = {
+      ...vessel,
+      knCurves: { headingAngles: [0, 10, 10, 30, 40], points: vessel.knCurves!.points },
+    }
+    expect(computeGZCurve(duplicate, loading)).toBeNull()
+  })
+
+  it('returns null when the first heading angle is not 0°', () => {
+    const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+    const noZero: VesselStabilityData = {
+      ...vessel,
+      knCurves: { headingAngles: [10, 20, 30, 40], points: vessel.knCurves!.points },
+    }
+    expect(computeGZCurve(noZero, loading)).toBeNull()
+  })
+
   it('checkIMOCriteria: initial-GM criterion fails for a low GM and passes for a healthy one', () => {
     const lowGmLoading = { totalDisplacementKg: 2_000_000, KG: 6.9, overallTCG: 0, overallLCG: 0 } // GM = 0.10 < 0.15
     const stability = computeStabilityResult(vessel, lowGmLoading)!

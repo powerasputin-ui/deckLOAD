@@ -126,7 +126,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
         </CardTitle>
         <CardDescription>
           {vessel.particulars.name || 'Судно без названия'} · водоизмещение {fmtNumber(stability.displacementKg / 1000)} т
-          {stability.extrapolated && ' · за пределами таблицы гидростатики (экстраполяция)'}
+          {stability.extrapolated && ' · за пределами таблицы гидростатики — использовано ближайшее табличное значение (не экстраполяция)'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
