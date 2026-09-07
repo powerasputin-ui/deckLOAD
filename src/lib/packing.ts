@@ -1207,7 +1207,12 @@ export function packDeck(
     // unit anyway. Only genuinely invalid input (NaN/undefined/negative)
     // falls back to 1.
     quantity: Math.max(0, Math.round(toFinite(it.quantity, 1))),
-    weight: it.weight === undefined ? undefined : toFinite(it.weight, 0),
+    // Defense-in-depth: the store's own normalizeProject already rejects a
+    // negative weight before it's ever persisted, but packDeck is a
+    // separate engineering-layer entry point in its own right (tests, or
+    // any future caller) that shouldn't have to rely on every caller
+    // upstream having already filtered it.
+    weight: it.weight === undefined || it.weight < 0 ? undefined : toFinite(it.weight, 0),
   }))
   const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
@@ -1464,7 +1469,9 @@ export function packDeck(
       contents: contentsByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
       locked: pin.locked,
-      stabilityOverride: stabilityOverrideByItemId.get(pin.itemId),
+      // Same precedence fix as packingResultFromManual's own copy of this —
+      // the pin's OWN override (if ever set) must win over the item's.
+      stabilityOverride: pin.stabilityOverride ?? stabilityOverrideByItemId.get(pin.itemId),
       nest: nestByItemId.get(pin.itemId),
     })
     result.usedArea += pin.width * pin.length
@@ -3110,7 +3117,10 @@ export function packingResultFromManual(
     outline: itemMap.get(p.itemId)?.outline,
     contents: itemMap.get(p.itemId)?.contents,
     clearanceMargin: p.clearanceMargin,
-    stabilityOverride: itemMap.get(p.itemId)?.stabilityOverride,
+    // The placement's OWN override (if ever set — nothing writes one today,
+    // see ManualPlacement.stabilityOverride's own comment) must win over
+    // the item's, not be silently discarded in favor of it.
+    stabilityOverride: p.stabilityOverride ?? itemMap.get(p.itemId)?.stabilityOverride,
     nest: itemMap.get(p.itemId)?.nest,
   }))
 

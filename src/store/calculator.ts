@@ -253,7 +253,7 @@ interface CalculatorState {
   removeManualPlacement: (id: string) => void
   clearManualPlacements: () => void
   // Pinned (interactive auto mode) — all keyed by trip index
-  pinFromPlaced: (tripIndex: number, placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string
+  pinFromPlaced: (tripIndex: number, placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number; stabilityOverride?: StabilityOverride }) => string
   updatePinned: (tripIndex: number, id: string, patch: Partial<PinnedPlacement>) => void
   removePinned: (tripIndex: number, id: string) => void
   clearPinned: (tripIndex?: number) => void
@@ -1006,7 +1006,12 @@ export const useCalculator = create<CalculatorState>()(
       const lengthChanged = patch.length !== undefined && patch.length !== prevItem.length
       const layerCapChanged =
         (patch.maxLayers !== undefined && patch.maxLayers !== prevItem.maxLayers) ||
-        (patch.height !== undefined && patch.height !== prevItem.height)
+        (patch.height !== undefined && patch.height !== prevItem.height) ||
+        // maxLayersFor() (below) factors maxStackHeightM into the same cap
+        // maxLayers/height already trigger a re-clamp for — a tightened
+        // height ceiling used to silently do nothing to placements already
+        // on the deck until the next full repack.
+        (patch.maxStackHeightM !== undefined && patch.maxStackHeightM !== prevItem.maxStackHeightM)
       if (!weightChanged && !widthChanged && !lengthChanged && !layerCapChanged) return { items }
 
       // Existing placements snapshot their own width/length/weight at the
@@ -1087,6 +1092,11 @@ export const useCalculator = create<CalculatorState>()(
         // Also remove orphaned placements referencing the deleted item
         manualPlacements,
         pinnedPlacementsByTrip,
+        // Every placement just removed above can have had its own lashing
+        // points — without this, deleting a cargo item left them behind as
+        // orphans (pruneOrphanLashingPoints exists for exactly this, but
+        // this path never called it).
+        deck: pruneOrphanLashingPoints(s.deck, manualPlacements, pinnedPlacementsByTrip),
         selectedPinIds: s.selectedPinIds.filter((sid) =>
           allPins.some((p) => p.id === sid && p.itemId !== id)
         ),
@@ -1102,13 +1112,16 @@ export const useCalculator = create<CalculatorState>()(
       return { items: [...s.items, { ...it, id: uuid(), name: `${it.name} (копия)` }] }
     }),
   clearItems: () =>
-    set({
+    set((s) => ({
       items: [],
       manualPlacements: [],
       pinnedPlacementsByTrip: {},
+      // Every placement is gone, so every attached lashing point is now
+      // orphaned too — same fix as removeItem above.
+      deck: pruneOrphanLashingPoints(s.deck, [], {}),
       selectedPinIds: [],
       selectedManualIds: [],
-    }),
+    })),
   setSortStrategy: (st) => set({ sortStrategy: st }),
   toggleGlobalRotation: () =>
     set((s) => ({ globalRotation: !s.globalRotation })),
@@ -1234,6 +1247,11 @@ export const useCalculator = create<CalculatorState>()(
             rotated: placed.rotated,
             color: placed.color,
             weight: placed.weight,
+            // Was silently dropped here — nothing currently writes a
+            // placement-level override (see PinnedPlacement's own comment),
+            // so this is a no-op today, but keeps "Закрепить" lossless in
+            // general instead of relying on that staying true forever.
+            stabilityOverride: placed.stabilityOverride,
           },
         ],
       },

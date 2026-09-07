@@ -158,6 +158,18 @@ describe('packDeck', () => {
     expect(res.requestedCount).toBe(1)
   })
 
+  // Regression: packDeck's own item sanitizer only checked Number.isFinite
+  // on weight, not >= 0 — the store's normalizeProject already rejects a
+  // negative weight before persistence, but packDeck is a separate
+  // engineering-layer entry point that shouldn't have to rely on every
+  // caller upstream having already filtered it (e.g. called directly, or
+  // by a future caller that bypasses the store).
+  it('treats a negative item weight as unset rather than packing it in', () => {
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, weight: -5000 })])
+    expect(res.placed[0].weight).toBeUndefined()
+    expect(res.totalWeight).toBe(0)
+  })
+
   it('returns empty result for NaN deck dimensions', () => {
     const res = packDeck(NaN, NaN, [item({ id: 'a', width: 1, length: 1 })])
     expect(res.placed).toHaveLength(0)
@@ -295,6 +307,19 @@ describe('packDeck', () => {
     })
     expect(res.placed.find((p) => p.x === 1 && p.y === 1)?.locked).toBe(true)
     expect(res.placed.find((p) => p.x === 5 && p.y === 5)?.locked).toBeFalsy()
+  })
+
+  // Same precedence fix as packingResultFromManual's own test — a pin's own
+  // stabilityOverride must win over the source item's, not be discarded.
+  it('prefers a pin\'s own stabilityOverride over the source item\'s', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'Груз', x: 1, y: 1, width: 2, length: 2,
+      layers: 1, rotated: false, color: '#0ea5e9', stabilityOverride: { vcgAboveDeckM: 2.2 },
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 1, stabilityOverride: { vcgAboveDeckM: 1.5 } })], {
+      pinned: [pin],
+    })
+    expect(res.placed[0].stabilityOverride?.vcgAboveDeckM).toBe(2.2)
   })
 
   it('reserves a pinned clearance margin so auto-placed cargo stays out of it', () => {
@@ -716,6 +741,30 @@ describe('packingResultFromManual', () => {
     expect(res.usedArea).toBe(12)
     expect(res.totalWeight).toBe(300)
     expect(res.utilization).toBeCloseTo(0.12)
+  })
+
+  // Regression: PlacedItem.stabilityOverride was built exclusively from the
+  // source CargoItem's override, ignoring the placement's own — a
+  // placement-level override (should a future feature ever set one) would
+  // be silently discarded in favor of the item's, even when they disagree.
+  it('prefers a placement\'s own stabilityOverride over the source item\'s', () => {
+    const placements: ManualPlacement[] = [
+      { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 3, layers: 1, rotated: false, color: '#0ea5e9', stabilityOverride: { vcgAboveDeckM: 2.2 } },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 1, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 1, color: '#0ea5e9', allowRotation: true, stabilityOverride: { vcgAboveDeckM: 1.5 } },
+    ])
+    expect(res.placed[0].stabilityOverride?.vcgAboveDeckM).toBe(2.2)
+  })
+
+  it('falls back to the item\'s stabilityOverride when the placement has none of its own', () => {
+    const placements: ManualPlacement[] = [
+      { id: 'm1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 3, layers: 1, rotated: false, color: '#0ea5e9' },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 1, [
+      { id: 'a', name: 'A', width: 2, length: 3, height: 1, quantity: 1, color: '#0ea5e9', allowRotation: true, stabilityOverride: { vcgAboveDeckM: 1.5 } },
+    ])
+    expect(res.placed[0].stabilityOverride?.vcgAboveDeckM).toBe(1.5)
   })
 
   it('coerces invalid layer counts to 1', () => {

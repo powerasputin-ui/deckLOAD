@@ -492,6 +492,62 @@ describe('calculator store', () => {
     expect(points![0].placementId).toBeUndefined()
   })
 
+  // Regression: removeItem removed the item's placements but never called
+  // pruneOrphanLashingPoints, unlike removeManualPlacement/clearManualPlacements
+  // above — deleting a cargo item left its lashing points behind forever.
+  it('drops a lashing point attached to a placement when the underlying cargo item is deleted', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000',
+    })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'm1' })
+    s.removeItem(item.id)
+    expect(useCalculator.getState().deck.lashingPoints).toHaveLength(0)
+  })
+
+  it('drops every lashing point when clearItems empties the whole project', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000',
+    })
+    s.addLashingPoint({ x: 5, y: 5, placementId: 'm1' })
+    s.clearItems()
+    expect(useCalculator.getState().deck.lashingPoints).toHaveLength(0)
+  })
+
+  // Regression: maxLayersFor() factors maxStackHeightM into its cap, but
+  // layerCapChanged only checked maxLayers/height, so tightening
+  // maxStackHeightM alone silently left an already-placed stack over-tall.
+  it('re-clamps an existing placement\'s layers when maxStackHeightM alone is tightened', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'Box', width: 2, length: 1, height: 1, quantity: 5 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 5, rotated: false, color: '#000',
+    })
+    s.updateItem(item.id, { maxStackHeightM: 2 })
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.layers).toBe(2)
+  })
+
+  // Regression: pinFromPlaced copied itemId/name/x/y/width/length/layers/
+  // rotated/color/weight but not stabilityOverride, dropping it silently on
+  // "Закрепить" even in the (currently theoretical) case a placement carries
+  // its own override.
+  it('carries stabilityOverride through pinFromPlaced', () => {
+    const s = useCalculator.getState()
+    const id = s.pinFromPlaced(0, {
+      itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000',
+      stabilityOverride: { vcgAboveDeckM: 1.5 },
+    })
+    const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === id)
+    expect(pin?.stabilityOverride?.vcgAboveDeckM).toBe(1.5)
+  })
+
   it('drops a lashing point attached to a pinned placement when that pin is removed', () => {
     const s = useCalculator.getState()
     const pinId = s.pinFromPlaced(0, { itemId: 'a', name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: '#000' })
