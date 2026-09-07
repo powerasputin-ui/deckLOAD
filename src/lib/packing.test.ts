@@ -343,6 +343,35 @@ describe('packDeck', () => {
     expect(res.placedCount).toBe(2) // Still places remaining units
   })
 
+  // Regression: a pin's own `layers` was pushed to result.placed unclamped
+  // — only a SEPARATE remaining-quantity counter was floored at 0. A pin
+  // requesting more layers than the item's quantity actually has left used
+  // to be placed in full anyway, letting placedCount exceed requestedCount.
+  it('clamps a pinned placement\'s layers to the item\'s actual remaining quantity', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'Груз', x: 1, y: 1, width: 2, length: 2,
+      layers: 10, rotated: false, color: '#0ea5e9',
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 2 })], {
+      pinned: [pin],
+    })
+    expect(res.placedCount).toBeLessThanOrEqual(res.requestedCount)
+    expect(res.placedCount).toBe(2)
+    expect(res.placed.find((p) => p.x === 1 && p.y === 1)?.layers).toBe(2)
+  })
+
+  it('rejects a pinned placement entirely once the item has no remaining quantity left', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'a', name: 'Груз', x: 1, y: 1, width: 2, length: 2,
+      layers: 1, rotated: false, color: '#0ea5e9',
+    }
+    const res = packDeck(10, 10, [item({ id: 'a', width: 2, length: 2, quantity: 0 })], {
+      pinned: [pin],
+    })
+    expect(res.placed.some((p) => p.x === 1 && p.y === 1)).toBe(false)
+    expect(res.unplaced.some((u) => u.reason.includes('превышает доступное количество'))).toBe(true)
+  })
+
   // Regression (real-world user report, two rounds): first a 1.5x2m box
   // flush-pinned against a slanted cut-corner edge got rejected as "outside
   // deck" on the next repack. A follow-up fix (relaxing pin validation to a

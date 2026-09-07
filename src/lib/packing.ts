@@ -1319,7 +1319,25 @@ export function packDeck(
   let index = 0
   const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
-    const layers = toLayers(pin.layers, 1)
+    // A pin's own `layers` is user/import-supplied and was never checked
+    // against how many units of that item are actually left to place — a
+    // pin with layers=10 when only 2 remain used to be placed in full,
+    // silently pushing placedCount above requestedCount. Clamp here, before
+    // the pin is accepted, rather than only clamping the separate remaining-
+    // quantity counter afterward (which left the pin itself untouched).
+    const requestedLayers = toLayers(pin.layers, 1)
+    const remainingForItem = remainingByItem.get(pin.itemId) ?? 0
+    const layers = Math.min(requestedLayers, remainingForItem)
+    if (layers <= 0) {
+      result.unplaced.push({
+        itemId: pin.itemId,
+        name: pin.name,
+        width: pin.width,
+        length: pin.length,
+        reason: 'Закреплённая позиция превышает доступное количество этого груза',
+      })
+      continue
+    }
     const insideOutline = hasOutline
       ? !outlineExclusionRects!.some((ex) => intersects({ x: pin.x, y: pin.y, width: pin.width, height: pin.length }, ex))
       : pin.x >= boardOffset - 1e-6 &&
@@ -1395,9 +1413,10 @@ export function packDeck(
       continue
     }
     acceptedPins.push(pin)
-    // Subtract accepted pin layers from remaining quantity (only for accepted pins)
-    const r = remainingByItem.get(pin.itemId) ?? 0
-    remainingByItem.set(pin.itemId, Math.max(0, r - layers))
+    // Subtract accepted pin layers from remaining quantity (only for
+    // accepted pins) — `layers` is already clamped to at most
+    // `remainingForItem` above, so this can never go negative.
+    remainingByItem.set(pin.itemId, remainingForItem - layers)
     // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap).
     // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
     // inflated cell instead, so the free-rect splitter never offers that

@@ -125,6 +125,46 @@ describe('calculator store', () => {
     expect(deck.boardOffset).toBeCloseTo(0.2 / 0.3048, 6)
   })
 
+  // Regression: setUnit converted every geometry field on items/placements
+  // except stabilityOverride — stability.ts treats vcgAboveDeckM/
+  // tcgOffsetM/lcgOffsetM as being in the deck's current display unit (same
+  // as x/y/width/length), so leaving it unconverted silently corrupted a
+  // VCG/TCG override by whatever factor separates the old and new units
+  // the next time stability was computed (e.g. ~3.28x for m<->ft).
+  it('converts item stabilityOverride when switching units', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 20, length: 8 })
+    s.addItem({ name: 'Box', width: 1, length: 1, quantity: 1 })
+    const item = useCalculator.getState().items[0]
+    s.setItemStabilityOverride(item.id, { vcgAboveDeckM: 1, tcgOffsetM: 0.5, lcgOffsetM: -0.5 })
+    s.setUnit('ft')
+    const converted = useCalculator.getState().items.find((it) => it.id === item.id)!.stabilityOverride!
+    expect(converted.vcgAboveDeckM).toBeCloseTo(1 / 0.3048, 6)
+    expect(converted.tcgOffsetM).toBeCloseTo(0.5 / 0.3048, 6)
+    expect(converted.lcgOffsetM).toBeCloseTo(-0.5 / 0.3048, 6)
+    s.setUnit('m')
+    const roundTripped = useCalculator.getState().items.find((it) => it.id === item.id)!.stabilityOverride!
+    expect(roundTripped.vcgAboveDeckM).toBeCloseTo(1, 6)
+    expect(roundTripped.tcgOffsetM).toBeCloseTo(0.5, 6)
+    expect(roundTripped.lcgOffsetM).toBeCloseTo(-0.5, 6)
+  })
+
+  // Regression: backgroundImageRect (the calibrated reference-photo
+  // rectangle, in the same deck-local coordinate space as everything else)
+  // was left out of setUnit entirely, desyncing the photo from the deck's
+  // new unit scale the moment the user switched units.
+  it('converts deck.backgroundImageRect when switching units', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ width: 20, length: 8 })
+    s.setDeckBackgroundImageRect({ x: 1, y: 2, width: 10, length: 5 })
+    s.setUnit('cm')
+    const rect = useCalculator.getState().deck.backgroundImageRect!
+    expect(rect.x).toBeCloseTo(100, 6)
+    expect(rect.y).toBeCloseTo(200, 6)
+    expect(rect.width).toBeCloseTo(1000, 6)
+    expect(rect.length).toBeCloseTo(500, 6)
+  })
+
   it('does not auto-select a cargo item when switching mode', () => {
     const s = useCalculator.getState()
     s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })

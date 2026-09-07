@@ -357,6 +357,24 @@ function convClearance(
   return { top: conv(m.top), right: conv(m.right), bottom: conv(m.bottom), left: conv(m.left) }
 }
 
+// stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are stored in the
+// deck's display unit, same as every other length here (see stability.ts's
+// buildLoadingConditionFromPlacements, which converts them via toMeters the
+// same way it converts placement x/y/width/length) — setUnit used to leave
+// them unconverted, silently corrupting a VCG/TCG/LCG override by whatever
+// factor separates the old and new units the next time it was used.
+function convStabilityOverride(
+  o: StabilityOverride | undefined,
+  conv: (v: number) => number
+): StabilityOverride | undefined {
+  if (!o) return undefined
+  return {
+    vcgAboveDeckM: o.vcgAboveDeckM === undefined ? undefined : conv(o.vcgAboveDeckM),
+    tcgOffsetM: o.tcgOffsetM === undefined ? undefined : conv(o.tcgOffsetM),
+    lcgOffsetM: o.lcgOffsetM === undefined ? undefined : conv(o.lcgOffsetM),
+  }
+}
+
 // Drops lashing points whose placementId no longer matches any existing
 // manual or pinned placement (across every trip). Without this, deleting,
 // merging away, or auto-redistributing a placement leaves its attached
@@ -934,6 +952,12 @@ export const useCalculator = create<CalculatorState>()(
             leaderY: a.leaderY === undefined ? undefined : conv(a.leaderY),
           })),
           outline: s.deck.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
+          backgroundImageRect: s.deck.backgroundImageRect && {
+            x: conv(s.deck.backgroundImageRect.x),
+            y: conv(s.deck.backgroundImageRect.y),
+            width: conv(s.deck.backgroundImageRect.width),
+            length: conv(s.deck.backgroundImageRect.length),
+          },
         },
         items: s.items.map((it) => ({
           ...it,
@@ -941,6 +965,7 @@ export const useCalculator = create<CalculatorState>()(
           length: conv(it.length),
           height: conv(it.height),
           outline: it.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
+          stabilityOverride: convStabilityOverride(it.stabilityOverride, conv),
         })),
         // Convert coordinates/dimensions of all existing placements too
         manualPlacements: s.manualPlacements.map((m) => ({
@@ -950,6 +975,7 @@ export const useCalculator = create<CalculatorState>()(
           width: conv(m.width),
           length: conv(m.length),
           clearanceMargin: convClearance(m.clearanceMargin, conv),
+          stabilityOverride: convStabilityOverride(m.stabilityOverride, conv),
         })),
         pinnedPlacementsByTrip: Object.fromEntries(
           Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
@@ -961,6 +987,7 @@ export const useCalculator = create<CalculatorState>()(
               width: conv(p.width),
               length: conv(p.length),
               clearanceMargin: convClearance(p.clearanceMargin, conv),
+              stabilityOverride: convStabilityOverride(p.stabilityOverride, conv),
             })),
           ])
         ),

@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind } from '@/lib/packing'
-import { WIRE_ROPE_SPECS } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind, LashingDeviceType } from '@/lib/packing'
+import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
 import type { DeckConfig, Mode, Unit } from './calculator'
@@ -473,6 +473,22 @@ function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
       x: toFiniteNonNegative(point.x, 0),
       y: toFiniteNonNegative(point.y, 0),
       label: toOptionalString(point.label),
+      // These six used to be silently dropped here — a lashing point is a
+      // full engineering record (which placement/cargo it secures, its
+      // attachment corner, angle off the deck plane, rated MSL, device
+      // type), not just a dot on the deck. Losing them on every reload
+      // turned a real securing arrangement back into a decorative marker.
+      placementId: toOptionalString(point.placementId),
+      itemId: toOptionalString(point.itemId),
+      cornerX: typeof point.cornerX === 'number' && Number.isFinite(point.cornerX) ? point.cornerX : undefined,
+      cornerY: typeof point.cornerY === 'number' && Number.isFinite(point.cornerY) ? point.cornerY : undefined,
+      verticalAngleDeg:
+        typeof point.verticalAngleDeg === 'number' && Number.isFinite(point.verticalAngleDeg) ? point.verticalAngleDeg : undefined,
+      mslKg: normalizeOptionalWeight(point.mslKg),
+      deviceType:
+        typeof point.deviceType === 'string' && point.deviceType in LASHING_DEVICES
+          ? (point.deviceType as LashingDeviceType)
+          : undefined,
     }
   })
   return points.length > 0 ? points : undefined
@@ -940,8 +956,13 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     const src = get().projects.find((p) => p.id === id)
     if (!src) return null
     const now = Date.now()
-    // Build a mapping oldItemId -> newItemId so placements stay linked
+    // Build mappings oldId -> newId so placements AND lashing points stay
+    // linked — placementIdMap covers both manual and pinned placements
+    // (a LashingPoint.placementId can reference either), since they share
+    // one uuid() namespace and a lashing point doesn't record which kind
+    // it's attached to.
     const itemIdMap = new Map<string, string>()
+    const placementIdMap = new Map<string, string>()
     const newItems = src.items.map((it) => {
       const newId = uuid()
       itemIdMap.set(it.id, newId)
@@ -954,21 +975,33 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       createdAt: now,
       updatedAt: now,
       items: newItems,
-      manualPlacements: src.manualPlacements.map((m) => ({
-        ...m,
-        id: uuid(),
-        itemId: itemIdMap.get(m.itemId) ?? m.itemId,
-      })),
+      manualPlacements: src.manualPlacements.map((m) => {
+        const newId = uuid()
+        placementIdMap.set(m.id, newId)
+        return { ...m, id: newId, itemId: itemIdMap.get(m.itemId) ?? m.itemId }
+      }),
       pinnedPlacementsByTrip: Object.fromEntries(
         Object.entries(src.pinnedPlacementsByTrip).map(([trip, list]) => [
           trip,
-          list.map((p) => ({
-            ...p,
-            id: uuid(),
-            itemId: itemIdMap.get(p.itemId) ?? p.itemId,
-          })),
+          list.map((p) => {
+            const newId = uuid()
+            placementIdMap.set(p.id, newId)
+            return { ...p, id: newId, itemId: itemIdMap.get(p.itemId) ?? p.itemId }
+          }),
         ])
       ),
+      // Without this, lashingPoints[].itemId/.placementId kept pointing at
+      // the ORIGINAL project's items/placements — which don't exist in
+      // this copy under those ids — leaving every securing arrangement
+      // silently orphaned the moment a project was duplicated.
+      deck: {
+        ...src.deck,
+        lashingPoints: src.deck.lashingPoints?.map((lp) => ({
+          ...lp,
+          itemId: lp.itemId ? itemIdMap.get(lp.itemId) ?? lp.itemId : lp.itemId,
+          placementId: lp.placementId ? placementIdMap.get(lp.placementId) ?? lp.placementId : lp.placementId,
+        })),
+      },
     }
     set((s) => {
       const next = { projects: [...s.projects, copy], activeId: copy.id }

@@ -247,6 +247,117 @@ describe('projects store', () => {
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
   })
 
+  // Regression: normalizeLashingPoints only kept id/x/y/label — a lashing
+  // point is a full engineering record (which placement/cargo it secures,
+  // attachment corner, angle off the deck plane, rated MSL, device type),
+  // and all six of those used to be silently dropped on every reload,
+  // turning a real securing arrangement back into a decorative dot.
+  it('round-trips a lashing point\'s full engineering data (placementId, itemId, corner, angle, MSL, device type) through a reload', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        lashingPoints: [
+          {
+            id: 'l1',
+            x: 5,
+            y: 5,
+            label: 'Найтов 1',
+            placementId: 'p1',
+            itemId: 'i1',
+            cornerX: 4.5,
+            cornerY: 4.5,
+            verticalAngleDeg: 45,
+            mslKg: 30000,
+            deviceType: 'chain_g80_10',
+          },
+        ],
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const reloaded = useProjects.getState().projects[0]
+    expect(reloaded.deck.lashingPoints).toEqual([
+      {
+        id: 'l1',
+        x: 5,
+        y: 5,
+        label: 'Найтов 1',
+        placementId: 'p1',
+        itemId: 'i1',
+        cornerX: 4.5,
+        cornerY: 4.5,
+        verticalAngleDeg: 45,
+        mslKg: 30000,
+        deviceType: 'chain_g80_10',
+      },
+    ])
+  })
+
+  // Regression: duplicateProject built an itemIdMap for manual/pinned
+  // placements but never touched deck.lashingPoints at all, and had no
+  // placementIdMap either — every lashing point in the copy kept pointing
+  // at the ORIGINAL project's item/placement ids, which don't exist in the
+  // copy, silently orphaning every securing arrangement on duplicate.
+  it('duplicateProject remaps lashingPoints\' itemId/placementId to the copy\'s own ids', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        lashingPoints: [{ id: 'l1', x: 1, y: 1, placementId: 'orig-placement', itemId: 'orig-item', mslKg: 10000 }],
+      },
+      items: [{ id: 'orig-item', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true }],
+      manualPlacements: [{ id: 'orig-placement', itemId: 'orig-item', name: 'Груз', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9' }],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'manual',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    const copyId = useProjects.getState().duplicateProject(project.id)!
+    const copy = useProjects.getState().projects.find((p) => p.id === copyId)!
+
+    const newItemId = copy.items[0].id
+    const newPlacementId = copy.manualPlacements[0].id
+    expect(newItemId).not.toBe('orig-item')
+    expect(newPlacementId).not.toBe('orig-placement')
+    expect(copy.deck.lashingPoints).toEqual([
+      { id: 'l1', x: 1, y: 1, placementId: newPlacementId, itemId: newItemId, mslKg: 10000 },
+    ])
+  })
+
   // A free note is deliberately placeable OUTSIDE the deck rectangle (see
   // DeckVisualization.tsx's handleAnnotationClick) — negative x/y is real
   // data, not corruption, unlike every other deck-local coordinate in this
