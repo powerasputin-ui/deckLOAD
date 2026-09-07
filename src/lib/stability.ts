@@ -321,6 +321,17 @@ export function buildCargoWeightMoments(
     })
 }
 
+// How many placements buildCargoWeightMoments above silently excludes for
+// lacking a usable weight — same filter condition, kept in sync
+// deliberately rather than re-derived, so this can never disagree with
+// what the stability calculation actually did. A vessel can otherwise show
+// a perfectly normal green GM/PASS while real cargo sitting on the deck
+// (weight never entered, or a preset item with a deliberately unknown
+// weight — see vesselTemplates.ts) contributed nothing to it at all.
+export function countMissingWeightPlacements(placements: { weight?: number }[]): number {
+  return placements.filter((p) => !((p.weight ?? 0) > 0)).length
+}
+
 function variableWeightsToMoments(items: VariableWeightItem[]): WeightMoment[] {
   return items
     .filter((w) => w.weightKg > 0)
@@ -564,6 +575,13 @@ export interface GZCurveResult {
   areaUnder30Deg: number // m·rad
   areaUnder40Deg: number // m·rad
   area30to40: number // m·rad
+  // true when totalDisplacementKg fell outside the KN table's own
+  // displacement range — interpolateKN below clamps to the nearest
+  // endpoint's KN column rather than extrapolating (same reasoning as
+  // HydrostaticLookup.extrapolated), but unlike hydrostatics this used to
+  // have no flag at all, so a curve built entirely from a clamped-endpoint
+  // KN column looked identical to one built from real in-range data.
+  knOutOfRange: boolean
 }
 
 function interpolateKN(knCurves: KNCrossCurves, displacementKg: number, angleIdx: number): number {
@@ -730,6 +748,14 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
     }
   }
 
+  // Same inclusive-boundary semantics as lookupHydrostatics's own
+  // `extrapolated` — exactly at the table's min/max displacement still
+  // counts as in-range, only strictly beyond either end counts as out.
+  const knDisplacements = kn.points.map((p) => p.displacementKg)
+  const knOutOfRange =
+    knDisplacements.length > 0 &&
+    (loading.totalDisplacementKg < Math.min(...knDisplacements) || loading.totalDisplacementKg > Math.max(...knDisplacements))
+
   return {
     curve,
     maxGZ,
@@ -738,6 +764,7 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
     areaUnder30Deg: integrateArea(curve, 0, 30),
     areaUnder40Deg: integrateArea(curve, 0, 40),
     area30to40: integrateArea(curve, 30, 40),
+    knOutOfRange,
   }
 }
 

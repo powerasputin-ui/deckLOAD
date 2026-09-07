@@ -14,6 +14,7 @@ import {
   computeStabilityResult,
   computeGZCurve,
   checkIMOCriteria,
+  countMissingWeightPlacements,
   G_METACENTRIC_MIN_SAFE,
   type VesselStabilityData,
   type DeckShipFrame,
@@ -66,6 +67,34 @@ function NoFreeSurfaceDataWarning() {
   )
 }
 
+// Named the same way as NoFreeSurfaceDataWarning above — the ONE reason the
+// criteria table below could look like a normal green PASS while actually
+// resting on a clamped-to-endpoint hydrostatic/KN value instead of the
+// vessel's real current displacement.
+function OutOfRangeWarning() {
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+      <span>
+        <b>Текущее водоизмещение вне диапазона таблиц гидростатики/KN.</b> Использовано ближайшее табличное значение,
+        а не реальное водоизмещение — критерии ниже не подтверждены для этой загрузки, только справочно.
+      </span>
+    </div>
+  )
+}
+
+function MissingWeightWarning({ count }: { count: number }) {
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+      <span>
+        <b>Груз без указанного веса не учтён в расчёте остойчивости (ед.: {count}).</b> Укажите вес в списке грузов,
+        чтобы включить его.
+      </span>
+    </div>
+  )
+}
+
 export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
   if (!vessel) {
     return (
@@ -92,6 +121,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   const minGM = vessel.particulars.minGM
   const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : null
   const hasFreeSurfaceData = vessel.variableWeights.some((w) => (w.freeSurfaceMomentTm ?? 0) !== 0)
+  const missingWeightCount = countMissingWeightPlacements(result.placed)
 
   if (!stability) {
     return (
@@ -115,6 +145,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   // real offshore vessel it can be many times too lenient (see minGM).
   const gmLimit = minGM ?? G_METACENTRIC_MIN_SAFE
   const gmOk = stability.GM_fluid >= gmLimit
+  const hasOutOfRangeData = stability.extrapolated || (gz?.knOutOfRange ?? false)
   const listSideLabel = stability.listSide === 'starboard' ? 'на правый борт' : stability.listSide === 'port' ? 'на левый борт' : ''
 
   return (
@@ -132,6 +163,8 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
       <CardContent className="space-y-4">
         <Disclaimer />
         {!hasFreeSurfaceData && <NoFreeSurfaceDataWarning />}
+        {hasOutOfRangeData && <OutOfRangeWarning />}
+        {missingWeightCount > 0 && <MissingWeightWarning count={missingWeightCount} />}
 
         <div className="grid grid-cols-2 gap-2.5">
           <div className="rounded-lg border bg-card p-3">

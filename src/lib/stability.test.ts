@@ -4,6 +4,7 @@ import {
   computeLoadingCondition,
   buildLoadingConditionFromPlacements,
   buildCargoWeightMoments,
+  countMissingWeightPlacements,
   lookupHydrostatics,
   computeStabilityResult,
   computeGZCurve,
@@ -212,6 +213,26 @@ describe('buildCargoWeightMoments — polygon centroid + TCG/LCG override', () =
     const [mOverride] = buildCargoWeightMoments([withOverride], 20, 8, deckFrame, true)
     expect(mOverride.tcgM).toBeCloseTo(mBase.tcgM + 1.5, 6)
     expect(mOverride.lcgM).toBeCloseTo(mBase.lcgM - 0.7, 6)
+  })
+})
+
+// Regression: buildCargoWeightMoments silently excludes any placement
+// lacking a usable weight from the whole stability calculation, and
+// nothing in StabilityResult ever said so — a vessel could show a normal
+// green GM/PASS while real cargo on the deck contributed nothing to it.
+// Kept in sync with buildCargoWeightMoments' own filter condition
+// deliberately, so this test also pins that the two can't silently diverge.
+describe('countMissingWeightPlacements', () => {
+  it('counts placements with weight undefined, 0, or negative as missing', () => {
+    expect(countMissingWeightPlacements([{ weight: undefined }, { weight: 0 }, { weight: -5 }])).toBe(3)
+  })
+
+  it('does not count a placement with a positive weight', () => {
+    expect(countMissingWeightPlacements([{ weight: 1000 }])).toBe(0)
+  })
+
+  it('counts a mix correctly', () => {
+    expect(countMissingWeightPlacements([{ weight: 1000 }, { weight: undefined }, { weight: 500 }])).toBe(1)
   })
 })
 
@@ -497,6 +518,44 @@ describe('computeGZCurve + checkIMOCriteria', () => {
       },
     }
     expect(computeGZCurve(badKnZero, loading)).toBeNull()
+  })
+
+  // Regression: interpolateKN clamps to the nearest endpoint's KN column
+  // when displacement falls outside the table's range, same as
+  // lookupHydrostatics does for hydrostatics — but unlike hydrostatics
+  // (which flags this via `extrapolated`), GZCurveResult had no equivalent
+  // flag at all, so a curve built entirely from a clamped-endpoint KN
+  // column looked identical to one built from real in-range data.
+  describe('knOutOfRange', () => {
+    const twoPointVessel: VesselStabilityData = {
+      ...vessel,
+      knCurves: {
+        headingAngles: [0, 10, 20, 30, 40],
+        points: [
+          { displacementKg: 1_500_000, KNByAngle: [0, 1.0, 2.0, 2.8, 3.2] },
+          { displacementKg: 2_500_000, KNByAngle: [0, 1.4, 2.6, 3.4, 4.0] },
+        ],
+      },
+    }
+
+    it('is false for a displacement strictly inside the KN table range', () => {
+      const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+      expect(computeGZCurve(twoPointVessel, loading)!.knOutOfRange).toBe(false)
+    })
+
+    it('is true below the minimum and above the maximum tabulated displacement', () => {
+      const below = { totalDisplacementKg: 1_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+      const above = { totalDisplacementKg: 3_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+      expect(computeGZCurve(twoPointVessel, below)!.knOutOfRange).toBe(true)
+      expect(computeGZCurve(twoPointVessel, above)!.knOutOfRange).toBe(true)
+    })
+
+    it('is false exactly at the table\'s min/max boundary (inclusive, same as lookupHydrostatics)', () => {
+      const atMin = { totalDisplacementKg: 1_500_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+      const atMax = { totalDisplacementKg: 2_500_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+      expect(computeGZCurve(twoPointVessel, atMin)!.knOutOfRange).toBe(false)
+      expect(computeGZCurve(twoPointVessel, atMax)!.knOutOfRange).toBe(false)
+    })
   })
 
   it('checkIMOCriteria: initial-GM criterion fails for a low GM and passes for a healthy one', () => {

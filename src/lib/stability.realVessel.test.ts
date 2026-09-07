@@ -262,6 +262,7 @@ describe('per-vessel minimum GM overrides the generic reference', () => {
     areaUnder30Deg: 0.1,
     areaUnder40Deg: 0.18,
     area30to40: 0.08,
+    knOutOfRange: false,
   }
   const stability = { GM_fluid: 0.9 } as StabilityResult
 
