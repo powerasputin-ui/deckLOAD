@@ -223,11 +223,12 @@ export function Sidebar({
         >
           <Redo2 className="h-4 w-4" />
         </Button>
+        <div className="flex-1" data-tour="view-mode">
         <ToggleGroup
           type="single"
           value={viewMode}
           onValueChange={(v) => { if (v) onViewModeChange(v as '2d' | '3d') }}
-          className="flex-1 grid grid-cols-2 gap-2"
+          className="grid grid-cols-2 gap-2"
         >
           <ToggleGroupItem
             value="2d"
@@ -243,6 +244,7 @@ export function Sidebar({
             <span className="text-xs font-medium">3D</span>
           </ToggleGroupItem>
         </ToggleGroup>
+        </div>
         <Button variant="ghost" size="icon" onClick={onToggle} className="h-8 w-8 shrink-0">
           <PanelLeftClose className="h-4 w-4" />
         </Button>
