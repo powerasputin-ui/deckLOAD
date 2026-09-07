@@ -504,6 +504,126 @@ describe('projects store', () => {
     expect(reloaded.deck.vessel?.particulars.blockCoefficient).toBe(0.68)
   })
 
+  // Regression: normalizeKNCrossCurves used to filter headingAngles and each
+  // point's KNByAngle independently, then only compare final LENGTHS — two
+  // arrays that each drop a different index can end up the same length
+  // while no longer corresponding to the same angles at all. A row whose
+  // own KN array is corrupted at a DIFFERENT index than the shared angle
+  // array's corruption must be dropped entirely, not kept misaligned.
+  it('drops a KN row whose own corrupted index does not match the heading-angle array\'s (does not silently misalign)', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
+            longitudinalOrigin: 'midships',
+          },
+          hydrostatics: { points: [] },
+          knCurves: {
+            // headingAngles corrupted at index 2 (NaN) -> surviving indices [0,1,3]
+            headingAngles: [0, 10, Number.NaN, 30],
+            points: [
+              // This row's OWN corruption is at index 3, not 2 -- after
+              // independently filtering, both arrays end up length 3, but
+              // this row's surviving values [0, 1.0, 2.0] no longer belong
+              // to angles [0, 10, 30] at all (2.0 was paired with the
+              // dropped 30°, not with the surviving 30° index). Must be
+              // dropped, not kept as if it were still valid.
+              { displacementKg: 2_000_000, KNByAngle: [0, 1.0, 2.0, Number.NaN] },
+            ],
+          },
+          variableWeights: [],
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    const reloaded = useProjects.getState().projects[0]
+    // The one row given is corrupted and must be dropped entirely -- with
+    // no surviving points, knCurves itself normalizes to undefined (same
+    // rule as an empty points array from any other cause).
+    expect(reloaded.deck.vessel?.knCurves).toBeUndefined()
+  })
+
+  // Regression: downfloodingAngleDeg only checked Number.isFinite, letting
+  // physically meaningless values (negative, or past 90°) through into
+  // checkIMOCriteria's boundary clamps.
+  it('rejects a physically meaningless downfloodingAngleDeg (negative or past 90°) instead of storing it', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        vessel: {
+          particulars: {
+            name: 'Тестовое судно',
+            lengthBpp: 80,
+            breadth: 18,
+            lightshipWeightKg: 2_000_000,
+            lightshipKG: 5.5,
+            lightshipLCG: -1.2,
+            lightshipTCG: 0.3,
+            longitudinalOrigin: 'midships',
+            downfloodingAngleDeg: -10,
+          },
+          hydrostatics: { points: [] },
+          knCurves: { headingAngles: [], points: [] },
+          variableWeights: [],
+        },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+
+    expect(useProjects.getState().projects[0].deck.vessel?.particulars.downfloodingAngleDeg).toBeUndefined()
+  })
+
   // Regression: normalizeProject used toPositiveInt for quantity, which
   // treats 0 the same as "no value given" and falls back to 1 — turning a
   // deliberately zeroed-out cargo (e.g. after deleting every placed unit)

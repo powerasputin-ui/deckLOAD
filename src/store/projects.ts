@@ -250,8 +250,18 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     lightshipLCG: toFinite(p.lightshipLCG, 0),
     lightshipTCG: toFinite(p.lightshipTCG, 0),
     longitudinalOrigin,
+    // A downflooding angle is a heel angle — physically must be strictly
+    // positive and can't exceed 90° (a vessel doesn't heel past that).
+    // Finite alone let through negative/absurd values (e.g. -10°) that then
+    // fed straight into checkIMOCriteria's Math.min(30, angle)/Math.min(40,
+    // angle) boundaries; those happen to degenerate to a zero-area (and so
+    // FAIL) criterion downstream rather than a false PASS, but that's
+    // incidental to how integrateArea clips its range, not a deliberate
+    // safeguard — bad input should be rejected here, not rely on that.
     downfloodingAngleDeg:
-      typeof p.downfloodingAngleDeg === 'number' && Number.isFinite(p.downfloodingAngleDeg) ? p.downfloodingAngleDeg : undefined,
+      typeof p.downfloodingAngleDeg === 'number' && Number.isFinite(p.downfloodingAngleDeg) && p.downfloodingAngleDeg > 0 && p.downfloodingAngleDeg <= 90
+        ? p.downfloodingAngleDeg
+        : undefined,
     // These four used to be silently dropped here — every consumer that
     // reads VesselParticulars.minGM/windageAreaM2/windageLeverM/
     // blockCoefficient (see their own doc comments in stability.ts) got
@@ -309,7 +319,22 @@ function normalizeKNCrossCurves(value: unknown): KNCrossCurves | undefined {
   if (!value || typeof value !== 'object') return undefined
   const raw = value as Record<string, unknown>
   if (!Array.isArray(raw.headingAngles) || raw.headingAngles.length === 0) return undefined
-  const headingAngles = raw.headingAngles.filter((a): a is number => typeof a === 'number' && Number.isFinite(a))
+  const rawAngleCount = raw.headingAngles.length
+  // Filtering headingAngles and each point's KNByAngle independently and
+  // only comparing final LENGTHS afterward can silently misalign them: two
+  // arrays that each drop a different index can end up the same length
+  // while no longer corresponding to the same angles at all. Recording
+  // WHICH original indices survive the angle filter, then picking every
+  // KNByAngle at those same indices, keeps a KN value paired with its own
+  // angle by construction instead of by coincidence.
+  const validAngleIdx: number[] = []
+  const headingAngles: number[] = []
+  raw.headingAngles.forEach((a, i) => {
+    if (typeof a === 'number' && Number.isFinite(a)) {
+      validAngleIdx.push(i)
+      headingAngles.push(a)
+    }
+  })
   if (headingAngles.length === 0) return undefined
   if (!Array.isArray(raw.points)) return undefined
   const points = raw.points
@@ -317,10 +342,14 @@ function normalizeKNCrossCurves(value: unknown): KNCrossCurves | undefined {
       if (!p || typeof p !== 'object') return null
       const pt = p as Record<string, unknown>
       if (typeof pt.displacementKg !== 'number' || !Number.isFinite(pt.displacementKg)) return null
-      if (!Array.isArray(pt.KNByAngle) || pt.KNByAngle.length !== headingAngles.length) return null
-      const KNByAngle = pt.KNByAngle.filter((k): k is number => typeof k === 'number' && Number.isFinite(k))
-      if (KNByAngle.length !== headingAngles.length) return null
-      return { displacementKg: pt.displacementKg, KNByAngle }
+      // Compared against the ORIGINAL angle count, before filtering — a
+      // KNByAngle that was already the wrong length relative to the raw
+      // table is corrupted regardless of which entries happen to be NaN.
+      if (!Array.isArray(pt.KNByAngle) || pt.KNByAngle.length !== rawAngleCount) return null
+      const rawKNByAngle = pt.KNByAngle as unknown[]
+      const KNByAngle = validAngleIdx.map((i) => rawKNByAngle[i])
+      if (!KNByAngle.every((k): k is number => typeof k === 'number' && Number.isFinite(k))) return null
+      return { displacementKg: pt.displacementKg, KNByAngle: KNByAngle as number[] }
     })
     .filter((p): p is { displacementKg: number; KNByAngle: number[] } => p !== null)
   return points.length > 0 ? { headingAngles, points } : undefined

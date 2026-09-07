@@ -481,6 +481,24 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     expect(computeGZCurve(noZero, loading)).toBeNull()
   })
 
+  // Regression: the angle=0° check above only confirms the TABLE claims a
+  // 0° column exists — it never checked that KN is actually 0 there, which
+  // is the real physical fact "GZ(0°)=0 by construction" depends on. A
+  // table with angle 0° present but a bad, nonzero KN(0°) used to pass
+  // straight through and hand the rest of the function a curve built on a
+  // false premise.
+  it('returns null when a table row has a nonzero KN at 0° heel', () => {
+    const loading = { totalDisplacementKg: 2_000_000, KG: 6.0, overallTCG: 0, overallLCG: 0 }
+    const badKnZero: VesselStabilityData = {
+      ...vessel,
+      knCurves: {
+        headingAngles: [0, 10, 20, 30, 40],
+        points: [{ displacementKg: 2_000_000, KNByAngle: [0.35, 1.2, 2.3, 3.1, 3.6] }],
+      },
+    }
+    expect(computeGZCurve(badKnZero, loading)).toBeNull()
+  })
+
   it('checkIMOCriteria: initial-GM criterion fails for a low GM and passes for a healthy one', () => {
     const lowGmLoading = { totalDisplacementKg: 2_000_000, KG: 6.9, overallTCG: 0, overallLCG: 0 } // GM = 0.10 < 0.15
     const stability = computeStabilityResult(vessel, lowGmLoading)!

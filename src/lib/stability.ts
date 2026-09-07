@@ -672,6 +672,16 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
     if (!(kn.headingAngles[i] > kn.headingAngles[i - 1])) return null
   }
   if (Math.abs(kn.headingAngles[0]) > 1e-6) return null
+  // The angle check above only guarantees the TABLE says heel 0° exists —
+  // GZ(0°)=0 "by construction" additionally needs KN actually being 0 AT
+  // that angle, in every displacement row (interpolateKN can pick any of
+  // them). A table with angle 0° present but a nonzero KN(0°) (bad data
+  // entry — KN should be identically 0 at zero heel for any hull) would
+  // otherwise pass silently and hand the rest of this function a curve
+  // whose "0° is really 0" premise is false.
+  for (const pt of kn.points) {
+    if (Math.abs(pt.KNByAngle[0] ?? 0) > 1e-6) return null
+  }
   // Free surface must reduce the WHOLE righting-arm curve, not just the
   // single initial-GM scalar — the standard treatment is a "virtual rise
   // of G" (effective KG = KG + FSC) applied everywhere GZ is computed.
