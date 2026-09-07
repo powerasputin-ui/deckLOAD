@@ -27,6 +27,11 @@ import {
   type RestrictionZoneShape,
 } from '@/lib/packing'
 import {
+  sanitizeCargoMaxLayers,
+  sanitizeCargoMaxStackHeightM,
+  sanitizeCargoWeight,
+} from '@/lib/cargoValidation'
+import {
   DEFAULT_VESSEL_PARTICULARS,
   DEFAULT_SHIP_FRAME,
   type VesselStabilityData,
@@ -1002,28 +1007,39 @@ export const useCalculator = create<CalculatorState>()(
       // so a NaN/negative/fractional value pushed through updateItem (a form
       // bug, a future caller, anything bypassing the existing NumField
       // clamps) would sit in live state until the next save/reload instead
-      // of being rejected immediately. Same validity rules as
-      // normalizeProject's own, so the two layers can't disagree.
+      // of being rejected immediately. Uses the exact same
+      // sanitizeCargo*() rules as normalizeProject (src/lib/cargoValidation.ts)
+      // — a single shared source of truth, so the two layers can't disagree.
       const sanitizedPatch: Partial<CargoItem> = { ...patch }
-      if ('maxLayers' in sanitizedPatch) {
-        const v = sanitizedPatch.maxLayers
-        sanitizedPatch.maxLayers = typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+      if ('maxLayers' in sanitizedPatch) sanitizedPatch.maxLayers = sanitizeCargoMaxLayers(sanitizedPatch.maxLayers)
+      if ('maxStackHeightM' in sanitizedPatch) sanitizedPatch.maxStackHeightM = sanitizeCargoMaxStackHeightM(sanitizedPatch.maxStackHeightM)
+      if ('weight' in sanitizedPatch) sanitizedPatch.weight = sanitizeCargoWeight(sanitizedPatch.weight)
+      // width/length/height/quantity are required fields (unlike maxLayers/
+      // maxStackHeightM/weight above, which are optional and undefined = "no
+      // override") — an invalid value can't become undefined, so it's
+      // dropped from the patch entirely instead, leaving the item's
+      // existing value untouched.
+      if ('width' in sanitizedPatch) {
+        const v = sanitizedPatch.width
+        const ok = typeof v === 'number' && Number.isFinite(v) && v > 0
+        if (ok) sanitizedPatch.width = v
+        else delete sanitizedPatch.width
       }
-      if ('maxStackHeightM' in sanitizedPatch) {
-        const v = sanitizedPatch.maxStackHeightM
-        sanitizedPatch.maxStackHeightM = typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined
+      if ('length' in sanitizedPatch) {
+        const v = sanitizedPatch.length
+        const ok = typeof v === 'number' && Number.isFinite(v) && v > 0
+        if (ok) sanitizedPatch.length = v
+        else delete sanitizedPatch.length
       }
-      if ('weight' in sanitizedPatch) {
-        const v = sanitizedPatch.weight
-        sanitizedPatch.weight = typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined
+      if ('height' in sanitizedPatch) {
+        const v = sanitizedPatch.height
+        const ok = typeof v === 'number' && Number.isFinite(v) && v >= 0
+        if (ok) sanitizedPatch.height = v
+        else delete sanitizedPatch.height
       }
       if ('quantity' in sanitizedPatch) {
         const v = sanitizedPatch.quantity
-        // quantity is a required field (unlike maxLayers/weight above, which
-        // are optional and undefined = "no override") — an invalid value
-        // can't become undefined, so it's dropped from the patch entirely,
-        // leaving the item's existing quantity untouched instead. Same
-        // NOT-toPositiveInt rule as packing.ts/projects.ts: 0 is a
+        // Same NOT-toPositiveInt rule as sanitizeCargoQuantity: 0 is a
         // legitimate "none of this cargo left", not corrupted input.
         if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
           sanitizedPatch.quantity = Math.round(v)

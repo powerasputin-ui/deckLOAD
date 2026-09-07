@@ -245,6 +245,12 @@ function ItemRow({
   const area = item.width * item.length * item.quantity
   const allPlaced = placed >= item.quantity
   const nonePlaced = placed === 0
+  // placed > quantity happens when the user reduces quantity below what's
+  // already on the deck (updateItem deliberately doesn't auto-remove those
+  // placements — see its own comment) — allPlaced's `>=` used to render
+  // this identically to an exact match, hiding a real requested/placed
+  // mismatch with no visual difference from "everything's fine."
+  const overPlaced = placed > item.quantity
   const rotationEnabled = globalRotation && item.allowRotation
   const hasStabilityOverride =
     item.stabilityOverride?.vcgAboveDeckM !== undefined ||
@@ -298,9 +304,11 @@ function ItemRow({
               </button>
             )}
             <Badge
-              variant={allPlaced ? 'default' : nonePlaced ? 'destructive' : 'secondary'}
+              variant={overPlaced || nonePlaced ? 'destructive' : allPlaced ? 'default' : 'secondary'}
               className="ml-auto shrink-0 text-[10px]"
+              title={overPlaced ? 'Размещено больше, чем указано в количестве — уменьшите количество расставленных единиц или увеличьте количество груза' : undefined}
             >
+              {overPlaced ? '⚠ ' : ''}
               {placed}/{item.quantity} разм.
             </Badge>
           </div>

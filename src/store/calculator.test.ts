@@ -649,6 +649,88 @@ describe('calculator store', () => {
     expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toBeUndefined()
   })
 
+  // Real-flow regression for the AUTO<->MANUAL round trip (unlike the
+  // hand-constructed state above): create cargo, run the actual multi-trip
+  // packer, pin its real output into two separate trips (mirroring what
+  // "AUTO packed this into trip N, then the user pinned it" looks like in
+  // the app), attach a lashing point to one pin and a stabilityOverride to
+  // the other, then flip AUTO -> MANUAL -> AUTO and verify every field of
+  // every placement survives the round trip untouched.
+  it('preserves a realistic packMultiTrip-derived AUTO state across an AUTO -> MANUAL -> AUTO round trip', async () => {
+    const { packMultiTrip } = await import('@/lib/packing')
+    const s = useCalculator.getState()
+    s.setDeck({ width: 6, length: 6, gap: 0, boardOffset: 0 })
+    s.addItem({ name: 'Crate', width: 2, length: 2, quantity: 5, weight: 750 })
+    const item = useCalculator.getState().items[0]
+
+    // A 6x6 deck fits at most 9 of these 2x2 crates per trip, so 5 units
+    // all fit on trip 0 in one packDeck call — force a real second trip by
+    // packing in two separate quantity batches instead, one per trip.
+    const trip0 = packMultiTrip(6, 6, [{ ...item, quantity: 3 }], 'area-desc', 1)[0]
+    const trip1 = packMultiTrip(6, 6, [{ ...item, quantity: 2 }], 'area-desc', 1)[0]
+    expect(trip0.placed.length).toBeGreaterThan(0)
+    expect(trip1.placed.length).toBeGreaterThan(0)
+
+    const pinIds0 = trip0.placed.map((p) =>
+      s.pinFromPlaced(0, {
+        itemId: p.itemId, name: p.name, x: p.x, y: p.y, width: p.width, length: p.length,
+        layers: p.stackedCount, rotated: p.rotated, color: p.color, weight: p.weight,
+      })
+    )
+    const pinIds1 = trip1.placed.map((p) =>
+      s.pinFromPlaced(1, {
+        itemId: p.itemId, name: p.name, x: p.x, y: p.y, width: p.width, length: p.length,
+        layers: p.stackedCount, rotated: p.rotated, color: p.color, weight: p.weight,
+      })
+    )
+
+    s.addLashingPoint({ x: 1, y: 1, placementId: pinIds0[0] })
+    s.updatePinned(1, pinIds1[0], { stabilityOverride: { vcgAboveDeckM: 2.1 } })
+
+    const snapshot = () => ({
+      manual: useCalculator.getState().manualPlacements.map((m) => ({ ...m })),
+      pinned: Object.fromEntries(
+        Object.entries(useCalculator.getState().pinnedPlacementsByTrip).map(([trip, pins]) => [
+          trip,
+          pins.map((p) => ({ ...p })),
+        ])
+      ),
+      lashingPoints: useCalculator.getState().deck.lashingPoints?.map((l) => ({ ...l })) ?? [],
+    })
+    const before = snapshot()
+    expect(before.pinned['0']).toHaveLength(trip0.placed.length)
+    expect(before.pinned['1']).toHaveLength(trip1.placed.length)
+    expect(before.lashingPoints).toHaveLength(1)
+    expect(before.pinned['1'].find((p) => p.id === pinIds1[0])?.stabilityOverride?.vcgAboveDeckM).toBe(2.1)
+
+    s.setMode('manual')
+    s.setMode('auto')
+
+    const after = snapshot()
+    expect(after).toEqual(before)
+    // Explicit field-by-field checks per the plan, not just the deep-equal
+    // above — pins the exact invariants a partial reconciliation bug would
+    // most likely violate (id/itemId/quantity/weight/position/rotation
+    // untouched, lashing point still attached to the right pin, override
+    // still on the right pin).
+    for (const trip of ['0', '1'] as const) {
+      before.pinned[trip].forEach((b, i) => {
+        const a = after.pinned[trip][i]
+        expect(a.id).toBe(b.id)
+        expect(a.itemId).toBe(b.itemId)
+        expect(a.layers).toBe(b.layers)
+        expect(a.weight).toBe(b.weight)
+        expect(a.x).toBe(b.x)
+        expect(a.y).toBe(b.y)
+        expect(a.rotated).toBe(b.rotated)
+        expect(a.stabilityOverride).toEqual(b.stabilityOverride)
+      })
+    }
+    const totalPlacedLayers = Object.values(after.pinned).flat().reduce((sum, p) => sum + p.layers, 0)
+    expect(totalPlacedLayers).toBe(5)
+    expect(after.lashingPoints[0].placementId).toBe(pinIds0[0])
+  })
+
   it('reflows pinned placements per trip independently when boardOffset changes', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 10, length: 10, boardOffset: 0.2, gap: 0 })

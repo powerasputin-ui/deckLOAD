@@ -5,6 +5,15 @@ import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacem
 import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
+import {
+  sanitizeCargoWidth,
+  sanitizeCargoLength,
+  sanitizeCargoHeight,
+  sanitizeCargoQuantity,
+  sanitizeCargoWeight,
+  sanitizeCargoMaxLayers,
+  sanitizeCargoMaxStackHeightM,
+} from '@/lib/cargoValidation'
 import type { DeckConfig, Mode, Unit } from './calculator'
 import { DEMO_DECK, createDemoItems } from './calculator'
 
@@ -125,17 +134,6 @@ function toPositiveInt(value: unknown, fallback: number): number {
   const v = typeof value === 'number' ? value : fallback
   if (!Number.isFinite(v) || v <= 0) return fallback
   return Math.max(1, Math.round(v))
-}
-
-// Cargo quantity is NOT toPositiveInt — 0 is a legitimate "none of this
-// cargo left" (e.g. after deleting the last placed unit), not a corrupted
-// value, same rule packing.ts's own sanitization already follows. Using
-// toPositiveInt here (as this used to) silently turned a deliberately
-// zeroed-out quantity back into 1 on every reload/import.
-function toQuantity(value: unknown, fallback: number): number {
-  const v = typeof value === 'number' ? value : fallback
-  if (!Number.isFinite(v) || v < 0) return fallback
-  return Math.round(v)
 }
 
 function toBool(value: unknown, fallback: boolean): boolean {
@@ -687,7 +685,10 @@ function freshProject(name: string, withDemo = false): Project {
 
 // Normalise a single project loaded from storage: backfill missing fields,
 // coerce layers to a valid number, etc. Prevents NaN propagation in packDeck.
-function normalizeProject(p: Partial<Project>): Project {
+// Exported for cargoValidation.test.ts, which checks that this and
+// updateItem's own sanitization (calculator.ts) agree on the same garbage
+// input now that both delegate to src/lib/cargoValidation.ts.
+export function normalizeProject(p: Partial<Project>): Project {
   const now = Date.now()
   const rawUnit = p.deck?.unit ?? 'm'
   const unit = VALID_UNITS.includes(rawUnit as Unit) ? (rawUnit as Unit) : 'm'
@@ -729,10 +730,10 @@ function normalizeProject(p: Partial<Project>): Project {
       ? p.items.map((it) => ({
           id: typeof it.id === 'string' && it.id ? it.id : uuid(),
           name: typeof it.name === 'string' ? it.name : 'Груз',
-          width: toFinitePositive(it.width, 1),
-          length: toFinitePositive(it.length, 1),
-          height: toFiniteNonNegative(it.height, 0),
-          quantity: toQuantity(it.quantity, 1),
+          width: sanitizeCargoWidth(it.width, 1),
+          length: sanitizeCargoLength(it.length, 1),
+          height: sanitizeCargoHeight(it.height, 0),
+          quantity: sanitizeCargoQuantity(it.quantity, 1),
           color: typeof it.color === 'string' ? it.color : '#0ea5e9',
           allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
           // >= 0 — a negative cargo weight isn't a smaller/lighter cargo,
@@ -740,12 +741,12 @@ function normalizeProject(p: Partial<Project>): Project {
           // it out of the stability calc either way (`weight > 0`), but
           // packing totals/UI/PDF have no such guard and would otherwise
           // happily subtract it from real weight sums.
-          weight: typeof it.weight === 'number' && Number.isFinite(it.weight) && it.weight >= 0 ? it.weight : undefined,
+          weight: sanitizeCargoWeight(it.weight),
           category: toOptionalString(it.category),
           shape: normalizeShape(it.shape),
           outline: normalizeOutline(it.outline),
-          maxLayers: typeof it.maxLayers === 'number' && Number.isFinite(it.maxLayers) && it.maxLayers > 0 ? Math.floor(it.maxLayers) : undefined,
-          maxStackHeightM: typeof it.maxStackHeightM === 'number' && Number.isFinite(it.maxStackHeightM) && it.maxStackHeightM > 0 ? it.maxStackHeightM : undefined,
+          maxLayers: sanitizeCargoMaxLayers(it.maxLayers),
+          maxStackHeightM: sanitizeCargoMaxStackHeightM(it.maxStackHeightM),
           contents: toOptionalString(it.contents),
           stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
           nest: normalizeNestSpec((it as { nest?: unknown }).nest),

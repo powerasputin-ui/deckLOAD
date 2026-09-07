@@ -210,6 +210,7 @@ export function PlacementPanel({
                       rotated={active && stampRotated}
                       total={it.quantity}
                       remaining={Math.max(0, it.quantity - (placedByItemId.get(it.id) ?? 0))}
+                      overPlaced={Math.max(0, (placedByItemId.get(it.id) ?? 0) - it.quantity)}
                       onSelect={() => {
                         if (isArmedPreset) {
                           setPendingPresetStamp(null)
@@ -262,6 +263,7 @@ function StampRow({
   rotated,
   total,
   remaining,
+  overPlaced,
   onSelect,
 }: {
   item: CargoItem
@@ -269,6 +271,7 @@ function StampRow({
   rotated?: boolean
   total: number
   remaining: number
+  overPlaced: number
   onSelect: () => void
 }) {
   return (
@@ -292,8 +295,9 @@ function StampRow({
             ? `${fmtNumber(item.length)}×${fmtNumber(item.width)} ↻`
             : `${fmtNumber(item.width)}×${fmtNumber(item.length)}`}
         </div>
-        <div className={cn('text-[10px]', remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
+        <div className={cn('text-[10px]', overPlaced > 0 ? 'text-red-600 dark:text-red-400 font-medium' : remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
           Всего: {total} · Не распределено: {remaining}
+          {overPlaced > 0 && <> · ⚠ Превышено: {overPlaced}</>}
         </div>
       </div>
       {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}

@@ -974,12 +974,31 @@ export default function Home() {
     })
   }
 
+  // AUTO already hard-stops on deck.maxDeckCargoT during packing (packing.ts's
+  // runningTotalWeightKg check, folding overflow into result.unplaced) — MANUAL
+  // had no equivalent, only StatsPanel's cosmetic red warning after the fact.
+  // Per the user's explicit contract choice ("A: hard limit in both modes"),
+  // this mirrors that check for manual placements/layer increases. Deliberately
+  // NOT covering updateItem's weight-propagation to already-placed manual
+  // placements (a much rarer path to grow total weight) — accepted as a known
+  // gap for this round.
+  const wouldExceedMaxDeckCargo = (addedWeightKg: number): boolean => {
+    if (deck.maxDeckCargoT === undefined) return false
+    const maxKg = deck.maxDeckCargoT * 1000
+    const currentKg = manualPlacements.reduce((s, p) => s + (p.weight ?? 0) * Math.max(1, p.layers ?? 1), 0)
+    return currentKg + addedWeightKg > maxKg
+  }
+
   // Finalizes a drawn shape into a real CargoItem (reusing
   // addOrIncrementCargoFromTemplate, same as any other preset) and places one
   // instance right where it was drawn — mode-aware, mirroring onPlace's own
   // manual/auto branching below.
   const handlePlaceCustomShape = (name: string, weight?: number) => {
     if (!pendingCustomShape) return
+    if (mode === 'manual' && wouldExceedMaxDeckCargo(weight ?? 0)) {
+      toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+      return
+    }
     const itemId = addOrIncrementCargoFromTemplate({
       name,
       weight,
@@ -1327,7 +1346,15 @@ export default function Home() {
     if (delta > 0) {
       const source = findMergeSourceManual(mp.itemId, id)
       if (source) {
+        // A merge just restacks two placements already on the deck — total
+        // deck weight doesn't change, so it's not subject to the cargo cap.
         handleMergeManual(source.id, id)
+        return
+      }
+      // No merge source: this "+" pulls a fresh unit from unplaced quantity,
+      // genuinely adding weight to the deck — that IS subject to the cap.
+      if (wouldExceedMaxDeckCargo(mp.weight ?? 0)) {
+        toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
         return
       }
     }
@@ -2015,6 +2042,10 @@ export default function Home() {
                           toast.warning(
                             `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
                           )
+                          return
+                        }
+                        if (mode === 'manual' && wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
+                          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
                           return
                         }
                       }
