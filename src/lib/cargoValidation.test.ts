@@ -8,6 +8,7 @@ import {
   sanitizeCargoMaxLayers,
   sanitizeCargoMaxStackHeightM,
   wouldExceedDeckCapacity,
+  mergedPlacementWeight,
 } from './cargoValidation'
 import { normalizeProject } from '@/store/projects'
 import { useCalculator } from '@/store/calculator'
@@ -144,6 +145,43 @@ describe('wouldExceedDeckCapacity', () => {
   it('treats a missing weight as 0 and a missing/zero layers as 1', () => {
     expect(wouldExceedDeckCapacity([{ layers: 5 }], 0, 10)).toBe(false) // weight defaults to 0
     expect(wouldExceedDeckCapacity([{ weight: 9000 }], 500, 10)).toBe(false) // layers defaults to 1: 9000*1+500=9500
+  })
+  // Regression: `currentKg + NaN > maxKg` is `false` in JS — a NaN/Infinity/
+  // negative addedWeightKg used to silently pass as "does not exceed",
+  // defeating the point of a function documented as THE hard-limit check.
+  it('treats invalid addedWeightKg as exceeding the limit, not as passing it', () => {
+    expect(wouldExceedDeckCapacity([], NaN, 10)).toBe(true)
+    expect(wouldExceedDeckCapacity([], Infinity, 10)).toBe(true)
+    expect(wouldExceedDeckCapacity([], -1, 10)).toBe(true)
+  })
+  it('treats invalid maxDeckCargoT (but not undefined) as exceeding the limit', () => {
+    expect(wouldExceedDeckCapacity([], 100, NaN)).toBe(true)
+    expect(wouldExceedDeckCapacity([], 100, -5)).toBe(true)
+  })
+})
+
+// Regression: a cross-item pipe merge (two CargoItems with matching
+// dimensions but different weight — reconcileCrossItemMerge in page.tsx
+// never required weight to match) used to leave the target placement's
+// weight untouched while bumping its layers, silently corrupting the
+// stack's real total weight in either direction.
+describe('mergedPlacementWeight', () => {
+  it('is a no-op for a same-item merge (both sides already share one weight)', () => {
+    expect(mergedPlacementWeight(500, 2, 500, 3)).toBe(500)
+  })
+  it('layer-weights a cross-item merge so total weight is preserved', () => {
+    // target: 800kg/layer x 2 layers = 1600kg. dragged: 500kg/layer x 3 layers = 1500kg.
+    // merged: 5 layers, total 3100kg -> 620kg/layer.
+    const merged = mergedPlacementWeight(800, 2, 500, 3)
+    expect(merged).toBeCloseTo(620, 6)
+    expect((merged ?? 0) * 5).toBeCloseTo(1600 + 1500, 6)
+  })
+  it('treats a missing weight as 0 on either side', () => {
+    expect(mergedPlacementWeight(undefined, 2, 500, 3)).toBeCloseTo((0 * 2 + 500 * 3) / 5, 6)
+    expect(mergedPlacementWeight(500, 2, undefined, 3)).toBeCloseTo((500 * 2 + 0 * 3) / 5, 6)
+  })
+  it('falls back to targetWeight when total layers is zero (degenerate input)', () => {
+    expect(mergedPlacementWeight(500, 0, 500, 0)).toBe(500)
   })
 })
 

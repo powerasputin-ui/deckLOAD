@@ -79,7 +79,7 @@ import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
-import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
+import { wouldExceedDeckCapacity, mergedPlacementWeight } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
 // Once a visitor clicks through the intro, this survives reloads/new tabs
@@ -1492,9 +1492,11 @@ export default function Home() {
         return
       }
     }
-    updatePinned(clampedTripIndex, target.id, { layers: target.layers + delta })
+    const mergedLayers = target.layers + delta
+    const mergedWeight = mergedPlacementWeight(target.weight, target.layers, dragged.weight, delta)
+    updatePinned(clampedTripIndex, target.id, { layers: mergedLayers, weight: mergedWeight })
     removePinned(clampedTripIndex, dragged.id)
-    toast.success(`Объединено: ${target.layers + delta} яр. груза «${target.name}»`)
+    toast.success(`Объединено: ${mergedLayers} яр. груза «${target.name}»`)
   }
 
   const handleMergeManual = (draggedId: string, targetId: string) => {
@@ -1514,9 +1516,11 @@ export default function Home() {
         return
       }
     }
-    updateManualPlacement(target.id, { layers: targetLayers + delta })
+    const mergedLayers = targetLayers + delta
+    const mergedWeight = mergedPlacementWeight(target.weight, targetLayers, dragged.weight, delta)
+    updateManualPlacement(target.id, { layers: mergedLayers, weight: mergedWeight })
     removeManualPlacement(dragged.id)
-    toast.success(`Объединено: ${targetLayers + delta} яр. груза «${target.name}»`)
+    toast.success(`Объединено: ${mergedLayers} яр. груза «${target.name}»`)
   }
 
   // Switch mode while preserving placements:

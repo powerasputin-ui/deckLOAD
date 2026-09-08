@@ -69,7 +69,40 @@ export function wouldExceedDeckCapacity(
   maxDeckCargoT: number | undefined
 ): boolean {
   if (maxDeckCargoT === undefined) return false
+  // This is now the one shared arithmetic every hard-limit call site relies
+  // on — a caller passing NaN/Infinity/negative used to silently pass the
+  // check (`currentKg + NaN > maxKg` is `false` in JS), defeating the whole
+  // point of a "hard" limit. No currently-wired call site can actually
+  // produce that (item.weight is sanitized well before it reaches here),
+  // but a function documented as THE hard-limit check shouldn't depend on
+  // that staying true forever — treat garbage input as "exceeds" rather
+  // than silently waving it through.
+  if (!Number.isFinite(addedWeightKg) || addedWeightKg < 0) return true
+  if (!Number.isFinite(maxDeckCargoT) || maxDeckCargoT < 0) return true
   const maxKg = maxDeckCargoT * 1000
   const currentKg = currentPlacements.reduce((sum, p) => sum + (p.weight ?? 0) * Math.max(1, p.layers ?? 1), 0)
   return currentKg + addedWeightKg > maxKg
+}
+
+// Used by handleMergePinned/handleMergeManual (page.tsx) when the user
+// drags one placement onto another to stack them. reconcileCrossItemMerge
+// only requires the two source CargoItems to share width/length/height
+// (pipe cargo split across two tracked stacks is a real workflow) — it
+// does NOT require them to share weight, so a cross-item merge can combine
+// layers from two items with different per-unit weights. Simply keeping
+// the target's old weight while bumping its layers (the previous
+// behavior) silently mis-recorded the merged stack's true weight in
+// either direction. A layer-weighted average keeps `weight * layers`
+// physically correct for the combined stack; for a same-item merge this
+// is a no-op, since both sides already share one weight by updateItem's
+// own weight-propagation invariant.
+export function mergedPlacementWeight(
+  targetWeight: number | undefined,
+  targetLayers: number,
+  draggedWeight: number | undefined,
+  draggedLayers: number
+): number | undefined {
+  const totalLayers = targetLayers + draggedLayers
+  if (totalLayers <= 0) return targetWeight
+  return ((targetWeight ?? 0) * targetLayers + (draggedWeight ?? 0) * draggedLayers) / totalLayers
 }
