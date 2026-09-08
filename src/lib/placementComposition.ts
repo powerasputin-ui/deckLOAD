@@ -36,7 +36,12 @@
 // noticing, since nothing outside this module and its tests produces one.
 
 import type { CompositionSegment, StabilityOverride } from './packing'
-import { computeItemVCG } from './stability'
+// From stabilityMath.ts, NOT stability.ts — see stabilityMath.ts's own doc
+// comment. stability.ts's buildCargoWeightMoments will need to import FROM
+// this module in Round 14 to become composition-aware; if this module
+// imported computeItemVCG from stability.ts instead, that would be a
+// circular dependency the moment that wiring lands.
+import { computeItemVCG } from './stabilityMath'
 
 // The minimal shape any placement (ManualPlacement or PinnedPlacement)
 // needs to expose for these functions — deliberately narrow so this module

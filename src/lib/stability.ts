@@ -19,6 +19,10 @@
 import type { StabilityOverride } from './packing'
 import { polygonCentroid, rotateOutline90 } from './packing'
 import { type Unit, toMeters } from './units'
+// Re-exported (not just imported) — see this file's own "Cargo VCG" comment
+// below for why computeItemVCG lives in stabilityMath.ts now.
+import { computeItemVCG } from './stabilityMath'
+export { computeItemVCG }
 
 // ---- Vessel particulars (from the vessel's Stability Booklet) ----
 
@@ -152,40 +156,14 @@ export const DEFAULT_SHIP_FRAME: DeckShipFrame = {
 }
 
 // ---- Cargo VCG ----
-
-// Default: half the stacked height above the deck surface — a conservative
-// flat-centroid assumption, correct for a plain column of identical units.
-// A real nested pipe штабель (src/lib/pipeNest.ts) is NOT a uniform
-// column — its true weighted centroid sits well below half the stack
-// height, since more pipes sit in the lower, wider rows — so a nest's own
-// computed VCG (`nestVcgAboveDeckM`) takes precedence over this default
-// whenever it's present. An explicit user override always wins over both.
-export function computeItemVCG(p: {
-  height: number
-  layers: number
-  stabilityOverride?: StabilityOverride
-  nestVcgAboveDeckM?: number
-}): number {
-  if (p.stabilityOverride?.vcgAboveDeckM !== undefined) return p.stabilityOverride.vcgAboveDeckM
-  const layers = Number.isFinite(p.layers) && p.layers > 0 ? p.layers : 1
-  const height = Number.isFinite(p.height) && p.height > 0 ? p.height : 0
-  if (p.nestVcgAboveDeckM !== undefined) {
-    // Defense in depth: a nest-shaped item is meant to always have
-    // `layers === 1` (PresetsBar.tsx pins `maxLayers: 1` on every штабель
-    // it creates), but if one somehow ends up stacked N-high anyway (a
-    // hand-edited/imported project, a future caller that forgets the cap),
-    // `nestVcgAboveDeckM` alone describes only ONE штабель's own internal
-    // VCG — silently ignoring `layers` would apply the full N-tier weight
-    // at a single штабель's height, understating KG. Each additional
-    // identical штабель sits a full `height` higher than the one below it,
-    // so the weighted average VCG across N equal-weight tiers is the base
-    // штабель's VCG plus half the added height: for tier k (0-indexed),
-    // VCG_k = k*height + nestVcgAboveDeckM; averaging k=0..layers-1 gives
-    // nestVcgAboveDeckM + height*(layers-1)/2.
-    return p.nestVcgAboveDeckM + (height * (layers - 1)) / 2
-  }
-  return (height * layers) / 2
-}
+// Moved to src/lib/stabilityMath.ts (pre-Round-14 dependency-direction fix)
+// so src/lib/placementComposition.ts can depend on this pure arithmetic
+// without depending on stability.ts itself — Round 14 needs
+// buildCargoWeightMoments below to import FROM placementComposition.ts,
+// and placementComposition.ts importing computeItemVCG from HERE would
+// have made that a cycle. Re-exported (not just imported) so every
+// existing import of `computeItemVCG` from './stability' keeps working
+// unchanged — see the import at the top of this file.
 
 // ---- Displacement / KG / TCG / LCG aggregation ----
 
