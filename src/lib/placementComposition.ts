@@ -95,10 +95,27 @@ export function placementTotalHeightM(p: ComposablePlacement, items: Composition
 // a segment sitting ABOVE others in the pile needs its contribution offset
 // by the cumulative height of everything stacked below it first ("baseline"
 // below) — otherwise every segment would be treated as if it alone sat
-// directly on the deck. computeItemVCG's own formula (height*layers/2, or a
-// nest's own vcg+half-height, or an explicit override) already gives "how
+// directly on the deck. computeItemVCG's own DEFAULT formula (height*
+// layers/2) and its nest branch (vcg+half-height) both genuinely give "how
 // high above THIS segment's OWN base its centroid sits" — baseline is
 // exactly the missing piece that turns that into "how high above the DECK".
+//
+// An explicit stabilityOverride.vcgAboveDeckM is a DIFFERENT case, on
+// purpose: per its own doc comment (packing.ts's StabilityOverride — "an
+// absolute value like vcgAboveDeckM", contrasted there with tcgOffsetM/
+// lcgOffsetM's explicitly non-absolute, additive semantics), it already
+// names an absolute height above the deck surface, not a height above
+// wherever this segment happens to sit in the stack — the same contract
+// computeItemVCG honors for an ordinary (uncomposed) placement, where its
+// return value is used as-is, with no per-layer/per-stack adjustment at
+// all. Adding `baselineM` to it here would double-count the stack height
+// beneath this segment into a number that was never meant to be relative
+// in the first place — an EARLIER version of this function did exactly
+// that (P1 corrective patch, post-Round-14 review): for [A2,B3] with an
+// override on B (the TOP segment, baselineM=2.0 from A), it silently
+// turned an override the caller entered as "3.0 m above the deck" into an
+// absolute VCG of 5.0 m. Only a segment WITHOUT its own override gets
+// baseline added; an overridden segment's absolute value is used verbatim.
 //
 // A weight-weighted average (not per-segment WeightMoment expansion) is
 // mathematically sufficient here, not a simplification that loses
@@ -118,12 +135,16 @@ export function placementTotalVCG(p: ComposablePlacement, items: CompositionCata
     const item = findItem(items, seg.itemId)
     const segWeightKg = seg.layers * (item?.weight ?? 0)
     const segHeightM = item?.height ?? 0
-    const vcgAboveOwnBase = computeItemVCG({
-      height: segHeightM,
-      layers: seg.layers,
-      stabilityOverride: item?.stabilityOverride,
-    })
-    weightedSum += segWeightKg * (baselineM + vcgAboveOwnBase)
+    const hasAbsoluteOverride = item?.stabilityOverride?.vcgAboveDeckM !== undefined
+    const vcgAbsolute = hasAbsoluteOverride
+      ? computeItemVCG({ height: segHeightM, layers: seg.layers, stabilityOverride: item?.stabilityOverride })
+      : baselineM +
+        computeItemVCG({
+          height: segHeightM,
+          layers: seg.layers,
+          stabilityOverride: item?.stabilityOverride,
+        })
+    weightedSum += segWeightKg * vcgAbsolute
     totalWeightKg += segWeightKg
     baselineM += segHeightM * seg.layers
   }

@@ -74,12 +74,18 @@ export interface DeckConfig {
   // The vessel's own approved total deck-cargo capacity (t), seeded from
   // VesselTemplate.limits.maxDeckCargoT when a template is applied.
   // Undefined = no known limit, not "unlimited" — StatsPanel shows nothing
-  // rather than a fabricated always-green check. Used two ways: a real HARD
-  // stop for auto-placement (page.tsx passes it to packMultiTrip/
-  // packDeckVariants as PackOptions.maxTotalWeightKg — cargo that would
-  // push the total over this is left unplaced, same as running out of
-  // deck area) and a soft red-text warning in StatsPanel for manual mode
-  // (where nothing auto-stops placement).
+  // rather than a fabricated always-green check. A real HARD stop in BOTH
+  // modes (contract A, chosen explicitly by the user — see
+  // cargoValidation.ts's wouldExceedDeckCapacity, the one shared check both
+  // modes' new-placement guards call): AUTO passes it to packMultiTrip/
+  // packDeckVariants as PackOptions.maxTotalWeightKg (cargo that would push
+  // the total over this is left unplaced, same as running out of deck
+  // area) AND every interactive placement path in both modes (click/stamp/
+  // preset/pin "+", see page.tsx's wouldExceedMaxDeckCargo) blocks the
+  // placement outright with a toast error — NOT a soft warning in either
+  // mode. StatsPanel's own live counter is a separate, purely
+  // informational readout of the same number; the enforcement itself
+  // happens at the placement call sites above, not there.
   maxDeckCargoT?: number
   // The vessel's own registry figure for how many 10-foot units fit at
   // full pipe load, seeded from VesselTemplate.limits.tenFootContainerCapacity.

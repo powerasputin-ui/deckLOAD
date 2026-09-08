@@ -117,7 +117,7 @@ describe('placementTotalVCG — baseline stacking, weight-weighted average', () 
     expect(placementTotalVCG(pBottomB, catalog)).not.toBeCloseTo(placementTotalVCG(pBottomA, catalog), 3)
   })
 
-  it('honors an explicit stabilityOverride.vcgAboveDeckM on one constituent, weighted against the other\'s own default', () => {
+  it('honors an explicit stabilityOverride.vcgAboveDeckM on the BOTTOM constituent (A), weighted against the other\'s own default', () => {
     const aWithOverride: CompositionCatalogItem = { ...A, stabilityOverride: { vcgAboveDeckM: 2.0 } }
     const items = [aWithOverride, B]
     const p = composed([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
@@ -125,6 +125,51 @@ describe('placementTotalVCG — baseline stacking, weight-weighted average', () 
     // B: no override, own-base VCG = 2.0*3/2=3.0, baseline = A's height*layers = 1.0*2=2.0 -> absolute = 5.0, weight=2400
     const expected = (1000 * 2.0 + 2400 * 5.0) / 3400
     expect(placementTotalVCG(p, items)).toBeCloseTo(expected, 6)
+  })
+
+  // P1 corrective patch (post-Round-14 review): stabilityOverride.vcgAboveDeckM
+  // is documented (packing.ts's StabilityOverride) as an ABSOLUTE height
+  // above the deck surface — the same contract computeItemVCG honors for an
+  // ordinary (uncomposed) placement, where the override is used as-is with
+  // no per-stack adjustment. An earlier version of placementTotalVCG added
+  // `baselineM` to EVERY segment's computeItemVCG result unconditionally,
+  // including an overridden one — for [A2,B3] with the override on B (the
+  // TOP segment, baselineM=2.0 from A below it), that silently turned an
+  // override the caller entered as "3.0 m above the deck" into an absolute
+  // VCG of 5.0 m. These tests pin the override's absolute meaning
+  // regardless of which segment (bottom, middle, top) carries it.
+  describe('P1 fix: an explicit override stays an ABSOLUTE height above the deck, never offset by baselineM, regardless of stack position', () => {
+    it('[A2,B3] override on B (the TOP segment): B\'s contribution is the override value itself, not baseline + override', () => {
+      const bWithOverride: CompositionCatalogItem = { ...B, stabilityOverride: { vcgAboveDeckM: 3.0 } }
+      const items = [A, bWithOverride]
+      const p = composed([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+      // A: no override, own-base VCG = 1.0*2/2=1.0, baseline=0 -> absolute=1.0, weight=1000
+      // B: override VCG=3.0 directly (NOT baseline(2.0) + 3.0 = 5.0), weight=2400
+      const expected = (1000 * 1.0 + 2400 * 3.0) / 3400
+      expect(placementTotalVCG(p, items)).toBeCloseTo(expected, 6)
+      // Explicitly pin the bug this patch fixes: the pre-fix (wrong) value
+      // would have been (1000*1.0 + 2400*5.0)/3400 — assert we're NOT there.
+      const buggyValue = (1000 * 1.0 + 2400 * 5.0) / 3400
+      expect(placementTotalVCG(p, items)).not.toBeCloseTo(buggyValue, 3)
+    })
+
+    it('[A2,B3,A1] override on B (a MIDDLE segment): B\'s own contribution ignores baseline, but the trailing A segment still stacks correctly on top of it', () => {
+      const bWithOverride: CompositionCatalogItem = { ...B, stabilityOverride: { vcgAboveDeckM: 3.0 } }
+      const items = [A, bWithOverride]
+      const p = composed([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }, { itemId: 'A', layers: 1 }])
+      // Segment 1 (A×2): no override, baseline=0 -> absolute VCG=1.0, weight=1000
+      // Segment 2 (B×3): override=3.0 directly (ignores baseline=2.0), weight=2400
+      // Segment 3 (A×1): no override, own-base VCG=1.0*1/2=0.5, baseline accumulates
+      //   PHYSICAL height regardless of the override (2*1.0 + 3*2.0 = 8.0) -> absolute=8.5, weight=500
+      const expected = (1000 * 1.0 + 2400 * 3.0 + 500 * 8.5) / (1000 + 2400 + 500)
+      expect(placementTotalVCG(p, items)).toBeCloseTo(expected, 6)
+    })
+
+    it('dormancy: an UNCOMPOSED placement with its own override is completely unaffected by this fix (baselineM was always 0 there)', () => {
+      const items: CompositionCatalogItem[] = [{ ...A, stabilityOverride: { vcgAboveDeckM: 2.2 } }]
+      const p: ComposablePlacement = { itemId: 'A', layers: 4 }
+      expect(placementTotalVCG(p, items)).toBe(2.2)
+    })
   })
 })
 
