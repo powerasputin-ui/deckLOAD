@@ -1120,6 +1120,16 @@ export interface PinnedPlacement {
   // the formula suggests, but that must be a stated reason, not a silent
   // shortfall. Surfaced as-is in the PDF export.
   lashingJustification?: string
+  // Set when a cross-item merge (reconcileCrossItemMerge, page.tsx) combines
+  // this placement with an item whose CargoItem.allowRotation is false —
+  // rotation permission is normally resolved fresh from `items.find(itemId)`
+  // by itemId alone, which after a merge only ever sees the SURVIVING
+  // item's own allowRotation, silently forgetting whichever item was
+  // dragged in. Most-restrictive-wins: once set, this placement can never
+  // rotate again regardless of what its own itemId's CargoItem allows,
+  // since the merge may have folded in units that don't allow it. Never
+  // cleared automatically — a merge is a one-way operation here.
+  rotationLocked?: boolean
 }
 
 // Compute how many tiers (layers) can be stacked for an item. When the deck
@@ -2114,6 +2124,8 @@ export interface ManualPlacement {
   // See PinnedPlacement.lashingWireType/lashingJustification above — same meaning here.
   lashingWireType?: WireRopeType
   lashingJustification?: string
+  // See PinnedPlacement.rotationLocked above — same meaning here.
+  rotationLocked?: boolean
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's

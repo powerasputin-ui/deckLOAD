@@ -259,6 +259,38 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(pin.length).toBe(1)
   })
 
+  // Regression (Round 12): a cross-item merge folding in an item whose
+  // CargoItem.allowRotation is false used to leave the merged (surviving)
+  // placement's rotation permission resolved purely from ITS OWN itemId's
+  // catalog allowRotation — silently forgetting the dragged item's
+  // restriction the moment that item's own placement was removed by the
+  // merge. rotationLocked is the persistent flag a merge sets to close
+  // that gap; this proves it's actually honored by the rotate path even
+  // when the placement's own itemId currently allows rotation.
+  it('handleRotatePinned respects rotationLocked even when the placement\'s own item allows rotation', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1, allowRotation: true })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, { rotationLocked: true })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    expect(rotateCircle).toBeTruthy()
+    fireEvent.click(rotateCircle!)
+
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
+    const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
+    expect(pin.rotated).toBe(false)
+  })
+
   it('warns (once) when a placement newly exceeds a load zone\'s density limit', async () => {
     render(<Home />)
     clearDemoCargo()
