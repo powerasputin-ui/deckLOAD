@@ -13,6 +13,7 @@ import {
 import { normalizeProject } from '@/store/projects'
 import { useCalculator } from '@/store/calculator'
 import type { Project } from '@/store/projects'
+import type { CompositionCatalogItem } from './placementComposition'
 
 describe('sanitizeCargoWidth', () => {
   it('keeps a valid positive number', () => {
@@ -157,6 +158,59 @@ describe('wouldExceedDeckCapacity', () => {
   it('treats invalid maxDeckCargoT (but not undefined) as exceeding the limit', () => {
     expect(wouldExceedDeckCapacity([], 100, NaN)).toBe(true)
     expect(wouldExceedDeckCapacity([], 100, -5)).toBe(true)
+  })
+
+  // Round 17 (capacity verification). Found via the review's own
+  // investigate-first scenario 6: a composed placement's top-level
+  // `weight`/`layers` are only a backward-compatible AVERAGE fallback (see
+  // PlacedItem.composition's doc comment) — nothing keeps them in sync for
+  // a hand-built or merge-produced composed placement outside the one path
+  // (Round 16's removeItem) that happens to bother. Before this fix, a
+  // composed placement with no `.weight` of its own contributed exactly
+  // 0 kg here — this suite pins that this now uses `composition` (the
+  // actual source of physical truth) instead.
+  describe('composition-aware weight (Round 17)', () => {
+    const A: CompositionCatalogItem = { id: 'A', weight: 500, height: 1.0 }
+    const B: CompositionCatalogItem = { id: 'B', weight: 800, height: 2.0 }
+    const catalog = [A, B]
+
+    it('a composed placement with NO top-level .weight set is resolved from composition (real weight 3400kg), not treated as 0', () => {
+      const composed = { itemId: 'A', layers: 5, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }] }
+      // 3400 (composed) + 1000 (new) = 4400 > 4000 -> exceeds
+      expect(wouldExceedDeckCapacity([composed], 1000, 4, catalog)).toBe(true)
+      // 3400 + 500 = 3900 <= 4000 -> does not exceed
+      expect(wouldExceedDeckCapacity([composed], 500, 4, catalog)).toBe(false)
+    })
+
+    it('landing exactly on the limit with a composed placement is still allowed (not strictly over)', () => {
+      const composed = { itemId: 'A', layers: 5, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }] }
+      // 3400 + 600 = 4000 exactly
+      expect(wouldExceedDeckCapacity([composed], 600, 4, catalog)).toBe(false)
+      expect(wouldExceedDeckCapacity([composed], 601, 4, catalog)).toBe(true)
+    })
+
+    it('composition takes priority over a stale/wrong top-level .weight, not added on top of it', () => {
+      // If this were double-counting weight+composition, this would exceed
+      // (3400 + 999999 + anything); it must use composition alone (3400).
+      const composedWithStaleWeight = { itemId: 'A', layers: 5, weight: 999999, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }] }
+      expect(wouldExceedDeckCapacity([composedWithStaleWeight], 500, 4, catalog)).toBe(false) // 3400+500=3900<4000
+    })
+
+    it('dormancy: an uncomposed placement is completely unaffected — identical to the pre-Round-17 behavior, catalog ignored', () => {
+      expect(wouldExceedDeckCapacity([{ weight: 3000, layers: 1 }], 2000, 10, catalog)).toBe(false)
+      expect(wouldExceedDeckCapacity([{ weight: 9000, layers: 1 }], 2000, 10, catalog)).toBe(true)
+      // Catalog omitted entirely (defaults to []) — must behave the same
+      // for uncomposed placements, which never touch it.
+      expect(wouldExceedDeckCapacity([{ weight: 3000, layers: 1 }], 2000, 10)).toBe(false)
+    })
+
+    it('mixed composed + uncomposed placements on the same deck sum correctly', () => {
+      const composed = { itemId: 'A', layers: 5, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }] } // 3400kg
+      const uncomposed = { itemId: 'C', weight: 600, layers: 1 } // 600kg
+      // 3400 + 600 = 4000 current, +0 new = exactly at the 4000kg (4t) limit
+      expect(wouldExceedDeckCapacity([composed, uncomposed], 0, 4, catalog)).toBe(false)
+      expect(wouldExceedDeckCapacity([composed, uncomposed], 1, 4, catalog)).toBe(true)
+    })
   })
 })
 

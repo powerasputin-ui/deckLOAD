@@ -281,6 +281,125 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items[0].quantity).toBe(2)
   })
 
+  // Round 17 (capacity verification) — investigate-first scenarios 1-4 from
+  // the review: wouldExceedMaxDeckCargo (page.tsx) actually gates the "+"
+  // button's fresh-unit path (no merge source available) in BOTH modes,
+  // exactly at the limit (allowed) and just over it (blocked). This is the
+  // real end-to-end wiring, not just the underlying wouldExceedDeckCapacity
+  // arithmetic (already exhaustively unit-tested in cargoValidation.test.ts).
+  it('wouldExceedMaxDeckCargo (MANUAL): "+" is allowed exactly at the limit, blocked just over it', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5, maxDeckCargoT: 1 } }) // 1000kg cap
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2, height: 1, weight: 500 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      // ONE placement only — no merge source, so "+" must pull a fresh
+      // unplaced unit and go through the capacity guard.
+      useCalculator.getState().addManualPlacement({
+        id: 'mA', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 500,
+      })
+      useCalculator.setState({ selectedManualIds: ['mA'] })
+    })
+
+    // 500 (placed) + 500 (new) = 1000 kg = exactly the 1t cap -> allowed.
+    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    fireEvent.click(plusCircle!)
+    expect(useCalculator.getState().manualPlacements.find((m) => m.id === 'mA')?.layers).toBe(2)
+    expect(toast.error).not.toHaveBeenCalled()
+
+    // A third unit would push to 1500kg > 1000kg -> blocked, layers unchanged.
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    expect(useCalculator.getState().manualPlacements.find((m) => m.id === 'mA')?.layers).toBe(2)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('лимит груза'))
+  })
+
+  it('wouldExceedMaxDeckCargo (AUTO/pinned): "+" is allowed exactly at the limit, blocked just over it, scoped to the CURRENT trip only', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      // Deck sized to fit exactly ONE 2x1 footprint (no room for AUTO to
+      // auto-place a second, unpinned unit of the item's remaining
+      // quantity) — otherwise "+" would find that free auto-placed
+      // instance and MERGE it (a different, uncapped code path) instead of
+      // exercising the capacity-guarded fresh-unit path this test targets.
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 2.2, length: 1.2, boardOffset: 0, gap: 0.1, clearance: 5, maxDeckCargoT: 1 } })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2, height: 1, weight: 500 })
+    })
+    const item = useCalculator.getState().items[0]
+    let pinId = ''
+    act(() => {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 0.1, y: 0.1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 500,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    // 500 + 500 = 1000kg exactly at the cap -> allowed.
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)?.layers).toBe(2)
+    expect(toast.error).not.toHaveBeenCalled()
+
+    // A third unit (1500kg) on the SAME trip -> blocked. Bump quantity so
+    // checkLayerChange's own budget doesn't reject it for an unrelated
+    // reason before the capacity guard even runs.
+    act(() => {
+      useCalculator.getState().updateItem(item.id, { quantity: 3 })
+    })
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)?.layers).toBe(2)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('лимит груза'))
+  })
+
+  // Round 17 acceptance scenario 5: maxDeckCargoT is the vessel's own
+  // PER-TRIP capacity — a trip already sitting exactly at the cap must
+  // never block a "+" on a DIFFERENT trip that still has headroom.
+  it('wouldExceedMaxDeckCargo (AUTO/pinned): a trip already AT its cap does not block "+" on a DIFFERENT trip', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 2.2, length: 1.2, boardOffset: 0, gap: 0.1, clearance: 5, maxDeckCargoT: 1 } })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 4, height: 1, weight: 500 })
+    })
+    const item = useCalculator.getState().items[0]
+    let trip1PinId = ''
+    act(() => {
+      // Trip 0: already exactly AT the 1000kg cap.
+      useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 0.1, y: 0.1, width: 2, length: 1, layers: 2, rotated: false, color: item.color, weight: 500,
+      })
+      // Trip 1: only 500kg so far — plenty of headroom on ITS OWN budget.
+      trip1PinId = useCalculator.getState().pinFromPlaced(1, {
+        itemId: item.id, name: item.name, x: 0.1, y: 0.1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 500,
+      })
+    })
+
+    fireEvent.click(screen.getByText(/Рейс 2/))
+    act(() => {
+      useCalculator.setState({ selectedPinIds: [trip1PinId] })
+    })
+
+    // Trip 1: 500 + 500 = 1000kg exactly at ITS OWN cap -> allowed, despite
+    // trip 0 already sitting at its own (separate) 1000kg cap.
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[1].find((p) => p.id === trip1PinId)?.layers).toBe(2)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].layers).toBe(2) // trip 0 completely untouched
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  // Note: composed-placement capacity (scenario 6 from the review) is
+  // deliberately NOT exercised through the "+" button here — "+" invokes
+  // handleLayerChangePinned, whose fresh-unit weight is `pin.weight ?? 0`
+  // (undefined/0 for a composed placement, since composition is its source
+  // of truth) — a composition-aware "+" is explicitly Round 21 scope
+  // (push/pop segments), out of bounds for Round 17. The composed-weight
+  // fix itself is verified directly and thoroughly in
+  // cargoValidation.test.ts's "composition-aware weight (Round 17)" suite,
+  // which is what wouldExceedMaxDeckCargo actually calls into.
+
   it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {
     render(<Home />)
     // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants

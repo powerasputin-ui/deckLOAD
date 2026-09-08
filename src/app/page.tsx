@@ -1004,7 +1004,8 @@ export default function Home() {
     wouldExceedDeckCapacity(
       mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []),
       addedWeightKg,
-      deck.maxDeckCargoT
+      deck.maxDeckCargoT,
+      items
     )
 
   // Finalizes a drawn shape into a real CargoItem (reusing

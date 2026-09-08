@@ -9,7 +9,11 @@
 // Deliberately self-contained (imports nothing from projects.ts or
 // calculator.ts) so it can be imported by both without creating a cycle —
 // projects.ts already imports from calculator.ts, so a shared module can
-// only safely sit below both, not inside either.
+// only safely sit below both, not inside either. placementComposition.ts
+// sits below packing.ts/stabilityMath.ts only, so importing its pure
+// arithmetic here doesn't risk a cycle either.
+import { placementTotalWeightKg, type CompositionCatalogItem } from './placementComposition'
+import type { CompositionSegment } from './packing'
 
 export function sanitizeCargoWidth(value: unknown, fallback = 1): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
@@ -64,9 +68,16 @@ export function sanitizeCargoMaxStackHeightM(value: unknown): number | undefined
 // layer) — a bug class that a page.tsx-only implementation can't be
 // unit-tested against, since page.tsx itself has no test file.
 export function wouldExceedDeckCapacity(
-  currentPlacements: { weight?: number; layers?: number }[],
+  currentPlacements: { itemId?: string; weight?: number; layers?: number; composition?: CompositionSegment[] }[],
   addedWeightKg: number,
-  maxDeckCargoT: number | undefined
+  maxDeckCargoT: number | undefined,
+  // Round 17 (capacity verification): catalog, needed ONLY to resolve a
+  // composed placement's true weight via its own segments — an uncomposed
+  // placement (the overwhelming common case today) never touches this.
+  // Defaults to `[]` so every existing caller/test that predates
+  // composition keeps compiling and behaving identically (no placement it
+  // passes has `.composition` set).
+  items: CompositionCatalogItem[] = []
 ): boolean {
   if (maxDeckCargoT === undefined) return false
   // This is now the one shared arithmetic every hard-limit call site relies
@@ -80,7 +91,23 @@ export function wouldExceedDeckCapacity(
   if (!Number.isFinite(addedWeightKg) || addedWeightKg < 0) return true
   if (!Number.isFinite(maxDeckCargoT) || maxDeckCargoT < 0) return true
   const maxKg = maxDeckCargoT * 1000
-  const currentKg = currentPlacements.reduce((sum, p) => sum + (p.weight ?? 0) * Math.max(1, p.layers ?? 1), 0)
+  // A composed placement's own top-level `weight`/`layers` are only a
+  // backward-compatible AVERAGE fallback (see PlacedItem.composition's own
+  // doc comment in packing.ts) — nothing guarantees they're kept in sync
+  // with `composition` for a placement that was hand-built or edited
+  // outside the one path (Round 16's removeItem surgery) that currently
+  // bothers to. Before this fix, a composed placement with no `.weight` of
+  // its own contributed exactly 0 kg to this hard limit regardless of its
+  // REAL physical weight — silently defeating "hard limit in both AUTO and
+  // MANUAL" (contract A) the moment composition existed on the deck.
+  // Composition is the source of truth whenever present; `weight`/`layers`
+  // stay the fallback for everything still uncomposed.
+  const currentKg = currentPlacements.reduce((sum, p) => {
+    if (p.composition) {
+      return sum + placementTotalWeightKg({ itemId: p.itemId ?? '', layers: 0, composition: p.composition }, items)
+    }
+    return sum + (p.weight ?? 0) * Math.max(1, p.layers ?? 1)
+  }, 0)
   return currentKg + addedWeightKg > maxKg
 }
 
