@@ -358,6 +358,194 @@ describe('projects store', () => {
     ])
   })
 
+  // Round 13 (composition data-model foundation): duplicateProject's
+  // itemIdMap remap only ever touched a placement's own top-level itemId —
+  // a composed placement's constituent itemIds live one level deeper
+  // (composition[].itemId) and were left pointing at the ORIGINAL
+  // project's item ids, exactly the trap the migration plan flagged.
+  it('duplicateProject remaps composition[].itemId to the copy\'s own item ids, for both manual and pinned', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+      items: [
+        { id: 'orig-A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, color: '#0ea5e9', allowRotation: true, weight: 500 },
+        { id: 'orig-B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, color: '#f59e0b', allowRotation: true, weight: 800 },
+      ],
+      manualPlacements: [
+        { id: 'orig-mp', itemId: 'orig-A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 620, composition: [{ itemId: 'orig-A', layers: 2 }, { itemId: 'orig-B', layers: 3 }] },
+      ],
+      pinnedPlacementsByTrip: {
+        0: [{ id: 'orig-pp', itemId: 'orig-B', name: 'B', x: 2, y: 2, width: 1, length: 1, layers: 4, rotated: false, color: '#f59e0b', weight: 700, composition: [{ itemId: 'orig-B', layers: 3 }, { itemId: 'orig-A', layers: 1 }] }],
+      },
+      separationRules: [],
+      mode: 'manual',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+
+    const copyId = useProjects.getState().duplicateProject(project.id)!
+    const copy = useProjects.getState().projects.find((p) => p.id === copyId)!
+
+    const newA = copy.items.find((it) => it.name === 'A')!.id
+    const newB = copy.items.find((it) => it.name === 'B')!.id
+    expect(newA).not.toBe('orig-A')
+    expect(newB).not.toBe('orig-B')
+
+    expect(copy.manualPlacements[0].composition).toEqual([{ itemId: newA, layers: 2 }, { itemId: newB, layers: 3 }])
+    expect(copy.pinnedPlacementsByTrip[0][0].composition).toEqual([{ itemId: newB, layers: 3 }, { itemId: newA, layers: 1 }])
+  })
+
+  // Round 13: normalizeComposition sanitizer, exercised through hydrate
+  // (same path real corrupted/hand-edited storage would go through).
+  describe('composition sanitization on hydrate', () => {
+    it('keeps a valid composition (all itemIds resolve, positive integer layers)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'Composed',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [
+            { id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 500 },
+            { id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 800 },
+          ],
+          manualPlacements: [{ id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 620, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }] }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const project = useProjects.getState().projects[0]
+      expect(project.manualPlacements[0].composition).toEqual([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+      // A valid composition present -> legacy detection must NOT fire,
+      // even though the stored weight (620) is a real blend, not either
+      // constituent's own catalog weight.
+      expect(project.manualPlacements[0].legacyUnknownComposition).toBeUndefined()
+    })
+
+    it('falls back to undefined (ordinary placement) when a segment references an itemId that does not exist', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'BadComposition',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 500 }],
+          manualPlacements: [{ id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 500, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'ghost-item', layers: 3 }] }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      expect(useProjects.getState().projects[0].manualPlacements[0].composition).toBeUndefined()
+    })
+
+    it('falls back to undefined for a single-segment array (composed requires 2+ segments) and for non-positive layers', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'Degenerate',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 500 }, { id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 800 }],
+          manualPlacements: [
+            { id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 2, rotated: false, color: '#0ea5e9', weight: 500, composition: [{ itemId: 'A', layers: 2 }] },
+            { id: 'm2', itemId: 'A', name: 'A', x: 2, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 620, composition: [{ itemId: 'A', layers: -2 }, { itemId: 'B', layers: 3 }] },
+          ],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const placements = useProjects.getState().projects[0].manualPlacements
+      expect(placements[0].composition).toBeUndefined() // single-segment
+      expect(placements[1].composition).toBeUndefined() // negative layers
+    })
+
+    // Regression: normalizeComposition used to accept a fractional layers
+    // value and silently Math.round() it (1.4->1, but 1.6->2, 2.51->3) —
+    // quietly turning corrupted input into a DIFFERENT number instead of
+    // rejecting it. A trust boundary for saved/imported JSON must refuse
+    // invalid data, not guess what it "probably meant".
+    it('rejects (falls back to undefined) a fractional layers value instead of rounding it', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'FractionalLayers',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [
+            { id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 500 },
+            { id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 800 },
+          ],
+          manualPlacements: [
+            { id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 4, rotated: false, color: '#0ea5e9', weight: 620, composition: [{ itemId: 'A', layers: 2.51 }, { itemId: 'B', layers: 1 }] },
+          ],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      // 2.51 must NOT silently become 3 (or 2) — the whole composition is
+      // rejected, same as any other malformed segment.
+      expect(useProjects.getState().projects[0].manualPlacements[0].composition).toBeUndefined()
+    })
+  })
+
+  // Round 13: legacy merge-ghost detection (Legacy migration section of the
+  // migration plan) — a placement with NO composition whose weight doesn't
+  // match its own item's current catalog weight is flagged, not silently
+  // trusted or resynced.
+  describe('legacyUnknownComposition detection on hydrate', () => {
+    it('flags a placement whose weight does not match its catalog item (no composition present)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'LegacyGhost',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 900 }],
+          manualPlacements: [{ id: 'm1', itemId: 'B', name: 'B', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 620 }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      expect(useProjects.getState().projects[0].manualPlacements[0].legacyUnknownComposition).toBe(true)
+    })
+
+    it('does not flag a placement whose weight matches its catalog item', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'Ordinary',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 900 }],
+          manualPlacements: [{ id: 'm1', itemId: 'B', name: 'B', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 900 }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      expect(useProjects.getState().projects[0].manualPlacements[0].legacyUnknownComposition).toBeUndefined()
+    })
+
+    it('does not flag a placement with no weight at all, or one whose item no longer exists', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'NoWeight',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5 }],
+          manualPlacements: [
+            { id: 'm1', itemId: 'B', name: 'B', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9' },
+            { id: 'm2', itemId: 'ghost', name: 'Ghost', x: 2, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9', weight: 620 },
+          ],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const placements = useProjects.getState().projects[0].manualPlacements
+      expect(placements[0].legacyUnknownComposition).toBeUndefined()
+      expect(placements[1].legacyUnknownComposition).toBeUndefined()
+    })
+  })
+
   // A free note is deliberately placeable OUTSIDE the deck rectangle (see
   // DeckVisualization.tsx's handleAnnotationClick) — negative x/y is real
   // data, not corruption, unlike every other deck-local coordinate in this

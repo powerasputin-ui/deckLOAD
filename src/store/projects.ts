@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
-import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind, LashingDeviceType } from '@/lib/packing'
+import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind, LashingDeviceType, CompositionSegment } from '@/lib/packing'
 import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
@@ -569,14 +569,65 @@ function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones
   return zones.length > 0 ? zones : undefined
 }
 
-function normalizePinnedList(value: unknown): PinnedPlacement[] {
+// A composition array is only ever valid as a whole — a single bad segment
+// (unknown itemId, non-positive layers, wrong type) makes the WHOLE
+// placement's provenance untrustworthy, not just that one segment, so this
+// falls back to `undefined` (an ordinary uncomposed placement) rather than
+// silently dropping just the bad entry, which could leave a placement's
+// remaining segments summing to something inconsistent with its own
+// layers/weight. `length < 2` isn't a valid composed placement either —
+// see CompositionSegment's own doc comment (a composed placement is
+// defined as having 2+ segments; one segment IS just an ordinary placement).
+//
+// `layers` must be a genuine positive INTEGER, not just a positive finite
+// number — this used to round a fractional value (Math.round) instead of
+// rejecting it, which silently turns corrupted input into a DIFFERENT
+// number (1.4 -> 1, but 1.6 -> 2, 2.51 -> 3) rather than refusing to trust
+// it. normalizeComposition is a trust boundary for saved/imported JSON;
+// guessing at what a bad number "probably meant" belongs nowhere near it.
+function normalizeComposition(value: unknown, items: CargoItem[]): CompositionSegment[] | undefined {
+  if (!Array.isArray(value) || value.length < 2) return undefined
+  const validIds = new Set(items.map((it) => it.id))
+  const segments: CompositionSegment[] = []
+  for (const raw of value) {
+    const seg = raw as Record<string, unknown>
+    const itemId = typeof seg.itemId === 'string' ? seg.itemId : undefined
+    const layers = typeof seg.layers === 'number' && Number.isInteger(seg.layers) && seg.layers > 0 ? seg.layers : undefined
+    if (!itemId || !validIds.has(itemId) || !layers) return undefined
+    segments.push({ itemId, layers })
+  }
+  return segments
+}
+
+// See ManualPlacement/PinnedPlacement.composition's own doc comment (D in
+// the migration plan) — a placement with NO composition whose weight
+// doesn't match its own itemId's current catalog weight is, with
+// certainty for anything saved since Round 7 (b854714, when updateItem's
+// applyWeight started keeping every non-merged placement's weight in sync
+// with its item unconditionally), a cross-item merge ghost from before
+// composition existed (Round 10-era) — its real makeup is unrecoverable.
+// For a project old enough to predate Round 7 entirely, this can also
+// false-positive on an otherwise-ordinary stale weight unrelated to any
+// merge; that's an accepted asymmetry (an extra "please verify" banner is
+// far cheaper than silently trusting a number that might be a lost blend).
+function detectLegacyUnknownComposition(itemId: string, weight: number | undefined, items: CargoItem[]): boolean {
+  if (weight === undefined) return false
+  const item = items.find((it) => it.id === itemId)
+  if (!item || item.weight === undefined) return false
+  return weight !== item.weight
+}
+
+function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacement[] {
   if (!Array.isArray(value)) return []
   return value.map((pp) => {
     const pin = pp as Record<string, unknown>
+    const itemId = typeof pin.itemId === 'string' ? pin.itemId : ''
+    const weight = normalizeOptionalWeight(pin.weight)
+    const composition = normalizeComposition(pin.composition, items)
     return {
       ...(pin as object),
       id: typeof pin.id === 'string' && pin.id ? pin.id : uuid(),
-      itemId: typeof pin.itemId === 'string' ? pin.itemId : '',
+      itemId,
       name: typeof pin.name === 'string' ? pin.name : 'Груз',
       x: toFiniteNonNegative(pin.x, 0),
       y: toFiniteNonNegative(pin.y, 0),
@@ -585,11 +636,14 @@ function normalizePinnedList(value: unknown): PinnedPlacement[] {
       layers: toPositiveInt(pin.layers, 1),
       rotated: typeof pin.rotated === 'boolean' ? pin.rotated : false,
       color: typeof pin.color === 'string' ? pin.color : '#0ea5e9',
-      weight: normalizeOptionalWeight(pin.weight),
+      weight,
       clearanceMargin: normalizeClearanceMargin(pin.clearanceMargin),
       stabilityOverride: normalizeStabilityOverride(pin.stabilityOverride),
       lashingWireType: normalizeWireRopeType(pin.lashingWireType),
       lashingJustification: typeof pin.lashingJustification === 'string' ? pin.lashingJustification : undefined,
+      rotationLocked: typeof pin.rotationLocked === 'boolean' ? pin.rotationLocked : undefined,
+      composition,
+      legacyUnknownComposition: !composition && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
     } as PinnedPlacement
   })
 }
@@ -602,14 +656,17 @@ function normalizePinnedList(value: unknown): PinnedPlacement[] {
 // `items.find(it => it.id === mp.itemId)` lookup that doesn't optional-chain
 // its result then throws at render time — with no error boundary anywhere
 // in the app, that crashes the entire tree, not just one placement.
-function normalizeManualPlacements(value: unknown): ManualPlacement[] {
+function normalizeManualPlacements(value: unknown, items: CargoItem[]): ManualPlacement[] {
   if (!Array.isArray(value)) return []
   return value.map((mm) => {
     const m = mm as Record<string, unknown>
+    const itemId = typeof m.itemId === 'string' ? m.itemId : ''
+    const weight = normalizeOptionalWeight(m.weight)
+    const composition = normalizeComposition(m.composition, items)
     return {
       ...(m as object),
       id: typeof m.id === 'string' && m.id ? m.id : uuid(),
-      itemId: typeof m.itemId === 'string' ? m.itemId : '',
+      itemId,
       name: typeof m.name === 'string' ? m.name : 'Груз',
       x: toFiniteNonNegative(m.x, 0),
       y: toFiniteNonNegative(m.y, 0),
@@ -618,11 +675,14 @@ function normalizeManualPlacements(value: unknown): ManualPlacement[] {
       layers: toPositiveInt(m.layers, 1),
       rotated: typeof m.rotated === 'boolean' ? m.rotated : false,
       color: typeof m.color === 'string' ? m.color : '#0ea5e9',
-      weight: normalizeOptionalWeight(m.weight),
+      weight,
       clearanceMargin: normalizeClearanceMargin(m.clearanceMargin),
       stabilityOverride: normalizeStabilityOverride(m.stabilityOverride),
       lashingWireType: normalizeWireRopeType(m.lashingWireType),
       lashingJustification: typeof m.lashingJustification === 'string' ? m.lashingJustification : undefined,
+      rotationLocked: typeof m.rotationLocked === 'boolean' ? m.rotationLocked : undefined,
+      composition,
+      legacyUnknownComposition: !composition && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
     } as ManualPlacement
   })
 }
@@ -632,19 +692,20 @@ function normalizeManualPlacements(value: unknown): ManualPlacement[] {
 // compatibility with projects saved before trips existed — migrated to `{0: [...]}`.
 function normalizePinnedPlacementsByTrip(
   byTrip: unknown,
-  legacyFlat: unknown
+  legacyFlat: unknown,
+  items: CargoItem[]
 ): Record<number, PinnedPlacement[]> {
   if (byTrip && typeof byTrip === 'object' && !Array.isArray(byTrip)) {
     const out: Record<number, PinnedPlacement[]> = {}
     for (const [key, value] of Object.entries(byTrip as Record<string, unknown>)) {
       const trip = Number(key)
       if (!Number.isFinite(trip)) continue
-      const list = normalizePinnedList(value)
+      const list = normalizePinnedList(value, items)
       if (list.length > 0) out[trip] = list
     }
     return out
   }
-  const legacy = normalizePinnedList(legacyFlat)
+  const legacy = normalizePinnedList(legacyFlat, items)
   return legacy.length > 0 ? { 0: legacy } : {}
 }
 
@@ -698,6 +759,37 @@ export function normalizeProject(p: Partial<Project>): Project {
   const sortStrategy = VALID_SORTS.includes(rawSort as SortStrategy)
     ? (rawSort as SortStrategy)
     : 'area-desc'
+  // Built before the placements below (rather than inline in the returned
+  // object) because normalizeManualPlacements/normalizePinnedPlacementsByTrip
+  // need the already-normalized catalog to validate `composition[].itemId`
+  // against and to run the legacy-detection weight comparison — both need
+  // real CargoItem records, not the raw unsanitized input.
+  const items: CargoItem[] = Array.isArray(p.items)
+    ? p.items.map((it) => ({
+        id: typeof it.id === 'string' && it.id ? it.id : uuid(),
+        name: typeof it.name === 'string' ? it.name : 'Груз',
+        width: sanitizeCargoWidth(it.width, 1),
+        length: sanitizeCargoLength(it.length, 1),
+        height: sanitizeCargoHeight(it.height, 0),
+        quantity: sanitizeCargoQuantity(it.quantity, 1),
+        color: typeof it.color === 'string' ? it.color : '#0ea5e9',
+        allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
+        // >= 0 — a negative cargo weight isn't a smaller/lighter cargo,
+        // it's corrupted input. buildCargoWeightMoments already filters
+        // it out of the stability calc either way (`weight > 0`), but
+        // packing totals/UI/PDF have no such guard and would otherwise
+        // happily subtract it from real weight sums.
+        weight: sanitizeCargoWeight(it.weight),
+        category: toOptionalString(it.category),
+        shape: normalizeShape(it.shape),
+        outline: normalizeOutline(it.outline),
+        maxLayers: sanitizeCargoMaxLayers(it.maxLayers),
+        maxStackHeightM: sanitizeCargoMaxStackHeightM(it.maxStackHeightM),
+        contents: toOptionalString(it.contents),
+        stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
+        nest: normalizeNestSpec((it as { nest?: unknown }).nest),
+      }))
+    : []
   return {
     id: typeof p.id === 'string' && p.id ? p.id : uuid(),
     name: typeof p.name === 'string' ? p.name : 'Без названия',
@@ -726,36 +818,12 @@ export function normalizeProject(p: Partial<Project>): Project {
       shipFrame: normalizeShipFrame(p.deck?.shipFrame),
       deckForwardIsPositiveY: toBool(p.deck?.deckForwardIsPositiveY, true),
     },
-    items: Array.isArray(p.items)
-      ? p.items.map((it) => ({
-          id: typeof it.id === 'string' && it.id ? it.id : uuid(),
-          name: typeof it.name === 'string' ? it.name : 'Груз',
-          width: sanitizeCargoWidth(it.width, 1),
-          length: sanitizeCargoLength(it.length, 1),
-          height: sanitizeCargoHeight(it.height, 0),
-          quantity: sanitizeCargoQuantity(it.quantity, 1),
-          color: typeof it.color === 'string' ? it.color : '#0ea5e9',
-          allowRotation: typeof it.allowRotation === 'boolean' ? it.allowRotation : true,
-          // >= 0 — a negative cargo weight isn't a smaller/lighter cargo,
-          // it's corrupted input. buildCargoWeightMoments already filters
-          // it out of the stability calc either way (`weight > 0`), but
-          // packing totals/UI/PDF have no such guard and would otherwise
-          // happily subtract it from real weight sums.
-          weight: sanitizeCargoWeight(it.weight),
-          category: toOptionalString(it.category),
-          shape: normalizeShape(it.shape),
-          outline: normalizeOutline(it.outline),
-          maxLayers: sanitizeCargoMaxLayers(it.maxLayers),
-          maxStackHeightM: sanitizeCargoMaxStackHeightM(it.maxStackHeightM),
-          contents: toOptionalString(it.contents),
-          stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
-          nest: normalizeNestSpec((it as { nest?: unknown }).nest),
-        }))
-      : [],
-    manualPlacements: normalizeManualPlacements(p.manualPlacements),
+    items,
+    manualPlacements: normalizeManualPlacements(p.manualPlacements, items),
     pinnedPlacementsByTrip: normalizePinnedPlacementsByTrip(
       (p as { pinnedPlacementsByTrip?: unknown }).pinnedPlacementsByTrip,
-      (p as { pinnedPlacements?: unknown }).pinnedPlacements
+      (p as { pinnedPlacements?: unknown }).pinnedPlacements,
+      items
     ),
     separationRules: normalizeSeparationRules(p.separationRules),
     mode,
@@ -995,7 +1063,18 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       manualPlacements: src.manualPlacements.map((m) => {
         const newId = uuid()
         placementIdMap.set(m.id, newId)
-        return { ...m, id: newId, itemId: itemIdMap.get(m.itemId) ?? m.itemId }
+        return {
+          ...m,
+          id: newId,
+          itemId: itemIdMap.get(m.itemId) ?? m.itemId,
+          // The top-level itemId remap above only touches the placement's
+          // OWN nominal identity — a composed placement's constituent
+          // itemIds live one level deeper and were still pointing at the
+          // ORIGINAL project's item ids until this, exactly the trap
+          // flagged in the migration plan (J): silently dangling
+          // references into a different project's catalog.
+          composition: m.composition?.map((seg) => ({ ...seg, itemId: itemIdMap.get(seg.itemId) ?? seg.itemId })),
+        }
       }),
       pinnedPlacementsByTrip: Object.fromEntries(
         Object.entries(src.pinnedPlacementsByTrip).map(([trip, list]) => [
@@ -1003,7 +1082,12 @@ export const useProjects = create<ProjectsState>((set, get) => ({
           list.map((p) => {
             const newId = uuid()
             placementIdMap.set(p.id, newId)
-            return { ...p, id: newId, itemId: itemIdMap.get(p.itemId) ?? p.itemId }
+            return {
+              ...p,
+              id: newId,
+              itemId: itemIdMap.get(p.itemId) ?? p.itemId,
+              composition: p.composition?.map((seg) => ({ ...seg, itemId: itemIdMap.get(seg.itemId) ?? seg.itemId })),
+            }
           }),
         ])
       ),

@@ -1083,6 +1083,20 @@ export interface PackOptions {
   maxTotalWeightKg?: number
 }
 
+// One physical run of stacked units of the SAME item within a composed
+// (cross-item-merged) placement — see ManualPlacement.composition/
+// PinnedPlacement.composition's own doc comment for the full contract.
+// Ordered bottom-to-top; ADJACENT segments of the same itemId are always
+// coalesced into one, but two segments of the same itemId separated by a
+// different item's segment are deliberately kept apart — collapsing them
+// would lose which physical layer sits where in the pile. See
+// src/lib/placementComposition.ts for the pure functions that read/write
+// this array — nothing else should hand-roll composition arithmetic.
+export interface CompositionSegment {
+  itemId: string
+  layers: number
+}
+
 export interface PinnedPlacement {
   id: string // unique pin id
   itemId: string
@@ -1130,6 +1144,35 @@ export interface PinnedPlacement {
   // since the merge may have folded in units that don't allow it. Never
   // cleared automatically — a merge is a one-way operation here.
   rotationLocked?: boolean
+  // Round 13 (data-model foundation only — see src/lib/placementComposition.ts):
+  // present ONLY on a placement produced by a cross-item merge, i.e. one
+  // that physically contains units of more than one CargoItem. When
+  // present, this is the SOLE source of truth for the placement's physical
+  // makeup — `itemId`/`layers`/`weight` above become nominal/derived
+  // mirrors (itemId = whichever constituent currently "owns" the stack's
+  // identity; layers/weight must equal placementTotalLayers/
+  // placementTotalWeightKg of this array, never written independently for
+  // a composed placement). Absent (the overwhelming common case) means an
+  // ordinary single-item placement — itemId/layers/weight keep their
+  // existing, unchanged meaning and every existing consumer keeps working
+  // exactly as before. AS OF ROUND 13, nothing in the real merge/+/-/
+  // removeItem UI paths creates or reads this field yet — those still use
+  // the pre-Round-13 flat-field logic verbatim. This field and the pure
+  // helpers around it exist now so they can be built and tested in
+  // isolation before Round 14 switches the real merge UI over to them.
+  composition?: CompositionSegment[]
+  // Set by normalizeProject (projects.ts) on load, ONLY for a placement
+  // with no `composition` whose `weight` doesn't match its own itemId's
+  // current catalog weight — a reliable signal (for anything saved since
+  // Round 7's applyWeight) that this placement is a cross-item merge ghost
+  // from before `composition` existed (Round 10 era): its real physical
+  // makeup was already lost before this field could ever be introduced,
+  // and nothing should silently guess at or "fix" it. See the migration
+  // plan's Legacy migration section for the detection/UI-treatment
+  // contract — a human has to explicitly clear this, nothing does so
+  // automatically (in particular, updateItem's weight-sync must NOT
+  // silently resync a placement carrying this flag).
+  legacyUnknownComposition?: true
 }
 
 // Compute how many tiers (layers) can be stacked for an item. When the deck
@@ -2126,6 +2169,10 @@ export interface ManualPlacement {
   lashingJustification?: string
   // See PinnedPlacement.rotationLocked above — same meaning here.
   rotationLocked?: boolean
+  // See PinnedPlacement.composition above — same meaning here.
+  composition?: CompositionSegment[]
+  // See PinnedPlacement.legacyUnknownComposition above — same meaning here.
+  legacyUnknownComposition?: true
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
