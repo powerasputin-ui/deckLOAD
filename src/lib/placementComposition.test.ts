@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   segmentsOf,
   placementTotalLayers,
+  placementLayersOfItem,
   placementTotalWeightKg,
   placementTotalHeightM,
   placementTotalVCG,
@@ -92,6 +93,35 @@ describe('placementTotalLayers/WeightKg/HeightM — [A2,B3], [A2,A3,B2], [A2,B3,
     expect(segmentsOf(p)[2].itemId).toBe('A')
     expect(placementTotalLayers(p)).toBe(6)
     expect(placementTotalWeightKg(p, catalog)).toBe(2 * 500 + 3 * 800 + 1 * 500) // 4400 — both A segments counted
+  })
+})
+
+// Round 15 (quantity scanning): the primitive checkLayerChange/updateItem's
+// decrease-warning/packDeck's remainingByItem all need — how many layers of
+// ONE specific itemId a placement physically contains, correctly for BOTH
+// the case where that itemId isn't the placement's nominal one (missed
+// entirely by the old `placement.itemId === itemId` filter) and the case
+// where it IS the nominal one but the placement also contains OTHER items
+// (over-counted by the old `sum(placement.layers)` wholesale).
+describe('placementLayersOfItem', () => {
+  it('uncomposed placement: itemId matches -> its own layers; itemId does not match -> 0', () => {
+    const p: ComposablePlacement = { itemId: 'A', layers: 4 }
+    expect(placementLayersOfItem(p, 'A')).toBe(4)
+    expect(placementLayersOfItem(p, 'B')).toBe(0)
+  })
+
+  it('[A2,B3] with nominal itemId=A: correctly attributes 2 to A and 3 to B, not 5 to A and 0 to B', () => {
+    const p = composed([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+    expect(p.itemId).toBe('A') // nominal itemId, per the `composed()` helper above
+    expect(placementLayersOfItem(p, 'A')).toBe(2)
+    expect(placementLayersOfItem(p, 'B')).toBe(3)
+    expect(placementLayersOfItem(p, 'C')).toBe(0)
+  })
+
+  it('[A2,B3,A1] (two non-adjacent A segments): both count toward A\'s total', () => {
+    const p = composed([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }, { itemId: 'A', layers: 1 }])
+    expect(placementLayersOfItem(p, 'A')).toBe(3) // 2 + 1, both segments
+    expect(placementLayersOfItem(p, 'B')).toBe(3)
   })
 })
 

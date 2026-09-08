@@ -60,7 +60,9 @@ import {
   type PinnedPlacement,
   type PackVariant,
   type PackingResult,
+  type CompositionSegment,
 } from '@/lib/packing'
+import { placementLayersOfItem } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -1194,14 +1196,25 @@ export default function Home() {
     // Sum of layers across all placements of this item (excluding the one(s)
     // being changed) — across ALL trips, since the item's quantity is a single
     // shipment-wide budget, not per-trip.
+    //
+    // Round 15 (quantity scanning): scan each placement's composition for
+    // THIS itemId's own layer count via placementLayersOfItem, rather than
+    // filtering `placement.itemId === itemId` and summing the whole
+    // placement — a composed placement can contain `itemId` as a
+    // non-nominal constituent (missed by the old filter) or have `itemId`
+    // as its nominal itemId while also containing other items (over-counted
+    // by summing the whole placement). Exclusion (excludeIds — the
+    // placement currently being edited) still applies at the placement
+    // level first, unchanged. The uncomposed branch keeps the exact old
+    // Math.max(1, ...) arithmetic, so this stays byte-identical for every
+    // existing (uncomposed) placement.
+    const layersOfIdIn = (p: { id: string; itemId: string; layers: number; composition?: CompositionSegment[] }) =>
+      excluded.has(p.id) ? 0 : p.composition ? placementLayersOfItem(p, itemId) : p.itemId === itemId ? Math.max(1, p.layers) : 0
     const sumPlaced =
       Object.values(pinnedPlacementsByTrip)
         .flat()
-        .filter((p) => p.itemId === itemId && !excluded.has(p.id))
-        .reduce((s, p) => s + p.layers, 0) +
-      manualPlacements
-        .filter((m) => m.itemId === itemId && !excluded.has(m.id))
-        .reduce((s, m) => s + Math.max(1, m.layers), 0)
+        .reduce((s, p) => s + layersOfIdIn(p), 0) +
+      manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
     if (sumPlaced + newLayers > item.quantity) {
       return {
         ok: false,

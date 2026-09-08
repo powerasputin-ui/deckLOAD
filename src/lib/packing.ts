@@ -1516,14 +1516,26 @@ export function packDeck(
     }
     acceptedPins.push(pin)
     // Subtract accepted pin layers from remaining quantity (only for
-    // accepted pins) — for an uncomposed pin `layers` is already clamped to
-    // at most `remainingForItem` above, so this can never go negative. A
-    // composed pin's `layers` is NOT clamped against this same nominal-item
-    // count (see above), so it CAN exceed `remainingForItem` — clamped to 0
-    // here rather than going negative, which would otherwise be a
-    // deliberately conservative (never over-permissive) stand-in for real
-    // per-constituent quantity accounting, until the quantity round adds it.
-    remainingByItem.set(pin.itemId, Math.max(0, remainingForItem - layers))
+    // accepted pins). Round 15 (quantity scanning) closes the deferred issue
+    // flagged in the P1 patch above: a composed pin must decrement EACH of
+    // its own constituents' remaining quantity by that constituent's own
+    // segment layers — not the nominal itemId's remaining count by the
+    // pin's full total. Before this fix, [A2,B3] (nominal itemId=A) only
+    // ever reduced A's remaining count (by the FULL 5, not just its own 2),
+    // leaving B's remaining quantity completely untouched — a subsequent
+    // AUTO-pack pass could then place up to B's full original quantity on
+    // top of the 3 units already physically inside this pin. An uncomposed
+    // pin's `layers` is already clamped to at most `remainingForItem` above,
+    // so its single Math.max(0, ...) subtraction can never go negative;
+    // clamped to 0 here for the same reason on each composed segment too.
+    if (pin.composition) {
+      for (const seg of pin.composition) {
+        const segRemaining = remainingByItem.get(seg.itemId) ?? 0
+        remainingByItem.set(seg.itemId, Math.max(0, segRemaining - seg.layers))
+      }
+    } else {
+      remainingByItem.set(pin.itemId, Math.max(0, remainingForItem - layers))
+    }
     // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap).
     // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
     // inflated cell instead, so the free-rect splitter never offers that

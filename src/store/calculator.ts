@@ -25,6 +25,7 @@ import {
   type VesselMotion,
   type RestrictionZone,
   type RestrictionZoneShape,
+  type CompositionSegment,
 } from '@/lib/packing'
 import {
   sanitizeCargoMaxLayers,
@@ -42,6 +43,7 @@ import {
   type VariableWeightItem,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
+import { placementLayersOfItem } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
   return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
@@ -1064,13 +1066,27 @@ export const useCalculator = create<CalculatorState>()(
       // AUTO mode's own pin-acceptance clamp (packing.ts) already prevents
       // this from silently inflating displayed totals; this is purely
       // about telling the user, not fixing it for them.
+      //
+      // Round 15 (quantity scanning): scan each placement's composition for
+      // THIS itemId's own layer count via placementLayersOfItem, rather than
+      // filtering `placement.itemId === id` and summing the whole placement
+      // — a composed placement can contain `id` as a non-nominal constituent
+      // (missed entirely by the old filter) or can have `id` as its nominal
+      // itemId while ALSO containing other items (over-counted by summing
+      // the whole placement). The uncomposed branch keeps the EXACT old
+      // filter + Math.max(1, ...) arithmetic verbatim (placementLayersOfItem
+      // has no such defensive clamp of its own, since a real composition's
+      // segments are already layers>0-invariant by construction — only the
+      // uncomposed fallback ever needs it) so this stays byte-identical for
+      // every existing (uncomposed) placement, corrupted layers included.
+      const layersOfIdIn = (p: { itemId: string; layers: number; composition?: CompositionSegment[] }) =>
+        p.composition ? placementLayersOfItem(p, id) : p.itemId === id ? Math.max(1, p.layers ?? 1) : 0
       if (sanitizedPatch.quantity !== undefined && sanitizedPatch.quantity < prevItem.quantity) {
         const placedCount =
-          s.manualPlacements.filter((m) => m.itemId === id).reduce((sum, m) => sum + Math.max(1, m.layers ?? 1), 0) +
+          s.manualPlacements.reduce((sum, m) => sum + layersOfIdIn(m), 0) +
           Object.values(s.pinnedPlacementsByTrip)
             .flat()
-            .filter((p) => p.itemId === id)
-            .reduce((sum, p) => sum + Math.max(1, p.layers ?? 1), 0)
+            .reduce((sum, p) => sum + layersOfIdIn(p), 0)
         if (placedCount > sanitizedPatch.quantity) {
           toast.warning(
             `На палубе уже размещено больше груза «${prevItem.name}» (${placedCount} ед.), чем новое количество (${sanitizedPatch.quantity}). Расстановка не изменена — уберите лишнее вручную.`

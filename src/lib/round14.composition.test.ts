@@ -67,13 +67,14 @@ describe('packDeck pin loop — composition copy-through (construction)', () => 
       layers: 5, rotated: false, color: '#0ea5e9',
       composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
     }
-    // quantity: 5 for A (exactly what the pin consumes, via
-    // remainingByItem's pin-acceptance clamp — composition doesn't touch
-    // quantity tracking until Round 16, so only the nominal itemId's own
-    // quantity matters here) and quantity: 0 for B, so packDeck doesn't
-    // auto-pack any EXTRA, unpinned units into the rest of the 10x10 deck
-    // and pollute res.totalWeight beyond the one placement under test.
-    const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 5 }), catalogItem({ ...B, quantity: 0 })], { pinned: [pin] })
+    // quantity: 2 for A and 3 for B — exactly what the pin's own
+    // composition consumes from EACH constituent (Round 15 made
+    // remainingByItem decrement per-constituent, not just the nominal
+    // itemId — see round15.quantity.test.ts) — so packDeck's own auto-pack
+    // loop has nothing left over for either item and doesn't place any
+    // EXTRA, unpinned units that would pollute res.totalWeight beyond the
+    // one placement under test.
+    const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 2 }), catalogItem({ ...B, quantity: 3 })], { pinned: [pin] })
     const placed = res.placed.find((p) => p.x === 1 && p.y === 1)
     // total weight = 2*500 + 3*800 = 3400, layers = 5 -> average = 680
     expect(placed?.weight).toBeCloseTo(680, 6)
@@ -145,18 +146,25 @@ describe('packDeck pin loop — composition copy-through (construction)', () => 
       expect(placed?.composition).toHaveLength(2)
     })
 
-    it('remainingByItem is clamped to 0, never negative, after a composed pin oversubscribes the nominal itemId\'s own quantity', () => {
+    // Since Round 15 (per-constituent remainingByItem, see
+    // round15.quantity.test.ts), a constituent's OWN quantity being short of
+    // what its OWN segment needs is the scenario that actually exercises
+    // this clamp — composition needs A×5, but A's catalog quantity is only
+    // 3, so A's remaining would go to -2 without the Math.max(0, ...) clamp.
+    it('remainingByItem is clamped to 0, never negative, when a composed pin\'s own constituent segment exceeds that constituent\'s own remaining quantity', () => {
       const pin: PinnedPlacement = {
         id: 'p1', itemId: 'A', name: 'A', x: 1, y: 1, width: 2, length: 2,
-        layers: 5, rotated: false, color: '#0ea5e9',
-        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+        layers: 8, rotated: false, color: '#0ea5e9',
+        composition: [{ itemId: 'A', layers: 5 }, { itemId: 'B', layers: 3 }],
       }
       // A second, unpinned unit of A should NOT get auto-packed on top of
       // this — remainingByItem for A must not go negative and wrap/underflow
       // into permitting more A than the catalog actually has.
-      const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 3 }), catalogItem({ ...B, quantity: 0 })], { pinned: [pin] })
+      const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 3 }), catalogItem({ ...B, quantity: 3 })], { pinned: [pin] })
       const extraAPlacements = res.placed.filter((p) => p.itemId === 'A' && !(p.x === 1 && p.y === 1))
       expect(extraAPlacements).toHaveLength(0)
+      const extraBPlacements = res.placed.filter((p) => p.itemId === 'B' && !(p.x === 1 && p.y === 1))
+      expect(extraBPlacements).toHaveLength(0) // B's own quantity (3) is exactly consumed by its own segment (3)
     })
   })
 })

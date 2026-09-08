@@ -888,6 +888,53 @@ describe('calculator store', () => {
     warnSpy.mockRestore()
   })
 
+  // Round 15 (quantity scanning) — P1 gate the user required before starting
+  // this round: a composed placement's quantity consumption must be scanned
+  // PER CONSTITUENT itemId, not just the placement's nominal itemId. Before
+  // this fix, a composed [A2,B3] placement (nominal itemId=A) contributed
+  // its FULL layer count (5) to A's placedCount and NOTHING to B's — this
+  // pins the fix at the decrease-warning call site (updateItem in
+  // calculator.ts) with the exact numbers from the review.
+  it('quantity decrease-warning scans a composed placement PER CONSTITUENT itemId, not just its nominal itemId', () => {
+    const s = useCalculator.getState()
+    // A starts at 5 (not 2) so there's room to decrease it and actually
+    // exercise the `sanitizedPatch.quantity < prevItem.quantity` guard —
+    // updateItem's decrease-warning check is skipped entirely otherwise.
+    // addItem always generates its own id (ignores any id in the partial),
+    // so the real ids are captured right after, same pattern as this file's
+    // other tests.
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, quantity: 10 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    // Composed placement: nominal itemId=A, but physically contains 2 A + 3 B.
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'A', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    // B's quantity (10) has never been directly placed anywhere as its OWN
+    // nominal itemId — the old `placement.itemId === id` filter would find
+    // NOTHING for B and never warn, even though 3 real units of B are
+    // physically inside this placement. Reducing B below 3 must still warn.
+    const warnSpyB = vi.spyOn(toast, 'warning')
+    s.updateItem(itemB.id, { quantity: 2 }) // only 2 left, but 3 are physically placed
+    expect(warnSpyB).toHaveBeenCalled()
+    warnSpyB.mockRestore()
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(2) // warned, not blocked — quantity edit still applies
+
+    // A IS the nominal itemId, but the placement's FULL 5 layers must NOT
+    // be attributed to A — only its own 2. Reducing A's quantity to exactly
+    // 2 (== its own real consumption) must NOT warn; the old (buggy)
+    // filter-and-sum-whole-placement logic would have seen placedCount=5
+    // and warned incorrectly even though A itself is not over-placed.
+    const warnSpyA = vi.spyOn(toast, 'warning')
+    s.updateItem(itemA.id, { quantity: 2 }) // 5 -> 2, still >= A's own real consumption (2)
+    expect(warnSpyA).not.toHaveBeenCalled()
+    warnSpyA.mockRestore()
+  })
+
   // Regression: updateItem's weight propagation to existing placements
   // (below) used to be completely unguarded — raising an item's weight
   // after it was already placed could push the deck's total weight past

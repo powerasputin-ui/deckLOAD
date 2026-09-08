@@ -79,6 +79,24 @@ export function placementTotalLayers(p: ComposablePlacement): number {
   return segmentsOf(p).reduce((sum, seg) => sum + seg.layers, 0)
 }
 
+// How many layers of a SPECIFIC itemId this placement physically contains —
+// the primitive every quantity-accounting consumer (checkLayerChange,
+// updateItem's decrease-warning, packDeck's remainingByItem) needs instead
+// of filtering `placement.itemId === itemId` and summing `placement.layers`
+// wholesale. That filter-and-sum-whole pattern is wrong on BOTH sides for a
+// composed placement: it MISSES a constituent that isn't the nominal itemId
+// (e.g. a [A2,B3] placement whose nominal itemId is A contributes 0 to B's
+// count, though 3 real units of B are physically inside it), and it
+// OVER-counts when the nominal itemId itself is checked (the same placement
+// would report a full 5 for A, though only 2 of those 5 layers are A). For
+// an uncomposed placement this degenerates to the exact old filter-and-sum
+// (segmentsOf's synthesized single segment either matches itemId in full or
+// not at all), so every existing (uncomposed) call site's result is
+// unchanged.
+export function placementLayersOfItem(p: ComposablePlacement, itemId: string): number {
+  return segmentsOf(p).reduce((sum, seg) => (seg.itemId === itemId ? sum + seg.layers : sum), 0)
+}
+
 export function placementTotalWeightKg(p: ComposablePlacement, items: CompositionCatalogItem[]): number {
   return segmentsOf(p).reduce((sum, seg) => sum + seg.layers * (findItem(items, seg.itemId)?.weight ?? 0), 0)
 }
