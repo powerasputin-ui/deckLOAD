@@ -9,7 +9,7 @@ import { type Unit, toMeters } from './units'
 // back from this file (`import type {...} from './packing'`) — type-only
 // imports are erased at compile time, so this can never form a runtime
 // circular dependency, confirmed before adding this.
-import { placementTotalWeightKg, placementTotalHeightM } from './placementComposition'
+import { placementTotalWeightKg, placementTotalHeightM, placementTotalLayers } from './placementComposition'
 
 export interface Rect {
   x: number
@@ -1411,9 +1411,25 @@ export function packDeck(
     // silently pushing placedCount above requestedCount. Clamp here, before
     // the pin is accepted, rather than only clamping the separate remaining-
     // quantity counter afterward (which left the pin itself untouched).
+    //
+    // Composed pins are a DIFFERENT case, deliberately NOT put through this
+    // same clamp: `composition` is this placement's sole source of physical
+    // truth (see PlacedItem.composition's doc comment), so its own total
+    // layer count is authoritative, full stop — clamping it against
+    // `remainingByItem.get(pin.itemId)` would silently disagree with
+    // `composition` itself (that map only ever tracks ONE nominal itemId's
+    // quantity, never the several distinct items a composition can span),
+    // which would break the invariant sum(composition.layers) ===
+    // PlacedItem.layers the moment quantity ran short for the nominal item
+    // alone. Reconciling composition against each CONSTITUENT's own
+    // remaining quantity (redistributing a shortfall across A/B/...) is
+    // real quantity-accounting work, explicitly out of scope for
+    // construction — that belongs to the quantity round (composition isn't
+    // reachable from the real merge/+/-/removeItem UI yet regardless, so
+    // this has no production effect today).
     const requestedLayers = toLayers(pin.layers, 1)
     const remainingForItem = remainingByItem.get(pin.itemId) ?? 0
-    const layers = Math.min(requestedLayers, remainingForItem)
+    const layers = pin.composition ? placementTotalLayers(pin) : Math.min(requestedLayers, remainingForItem)
     if (layers <= 0) {
       result.unplaced.push({
         itemId: pin.itemId,
@@ -1500,9 +1516,14 @@ export function packDeck(
     }
     acceptedPins.push(pin)
     // Subtract accepted pin layers from remaining quantity (only for
-    // accepted pins) — `layers` is already clamped to at most
-    // `remainingForItem` above, so this can never go negative.
-    remainingByItem.set(pin.itemId, remainingForItem - layers)
+    // accepted pins) — for an uncomposed pin `layers` is already clamped to
+    // at most `remainingForItem` above, so this can never go negative. A
+    // composed pin's `layers` is NOT clamped against this same nominal-item
+    // count (see above), so it CAN exceed `remainingForItem` — clamped to 0
+    // here rather than going negative, which would otherwise be a
+    // deliberately conservative (never over-permissive) stand-in for real
+    // per-constituent quantity accounting, until the quantity round adds it.
+    remainingByItem.set(pin.itemId, Math.max(0, remainingForItem - layers))
     // Symmetric gap: reserve cell (pin.x - gap/2, pin.y - gap/2, w+gap, l+gap).
     // A clearanceMargin (hard-blocking exclusion zone) reserves the further-
     // inflated cell instead, so the free-rect splitter never offers that
@@ -3172,7 +3193,14 @@ export function packingResultFromManual(
   const dl = toFinite(deckLength, 0)
   const totalArea = outline && outline.length >= 3 ? polygonArea(outline) : dw * dl
   const totalRequestedSafe = toPositiveInt(totalRequested, 0)
-  const layersFor = (p: ManualPlacement) => toLayers(p.layers, 1)
+  // `composition` is this placement's sole source of physical truth once
+  // present (see PlacedItem.composition's doc comment) — its own segment
+  // total is authoritative, not `p.layers` (a stale/corrupted `p.layers`
+  // that disagreed with `composition` used to silently break the
+  // sum(composition.layers) === PlacedItem.layers invariant; deriving
+  // layers FROM composition instead makes that invariant hold by
+  // construction, the same fix applied to packDeck's pin loop above).
+  const layersFor = (p: ManualPlacement) => (p.composition ? placementTotalLayers(p) : toLayers(p.layers, 1))
   // Composition-aware total: for a composed placement, `weight` is only a
   // backward-compatible AVERAGE per unit (see PlacedItem.composition's doc
   // comment) — the true total comes from summing each segment's own

@@ -28,7 +28,7 @@ import {
   type VesselStabilityData,
   type DeckShipFrame,
 } from './stability'
-import { placementTotalVCG } from './placementComposition'
+import { placementTotalVCG, placementTotalLayers } from './placementComposition'
 
 // Same catalog values as placementComposition.test.ts's own A/B/C fixtures
 // (kept in sync deliberately — this file cross-checks the SAME worked
@@ -99,6 +99,66 @@ describe('packDeck pin loop — composition copy-through (construction)', () => 
     expect(placed?.weight).toBe(500)
     expect(placed?.height).toBe(1.0)
   })
+
+  // P1 corrective patch (post-Round-14 review): `composition` is this
+  // placement's sole source of physical truth once present — its own
+  // segment total (placementTotalLayers) is authoritative, NOT the
+  // pre-existing requestedLayers-vs-remainingByItem clamp, which only ever
+  // tracks ONE nominal itemId's own catalog quantity. Before this fix, a
+  // composed pin whose nominal itemId ran short on quantity got its
+  // PlacedItem.layers silently clamped down (e.g. to 3) while `composition`
+  // stayed at its full, uncomposed total (5 = A2+B3) — breaking the
+  // invariant sum(composition.layers) === PlacedItem.layers exactly the
+  // moment a composition-aware consumer (stability.ts) started trusting
+  // composition over layers. Not reachable through the real merge UI yet
+  // (merge doesn't write composition until Round 24), but construction is
+  // already officially composition-aware, so the invariant must hold now.
+  describe('invariant: sum(composition.layers) === PlacedItem.layers, even when the nominal itemId is short on catalog quantity', () => {
+    it('quantity of the nominal itemId (A) is LESS than the composition needs — composition wins, layers is NOT silently clamped down', () => {
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: 'A', name: 'A', x: 1, y: 1, width: 2, length: 2,
+        layers: 5, rotated: false, color: '#0ea5e9',
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      }
+      // Only 3 units of A left in the catalog — nowhere near enough to
+      // satisfy the pin's own top-level `layers: 5` under the OLD
+      // (pre-patch) clamp, which would have produced PlacedItem.layers = 3
+      // while composition still summed to 5.
+      const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 3 }), catalogItem({ ...B, quantity: 0 })], { pinned: [pin] })
+      const placed = res.placed.find((p) => p.x === 1 && p.y === 1)
+      expect(placed).toBeDefined()
+      expect(placed?.composition).toEqual([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+      expect(placementTotalLayers({ itemId: placed!.itemId, layers: placed!.layers, composition: placed!.composition })).toBe(placed!.layers)
+      expect(placed?.layers).toBe(5)
+      expect(placed?.stackedCount).toBe(5)
+    })
+
+    it('quantity of the nominal itemId is ZERO — composition is still fully authoritative', () => {
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: 'A', name: 'A', x: 1, y: 1, width: 2, length: 2,
+        layers: 5, rotated: false, color: '#0ea5e9',
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      }
+      const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 0 }), catalogItem({ ...B, quantity: 0 })], { pinned: [pin] })
+      const placed = res.placed.find((p) => p.x === 1 && p.y === 1)
+      expect(placed?.layers).toBe(5)
+      expect(placed?.composition).toHaveLength(2)
+    })
+
+    it('remainingByItem is clamped to 0, never negative, after a composed pin oversubscribes the nominal itemId\'s own quantity', () => {
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: 'A', name: 'A', x: 1, y: 1, width: 2, length: 2,
+        layers: 5, rotated: false, color: '#0ea5e9',
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      }
+      // A second, unpinned unit of A should NOT get auto-packed on top of
+      // this — remainingByItem for A must not go negative and wrap/underflow
+      // into permitting more A than the catalog actually has.
+      const res = packDeck(10, 10, [catalogItem({ ...A, quantity: 3 }), catalogItem({ ...B, quantity: 0 })], { pinned: [pin] })
+      const extraAPlacements = res.placed.filter((p) => p.itemId === 'A' && !(p.x === 1 && p.y === 1))
+      expect(extraAPlacements).toHaveLength(0)
+    })
+  })
 })
 
 describe('packingResultFromManual — composition copy-through (construction)', () => {
@@ -126,6 +186,35 @@ describe('packingResultFromManual — composition copy-through (construction)', 
     expect(res.placed[0].weight).toBe(500)
     expect(res.placed[0].height).toBe(1.0)
     expect(res.totalWeight).toBe(1500)
+  })
+
+  // P1 corrective patch — same invariant as packDeck's above, checked here
+  // too since packingResultFromManual is construction's OTHER real writer.
+  // Manual placements have no remainingByItem-style quantity clamp at all
+  // (layersFor previously just trusted `p.layers` outright), so the
+  // specific clamp-vs-composition conflict found in packDeck can't occur
+  // here the same way — but a stale/hand-edited `p.layers` that disagreed
+  // with `p.composition`'s own sum used to be trusted anyway (the OLD
+  // layersFor read `p.layers` unconditionally). Deriving layers FROM
+  // composition (this patch) makes the invariant hold by construction
+  // regardless of what a stale `p.layers` says.
+  it('invariant: sum(composition.layers) === PlacedItem.layers, even when p.layers itself is stale/wrong', () => {
+    const placements: ManualPlacement[] = [
+      {
+        // Deliberately wrong top-level layers (3) that disagrees with the
+        // composition's own true total (5) — proves layers is DERIVED from
+        // composition, not trusted from this stale field.
+        id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 2, length: 2,
+        layers: 3, rotated: false, color: '#0ea5e9',
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      },
+    ]
+    const res = packingResultFromManual(10, 10, placements, 5, [A, B])
+    const placed = res.placed[0]
+    expect(placed.composition).toEqual([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+    expect(placementTotalLayers({ itemId: placed.itemId, layers: placed.layers, composition: placed.composition })).toBe(placed.layers)
+    expect(placed.layers).toBe(5)
+    expect(placed.stackedCount).toBe(5)
   })
 })
 
