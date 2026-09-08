@@ -79,6 +79,7 @@ import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
+import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
 // Once a visitor clicks through the intro, this survives reloads/new tabs
@@ -981,20 +982,25 @@ export default function Home() {
     })
   }
 
-  // AUTO already hard-stops on deck.maxDeckCargoT during packing (packing.ts's
-  // runningTotalWeightKg check, folding overflow into result.unplaced) — MANUAL
-  // had no equivalent, only StatsPanel's cosmetic red warning after the fact.
-  // Per the user's explicit contract choice ("A: hard limit in both modes"),
-  // this mirrors that check for manual placements/layer increases. Deliberately
-  // NOT covering updateItem's weight-propagation to already-placed manual
-  // placements (a much rarer path to grow total weight) — accepted as a known
-  // gap for this round.
-  const wouldExceedMaxDeckCargo = (addedWeightKg: number): boolean => {
-    if (deck.maxDeckCargoT === undefined) return false
-    const maxKg = deck.maxDeckCargoT * 1000
-    const currentKg = manualPlacements.reduce((s, p) => s + (p.weight ?? 0) * Math.max(1, p.layers ?? 1), 0)
-    return currentKg + addedWeightKg > maxKg
-  }
+  // maxDeckCargoT is a hard limit in both AUTO and MANUAL (contract A). AUTO's
+  // own pack-time check (packing.ts's runningTotalWeightKg) only bounds the
+  // auto-packer's OWN placement loop — it starts its running total FROM
+  // whatever's already pinned and never re-validates pins themselves, and it
+  // plays no part at all in the interactive click/stamp/preset placement
+  // paths below, which call pinFromPlaced directly. This used to be checked
+  // only when mode === 'manual' at every call site, which is exactly why
+  // clicking a stamp, arming a preset, or "+"-ing a pinned stack's layers in
+  // AUTO could all silently blow past the limit — packDeck was never in the
+  // loop for any of them. maxDeckCargoT is the vessel's own PER-TRIP capacity
+  // (see StatsPanel's comment on this field), so AUTO checks only the
+  // CURRENT trip's pins, matching how the weight-edit guard in updateItem
+  // already treats separate trips independently.
+  const wouldExceedMaxDeckCargo = (addedWeightKg: number): boolean =>
+    wouldExceedDeckCapacity(
+      mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []),
+      addedWeightKg,
+      deck.maxDeckCargoT
+    )
 
   // Finalizes a drawn shape into a real CargoItem (reusing
   // addOrIncrementCargoFromTemplate, same as any other preset) and places one
@@ -1002,7 +1008,7 @@ export default function Home() {
   // manual/auto branching below.
   const handlePlaceCustomShape = (name: string, weight?: number) => {
     if (!pendingCustomShape) return
-    if (mode === 'manual' && wouldExceedMaxDeckCargo(weight ?? 0)) {
+    if (wouldExceedMaxDeckCargo(weight ?? 0)) {
       toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
       return
     }
@@ -1267,7 +1273,18 @@ export default function Home() {
     if (delta > 0) {
       const source = findMergeSourcePinned(pin.itemId, id)
       if (source) {
+        // A merge just restacks two placements already on the deck (or
+        // promotes an already-auto-placed, already-weight-budgeted unit) —
+        // total deck weight doesn't change, so it's not subject to the cap.
         handleMergePinned(source.id, id)
+        return
+      }
+      // No merge source: this "+" pulls a fresh unit from unplaced
+      // quantity, genuinely adding weight to the deck — that IS subject to
+      // the cap. Manual mode's own "+" button already checked this
+      // (handleLayerChangeManual); pinned had no equivalent at all.
+      if (wouldExceedMaxDeckCargo(pin.weight ?? 0)) {
+        toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
         return
       }
     }
@@ -1532,7 +1549,12 @@ export default function Home() {
       useCalculator.setState({
         mode: 'manual',
         manualPlacements: newManual,
-        pinnedPlacementsByTrip: {},
+        // Only the trip actually being converted moves into manualPlacements
+        // — every OTHER trip's pins must survive untouched. This used to be
+        // `pinnedPlacementsByTrip: {}`, wiping every other trip's data the
+        // instant the user switched to MANUAL from anywhere but trip 0 —
+        // there was no way back to it after switching back to AUTO.
+        pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [clampedTripIndex]: [] },
         selectedPinIds: [],
         activeStampId: null,
         pendingPresetStamp: null,
@@ -1559,8 +1581,18 @@ export default function Home() {
       const matches = matchLashingCarryover(manualPlacements, newPinned)
       useCalculator.setState({
         mode: 'auto',
-        // Manual mode has no trip concept — everything becomes trip 0's pins.
-        pinnedPlacementsByTrip: { 0: newPinned },
+        // Manual mode has no trip concept of its own — the edits go back
+        // into whichever trip was active when the user switched TO manual.
+        // NOT clampedTripIndex: manual's own `trips` array is always
+        // length 1, so `clampedTripIndex = min(activeTripIndex, 0)` is
+        // forced down to 0 for the whole time the user is in manual mode,
+        // regardless of which trip they were on before switching —
+        // activeTripIndex is the one value that still remembers it. Used
+        // to hard-code trip 0 outright and replace the whole map, which
+        // both mis-filed the edit under the wrong trip whenever the user
+        // had switched from trip N != 0, and discarded every other trip's
+        // pins in the process.
+        pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: newPinned },
         manualPlacements: [],
         selectedPinIds: [],
         activeStampId: null,
@@ -1736,7 +1768,10 @@ export default function Home() {
       const matches = matchLashingCarryover(s.manualPlacements, newManual)
       useCalculator.setState({
         manualPlacements: newManual,
-        pinnedPlacementsByTrip: {},
+        // Same fix as handleModeChange: don't wipe every trip's pins just
+        // because a variant was applied while in manual mode — this had
+        // nothing to do with any AUTO trip and shouldn't destroy them.
+        pinnedPlacementsByTrip: { ...s.pinnedPlacementsByTrip, [clampedTripIndex]: [] },
         selectedPinIds: [],
       })
       useCalculator.getState().remapLashingPointsForRedistribute(matches)
@@ -1758,7 +1793,10 @@ export default function Home() {
       }))
       const matches = matchLashingCarryover(s.pinnedPlacementsByTrip[clampedTripIndex] ?? [], newPinned)
       useCalculator.setState({
-        pinnedPlacementsByTrip: { [clampedTripIndex]: newPinned },
+        // Replace only the current trip's pins — same fix as
+        // handleModeChange, this used to overwrite the whole map and
+        // silently discard every other trip's pins.
+        pinnedPlacementsByTrip: { ...s.pinnedPlacementsByTrip, [clampedTripIndex]: newPinned },
         manualPlacements: [],
         selectedPinIds: [],
       })
@@ -2024,6 +2062,18 @@ export default function Home() {
                       let itemId = p.itemId
                       const wasPendingPreset = !!pendingPresetStamp
                       if (pendingPresetStamp) {
+                        // A preset stamp skips the quantity guard below on
+                        // purpose (see the comment further down where it
+                        // stays armed) — but that's not license to skip the
+                        // capacity guard too. It was, until now: this branch
+                        // never called wouldExceedMaxDeckCargo at all, in
+                        // either mode, so repeatedly clicking an armed preset
+                        // could blow past maxDeckCargoT with zero pushback.
+                        const presetWeight = pendingPresetStamp.weight
+                        if (wouldExceedMaxDeckCargo(presetWeight ?? 0)) {
+                          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+                          return
+                        }
                         itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
                       } else {
                         // Scoped to THIS item, not a global sum across every
@@ -2051,7 +2101,7 @@ export default function Home() {
                           )
                           return
                         }
-                        if (mode === 'manual' && wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
+                        if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
                           toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
                           return
                         }

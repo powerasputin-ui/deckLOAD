@@ -313,9 +313,64 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     fireEvent.click(screen.getByText('Ручной'))
 
     expect(useCalculator.getState().mode).toBe('manual')
-    expect(useCalculator.getState().pinnedPlacementsByTrip).toEqual({})
+    // The single trip being converted is cleared (its data now lives in
+    // manualPlacements) — but the map itself isn't wiped to {} anymore, see
+    // the multi-trip regression test below for why that distinction matters.
+    expect(useCalculator.getState().pinnedPlacementsByTrip).toEqual({ 0: [] })
     expect(useCalculator.getState().manualPlacements).toHaveLength(1)
     expect(useCalculator.getState().manualPlacements[0].itemId).toBe(item.id)
+  })
+
+  // Regression: handleModeChange used to convert ONLY the currently-viewed
+  // trip and then wipe pinnedPlacementsByTrip to {} entirely (AUTO->MANUAL)
+  // or hard-code everything into trip 0 (MANUAL->AUTO), silently destroying
+  // every other trip's pins. A real multi-trip plan (not trip 0) is the
+  // only way to catch this — the two tests above only ever exercised a
+  // single trip, where wiping {} and writing {0: ...} looked identical to
+  // "correct."
+  it('preserves OTHER trips when switching mode while viewing a non-zero trip, both directions', () => {
+    render(<Home />)
+    clearDemoCargo()
+    // A deck that fits exactly one 2x1 unit per trip forces packMultiTrip
+    // to actually generate a second trip instead of fitting everything on
+    // trip 0 alone.
+    act(() => {
+      useCalculator.getState().setDeck({ width: 3, length: 1, gap: 0, boardOffset: 0 })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.getState().pinFromPlaced(0, {
+        itemId: item.id, name: item.name, x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+      useCalculator.getState().pinFromPlaced(1, {
+        itemId: item.id, name: item.name, x: 0, y: 0, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+      })
+    })
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[1]).toHaveLength(1)
+
+    // Switch to trip 2 (index 1) before switching mode.
+    fireEvent.click(screen.getByText(/Рейс 2/))
+    fireEvent.click(screen.getByText('Ручной'))
+
+    expect(useCalculator.getState().mode).toBe('manual')
+    // Trip 0's pin must survive completely untouched.
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].itemId).toBe(item.id)
+    // Trip 1 (the one being edited) is now represented as manual instead.
+    expect(useCalculator.getState().pinnedPlacementsByTrip[1]).toEqual([])
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+
+    // Switch back to AUTO — the edit must land back in trip 1, not trip 0.
+    fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+
+    expect(useCalculator.getState().mode).toBe('auto')
+    expect(useCalculator.getState().manualPlacements).toHaveLength(0)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].itemId).toBe(item.id)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[1]).toHaveLength(1)
+    expect(useCalculator.getState().pinnedPlacementsByTrip[1][0].itemId).toBe(item.id)
   })
 
   it('handleModeChange (manual -> auto) converts manual placements back to trip-0 pins', () => {

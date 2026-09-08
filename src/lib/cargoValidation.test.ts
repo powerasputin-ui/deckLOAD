@@ -7,6 +7,7 @@ import {
   sanitizeCargoWeight,
   sanitizeCargoMaxLayers,
   sanitizeCargoMaxStackHeightM,
+  wouldExceedDeckCapacity,
 } from './cargoValidation'
 import { normalizeProject } from '@/store/projects'
 import { useCalculator } from '@/store/calculator'
@@ -111,6 +112,38 @@ describe('sanitizeCargoMaxStackHeightM', () => {
     expect(sanitizeCargoMaxStackHeightM(0)).toBeUndefined()
     expect(sanitizeCargoMaxStackHeightM(-1)).toBeUndefined()
     expect(sanitizeCargoMaxStackHeightM(NaN)).toBeUndefined()
+  })
+})
+
+// This is the shared arithmetic behind maxDeckCargoT's hard limit (contract
+// A: hard limit in both AUTO and MANUAL). Pulled out to a pure function
+// specifically because the same check kept getting re-implemented inline in
+// page.tsx call sites and some were simply forgotten (onPlace's AUTO
+// branch, the preset branch in either mode, the pinned "+" layer button) —
+// a bug class a page.tsx-only implementation can't be unit-tested against,
+// since page.tsx has no test file of its own.
+describe('wouldExceedDeckCapacity', () => {
+  it('allows when under the limit', () => {
+    expect(wouldExceedDeckCapacity([{ weight: 3000, layers: 1 }], 2000, 10)).toBe(false) // 3000+2000=5000 < 10000
+  })
+  it('blocks when the addition would push over the limit', () => {
+    expect(wouldExceedDeckCapacity([{ weight: 9000, layers: 1 }], 2000, 10)).toBe(true) // 9000+2000=11000 > 10000
+  })
+  it('allows landing exactly on the limit (not strictly over)', () => {
+    expect(wouldExceedDeckCapacity([{ weight: 8000, layers: 1 }], 2000, 10)).toBe(false) // exactly 10000
+  })
+  it('never blocks when maxDeckCargoT is undefined (no limit configured)', () => {
+    expect(wouldExceedDeckCapacity([{ weight: 999999, layers: 1 }], 999999, undefined)).toBe(false)
+  })
+  it('multiplies each placement by its own layers, not a flat count', () => {
+    // 3 placements: 2000*3 + 1000*1 + 500*2 = 6000+1000+1000 = 8000, +1000 new = 9000 < 10000
+    const placements = [{ weight: 2000, layers: 3 }, { weight: 1000, layers: 1 }, { weight: 500, layers: 2 }]
+    expect(wouldExceedDeckCapacity(placements, 1000, 10)).toBe(false)
+    expect(wouldExceedDeckCapacity(placements, 2001, 10)).toBe(true) // 8000+2001=10001 > 10000
+  })
+  it('treats a missing weight as 0 and a missing/zero layers as 1', () => {
+    expect(wouldExceedDeckCapacity([{ layers: 5 }], 0, 10)).toBe(false) // weight defaults to 0
+    expect(wouldExceedDeckCapacity([{ weight: 9000 }], 500, 10)).toBe(false) // layers defaults to 1: 9000*1+500=9500
   })
 })
 

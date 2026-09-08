@@ -54,3 +54,22 @@ export function sanitizeCargoMaxLayers(value: unknown): number | undefined {
 export function sanitizeCargoMaxStackHeightM(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
+
+// maxDeckCargoT is a hard limit in both AUTO and MANUAL (contract A, chosen
+// explicitly by the user). This is the one shared arithmetic both modes'
+// new-placement guards must call — pulled out to a pure, unit-testable
+// function specifically because the same check kept getting re-implemented
+// inline in page.tsx call sites and some of them were simply forgotten
+// (onPlace's AUTO branch, the preset branch in either mode, pinned "+"
+// layer) — a bug class that a page.tsx-only implementation can't be
+// unit-tested against, since page.tsx itself has no test file.
+export function wouldExceedDeckCapacity(
+  currentPlacements: { weight?: number; layers?: number }[],
+  addedWeightKg: number,
+  maxDeckCargoT: number | undefined
+): boolean {
+  if (maxDeckCargoT === undefined) return false
+  const maxKg = maxDeckCargoT * 1000
+  const currentKg = currentPlacements.reduce((sum, p) => sum + (p.weight ?? 0) * Math.max(1, p.layers ?? 1), 0)
+  return currentKg + addedWeightKg > maxKg
+}
