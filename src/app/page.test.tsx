@@ -75,6 +75,78 @@ describe('Home (page.tsx)', () => {
     expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('удалён'))
   })
 
+  // Round 16 — composition-aware handleRemovePinned. Before this fix, the
+  // whole pin's layer count (5) was decremented from the NOMINAL itemId's
+  // (A) own quantity, leaving B's quantity completely untouched even though
+  // 3 real units of B are physically inside this pin — this test pins the
+  // exact classic bug the review named: [A2,B3] -> old code did A-=5, B-=0;
+  // correct is A-=2, B-=3.
+  it('handleRemovePinned (composition-aware): a composed pin decreases EACH constituent\'s own quantity, not just the nominal itemId\'s', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      // Hand-built composition, same technique used throughout the
+      // migration's test suite since Round 13 — no real merge UI creates
+      // this yet.
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    expect(xCircle).toBeTruthy()
+    fireEvent.click(xCircle!)
+
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(3) // 5 - 2
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(2) // 5 - 3
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0] ?? []).toHaveLength(0)
+  })
+
+  // Round 16 acceptance scenario D — full placement removal with a
+  // non-adjacent same-itemId composition: [A2,B3,A1]. Deleting this ONE
+  // placement must decrement A by 3 (2+1, BOTH A segments summed, not just
+  // the first one encountered) and B by 3 — proves the aggregation-by-
+  // itemId step in handleRemovePinned (needed because a composition can
+  // list the same itemId more than once) actually runs correctly end-to-end
+  // through the real ✕-button click handler, not just in isolation.
+  it('handleRemovePinned (composition-aware): [A2,B3,A1] — non-adjacent A segments are summed before decrementing, not just the first one', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }, { itemId: itemA.id, layers: 1 }],
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    expect(xCircle).toBeTruthy()
+    fireEvent.click(xCircle!)
+
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(2) // 5 - (2+1)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(2) // 5 - 3
+    expect(useCalculator.getState().pinnedPlacementsByTrip[0] ?? []).toHaveLength(0)
+  })
+
 it('handleLayerChangePinned("-") pins the freed unit as its own placement (regression: freed units re-stacked onto each other)', () => {
     render(<Home />)
     clearDemoCargo()

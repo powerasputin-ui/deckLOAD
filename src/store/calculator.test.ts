@@ -52,6 +52,148 @@ describe('calculator store', () => {
     expect(useCalculator.getState().manualPlacements).toHaveLength(0)
   })
 
+  // Round 16 — removeItem composition-aware surgery. Before this fix,
+  // deleting CargoItem A from the catalog filtered out ANY placement whose
+  // top-level `p.itemId === A`, wholesale — for a composed [A2,B3]
+  // placement (nominal itemId=A), that silently destroyed the 3 physical
+  // units of B along with it, even though B is NOT being deleted. The fix:
+  // only A's own segment(s) are stripped from `composition`; B stays
+  // exactly where it was, now as its own ordinary (uncomposed) placement.
+  describe('removeItem — composition-aware surgery (does not lose surviving constituents)', () => {
+    function seedAB() {
+      const s = useCalculator.getState()
+      s.addItem({ name: 'A', width: 1, length: 1, quantity: 5 })
+      s.addItem({ name: 'B', width: 1, length: 1, quantity: 5 })
+      const A = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const B = useCalculator.getState().items.find((it) => it.name === 'B')!
+      return { A, B }
+    }
+
+    // A. Базовый: [A2,B3] -> removeItem(A) -> B survives as an ordinary B3 placement.
+    it('A. [A2,B3] removeItem(A): B survives, un-composes to a plain B3 placement, A\'s catalog row is gone', () => {
+      const s = useCalculator.getState()
+      const { A, B } = seedAB()
+      s.addManualPlacement({
+        id: 'm1', itemId: A.id, name: 'A', x: 0, y: 0, width: 1, length: 1,
+        layers: 5, rotated: false, color: '#000',
+        composition: [{ itemId: A.id, layers: 2 }, { itemId: B.id, layers: 3 }],
+      })
+
+      s.removeItem(A.id)
+
+      expect(useCalculator.getState().items.find((it) => it.id === A.id)).toBeUndefined()
+      expect(useCalculator.getState().items.find((it) => it.id === B.id)).toBeDefined()
+      expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+      const survivor = useCalculator.getState().manualPlacements[0]
+      expect(survivor.id).toBe('m1') // same placement, transformed — not deleted and re-created
+      expect(survivor.itemId).toBe(B.id)
+      expect(survivor.layers).toBe(3)
+      expect(survivor.composition).toBeUndefined() // un-composed — only one constituent left
+    })
+
+    // B. Non-adjacent: [A2,B3,A1] -> removeItem(B) -> composition coalesces to [A3].
+    it('B. [A2,B3,A1] removeItem(B): the two non-adjacent A segments coalesce to a single A3, A does not gain B\'s layers', () => {
+      const s = useCalculator.getState()
+      const { A, B } = seedAB()
+      s.addManualPlacement({
+        id: 'm1', itemId: A.id, name: 'A', x: 0, y: 0, width: 1, length: 1,
+        layers: 6, rotated: false, color: '#000',
+        composition: [{ itemId: A.id, layers: 2 }, { itemId: B.id, layers: 3 }, { itemId: A.id, layers: 1 }],
+      })
+
+      s.removeItem(B.id)
+
+      expect(useCalculator.getState().items.find((it) => it.id === B.id)).toBeUndefined()
+      const survivor = useCalculator.getState().manualPlacements[0]
+      expect(survivor.itemId).toBe(A.id)
+      expect(survivor.layers).toBe(3) // 2 + 1, not 2 (only the first A segment)
+      expect(survivor.composition).toBeUndefined()
+    })
+
+    // C. [A2,B3,A1] -> removeItem(A) -> composition becomes plain B3, B stays physically placed.
+    it('C. [A2,B3,A1] removeItem(A): both A segments (2+1=3) are removed together, B survives untouched as B3', () => {
+      const s = useCalculator.getState()
+      const { A, B } = seedAB()
+      s.addManualPlacement({
+        id: 'm1', itemId: A.id, name: 'A', x: 0, y: 0, width: 1, length: 1,
+        layers: 6, rotated: false, color: '#000',
+        composition: [{ itemId: A.id, layers: 2 }, { itemId: B.id, layers: 3 }, { itemId: A.id, layers: 1 }],
+      })
+
+      s.removeItem(A.id)
+
+      expect(useCalculator.getState().items.find((it) => it.id === A.id)).toBeUndefined()
+      expect(useCalculator.getState().items.find((it) => it.id === B.id)).toBeDefined()
+      const survivor = useCalculator.getState().manualPlacements[0]
+      expect(survivor.itemId).toBe(B.id)
+      expect(survivor.layers).toBe(3)
+      expect(survivor.composition).toBeUndefined()
+      // Position/geometry untouched — this is a composition edit, not a move.
+      expect(survivor.x).toBe(0)
+      expect(survivor.y).toBe(0)
+    })
+
+    // E. Multi-trip: removeItem must scan EVERY trip's pinned placements,
+    // not just the active one — the deleted item's placements can live in
+    // any trip.
+    it('E. Multi-trip: removeItem(B) strips B out of BOTH trip 0\'s [A2,B3] and trip 1\'s [C4,B2], independent of which trip is active', () => {
+      const s = useCalculator.getState()
+      const { A, B } = seedAB()
+      s.addItem({ name: 'C', width: 1, length: 1, quantity: 5 })
+      const C = useCalculator.getState().items.find((it) => it.name === 'C')!
+
+      const pin0 = s.pinFromPlaced(0, { itemId: A.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#000' })
+      s.updatePinned(0, pin0, { composition: [{ itemId: A.id, layers: 2 }, { itemId: B.id, layers: 3 }] })
+      const pin1 = s.pinFromPlaced(1, { itemId: C.id, name: 'C', x: 0, y: 0, width: 1, length: 1, layers: 6, rotated: false, color: '#000' })
+      s.updatePinned(1, pin1, { composition: [{ itemId: C.id, layers: 4 }, { itemId: B.id, layers: 2 }] })
+
+      s.removeItem(B.id)
+
+      expect(useCalculator.getState().items.find((it) => it.id === B.id)).toBeUndefined()
+      const trip0 = useCalculator.getState().pinnedPlacementsByTrip[0]
+      const trip1 = useCalculator.getState().pinnedPlacementsByTrip[1]
+      expect(trip0).toHaveLength(1)
+      expect(trip0[0].itemId).toBe(A.id)
+      expect(trip0[0].layers).toBe(2)
+      expect(trip0[0].composition).toBeUndefined()
+      expect(trip1).toHaveLength(1)
+      expect(trip1[0].itemId).toBe(C.id)
+      expect(trip1[0].layers).toBe(4)
+      expect(trip1[0].composition).toBeUndefined()
+    })
+
+    // F. Mixed composed/uncomposed: removeItem must touch ONLY the segment
+    // that actually matches, and leave every unrelated placement — even
+    // other placements of the SAME itemId — completely unrecalculated.
+    it('F. Mixed composed/uncomposed placements: only the composed one is touched, sibling uncomposed placements of the same itemId are untouched', () => {
+      const s = useCalculator.getState()
+      const { A, B } = seedAB()
+      s.addManualPlacement({ id: 'mA', itemId: A.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 3, rotated: false, color: '#000' }) // uncomposed A3
+      s.addManualPlacement({
+        id: 'mAB', itemId: A.id, name: 'A', x: 5, y: 5, width: 1, length: 1,
+        layers: 5, rotated: false, color: '#000',
+        composition: [{ itemId: A.id, layers: 2 }, { itemId: B.id, layers: 3 }],
+      }) // composed [A2,B3]
+      s.addManualPlacement({ id: 'mB', itemId: B.id, name: 'B', x: 9, y: 9, width: 1, length: 1, layers: 2, rotated: false, color: '#000' }) // uncomposed B2
+      const mBBefore = useCalculator.getState().manualPlacements.find((m) => m.id === 'mB')
+
+      s.removeItem(A.id)
+
+      // Uncomposed A3 ('mA'): itemId===A with no composition -> removed
+      // entirely, same as the pre-existing (dormant) behavior.
+      expect(useCalculator.getState().manualPlacements.find((m) => m.id === 'mA')).toBeUndefined()
+      // Composed [A2,B3] ('mAB'): A's segment stripped, B survives as its own B3.
+      const survivor = useCalculator.getState().manualPlacements.find((m) => m.id === 'mAB')
+      expect(survivor?.itemId).toBe(B.id)
+      expect(survivor?.layers).toBe(3)
+      expect(survivor?.composition).toBeUndefined()
+      // Uncomposed B2 ('mB'): doesn't reference A at all — untouched,
+      // exact same object values as before.
+      const mBAfter = useCalculator.getState().manualPlacements.find((m) => m.id === 'mB')
+      expect(mBAfter).toEqual(mBBefore)
+    })
+  })
+
   it('converts units correctly', () => {
     const s = useCalculator.getState()
     s.setDeck({ width: 2, length: 1, gap: 0.1, boardOffset: 0.05, clearance: 0.5 })

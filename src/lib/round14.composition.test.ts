@@ -372,6 +372,13 @@ describe('Round 14 "no production writer" gate', () => {
       'src/lib/stability.ts', // copy-through only: `composition: p.composition` inside the composable() helper
       'src/lib/placementComposition.ts', // the arithmetic module itself — operates on a composition array the CALLER already supplied
       'src/store/projects.ts', // duplicateProject's itemId remap of an EXISTING composition array
+      // Round 16: removeItem's removeItemFromPlacements only ever STRIPS
+      // segments out of an EXISTING composition via placementRemoveItem
+      // (or copies it through untouched when unaffected) — never invents
+      // one where a placement didn't already have it. Still not a merge
+      // writer: merge stays the only thing that can CREATE a composition
+      // from scratch until the switch-on round.
+      'src/store/calculator.ts',
     ])
 
     for (const relPath of filesToScan) {

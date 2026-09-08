@@ -1348,13 +1348,29 @@ export default function Home() {
   // decreases item.quantity by the placement's layer count — otherwise the
   // auto-packer would immediately re-place the freed unit elsewhere, making
   // the ✕ button look like it does nothing.
+  //
+  // Round 16: composition-aware — each constituent's OWN quantity is
+  // decreased by its OWN physical layer count, never the nominal itemId's
+  // quantity by the pin's full total (placement.itemId is never the sole
+  // source of quantity — see the migration plan's Quantity contract). A
+  // composition can contain the SAME itemId in more than one non-adjacent
+  // segment (e.g. [A2,B3,A1]), so segments are aggregated per itemId first,
+  // then applied once each. Dormant for an uncomposed pin: its implicit
+  // one-segment "composition" degenerates to the exact old single update.
   const handleRemovePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
-    const item = items.find((it) => it.id === pin.itemId)
     removePinned(clampedTripIndex, id)
-    if (item) {
-      useCalculator.getState().updateItem(item.id, { quantity: Math.max(0, item.quantity - pin.layers) })
+    const segments = pin.composition ?? [{ itemId: pin.itemId, layers: pin.layers }]
+    const layersByItemId = new Map<string, number>()
+    for (const seg of segments) {
+      layersByItemId.set(seg.itemId, (layersByItemId.get(seg.itemId) ?? 0) + seg.layers)
+    }
+    for (const [itemId, removedLayers] of layersByItemId) {
+      const currentItem = useCalculator.getState().items.find((it) => it.id === itemId)
+      if (currentItem) {
+        useCalculator.getState().updateItem(itemId, { quantity: Math.max(0, currentItem.quantity - removedLayers) })
+      }
     }
     toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }

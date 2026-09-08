@@ -43,7 +43,7 @@ import {
   type VariableWeightItem,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
-import { placementLayersOfItem } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
   return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
@@ -468,6 +468,74 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     stabilityOverride: partial?.stabilityOverride,
     nest: partial?.nest,
   }
+}
+
+// Round 16 — removeItem's composition-aware surgery. `id` here is the
+// CargoItem being permanently deleted from the catalog. For an UNCOMPOSED
+// placement this degenerates to the exact old behavior (drop the placement
+// iff its itemId matches). For a COMPOSED placement, this only ever strips
+// `id`'s own segment(s) out of `composition` — any OTHER constituent
+// physically stays exactly where it was (composition shrinks, or the
+// placement un-composes back to a plain single-item one), matching the
+// migration plan's `removeItem` contract: a composed placement is NEVER
+// deleted wholesale just because its NOMINAL itemId happens to equal `id`,
+// and a non-nominal constituent match (composition contains `id` even
+// though the placement's own itemId is something else) is caught too —
+// the old `p.itemId !== id` filter missed that case entirely.
+//
+// No quantity is written back to `id` itself here (pointless — its own
+// catalog row is deleted in the same store update) or to a surviving
+// constituent (it's still physically placed, not returned to any pool);
+// see this function's own risk-register note on why a composed placement's
+// surviving weight/layers must be RE-DERIVED from the catalog rather than
+// left stale after the surgery.
+function removeItemFromPlacements<T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(
+  list: T[],
+  id: string,
+  catalog: CargoItem[]
+): T[] {
+  const result: T[] = []
+  for (const p of list) {
+    if (!p.composition) {
+      if (p.itemId !== id) result.push(p)
+      continue
+    }
+    if (!p.composition.some((seg) => seg.itemId === id)) {
+      result.push(p)
+      continue
+    }
+    const removal = placementRemoveItem(id, p.composition)
+    if (removal.composition) {
+      // Still genuinely composed (2+ distinct constituents survive).
+      const newItemId = removal.composition[0].itemId
+      const newLayers = placementTotalLayers({ itemId: newItemId, layers: 0, composition: removal.composition })
+      result.push({
+        ...p,
+        itemId: newItemId,
+        composition: removal.composition,
+        layers: newLayers,
+        // Cached mirror only (every real consumer re-derives this live from
+        // `.composition` — see packDeck/packingResultFromManual) — kept in
+        // sync anyway so nothing stale lingers in stored state.
+        weight: placementTotalWeightKg({ itemId: newItemId, layers: newLayers, composition: removal.composition }, catalog) / Math.max(1, newLayers),
+      } as T)
+    } else if (removal.remainingSingleton) {
+      // Collapses back to an ordinary uncomposed placement — nominal
+      // identity transfers to the one surviving constituent.
+      const singleton = removal.remainingSingleton
+      const catalogItem = catalog.find((it) => it.id === singleton.itemId)
+      result.push({
+        ...p,
+        itemId: singleton.itemId,
+        composition: undefined,
+        layers: singleton.layers,
+        weight: catalogItem?.weight,
+      } as T)
+    }
+    // else: composition fully emptied (every constituent WAS `id`) -> drop
+    // the placement entirely, same as the uncomposed-match case above.
+  }
+  return result
 }
 
 // Re-position and re-size just the placements of one resized item, keeping
@@ -1207,17 +1275,20 @@ export const useCalculator = create<CalculatorState>()(
     }),
   removeItem: (id) =>
     set((s) => {
+      // Round 16: composition-aware — see removeItemFromPlacements's own
+      // doc comment. `pinnedPlacementsByTrip` scans EVERY trip (not just
+      // the active one), since the deleted item's placements can live in
+      // any of them.
+      const manualPlacements = removeItemFromPlacements(s.manualPlacements, id, s.items)
       const pinnedPlacementsByTrip = Object.fromEntries(
         Object.entries(s.pinnedPlacementsByTrip).map(([trip, list]) => [
           trip,
-          list.filter((p) => p.itemId !== id),
+          removeItemFromPlacements(list, id, s.items),
         ])
       )
-      const allPins = Object.values(s.pinnedPlacementsByTrip).flat()
-      const manualPlacements = s.manualPlacements.filter((m) => m.itemId !== id)
+      const allPins = Object.values(pinnedPlacementsByTrip).flat()
       return {
         items: s.items.filter((it) => it.id !== id),
-        // Also remove orphaned placements referencing the deleted item
         manualPlacements,
         pinnedPlacementsByTrip,
         // Every placement just removed above can have had its own lashing
@@ -1225,9 +1296,13 @@ export const useCalculator = create<CalculatorState>()(
         // orphans (pruneOrphanLashingPoints exists for exactly this, but
         // this path never called it).
         deck: pruneOrphanLashingPoints(s.deck, manualPlacements, pinnedPlacementsByTrip),
-        selectedPinIds: s.selectedPinIds.filter((sid) =>
-          allPins.some((p) => p.id === sid && p.itemId !== id)
-        ),
+        // A placement that SURVIVES the surgery above (transformed or
+        // untouched) keeps its own id, so a plain existence check is
+        // correct — the old extra `p.itemId !== id` condition is now
+        // redundant (a surviving composed placement's nominal itemId can
+        // never still equal `id`, since `id`'s own segments were just
+        // stripped out of it).
+        selectedPinIds: s.selectedPinIds.filter((sid) => allPins.some((p) => p.id === sid)),
         selectedManualIds: s.selectedManualIds.filter((mid) =>
           manualPlacements.some((m) => m.id === mid)
         ),
