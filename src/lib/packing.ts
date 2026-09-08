@@ -5,6 +5,11 @@
 
 import type { PipeNestSpec } from './pipeNest'
 import { type Unit, toMeters } from './units'
+// Value-level import from placementComposition.ts, which only imports TYPES
+// back from this file (`import type {...} from './packing'`) — type-only
+// imports are erased at compile time, so this can never form a runtime
+// circular dependency, confirmed before adding this.
+import { placementTotalWeightKg, placementTotalHeightM } from './placementComposition'
 
 export interface Rect {
   x: number
@@ -696,6 +701,23 @@ export interface PlacedItem {
   // as stabilityOverride above. The 2D/3D renderers need the full spec
   // (pipesPerRow/tierCounts) to draw the real stack, not just its VCG.
   nest?: PipeNestSpec
+  // Copied through verbatim from the source ManualPlacement/PinnedPlacement
+  // — see CompositionSegment's own doc comment for the full contract.
+  // NEVER synthesized here: packDeck/packingResultFromManual only copy an
+  // EXISTING composition, they never create one where the source placement
+  // didn't have it (that would make construction a second production
+  // writer of composition, alongside merge — exactly what the staged
+  // migration is designed to prevent; merge stays the only writer until
+  // that round explicitly flips on). When present, this is the source of
+  // truth for a composition-aware consumer (stability.ts, and later
+  // lashing/quantity/3D-rendering rounds); `weight`/`height` above become a
+  // backward-compatible AVERAGE-per-unit fallback for consumers that
+  // haven't been updated yet (weight*stackedCount / height*stackedCount
+  // still reconstruct the correct TOTAL, since the average is weighted —
+  // but neither field alone is meaningful for anything that needs to know
+  // which constituent contributed what, e.g. VCG, which is why stability.ts
+  // reads `composition` directly instead of trusting this fallback).
+  composition?: CompositionSegment[]
 }
 
 export interface UnplacedItem {
@@ -1503,6 +1525,17 @@ export function packDeck(
       },
       freeRects
     )
+    // Copied through verbatim, NEVER synthesized — see PlacedItem.composition's
+    // own doc comment. `weight`/`height` become a backward-compatible AVERAGE
+    // per unit when composed, so `weight * layers` (every existing consumer's
+    // convention) still reconstructs the correct TOTAL — composition-aware
+    // consumers (stability.ts) read `pin.composition` directly instead.
+    const pinWeight = pin.composition
+      ? placementTotalWeightKg({ itemId: pin.itemId, layers: pin.layers, composition: pin.composition }, items) / Math.max(1, layers)
+      : pin.weight
+    const pinHeight = pin.composition
+      ? placementTotalHeightM({ itemId: pin.itemId, layers: pin.layers, composition: pin.composition }, items) / Math.max(1, layers)
+      : (heightByItemId.get(pin.itemId) ?? 0)
     result.placed.push({
       itemId: pin.itemId,
       name: pin.name,
@@ -1510,12 +1543,12 @@ export function packDeck(
       y: pin.y,
       width: pin.width,
       length: pin.length,
-      height: heightByItemId.get(pin.itemId) ?? 0,
+      height: pinHeight,
       layers,
       stackedCount: layers,
       rotated: pin.rotated,
       color: pin.color,
-      weight: pin.weight,
+      weight: pinWeight,
       index: index++,
       shape: shapeByItemId.get(pin.itemId),
       outline: outlineByItemId.get(pin.itemId),
@@ -1526,10 +1559,11 @@ export function packDeck(
       // the pin's OWN override (if ever set) must win over the item's.
       stabilityOverride: pin.stabilityOverride ?? stabilityOverrideByItemId.get(pin.itemId),
       nest: nestByItemId.get(pin.itemId),
+      composition: pin.composition,
     })
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
-    if (pin.weight) result.totalWeight += pin.weight * layers
+    if (pinWeight) result.totalWeight += pinWeight * layers
   }
 
   // Expand each item into the number of STACKS (floor footprints) needed.
@@ -3139,11 +3173,16 @@ export function packingResultFromManual(
   const totalArea = outline && outline.length >= 3 ? polygonArea(outline) : dw * dl
   const totalRequestedSafe = toPositiveInt(totalRequested, 0)
   const layersFor = (p: ManualPlacement) => toLayers(p.layers, 1)
+  // Composition-aware total: for a composed placement, `weight` is only a
+  // backward-compatible AVERAGE per unit (see PlacedItem.composition's doc
+  // comment) — the true total comes from summing each segment's own
+  // catalog weight, not `average * layers` (though those are mathematically
+  // equal by construction, going straight to the segments avoids relying on
+  // that invariant staying correct upstream).
+  const weightFor = (p: ManualPlacement) =>
+    p.composition ? placementTotalWeightKg(p, items ?? []) : toFinite(p.weight ?? 0, 0) * layersFor(p)
   const usedArea = placements.reduce((s, p) => s + toFinite(p.width, 0) * toFinite(p.length, 0), 0)
-  const totalWeight = placements.reduce(
-    (s, p) => s + toFinite(p.weight ?? 0, 0) * layersFor(p),
-    0
-  )
+  const totalWeight = placements.reduce((s, p) => s + weightFor(p), 0)
   const placedCount = placements.reduce((s, p) => s + layersFor(p), 0)
 
   // Build per-item map for requested quantity and max layers — also feeds
@@ -3158,38 +3197,56 @@ export function packingResultFromManual(
     }
   }
 
-  const placed = placements.map((p, i) => ({
-    itemId: p.itemId,
-    name: p.name,
-    x: p.x,
-    y: p.y,
-    width: p.width,
-    length: p.length,
-    height: itemMap.get(p.itemId)?.height ?? 0,
-    layers: layersFor(p),
-    stackedCount: layersFor(p),
-    rotated: p.rotated,
-    color: p.color,
-    weight: p.weight,
-    index: i,
-    shape: itemMap.get(p.itemId)?.shape,
-    outline: itemMap.get(p.itemId)?.outline,
-    contents: itemMap.get(p.itemId)?.contents,
-    clearanceMargin: p.clearanceMargin,
-    // The placement's OWN override (if ever set — nothing writes one today,
-    // see ManualPlacement.stabilityOverride's own comment) must win over
-    // the item's, not be silently discarded in favor of it.
-    stabilityOverride: p.stabilityOverride ?? itemMap.get(p.itemId)?.stabilityOverride,
-    nest: itemMap.get(p.itemId)?.nest,
-  }))
+  const placed = placements.map((p, i) => {
+    const layers = layersFor(p)
+    // Copied through verbatim, NEVER synthesized — see PlacedItem.composition's
+    // own doc comment. `weight`/`height` become the backward-compatible
+    // AVERAGE per unit when composed, so `weight * layers` (every existing
+    // consumer's convention, e.g. the breakdown map below) still reconstructs
+    // the correct TOTAL.
+    const pWeight = p.composition
+      ? placementTotalWeightKg(p, items ?? []) / Math.max(1, layers)
+      : p.weight
+    const pHeight = p.composition
+      ? placementTotalHeightM(p, items ?? []) / Math.max(1, layers)
+      : (itemMap.get(p.itemId)?.height ?? 0)
+    return {
+      itemId: p.itemId,
+      name: p.name,
+      x: p.x,
+      y: p.y,
+      width: p.width,
+      length: p.length,
+      height: pHeight,
+      layers,
+      stackedCount: layers,
+      rotated: p.rotated,
+      color: p.color,
+      weight: pWeight,
+      index: i,
+      shape: itemMap.get(p.itemId)?.shape,
+      outline: itemMap.get(p.itemId)?.outline,
+      contents: itemMap.get(p.itemId)?.contents,
+      clearanceMargin: p.clearanceMargin,
+      // The placement's OWN override (if ever set — nothing writes one today,
+      // see ManualPlacement.stabilityOverride's own comment) must win over
+      // the item's, not be silently discarded in favor of it.
+      stabilityOverride: p.stabilityOverride ?? itemMap.get(p.itemId)?.stabilityOverride,
+      nest: itemMap.get(p.itemId)?.nest,
+      composition: p.composition,
+    }
+  })
 
   // Breakdown by itemId
   const map = new Map<string, ItemBreakdown>()
   let maxStackHeight = 0
   for (const p of placed) {
     const itemInfo = itemMap.get(p.itemId)
-    const itemHeight = itemInfo?.height ?? 0
-    const stackHeight = itemHeight * p.stackedCount
+    // p.height is already the correct per-unit value (composition-aware
+    // average when composed, plain catalog height otherwise) — using it
+    // instead of a fresh itemInfo lookup keeps this composition-aware for
+    // free, since average * stackedCount reconstructs the true total.
+    const stackHeight = p.height * p.stackedCount
     if (stackHeight > maxStackHeight) maxStackHeight = stackHeight
     const b = map.get(p.itemId) ?? {
       itemId: p.itemId,

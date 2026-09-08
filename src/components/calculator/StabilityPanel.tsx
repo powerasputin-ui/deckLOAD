@@ -8,7 +8,7 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card'
-import type { PackingResult } from '@/lib/packing'
+import type { CargoItem, PackingResult } from '@/lib/packing'
 import {
   buildLoadingConditionFromPlacements,
   computeStabilityResult,
@@ -34,6 +34,11 @@ interface StabilityPanelProps {
   vessel?: VesselStabilityData
   shipFrame?: DeckShipFrame
   deckForwardIsPositiveY?: boolean
+  // Catalog — needed ONLY to resolve a composed placement's per-segment
+  // weight/height/stabilityOverride (see buildCargoWeightMoments's own doc
+  // comment). Defaults to `[]`, same as the lib functions it's threaded
+  // into, so no existing call site outside page.tsx breaks.
+  items?: CargoItem[]
 }
 
 // A short, always-visible line — never a dismissable toast, never a
@@ -95,7 +100,7 @@ function MissingWeightWarning({ count }: { count: number }) {
   )
 }
 
-export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, shipFrame, deckForwardIsPositiveY }: StabilityPanelProps) {
+export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, shipFrame, deckForwardIsPositiveY, items }: StabilityPanelProps) {
   if (!vessel) {
     return (
       <Card data-tour="stability">
@@ -114,7 +119,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   }
 
   const frame: DeckShipFrame = shipFrame ?? { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
-  const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deckWidth, length: deckLength }, deckForwardIsPositiveY ?? true, result.placed, unit)
+  const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deckWidth, length: deckLength }, deckForwardIsPositiveY ?? true, result.placed, unit, items ?? [])
   const stability = computeStabilityResult(vessel, loading)
   const gz = stability ? computeGZCurve(vessel, loading) : null
   const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg

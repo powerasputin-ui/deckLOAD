@@ -16,13 +16,18 @@
 // checkZoneLoads/checkLashingBalance (compute live from current state,
 // nothing cached here).
 
-import type { StabilityOverride } from './packing'
+import type { CompositionSegment, StabilityOverride } from './packing'
 import { polygonCentroid, rotateOutline90 } from './packing'
 import { type Unit, toMeters } from './units'
 // Re-exported (not just imported) — see this file's own "Cargo VCG" comment
 // below for why computeItemVCG lives in stabilityMath.ts now.
 import { computeItemVCG } from './stabilityMath'
 export { computeItemVCG }
+// Round 14: composition-aware VCG/TCG/LCG — see placementComposition.ts's own
+// doc comment for why this import direction (stability.ts -> here) doesn't
+// form a cycle now that computeItemVCG lives in stabilityMath.ts.
+import type { CompositionCatalogItem } from './placementComposition'
+import { placementTotalVCG, placementTotalTCGOffset, placementTotalLCGOffset, placementTotalWeightKg } from './placementComposition'
 
 // ---- Vessel particulars (from the vessel's Stability Booklet) ----
 
@@ -250,6 +255,12 @@ function footprintCenter(p: {
 
 export function buildCargoWeightMoments(
   placements: {
+    // Needed only to resolve a composed placement's segments (segmentsOf's
+    // implicit-singleton fallback, which never actually runs when
+    // `composition` is set — see the composablePlacement helper below).
+    // Optional so every pre-Round-14 test fixture (plain {x,y,...} objects
+    // with no itemId) keeps compiling unchanged.
+    itemId?: string
     x: number
     y: number
     width: number
@@ -263,14 +274,37 @@ export function buildCargoWeightMoments(
     // Structurally matches (but doesn't import) packing.ts's PipeNestSpec —
     // only the one number this module actually needs.
     nest?: { vcgAboveDeckM: number }
+    // Round 14: present ONLY on a placement produced by a cross-item merge
+    // (see CompositionSegment's own doc comment in packing.ts). When set,
+    // this placement's VCG/TCG/LCG/weight are derived per-segment via
+    // placementComposition.ts instead of this placement's own flat
+    // height/weight/stabilityOverride, which for a composed placement are
+    // only a backward-compatible AVERAGE (see PlacedItem.composition).
+    composition?: CompositionSegment[]
   }[],
   deckWidth: number,
   deckLength: number,
   shipFrame: DeckShipFrame,
-  deckForwardIsPositiveY: boolean
+  deckForwardIsPositiveY: boolean,
+  // Catalog, needed ONLY to resolve a composed placement's per-segment
+  // weight/height/stabilityOverride — an uncomposed placement (the
+  // overwhelming common case today) never touches this. Defaults to `[]` so
+  // every existing caller/test that predates composition keeps compiling
+  // and behaving identically (no placement it passes has `.composition` set).
+  items: CompositionCatalogItem[] = []
 ): WeightMoment[] {
+  // `composition` is the only thing ever consulted for a composed
+  // placement's arithmetic (segmentsOf ignores itemId/layers whenever
+  // `composition` is set) — the `?? ''`/`?? 0` fallbacks below exist purely
+  // to satisfy ComposablePlacement's required fields and are never actually
+  // read in that branch.
+  const composable = (p: { itemId?: string; layers: number; composition?: CompositionSegment[] }) => ({
+    itemId: p.itemId ?? '',
+    layers: p.layers,
+    composition: p.composition,
+  })
   return placements
-    .filter((p) => (p.weight ?? 0) > 0)
+    .filter((p) => (p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0)) > 0)
     .map((p) => {
       const center = footprintCenter(p)
       const tcgAuto = shipFrame.originOffsetFromCenterlineM + (center.x - deckWidth / 2)
@@ -279,14 +313,21 @@ export function buildCargoWeightMoments(
       // there is no universal convention tying the two together.
       const alongDeckFromMid = center.y - deckLength / 2
       const lcgAuto = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
-      const vcgM = shipFrame.heightAboveBaselineM + computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM })
+      // Composed: per-segment weighted VCG/TCG/LCG-offset via
+      // placementComposition.ts (mathematically exact for ship-level moment
+      // summation — see placementTotalVCG's own doc comment, and the
+      // explicit user requirement to branch here rather than inject a fake
+      // stabilityOverride). Uncomposed: unchanged single computeItemVCG call.
+      const vcgM = shipFrame.heightAboveBaselineM + (p.composition
+        ? placementTotalVCG(composable(p), items)
+        : computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM }))
       // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
       // (position-derived) arm, not an absolute value — unlike
       // vcgAboveDeckM, TCG/LCG move every time the item is dragged, so an
       // absolute override would silently detach from the item on the next
       // move. An offset stays correct relative to wherever the item is now.
-      const tcgM = tcgAuto + (p.stabilityOverride?.tcgOffsetM ?? 0)
-      const lcgM = lcgAuto + (p.stabilityOverride?.lcgOffsetM ?? 0)
+      const tcgM = tcgAuto + (p.composition ? placementTotalTCGOffset(composable(p), items) : (p.stabilityOverride?.tcgOffsetM ?? 0))
+      const lcgM = lcgAuto + (p.composition ? placementTotalLCGOffset(composable(p), items) : (p.stabilityOverride?.lcgOffsetM ?? 0))
       // `weight` on a placement is the PER-UNIT weight and `layers` is how
       // many units share this one footprint (packing.ts writes
       // `weight: item.weight` alongside `layers: unitsInStack`). Every other
@@ -295,7 +336,8 @@ export function buildCargoWeightMoments(
       // not, so a multi-tier stack contributed a single unit's weight to
       // displacement, KG, list and trim: the load came out UNDERstated,
       // which makes the vessel look more stable than it is.
-      return { weightKg: (p.weight ?? 0) * Math.max(1, p.layers ?? 1), vcgM, tcgM, lcgM }
+      const weightKg = p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0) * Math.max(1, p.layers ?? 1)
+      return { weightKg, vcgM, tcgM, lcgM }
     })
 }
 
@@ -322,6 +364,7 @@ export function buildLoadingConditionFromPlacements(
   deck: { width: number; length: number },
   deckForwardIsPositiveY: boolean,
   placements: {
+    itemId?: string
     x: number
     y: number
     width: number
@@ -333,6 +376,7 @@ export function buildLoadingConditionFromPlacements(
     outline?: { x: number; y: number }[]
     stabilityOverride?: StabilityOverride
     nest?: { vcgAboveDeckM: number }
+    composition?: CompositionSegment[]
   }[],
   // The deck's own unit of display (`deck.unit` in the store) — deck
   // dimensions and every placement's x/y/width/length/height/outline are
@@ -343,7 +387,12 @@ export function buildLoadingConditionFromPlacements(
   // metres to feet/cm arms and silently corrupt GM/list/trim — see
   // toMeters below. Defaults to 'm' (a no-op) so every existing caller/test
   // that already passes real metres keeps working unchanged.
-  unit: Unit = 'm'
+  unit: Unit = 'm',
+  // Catalog — see buildCargoWeightMoments's own doc comment on this same
+  // param. `composition` itself is never unit-converted below: its segments
+  // reference itemIds and layer counts, not physical lengths/weights, so
+  // there is nothing in it for toMeters to touch.
+  items: CompositionCatalogItem[] = []
 ): LoadingCondition {
   const lightship: WeightMoment = {
     weightKg: vessel.particulars.lightshipWeightKg,
@@ -379,7 +428,7 @@ export function buildLoadingConditionFromPlacements(
           // nest.vcgAboveDeckM is computed by pipeNest.ts in real metres
           // throughout (independent of deck display unit) — left as-is.
         }))
-  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY)
+  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY, items)
   const variable = variableWeightsToMoments(vessel.variableWeights)
   return computeLoadingCondition(lightship, [...variable, ...cargo])
 }

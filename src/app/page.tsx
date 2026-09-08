@@ -2319,6 +2319,7 @@ export default function Home() {
                 vessel={deck.vessel}
                 shipFrame={deck.shipFrame}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY}
+                items={items}
               />
             </div>
             <div className="xl:col-span-4 self-start" data-tour="cargo-list">
