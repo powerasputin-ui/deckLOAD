@@ -1,9 +1,11 @@
 import jsPDF from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import type { PackingResult } from './packing'
+import { assessLashingRequirement, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
 import type { DeckConfig, Unit } from '@/store/calculator'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber } from './utils'
+import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
 
 // App palette (mirrors the colors already used on-screen: slate-900 ink,
 // sky-500 accent, slate-100/200 for card backgrounds/borders).
@@ -116,6 +118,57 @@ export interface LashingRequirementRow {
   // packing.ts. Rows are never built for 'dangerous-goods' cargo at all —
   // those are listed separately via dangerousGoodsNames below instead.
   methodology: 'metal-rd' | 'general'
+}
+
+// Round 19 (lashing per-segment). Extracted out of page.tsx's handleExportPdf
+// as its own pure, independently testable function — a composed placement
+// can span multiple distinct categories (e.g. ordinary cargo + dangerous
+// goods), so it expands into N rows (one per constituent segment), each
+// with its OWN category/weight/methodology/requiredCount — assessing the
+// whole placement as one row using only the nominal itemId's category
+// silently dropped every OTHER constituent's own methodology (or worse,
+// misrouted an ordinary constituent through a dangerous-goods verdict it
+// doesn't belong to, or vice versa, depending on which constituent happens
+// to be nominal). `attachedCount`, `wireLabel` and `justification` stay
+// SHARED/placement-level (C3 — lashing points attach to the physical stack,
+// not a specific constituent) — the same value repeated across that
+// placement's rows. Degenerates to exactly one row per placement, byte-for-
+// byte identical to the pre-Round-19 behavior, for every existing
+// (uncomposed) placement, since segmentLashingInputs's own one-segment
+// fallback kicks in.
+export function buildLashingRequirementRows(
+  placements: (ComposablePlacement & { id: string; name: string; lashingWireType?: WireRopeType; lashingJustification?: string })[],
+  items: LashingCatalogItem[],
+  lashingPoints: { placementId?: string }[]
+): { rows: LashingRequirementRow[]; dangerousGoodsNames: string[] } {
+  const dangerousGoodsNames: string[] = []
+  const rows = placements
+    .flatMap((p) => {
+      const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+      const segments = segmentLashingInputs(p, items)
+      const multiSegment = segments.length > 1
+      return segments.map((seg) => {
+        const assessment = assessLashingRequirement(seg.category, seg.weightKg, WIRE_ROPE_SPECS[wireType].breakingLoadKN)
+        const rowName = multiSegment ? `${p.name} — ${items.find((it) => it.id === seg.itemId)?.name ?? seg.itemId}` : p.name
+        if (assessment.status === 'not-applicable') {
+          dangerousGoodsNames.push(rowName)
+          return null
+        }
+        if (assessment.status !== 'calculated' || !assessment.requiredCount) return null
+        const row: LashingRequirementRow = {
+          name: rowName,
+          requiredCount: assessment.requiredCount,
+          attachedCount: lashingPoints.filter((pt) => pt.placementId === p.id).length,
+          wireLabel: WIRE_ROPE_SPECS[wireType].label,
+          justification: p.lashingJustification,
+          category: seg.category,
+          methodology: assessment.methodology,
+        }
+        return row
+      })
+    })
+    .filter((r): r is LashingRequirementRow => r !== null)
+  return { rows, dangerousGoodsNames }
 }
 
 interface ExportDeckPlanToPdfOptions {

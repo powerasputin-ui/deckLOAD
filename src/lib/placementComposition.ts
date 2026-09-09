@@ -305,3 +305,37 @@ export function placementRemoveItem(itemId: string, composition: CompositionSegm
   if (coalesced.length === 1) return { composition: null, remainingSingleton: coalesced[0], removedLayers }
   return { composition: null, remainingSingleton: null, removedLayers }
 }
+
+// The minimal catalog shape lashing needs — `category` (and `name`, for
+// segment labels in the UI/PDF) in addition to `weight`
+// (CompositionCatalogItem above has neither, since VCG/weight/height
+// arithmetic needs neither).
+export interface LashingCatalogItem {
+  id: string
+  name?: string
+  category?: string
+  weight?: number
+}
+
+// Round 19 (lashing per-segment). The single point every lashing consumer
+// (Sidebar.tsx, handleExportPdf) is meant to call into instead of resolving
+// `category`/`weight` from the placement's own nominal itemId — a composed
+// placement can span multiple distinct categories (e.g. ordinary cargo +
+// dangerous goods), and assessing it as ONE lashing requirement using only
+// the nominal itemId's category silently drops every OTHER constituent's
+// own methodology (or, worse, misroutes an ordinary constituent through a
+// dangerous-goods "not applicable" verdict it doesn't belong to, or vice
+// versa, depending on which constituent happens to be nominal).
+//
+// Degenerates to the exact today's single-input behavior for an uncomposed
+// placement (segmentsOf's implicit one-segment fallback), so every existing
+// (uncomposed) call site's assessment is unchanged.
+export function segmentLashingInputs(
+  p: ComposablePlacement,
+  items: LashingCatalogItem[]
+): { itemId: string; layers: number; category?: string; weightKg: number }[] {
+  return segmentsOf(p).map((seg) => {
+    const item = items.find((it) => it.id === seg.itemId)
+    return { itemId: seg.itemId, layers: seg.layers, category: item?.category, weightKg: seg.layers * (item?.weight ?? 0) }
+  })
+}

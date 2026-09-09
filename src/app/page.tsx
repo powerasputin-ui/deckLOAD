@@ -54,8 +54,6 @@ import {
   checkZoneLoads,
   computeZoneLoads,
   LASHING_DEVICES,
-  WIRE_ROPE_SPECS,
-  assessLashingRequirement,
   type ManualPlacement,
   type PinnedPlacement,
   type PackVariant,
@@ -80,7 +78,7 @@ import { Sidebar } from '@/components/calculator/Sidebar'
 import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
-import { exportDeckPlanToPdf } from '@/lib/exportPdf'
+import { exportDeckPlanToPdf, buildLashingRequirementRows } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity, mergedPlacementWeight } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
@@ -685,34 +683,11 @@ export default function Home() {
     // separately per trip.
     const allPlacements: (ManualPlacement | PinnedPlacement)[] =
       mode === 'manual' ? manualPlacements : Object.values(pinnedPlacementsByTrip).flat()
-    const dangerousGoodsNames: string[] = []
-    const lashingRequirements = allPlacements
-      .map((p) => {
-        const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
-        const category = items.find((it) => it.id === p.itemId)?.category
-        // `weight` is per-unit; the stack's real weight is what РД
-        // 31.11.21.23-96 п. 2.2.3 wants — same fix as Sidebar.tsx's copy.
-        const assessment = assessLashingRequirement(
-          category,
-          (p.weight ?? 0) * Math.max(1, p.layers ?? 1),
-          WIRE_ROPE_SPECS[wireType].breakingLoadKN
-        )
-        if (assessment.status === 'not-applicable') {
-          dangerousGoodsNames.push(p.name)
-          return null
-        }
-        if (assessment.status !== 'calculated' || !assessment.requiredCount) return null
-        return {
-          name: p.name,
-          requiredCount: assessment.requiredCount,
-          attachedCount: points.filter((pt) => pt.placementId === p.id).length,
-          wireLabel: WIRE_ROPE_SPECS[wireType].label,
-          justification: p.lashingJustification,
-          category,
-          methodology: assessment.methodology,
-        }
-      })
-      .filter((r): r is NonNullable<typeof r> => r !== null)
+    // Round 19: composition-aware, per-segment row expansion — see
+    // buildLashingRequirementRows's own doc comment (exportPdf.ts) for the
+    // full contract. Pulled out as its own pure function specifically so it
+    // can be unit-tested without jsPDF/canvas.
+    const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
     try {
       await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames })
       toast.success('PDF скачан')

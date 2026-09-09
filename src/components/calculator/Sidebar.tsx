@@ -66,6 +66,7 @@ import {
   type WireRopeType,
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
+import { segmentLashingInputs } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -838,18 +839,31 @@ function LashingPointsSection() {
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
     : 0
   const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
-  const selectedItem = items.find((i) => i.id === selectedPlacement?.itemId)
-  // assessLashingRequirement wraps requiredLashingCount with an honest
-  // status — see its own doc comment in packing.ts for why a bare number
-  // can't tell "0 required", "not enough data to say", and "this
-  // methodology doesn't apply to this cargo" apart.
-  const selectedAssessment = assessLashingRequirement(
-    selectedItem?.category,
-    // `weight` is per-unit; the calc wants the whole stack's weight
-    // (РД 31.11.21.23-96 п. 2.2.3 is a per-штабель figure) — multiply by
-    // `layers`, same fix as checkLashingBalance.
-    (selectedPlacement?.weight ?? 0) * Math.max(1, selectedPlacement?.layers ?? 1),
-    WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN
+  // Round 19: per-segment assessment — a composed placement can span
+  // multiple distinct categories (e.g. ordinary cargo + dangerous goods),
+  // so it's assessed as N independent verdicts (one per constituent
+  // segment) instead of one verdict using only the nominal itemId's own
+  // category. Degenerates to exactly one entry, numerically identical to
+  // the pre-Round-19 single assessLashingRequirement call, for every
+  // existing (uncomposed) placement — segmentLashingInputs's own doc
+  // comment covers why. assessLashingRequirement wraps requiredLashingCount
+  // with an honest status — see its own doc comment in packing.ts for why a
+  // bare number can't tell "0 required", "not enough data to say", and
+  // "this methodology doesn't apply to this cargo" apart.
+  const selectedAssessments = selectedPlacement
+    ? segmentLashingInputs(selectedPlacement, items).map((seg) => ({
+        ...seg,
+        assessment: assessLashingRequirement(seg.category, seg.weightKg, WIRE_ROPE_SPECS[selectedWireType].breakingLoadKN),
+      }))
+    : []
+  // `attachedCount` is a SHARED, placement-level physical count (C3 — lashing
+  // points attach to the real stack, not to an individual constituent), so
+  // it's compared against the most demanding segment's own requirement, not
+  // a sum across segments (physical points can simultaneously satisfy more
+  // than one segment's requirement) — see the migration plan's own I section.
+  const selectedRequiredCountTotal = selectedAssessments.reduce(
+    (max, seg) => (seg.assessment.status === 'calculated' ? Math.max(max, seg.assessment.requiredCount ?? 0) : max),
+    0
   )
 
   return (
@@ -945,41 +959,73 @@ function LashingPointsSection() {
           </div>
         )}
 
-        {selectedPlacement && selectedAssessment.status === 'not-applicable' && (
-          <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
-            <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>
-              <b>Категория «{selectedItem?.category}» — груз для IMDG Code.</b> Это два разных контура: классификация,
-              сегрегация и документация — по IMDG Code (вне этого приложения, согласуйте с грузоотправителем/капитаном
-              по опасным грузам); механическая прочность самого крепления — отдельная проверка, не подменяет IMDG.
-              РД 31.11.21.23-96 к этой категории не применим, числа не показываем. Дистанции от другого груза
-              задаются в разделе «Сепарация груза». Для проверки прочности крепления смотрите индикатор у
-              прикреплённых точек на схеме (силовой баланс по IMO CSS Code Annex 13 считается уже сейчас).
-            </span>
-          </div>
-        )}
+        {/* Round 19: one verdict block PER SEGMENT — a composed placement's
+            constituents can have different categories (e.g. ordinary cargo +
+            dangerous goods), so each gets its own independent verdict rather
+            than one verdict computed from only the nominal itemId's category.
+            A segment label is shown only when there's more than one segment
+            (uncomposed placements render byte-for-byte the same single block
+            as before Round 19). */}
+        {selectedPlacement && selectedAssessments.map((seg, idx) => {
+          const segLabel =
+            selectedAssessments.length > 1
+              ? `${items.find((it) => it.id === seg.itemId)?.name ?? seg.itemId} (${seg.layers} ед., ${Math.round(seg.weightKg)} кг): `
+              : null
+          if (seg.assessment.status === 'not-applicable') {
+            return (
+              <div
+                key={`${seg.itemId}-${idx}`}
+                className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5"
+              >
+                <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>
+                  {segLabel && <b>{segLabel}</b>}
+                  <b>Категория «{seg.category}» — груз для IMDG Code.</b> Это два разных контура: классификация,
+                  сегрегация и документация — по IMDG Code (вне этого приложения, согласуйте с грузоотправителем/капитаном
+                  по опасным грузам); механическая прочность самого крепления — отдельная проверка, не подменяет IMDG.
+                  РД 31.11.21.23-96 к этой категории не применим, числа не показываем. Дистанции от другого груза
+                  задаются в разделе «Сепарация груза». Для проверки прочности крепления смотрите индикатор у
+                  прикреплённых точек на схеме (силовой баланс по IMO CSS Code Annex 13 считается уже сейчас).
+                </span>
+              </div>
+            )
+          }
+          if (seg.assessment.status === 'insufficient-data') {
+            return (
+              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-[11px] text-muted-foreground">
+                {segLabel && <b>{segLabel}</b>}
+                Недостаточно данных для оценки: {seg.assessment.missingInputs?.join(', ')}.
+              </div>
+            )
+          }
+          if (seg.assessment.status === 'calculated') {
+            return (
+              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-[10px] font-medium text-muted-foreground">
+                {segLabel && <div className="mb-0.5">{segLabel}</div>}
+                {seg.assessment.methodology === 'metal-rd' && (
+                  <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {seg.assessment.requiredCount}</>
+                )}
+                {seg.assessment.methodology === 'general' && (
+                  <>
+                    Ориентировочное количество найтовов: {seg.assessment.requiredCount}
+                    <div className="font-normal text-muted-foreground/70 mt-0.5">
+                      Не является нормативным расчётом крепления.
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          }
+          return null
+        })}
 
-        {selectedPlacement && selectedAssessment.status === 'insufficient-data' && (
-          <div className="rounded-md border p-2 text-[11px] text-muted-foreground">
-            Недостаточно данных для оценки: {selectedAssessment.missingInputs?.join(', ')}.
-          </div>
-        )}
-
-        {selectedPlacement && selectedAssessment.status === 'calculated' && (
+        {/* Wire type / attached-point count / justification stay SHARED,
+            placement-level (C3 — lashing points attach to the physical
+            stack, not a specific constituent) — rendered once, gated on at
+            least one segment actually having a real requirement, and
+            compared against the max requirement across segments. */}
+        {selectedPlacement && selectedAssessments.some((s) => s.assessment.status === 'calculated') && (
           <div className="rounded-md border p-2 space-y-1.5">
-            <div className="text-[10px] font-medium text-muted-foreground">
-              {selectedAssessment.methodology === 'metal-rd' && (
-                <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {selectedAssessment.requiredCount}</>
-              )}
-              {selectedAssessment.methodology === 'general' && (
-                <>
-                  Ориентировочное количество найтовов: {selectedAssessment.requiredCount}
-                  <div className="font-normal text-muted-foreground/70 mt-0.5">
-                    Не является нормативным расчётом крепления.
-                  </div>
-                </>
-              )}
-            </div>
             <Select
               value={selectedWireType}
               onValueChange={(v) => updateSelectedPlacement({ lashingWireType: v as WireRopeType })}
@@ -994,7 +1040,7 @@ function LashingPointsSection() {
             <div className="text-[10px] text-muted-foreground">
               Прикреплено точек к этому грузу: {selectedPointsCount}
             </div>
-            {selectedPointsCount < (selectedAssessment.requiredCount ?? 0) && (
+            {selectedPointsCount < selectedRequiredCountTotal && (
               <div className="space-y-1">
                 <div className="text-[10px] text-destructive">
                   Меньше расчётного числа — укажите обоснование (идёт в PDF)

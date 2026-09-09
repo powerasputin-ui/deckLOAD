@@ -665,4 +665,74 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     expect(rafSpy).toHaveBeenCalledTimes(1)
   })
+
+  // Round 19 (lashing per-segment) — the Sidebar half of the mutation gate
+  // (the PDF half lives in exportPdf.test.ts, unit-testing
+  // buildLashingRequirementRows directly). A composed [A(metal)x2,B(general)x3]
+  // pin must render TWO independent verdict blocks, not one verdict computed
+  // from only the nominal itemId's category.
+  it('Sidebar lashing section renders one verdict block PER SEGMENT for a composed placement', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Труба', width: 2, length: 1, quantity: 5, category: 'Металлопродукция', weight: 500 })
+      useCalculator.getState().addItem({ name: 'Ящик', width: 2, length: 1, quantity: 5, category: 'Обычный груз', weight: 800 })
+    })
+    const metal = useCalculator.getState().items.find((it) => it.name === 'Труба')!
+    const general = useCalculator.getState().items.find((it) => it.name === 'Ящик')!
+    let pinId = ''
+    act(() => {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: metal.id, name: metal.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: metal.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: metal.id, layers: 2 }, { itemId: general.id, layers: 3 }],
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    fireEvent.click(screen.getByText('Крепление груза'))
+
+    // Both segment labels appear (2 ед./3 ед. — the segment's own layers,
+    // not the placement's combined 5).
+    expect(screen.getByText(/Труба \(2 ед\., \d+ кг\)/)).toBeTruthy()
+    expect(screen.getByText(/Ящик \(3 ед\., \d+ кг\)/)).toBeTruthy()
+    // The metal segment's own РД 31.11.21.23-96 verdict is present and NOT
+    // suppressed by the general-cargo segment sharing the same placement.
+    expect(screen.getByText(/РД 31.11.21.23-96/)).toBeTruthy()
+    expect(screen.getByText(/Ориентировочное количество найтовов/)).toBeTruthy()
+  })
+
+  it('Sidebar lashing section: a dangerous-goods segment is excluded per-segment without hiding the other segment\'s verdict, regardless of which one is nominal', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Реагент', width: 2, length: 1, quantity: 5, category: 'Опасный груз', weight: 300 })
+      useCalculator.getState().addItem({ name: 'Труба', width: 2, length: 1, quantity: 5, category: 'Металлопродукция', weight: 500 })
+    })
+    const dangerous = useCalculator.getState().items.find((it) => it.name === 'Реагент')!
+    const metal = useCalculator.getState().items.find((it) => it.name === 'Труба')!
+    let pinId = ''
+    act(() => {
+      // Dangerous goods is the NOMINAL itemId here — the old (pre-Round-19)
+      // code would have classified the WHOLE placement as dangerous goods,
+      // silently dropping the metal segment's own РД-31.11.21.23-96 verdict.
+      pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: dangerous.id, name: dangerous.name, x: 1, y: 1, width: 2, length: 1, layers: 3, rotated: false, color: dangerous.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: dangerous.id, layers: 1 }, { itemId: metal.id, layers: 2 }],
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    fireEvent.click(screen.getByText('Крепление груза'))
+
+    expect(screen.getAllByText(/IMDG Code/).length).toBeGreaterThan(0) // dangerous segment's own not-applicable notice
+    // "требуется найтовов" appears ONLY in the calculated-verdict block
+    // (unlike "РД 31.11.21.23-96", which the not-applicable explanation
+    // text also happens to mention) — a real, specific check that the metal
+    // segment's own verdict actually rendered, not just incidental text.
+    expect(screen.getByText(/требуется найтовов/)).toBeTruthy()
+  })
 })
