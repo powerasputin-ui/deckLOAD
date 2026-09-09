@@ -60,7 +60,7 @@ import {
   type PackingResult,
   type CompositionSegment,
 } from '@/lib/packing'
-import { placementLayersOfItem } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -1234,7 +1234,23 @@ export default function Home() {
   // still-auto-placed instance, which gets pinned so it can be merged) and
   // returns what handleMergePinned needs to absorb it.
   const findMergeSourcePinned = (itemId: string, excludeId: string): { id: string } | null => {
-    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId)
+    // Round 21 corrective pass: a composed placement's nominal `itemId` can
+    // coincidentally match `itemId` even though it also carries OTHER
+    // constituents — offering it here would feed it straight into
+    // handleMergePinned below, which is still the old composition-BLIND
+    // writer (blends `weight`/`layers` as flat fields and deletes the
+    // dragged placement outright). That would silently discard every
+    // non-nominal constituent's provenance/quantity, permanently. Excluding
+    // composed candidates here is the minimal fix: it never makes this
+    // function (or the merge writer) composition-AWARE, it just keeps a
+    // composed placement from ever being offered as a source through this
+    // "+" path. A freely-still-auto-placed instance (the second branch,
+    // below) can never be composed in the first place — composition only
+    // ever exists on an already-PINNED source (see PlacedItem.composition's
+    // own doc comment in packing.ts), and this scan explicitly excludes
+    // positions that match an existing pin — so no equivalent guard is
+    // needed there.
+    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId && !p.composition)
     if (otherPin) return { id: otherPin.id }
     const freeInstance = result.placed.find((p) => {
       if (p.itemId !== itemId) return false
@@ -1261,6 +1277,92 @@ export default function Home() {
   const handleLayerChangePinned = (id: string, delta: number) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
+
+    // Round 21: a composed placement's own `composition` array IS its
+    // physical stack — "+"/"-" push/pop one unit on top of it directly,
+    // instead of hunting for another placement to merge with (that's what
+    // drag-merge/handleMergePinned is for, untouched here per C2's scope).
+    // Still dormant in production: no real placement carries `composition`
+    // until the merge switch-on round (24) — reachable today only via
+    // hand-built composition literals in tests.
+    if (pin.composition) {
+      if (delta > 0) {
+        // The unit "+" adds is one more of the placement's own NOMINAL
+        // itemId (C2 contract) — its weight, not the composed placement's
+        // own averaged `weight` field, is what genuinely adds to deck load.
+        const nominalItem = items.find((it) => it.id === pin.itemId)
+        if (wouldExceedMaxDeckCargo(nominalItem?.weight ?? 0)) {
+          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+          return
+        }
+        // checkLayerChange's own physical/quantity caps are keyed to a
+        // single itemId's own layer count — pass the nominal itemId's
+        // OWN count within this placement (composition-aware since Round
+        // 15), not the placement's total layers across every constituent.
+        const ownLayers = placementLayersOfItem(pin, pin.itemId)
+        const check = checkLayerChange(pin.itemId, ownLayers, delta, id)
+        if (!check.ok) {
+          toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+          return
+        }
+        const composition = placementPush(pin.composition, pin.itemId, 1)
+        const layers = placementTotalLayers({ itemId: pin.itemId, layers: 0, composition })
+        // `weight` is stored PER-UNIT (existing convention) — divide the
+        // composition's total back down.
+        const weight = placementTotalWeightKg({ itemId: pin.itemId, layers, composition }, items) / Math.max(1, layers)
+        updatePinned(clampedTripIndex, id, { composition, layers, weight })
+        return
+      }
+      const popped = placementPop(pin.composition)
+      if (popped.remainingSingleton) {
+        // Only one constituent left -> un-compose back to an ordinary
+        // placement, identity transferring to the survivor (C2 contract).
+        const singleton = popped.remainingSingleton
+        const catalogItem = items.find((it) => it.id === singleton.itemId)
+        updatePinned(clampedTripIndex, id, {
+          composition: undefined,
+          itemId: singleton.itemId,
+          layers: singleton.layers,
+          weight: catalogItem?.weight,
+        })
+      } else if (popped.composition) {
+        const composition = popped.composition
+        const layers = placementTotalLayers({ itemId: pin.itemId, layers: 0, composition })
+        const weight = placementTotalWeightKg({ itemId: pin.itemId, layers, composition }, items) / Math.max(1, layers)
+        updatePinned(clampedTripIndex, id, { composition, layers, weight })
+      } else {
+        // Defensive only: a composed placement always has >=2 segments, so
+        // a single pop can never empty it. If it somehow does, fall back
+        // to the existing safe full-removal path instead of leaving a
+        // corrupt zero-layer placement on the deck.
+        handleRemovePinned(id)
+        return
+      }
+      // Stand the freed unit up as its own single-layer placement, same as
+      // the uncomposed "-" below — but sourced from the segment that was
+      // PHYSICALLY on top (popped.freedItemId), which may differ from the
+      // placement's own nominal `itemId`.
+      const freedItem = items.find((it) => it.id === popped.freedItemId)
+      if (freedItem) {
+        const spot = findFreeSpotForItem(freedItem)
+        if (spot) {
+          pinFromPlaced(clampedTripIndex, {
+            itemId: freedItem.id,
+            name: freedItem.name,
+            x: spot.x,
+            y: spot.y,
+            width: spot.rotated ? freedItem.length : freedItem.width,
+            length: spot.rotated ? freedItem.width : freedItem.length,
+            layers: 1,
+            rotated: spot.rotated,
+            color: freedItem.color,
+            weight: freedItem.weight,
+          })
+          useCalculator.setState({ selectedPinIds: [id] })
+        }
+      }
+      return
+    }
 
     if (delta > 0) {
       const source = findMergeSourcePinned(pin.itemId, id)
@@ -1362,14 +1464,84 @@ export default function Home() {
   // Manual-mode equivalent of findMergeSourcePinned — every placement here
   // is already a manual placement (no separate "still auto-placed" pool to
   // fall back to), so this just looks for another one of the same item.
+  // Round 21 corrective pass: same `!m.composition` guard as
+  // findMergeSourcePinned above, same reason — never offer a composed
+  // placement to the still composition-blind handleMergeManual.
   const findMergeSourceManual = (itemId: string, excludeId: string): { id: string } | null => {
-    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId)
+    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId && !m.composition)
     return other ? { id: other.id } : null
   }
 
   const handleLayerChangeManual = (id: string, delta: number) => {
     const mp = manualPlacements.find((m) => m.id === id)
     if (!mp) return
+
+    // Round 21: same composed push/pop wiring as handleLayerChangePinned
+    // above — see its comment for the full rationale. Manual-mode
+    // equivalent, using manualPlacements/updateManualPlacement/
+    // addManualPlacement instead of the pinned-trip equivalents.
+    if (mp.composition) {
+      if (delta > 0) {
+        const nominalItem = items.find((it) => it.id === mp.itemId)
+        if (wouldExceedMaxDeckCargo(nominalItem?.weight ?? 0)) {
+          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+          return
+        }
+        const ownLayers = placementLayersOfItem(mp, mp.itemId)
+        const check = checkLayerChange(mp.itemId, ownLayers, delta, id)
+        if (!check.ok) {
+          toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+          return
+        }
+        const composition = placementPush(mp.composition, mp.itemId, 1)
+        const layers = placementTotalLayers({ itemId: mp.itemId, layers: 0, composition })
+        const weight = placementTotalWeightKg({ itemId: mp.itemId, layers, composition }, items) / Math.max(1, layers)
+        updateManualPlacement(id, { composition, layers, weight })
+        return
+      }
+      const popped = placementPop(mp.composition)
+      if (popped.remainingSingleton) {
+        const singleton = popped.remainingSingleton
+        const catalogItem = items.find((it) => it.id === singleton.itemId)
+        updateManualPlacement(id, {
+          composition: undefined,
+          itemId: singleton.itemId,
+          layers: singleton.layers,
+          weight: catalogItem?.weight,
+        })
+      } else if (popped.composition) {
+        const composition = popped.composition
+        const layers = placementTotalLayers({ itemId: mp.itemId, layers: 0, composition })
+        const weight = placementTotalWeightKg({ itemId: mp.itemId, layers, composition }, items) / Math.max(1, layers)
+        updateManualPlacement(id, { composition, layers, weight })
+      } else {
+        // Defensive only, see handleLayerChangePinned's identical comment.
+        removeManualPlacement(id)
+        return
+      }
+      const freedItem = items.find((it) => it.id === popped.freedItemId)
+      if (freedItem) {
+        const spot = findFreeSpotForItem(freedItem)
+        if (spot) {
+          useCalculator.getState().addManualPlacement({
+            id: crypto.randomUUID(),
+            itemId: freedItem.id,
+            name: freedItem.name,
+            x: spot.x,
+            y: spot.y,
+            width: spot.rotated ? freedItem.length : freedItem.width,
+            length: spot.rotated ? freedItem.width : freedItem.length,
+            layers: 1,
+            rotated: spot.rotated,
+            color: freedItem.color,
+            weight: freedItem.weight,
+          })
+          useCalculator.setState({ selectedManualIds: [id] })
+        }
+      }
+      return
+    }
+
     const current = Math.max(1, mp.layers)
 
     // Same "+" logic as handleLayerChangePinned: grab an existing placement
