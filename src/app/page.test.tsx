@@ -544,6 +544,140 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().manualPlacements[0].itemId).toBe(item.id)
   })
 
+  // Round 20 (composition-only preservation). handleModeChange's AUTO->MANUAL
+  // branch sources from `result.placed` (PlacedItem[]) — PlacedItem already
+  // carries `composition` (Round 14, copy-through only), so this is a
+  // straight passthrough that was simply missing before this round.
+  it('handleModeChange (AUTO -> MANUAL) preserves composition on a composed pin', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      // quantity exactly matching what the composed pin's own composition
+      // consumes (2 of A, 3 of B) — otherwise AUTO auto-packs the remaining
+      // unplaced quantity of both items alongside the pin, polluting
+      // manualPlacements with unrelated extra placements after the switch.
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 2 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 3 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    fireEvent.click(screen.getByText('Ручной'))
+
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+    expect(useCalculator.getState().manualPlacements[0].composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+  })
+
+  // Round 20: handleModeChange's MANUAL->AUTO branch sources from raw stored
+  // ManualPlacements directly — same passthrough, different source.
+  it('handleModeChange (MANUAL -> AUTO) preserves composition on a composed manual placement', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1,
+        layers: 5, rotated: false, color: itemA.color,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+
+    const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    expect(pins).toHaveLength(1)
+    expect(pins[0].composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+  })
+
+  // Round 20: handleAutoRedistribute's frozenPinned freezes a LOCKED
+  // composed pin in place, and applyVariant's AUTO branch (auto-applied
+  // immediately after redistribute) must carry its composition through.
+  // Together these cover BOTH the frozenPinned passthrough AND applyVariant
+  // AUTO in one real end-to-end interaction.
+  it('handleAutoRedistribute + applyVariant (AUTO): a LOCKED composed pin survives redistribute with composition intact', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        locked: true,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+
+    // applyVariant assigns a brand-new id to every placed item (including
+    // the frozen one), so match by the frozen/locked position instead —
+    // freezing means it must not have moved.
+    const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    const survivor = pins.find((p) => Math.abs(p.x - 1) < 0.01 && Math.abs(p.y - 1) < 0.01)
+    expect(survivor?.composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+  })
+
+  // Round 20: same redistribute flow, but starting from MANUAL mode — covers
+  // frozenPinned's OTHER source (manualPlacements, not pinnedPlacements) and
+  // applyVariant's MANUAL branch. A manual placement has no `locked` field,
+  // so `clearanceMargin` is what freezes it for handleAutoRedistribute here.
+  it('handleAutoRedistribute + applyVariant (MANUAL): a clearance-zoned composed placement survives redistribute with composition intact', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1,
+        layers: 5, rotated: false, color: itemA.color,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        clearanceMargin: { top: 0, right: 0, bottom: 0, left: 0 },
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+
+    const survivor = useCalculator.getState().manualPlacements.find((p) => Math.abs(p.x - 1) < 0.01 && Math.abs(p.y - 1) < 0.01)
+    expect(survivor?.composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+  })
+
   // Regression: handleModeChange used to convert ONLY the currently-viewed
   // trip and then wipe pinnedPlacementsByTrip to {} entirely (AUTO->MANUAL)
   // or hard-code everything into trip 0 (MANUAL->AUTO), silently destroying

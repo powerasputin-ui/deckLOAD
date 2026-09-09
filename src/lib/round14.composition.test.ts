@@ -379,6 +379,15 @@ describe('Round 14 "no production writer" gate', () => {
       // writer: merge stays the only thing that can CREATE a composition
       // from scratch until the switch-on round.
       'src/store/calculator.ts',
+      // Round 20: composition-only preservation across mode/variant
+      // transformations (handleModeChange's AUTO<->MANUAL, handleAutoRedistribute's
+      // frozenPinned, applyVariant's MANUAL/AUTO branches) — every site is a
+      // straight `composition: p.composition` / `composition: m.composition`
+      // passthrough from an EXISTING placement (PlacedItem or a raw stored
+      // ManualPlacement/PinnedPlacement) into a freshly-reconstructed one of
+      // the same kind. Still not a merge writer: none of these five sites can
+      // ever populate composition where the source didn't already have it.
+      'src/app/page.tsx',
     ])
 
     for (const relPath of filesToScan) {

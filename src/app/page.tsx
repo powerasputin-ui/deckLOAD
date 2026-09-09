@@ -1584,6 +1584,17 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
+        // Round 20 — composition-only preservation. PlacedItem already
+        // carries `composition` (copied through verbatim by packDeck/
+        // packingResultFromManual, never synthesized — Round 14), so this
+        // is a straight passthrough, not a new source of truth. Dormant
+        // today (nothing writes composition until the merge switch-on
+        // round); scoped deliberately to composition ONLY — stabilityOverride/
+        // lashingWireType/lashingJustification/rotationLocked are NOT
+        // present on PlacedItem at all (a structural gap, not a missed
+        // copy here) and are tracked separately as a future placement-
+        // metadata-ownership decision, not fixed in this round.
+        composition: p.composition,
       }))
       // Lashing points only ever attach to a real placement id (pinned or
       // manual) — auto-mode's non-pinned, algorithm-placed slots never have
@@ -1621,6 +1632,10 @@ export default function Home() {
         color: m.color,
         weight: m.weight,
         clearanceMargin: m.clearanceMargin,
+        // Round 20 — composition-only preservation. `m` is a raw stored
+        // ManualPlacement here (not PlacedItem), which already carries
+        // `composition` at the type level — straight passthrough.
+        composition: m.composition,
       }))
       const matches = matchLashingCarryover(manualPlacements, newPinned)
       useCalculator.setState({
@@ -1700,6 +1715,13 @@ export default function Home() {
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
         locked: isLocked(p),
+        // Round 20 — composition-only preservation. `p` is a raw stored
+        // ManualPlacement/PinnedPlacement here — straight passthrough. This
+        // pin is fed into packDeckVariants as PackOptions.pinned, whose own
+        // pin-loop already copies `.composition` through into PlacedItem
+        // verbatim (Round 14) — but only if it's still present on the pin
+        // by the time it gets there, which it wasn't before this fix.
+        composition: p.composition,
       }))
     // Warn user if pinned placements (across all trips) will be cleared —
     // excluding the frozen ones above, which specifically will NOT be reset
@@ -1808,6 +1830,9 @@ export default function Home() {
         color: p.color,
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
+        // Round 20 — composition-only preservation, same reasoning as
+        // handleModeChange's AUTO->MANUAL branch above (source is PlacedItem).
+        composition: p.composition,
       }))
       const matches = matchLashingCarryover(s.manualPlacements, newManual)
       useCalculator.setState({
@@ -1834,6 +1859,9 @@ export default function Home() {
         weight: p.weight,
         clearanceMargin: p.clearanceMargin,
         locked: p.locked,
+        // Round 20 — composition-only preservation, same reasoning as
+        // handleModeChange's MANUAL->AUTO branch above (source is PlacedItem).
+        composition: p.composition,
       }))
       const matches = matchLashingCarryover(s.pinnedPlacementsByTrip[clampedTripIndex] ?? [], newPinned)
       useCalculator.setState({
