@@ -27,6 +27,14 @@ function clearDemoCargo() {
   })
 }
 
+// Text content of every SVG <text> node on the deck — scoped this way
+// because plain labels like a category name ("Обычный") or the lock badge
+// glyph ("🔒") also appear elsewhere on the page (datalist options, other
+// UI chrome), making a page-wide screen.getByText ambiguous.
+function svgTextContents(): string[] {
+  return Array.from(document.querySelectorAll('svg text')).map((el) => el.textContent ?? '')
+}
+
 function stubLocalStorage() {
   const storage: Record<string, string> = {}
   vi.stubGlobal('localStorage', {
@@ -892,6 +900,345 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === trip1PinId)?.layers).toBe(2)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0].some((p) => p.itemId === itemB.id)).toBe(false)
+  })
+
+  // Round 22 — DeckVisualization mixed-load / multi-category rendering.
+  // Before this round, a composed placement rendered indistinguishably
+  // from an ordinary placement of its nominal item: one solid nominal
+  // color, and a corner category label resolved only via
+  // `categoryByItemId.get(p.itemId)` (nominal itemId), silently hiding
+  // any non-nominal constituent's own category. `#475569` is the mixed-
+  // load marker's own unique fill (DeckVisualization.tsx) — not used
+  // anywhere else in the file, so it's a safe, specific selector.
+  it('DeckVisualization: uncomposed placement never renders the mixed-load marker (regression)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000', category: 'Обычный' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 3, rotated: false, color: itemA.color,
+      })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeNull()
+    // Existing rendering is untouched: base fill is still the item's own
+    // color, category label still shows the single real category. Scoped
+    // to `svg text` — "Обычный" also appears elsewhere on the page (e.g.
+    // the category datalist), so a page-wide text query would be ambiguous.
+    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+    expect(svgTextContents()).toContain('Обычный')
+  })
+
+  it('DeckVisualization: composed [A2,B3] with the SAME category shows the mixed-load marker but keeps the single category label (K#R22-same-category)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000', category: 'Обычный' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, color: '#0000ff', category: 'Обычный' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    // Both constituents share "Обычный" -> no "Смешанный груз" label, the
+    // single real category still shows (not replaced just because the
+    // placement happens to be composed).
+    const texts = svgTextContents()
+    expect(texts).toContain('Обычный')
+    expect(texts).not.toContain('Смешанный груз')
+    // Base nominal rendering (color) is untouched.
+    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+  })
+
+  it('DeckVisualization: composed [A2,B3] with DIFFERENT categories shows "Смешанный груз" instead of the nominal-only category (K#R22-mixed-category)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      // Quantities set to EXACTLY what the composition uses (2 and 3) —
+      // otherwise AUTO auto-places the leftover unplaced units of A
+      // elsewhere on the deck as their own genuine (uncomposed) A
+      // placement, which would legitimately show "Обычный" too and make
+      // the "no longer appears" assertion below a false failure.
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 2, color: '#ff0000', category: 'Обычный' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, color: '#0000ff', category: 'Опасный груз' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    const texts = svgTextContents()
+    expect(texts).toContain('Смешанный груз')
+    // The old nominal-only category text no longer appears BY ITSELF as
+    // the placement's label (it would have silently hidden B's category).
+    expect(texts).not.toContain('Обычный')
+  })
+
+  // Corrective pass (post-review): A has a real category, B has NONE set.
+  // Per the existing project-wide contract for an absent category
+  // (violatesSeparation/lashingMethodologyFor in packing.ts both treat "no
+  // category" as "doesn't participate", never as its own distinct
+  // category that can conflict with a real one), this must NOT show
+  // "Смешанный груз" — it shows A's real category alone, same as it
+  // always would for a single-category composition. This is a deliberate,
+  // contract-derived decision, not an oversight — see the `.filter(Boolean)`
+  // comment in DeckVisualization.tsx for the full reasoning.
+  it('DeckVisualization: composed [A2,B3] where B has NO category set does not show "Смешанный груз" — undefined is not a distinct category (K#R22-undefined-category)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 2, color: '#ff0000', category: 'Металл' })
+      // No `category` passed for B — matches CargoItem.category's optional
+      // contract (free text, absent = not set).
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, color: '#0000ff' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    expect(itemB.category).toBeUndefined()
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    // Still composed -> mixed-load marker present (that part is unrelated
+    // to category logic — driven purely by segment count).
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    const texts = svgTextContents()
+    expect(texts).toContain('Металл')
+    expect(texts).not.toContain('Смешанный груз')
+  })
+
+  // Corrective pass: [A2,A3] — two NON-ADJACENT segments of the SAME
+  // itemId (a real, reachable shape once merge/push start producing
+  // composition — see the migration plan's merge examples, e.g.
+  // composed(A2+B3) + single(A1) never coalescing across a B boundary).
+  // The mixed-load marker is driven purely by segment COUNT
+  // (segmentsOf(p).length > 1), not by distinct item identity — so it
+  // still shows here even though physically only ONE CargoItem is
+  // involved. This is the user-specified expected behavior: the marker
+  // signals "this placement's composition is segmented", not strictly
+  // "contains more than one distinct item type". Category and the ×N
+  // total-count badge are unaffected either way, since both are already
+  // itemId/count-based, not segment-count-based.
+  it('DeckVisualization: composed [A2,A3] (same itemId, non-adjacent segments) still shows the mixed-load marker, but category and ×N stay normal (K#R22-same-item-composed)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000', category: 'Металл' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemA.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    // Marker present (segment count > 1) despite only one real item type.
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    const texts = svgTextContents()
+    expect(texts).toContain('Металл')
+    expect(texts).not.toContain('Смешанный груз')
+    // ×N still reads the true total unit count (5), unaffected by how
+    // many composition segments make it up.
+    expect(texts).toContain('×5')
+  })
+
+  it('DeckVisualization: composed placement with different constituent COLORS still renders the nominal base fill unchanged, marker present (K#R22-colors)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, color: '#00ff00' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    // Base fill stays the nominal color — no product decision was made to
+    // split/change item.color itself, only to ADD the marker.
+    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+  })
+
+  // Geometry corrective pass — the un-clamped marker position
+  // (x + w - 30) placed the marker ENTIRELY outside the placement's own
+  // footprint at the mixed-load gate's own minimum width (w=16, marker
+  // span [x-20, x-8]). This forces a placement rendered right at/near
+  // that minimum width and checks the marker's actual DOM geometry stays
+  // attached to the box, rather than asserting presence alone (which the
+  // pre-fix code already satisfied — the marker was there, just floating
+  // off to the side).
+  //
+  // Deck sized to 500x300 (deck units) puts scale at
+  // min(836/500, 496/300) ≈ 1.653 px/unit; a 10x10 unit item then renders
+  // at ≈16.53 screen px — just above the w>=16 && h>=16 gate, the
+  // smallest production-reachable size at which the marker (or the
+  // existing ×N badge) renders at all.
+  it('DeckVisualization: mixed-load marker geometry stays attached to the placement at the gate\'s minimum width (K#R22-geometry-boundary)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 500, length: 300 } })
+      useCalculator.getState().addItem({ name: 'A', width: 10, length: 10, height: 1, quantity: 5, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'B', width: 10, length: 10, height: 1, quantity: 5, color: '#0000ff' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 10, y: 10, width: 10, length: 10, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    const box = document.querySelector('svg rect[fill="#ff0000"]')
+    const marker = document.querySelector('svg circle[fill="#475569"]')
+    expect(box).toBeTruthy()
+    expect(marker).toBeTruthy()
+    const boxX = Number(box!.getAttribute('x'))
+    const boxW = Number(box!.getAttribute('width'))
+    // Sanity check this test actually landed at the intended boundary size
+    // — if this fails, the deck/item dimensions above no longer produce a
+    // ~16-17px box and the test isn't exercising the gate's minimum.
+    expect(boxW).toBeGreaterThanOrEqual(16)
+    expect(boxW).toBeLessThan(20)
+    const mcx = Number(marker!.getAttribute('cx'))
+    const mr = Number(marker!.getAttribute('r'))
+    // The core assertion: the marker's circle must overlap the placement's
+    // own horizontal extent [boxX, boxX + boxW] — NOT be entirely to the
+    // left of it (which the pre-fix formula produced: mcx+mr = -8 at
+    // boxX=0, strictly less than boxX).
+    expect(mcx + mr).toBeGreaterThanOrEqual(boxX)
+    expect(mcx - mr).toBeLessThanOrEqual(boxX + boxW)
+  })
+
+  // Same scenario at a normal (non-boundary) width — proves the clamp is a
+  // no-op there and the marker renders at EXACTLY the original formula's
+  // position, i.e. adaptive positioning does not regress the existing
+  // appearance for the vast majority of real placements.
+  it('DeckVisualization: mixed-load marker keeps its original (unclamped) position at normal placement width (K#R22-geometry-normal-width)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, color: '#0000ff' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    const box = document.querySelector('svg rect[fill="#ff0000"]')
+    const marker = document.querySelector('svg circle[fill="#475569"]')
+    expect(box).toBeTruthy()
+    expect(marker).toBeTruthy()
+    const boxX = Number(box!.getAttribute('x'))
+    const boxW = Number(box!.getAttribute('width'))
+    // Confirms this is genuinely a "normal" (non-boundary) width, well
+    // clear of the gate's own minimum.
+    expect(boxW).toBeGreaterThan(40)
+    const mcx = Number(marker!.getAttribute('cx'))
+    // Exact original formula: x + w - 30 — the clamp must be a no-op here.
+    expect(mcx).toBeCloseTo(boxX + boxW - 30, 5)
+  })
+
+  it('DeckVisualization: mixed-load marker coexists with the locked badge without replacing it (interaction regression)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, color: '#0000ff' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+        locked: true,
+      })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    expect(svgTextContents()).toContain('🔒')
+  })
+
+  it('DeckVisualization: mixed-load marker coexists with selection highlight without changing the selection stroke (interaction regression)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, color: '#0000ff' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    let pinId = ''
+    act(() => {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
+    // Selection still drives the existing violet stroke — untouched by
+    // the marker addition (marker is a separate <g>, doesn't touch stroke
+    // props on the underlying shape).
+    expect(document.querySelector('svg [stroke="#7c3aed"]')).toBeTruthy()
   })
 
   it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {

@@ -45,6 +45,7 @@ import {
   restrictionZonePolygon,
   polygonArea,
 } from '@/lib/packing'
+import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
@@ -3095,7 +3096,50 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             : undefined
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
           const isSelected = isManualSelected || isPinnedSelected
-          const category = categoryByItemId?.get(p.itemId)
+          // Round 22: a composed placement's `composition` (see
+          // placementComposition.ts's segmentsOf — degenerates to a single
+          // nominal-itemId segment for an ordinary placement, so this is a
+          // no-op for every existing uncomposed placement) physically
+          // contains more than one constituent CargoItem. Neither of these
+          // was visible on the deck before this round — a composed
+          // placement rendered indistinguishably from an ordinary one of
+          // its nominal item, and the corner label showed only the
+          // nominal itemId's own category even when a non-nominal
+          // constituent had a completely different one (e.g. dangerous
+          // goods hidden inside an otherwise-ordinary-looking stack).
+          const segments = segmentsOf(p)
+          const isMixedLoad = segments.length > 1
+          // `.filter(Boolean)` here deliberately drops constituents with NO
+          // category set — this is not an oversight, it mirrors the
+          // existing project-wide contract for an absent `category`
+          // (CargoItem.category is optional free text): `violatesSeparation`
+          // (packing.ts) explicitly skips any candidate/placed item with no
+          // category (`if (!candidate.category) return false`, `if
+          // (!other.category) continue`), and `lashingMethodologyFor`
+          // (packing.ts) routes an undefined category into the same
+          // 'general' bucket as most other named categories. Nowhere else
+          // in this codebase does "no category" behave as its own distinct
+          // category that can conflict with a real one — so e.g.
+          // composition [A(category="Металл"), B(no category)] intentionally
+          // still shows "Металл" alone (the one REAL category among the
+          // constituents), not "Смешанный груз": B simply doesn't
+          // participate in category comparisons, same as it wouldn't
+          // trigger a separation-rule violation either. Only two or more
+          // DIFFERENT real categories counts as mixed.
+          const constituentCategories = new Set(
+            segments.map((seg) => categoryByItemId?.get(seg.itemId)).filter((c): c is string => !!c)
+          )
+          // More than one DISTINCT category among the constituents -> show
+          // a compact "mixed" label instead of just the nominal item's own
+          // category, which would silently hide the others. Deliberately
+          // NOT a joined list of every category (e.g. "Обычный, Опасный
+          // груз, ...") — on a small SVG label that reads as either
+          // overflow-clipped noise or, worse, an authoritative-looking but
+          // truncated safety label; a short constant string stays legible
+          // at any placement size and never implies a longer list than it
+          // shows.
+          const category =
+            constituentCategories.size > 1 ? 'Смешанный груз' : categoryByItemId?.get(p.itemId)
           const overlappingOverloadedZones =
             overloadedZonesById.size > 0
               ? zoneIdsOverlapping({ x: p.x, y: p.y, width: p.width, length: p.length }, loadZones)
@@ -3143,6 +3187,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               manualMode={mode === 'manual'}
               locked={!!matchingPin?.locked}
               category={category}
+              mixedLoad={isMixedLoad}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
               contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
@@ -4048,6 +4093,7 @@ function PlacedRect({
   locked,
   selected,
   category,
+  mixedLoad,
   overLoad,
   overLoadTitle,
   contentsTitle,
@@ -4090,6 +4136,13 @@ function PlacedRect({
   // selection completely differently").
   selected?: boolean
   category?: string
+  // Round 22: true when this placement's `composition` has more than one
+  // constituent segment (see segmentsOf) — drives a small "mixed load"
+  // marker (below) distinct from the existing ×N stacked-count badge,
+  // which only ever communicated total unit count, never that those units
+  // physically belong to more than one CargoItem. Never true for an
+  // ordinary (uncomposed) placement.
+  mixedLoad?: boolean
   overLoad?: boolean
   overLoadTitle?: string
   contentsTitle?: string
@@ -4262,6 +4315,46 @@ function PlacedRect({
           </text>
         </g>
       )}
+      {/* Mixed-load marker (Round 22) — a composed placement's ×N badge
+          above shows the true TOTAL unit count, but says nothing about
+          those units belonging to more than one physical CargoItem. This
+          small split-circle glyph sits just left of that badge at normal
+          sizes, using the same plain-SVG-primitive style as every other
+          marker in this file (no icon font/library, see PowerSocketGlyph's
+          own doc comment) and neutral slate tones that don't imply any
+          particular constituent's real color.
+          Geometry corrective pass: the un-clamped "x + w - 30" position
+          this started with placed the marker entirely outside the
+          placement's own footprint at the gate's own minimum width (w=16
+          -> marker spans [x-20, x-8], fully left of the box). Clamping mcx
+          to stay within [x + mr, x + w - mr] keeps the marker's circle
+          anchored inside the placement at any gated width. At/below ~w=36
+          this necessarily means overlapping the ×N badge (that badge is
+          20px wide by itself, already wider than the 16px minimum gate —
+          there is no position that avoids ALL overlap in a box that small,
+          the ×N badge itself already overflows the box's own left edge at
+          w=16). Overlapping a sibling badge at an extreme small size is
+          the deliberately accepted tradeoff — floating the marker in empty
+          space with no visible relationship to any placement, which is
+          what the un-clamped formula did, is strictly worse. At normal
+          widths (the vast majority of real placements) the clamp is a
+          no-op and this renders identically to before. */}
+      {mixedLoad && w >= 16 && h >= 16 && (() => {
+        const mr = 6
+        const desiredMcx = x + w - 30
+        const mcx = Math.min(Math.max(desiredMcx, x + mr), x + w - mr)
+        const mcy = y + 9
+        return (
+          <g className="pointer-events-none">
+            <title>Смешанный груз: несколько видов физически в одном месте</title>
+            <circle cx={mcx} cy={mcy} r={mr} fill="#475569" stroke="#fff" strokeWidth={1} />
+            <path
+              d={`M ${mcx} ${mcy - mr} A ${mr} ${mr} 0 0 1 ${mcx} ${mcy + mr} L ${mcx} ${mcy - mr} Z`}
+              fill="#cbd5e1"
+            />
+          </g>
+        )
+      })()}
       {item.rotated && item.stackedCount <= 1 && w >= 16 && h >= 16 && (
         <text x={x + w - 6} y={y + 12} fontSize={10} textAnchor="end" fill="rgba(255,255,255,0.9)" className="select-none pointer-events-none">
           ↻
