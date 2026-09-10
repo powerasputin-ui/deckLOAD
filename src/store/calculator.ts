@@ -1147,8 +1147,13 @@ export const useCalculator = create<CalculatorState>()(
       // segments are already layers>0-invariant by construction — only the
       // uncomposed fallback ever needs it) so this stays byte-identical for
       // every existing (uncomposed) placement, corrupted layers included.
-      const layersOfIdIn = (p: { itemId: string; layers: number; composition?: CompositionSegment[] }) =>
-        p.composition ? placementLayersOfItem(p, id) : p.itemId === id ? Math.max(1, p.layers ?? 1) : 0
+      //
+      // Round 29 corrective pass: a Tier-2 malformed placement (`malformed`
+      // set, no valid `composition` to trust) must not phantom-count toward
+      // this decrease-warning either — same exclusion as page.tsx's
+      // checkLayerChange/onPlace gates.
+      const layersOfIdIn = (p: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+        p.malformed && !p.composition ? 0 : p.composition ? placementLayersOfItem(p, id) : p.itemId === id ? Math.max(1, p.layers ?? 1) : 0
       if (sanitizedPatch.quantity !== undefined && sanitizedPatch.quantity < prevItem.quantity) {
         const placedCount =
           s.manualPlacements.reduce((sum, m) => sum + layersOfIdIn(m), 0) +

@@ -617,13 +617,58 @@ function detectLegacyUnknownComposition(itemId: string, weight: number | undefin
   return weight !== item.weight
 }
 
+// R29 (malformed-placement hydration contract). Computes the `malformed`
+// marker shared by normalizePinnedList/normalizeManualPlacements — kept as
+// one function so manual and pinned can never silently diverge on this
+// (see the R29 report's explicit "no different semantics for manual vs
+// pinned without a reason" rule).
+//
+// `rawComposition !== undefined` (not `Array.isArray`) is the test for
+// "composition was attempted" — this must catch every shape of attempt
+// (wrong type, null, too-short array), not just a well-formed-but-invalid
+// array, since ANY explicit `composition` key in the source JSON was
+// clearly meant to represent a physical multi-item load and must never be
+// silently treated as "this placement was always plain" just because its
+// value happened to be malformed in a different way than "bad segment".
+//
+// STICKY across repeated hydration, via `existingMalformed` (the raw,
+// pre-normalization `malformed` field already on the incoming placement, if
+// any): `JSON.stringify` DROPS an `undefined`-valued key entirely (the
+// rejected composition's `composition: undefined` field vanishes from the
+// persisted JSON), so a SECOND hydration pass sees `rawComposition ===
+// undefined` (the key is simply gone) and could no longer re-derive
+// `invalidComposition` from scratch — a real round-trip regression this
+// module's own R29 test caught. Once true, `unresolvedItem`/
+// `invalidComposition` must stay true on every future normalize pass
+// regardless of what the current raw input alone would compute, and
+// `rawComposition` must keep whatever value was captured the first time a
+// fresh one isn't available this pass.
+function computeMalformed(
+  itemId: string,
+  rawComposition: unknown,
+  composition: CompositionSegment[] | undefined,
+  items: CargoItem[],
+  existingMalformed: unknown
+): PinnedPlacement['malformed'] {
+  const prior = existingMalformed && typeof existingMalformed === 'object' ? (existingMalformed as Record<string, unknown>) : undefined
+  const unresolvedItem = itemId === '' || !items.some((it) => it.id === itemId) || prior?.unresolvedItem === true
+  const invalidComposition = (rawComposition !== undefined && !composition) || prior?.invalidComposition === true
+  if (!unresolvedItem && !invalidComposition) return undefined
+  return {
+    unresolvedItem: unresolvedItem ? true : undefined,
+    invalidComposition: invalidComposition ? true : undefined,
+    rawComposition: invalidComposition ? (rawComposition ?? prior?.rawComposition) : undefined,
+  }
+}
+
 function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacement[] {
   if (!Array.isArray(value)) return []
   return value.map((pp) => {
     const pin = pp as Record<string, unknown>
     const itemId = typeof pin.itemId === 'string' ? pin.itemId : ''
     const weight = normalizeOptionalWeight(pin.weight)
-    const composition = normalizeComposition(pin.composition, items)
+    const rawComposition = pin.composition
+    const composition = normalizeComposition(rawComposition, items)
     return {
       ...(pin as object),
       id: typeof pin.id === 'string' && pin.id ? pin.id : uuid(),
@@ -643,7 +688,8 @@ function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacemen
       lashingJustification: typeof pin.lashingJustification === 'string' ? pin.lashingJustification : undefined,
       rotationLocked: typeof pin.rotationLocked === 'boolean' ? pin.rotationLocked : undefined,
       composition,
-      legacyUnknownComposition: !composition && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      legacyUnknownComposition: rawComposition === undefined && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      malformed: computeMalformed(itemId, rawComposition, composition, items, pin.malformed),
     } as PinnedPlacement
   })
 }
@@ -662,7 +708,8 @@ function normalizeManualPlacements(value: unknown, items: CargoItem[]): ManualPl
     const m = mm as Record<string, unknown>
     const itemId = typeof m.itemId === 'string' ? m.itemId : ''
     const weight = normalizeOptionalWeight(m.weight)
-    const composition = normalizeComposition(m.composition, items)
+    const rawComposition = m.composition
+    const composition = normalizeComposition(rawComposition, items)
     return {
       ...(m as object),
       id: typeof m.id === 'string' && m.id ? m.id : uuid(),
@@ -682,7 +729,8 @@ function normalizeManualPlacements(value: unknown, items: CargoItem[]): ManualPl
       lashingJustification: typeof m.lashingJustification === 'string' ? m.lashingJustification : undefined,
       rotationLocked: typeof m.rotationLocked === 'boolean' ? m.rotationLocked : undefined,
       composition,
-      legacyUnknownComposition: !composition && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      legacyUnknownComposition: rawComposition === undefined && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      malformed: computeMalformed(itemId, rawComposition, composition, items, m.malformed),
     } as ManualPlacement
   })
 }

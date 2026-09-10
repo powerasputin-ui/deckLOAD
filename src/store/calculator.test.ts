@@ -1244,6 +1244,31 @@ describe('calculator store', () => {
     warnSpyA.mockRestore()
   })
 
+  // R29 corrective pass: a Tier-2 malformed placement (no valid composition
+  // to trust) is excluded from packing/capacity, but the decrease-warning
+  // scan reads the raw store arrays directly — before this fix it still
+  // phantom-counted the malformed placement's raw, untrustworthy `layers`
+  // toward "already placed" (since its own itemId is very often a
+  // genuinely valid one), producing a false "quantity already exceeds"
+  // warning for cargo that isn't visible anywhere on the deck.
+  it('quantity decrease-warning does NOT phantom-count a Tier-2 malformed placement\'s raw layers', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 10 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    // Malformed: invalidComposition, itemId happens to be the real 'A'.
+    // Raw layers=6, but physically nothing is placed (excluded from packing).
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'Ghost', x: 0, y: 0, width: 1, length: 1,
+      layers: 6, rotated: false, color: '#000',
+      malformed: { invalidComposition: true, rawComposition: [{ itemId: itemA.id, layers: 6 }, { itemId: 'garbage', layers: 1 }] },
+    })
+
+    const warnSpy = vi.spyOn(toast, 'warning')
+    s.updateItem(itemA.id, { quantity: 3 }) // well below the phantom 6, but nothing real is placed
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
   // Regression: updateItem's weight propagation to existing placements
   // (below) used to be completely unguarded — raising an item's weight
   // after it was already placed could push the deck's total weight past

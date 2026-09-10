@@ -8,6 +8,7 @@ function emptyResult(): PackingResult {
   return {
     placed: [],
     unplaced: [],
+    quarantined: [],
     breakdown: [],
     requestedCount: 0,
     placedCount: 0,

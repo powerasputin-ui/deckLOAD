@@ -546,6 +546,220 @@ describe('projects store', () => {
     })
   })
 
+  // Round 29 (malformed-placement contract — see the R28/R29 cross-path
+  // state-integrity audit). Two-tier contract: a placement with no valid
+  // `composition` to fall back on gets `malformed.unresolvedItem`/
+  // `invalidComposition` set (never dropped, never silently reinterpreted
+  // as an ordinary single-item placement); a placement whose `composition`
+  // IS valid stays unflagged for physical purposes even if its own nominal
+  // `itemId` doesn't resolve, since composition alone is already the sole
+  // source of physical truth once present.
+  describe('malformed placement contract on hydrate', () => {
+    it('flags an unknown top-level itemId with no composition (bare orphan reference)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'OrphanRef',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [{ id: 'm1', itemId: 'item-DELETED', name: 'Ghost', x: 1, y: 1, width: 1, length: 1, layers: 2, rotated: false, color: '#000', weight: 500 }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const p = useProjects.getState().projects[0].manualPlacements[0]
+      expect(p.malformed?.unresolvedItem).toBe(true)
+      expect(p.malformed?.invalidComposition).toBeUndefined()
+      // Original data preserved verbatim — not blanked, not dropped.
+      expect(p.itemId).toBe('item-DELETED')
+      expect(p.layers).toBe(2)
+      expect(p.weight).toBe(500)
+    })
+
+    it('flags an empty/missing itemId the same way as a genuinely unknown one (same class)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'EmptyRef',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [
+            { id: 'm1', name: 'NoItemIdField', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000' }, // itemId field entirely missing
+            { id: 'm2', itemId: '', name: 'EmptyString', x: 3, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000' },
+          ],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const placements = useProjects.getState().projects[0].manualPlacements
+      expect(placements[0].malformed?.unresolvedItem).toBe(true)
+      expect(placements[1].malformed?.unresolvedItem).toBe(true)
+    })
+
+    it('flags invalidComposition (distinct from unresolvedItem) when composition was present but rejected, and preserves the raw rejected value', () => {
+      const badComposition = [{ itemId: 'A', layers: 2 }, { itemId: 'ghost-item', layers: 3 }]
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'BadComposition',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 500 }],
+          manualPlacements: [{ id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 100, composition: badComposition }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const p = useProjects.getState().projects[0].manualPlacements[0]
+      expect(p.composition).toBeUndefined() // still rejected, same as before R29
+      expect(p.malformed?.invalidComposition).toBe(true)
+      expect(p.malformed?.unresolvedItem).toBeUndefined() // itemId 'A' is valid
+      expect(p.malformed?.rawComposition).toEqual(badComposition)
+      // The old detector must NOT be the mechanism catching this anymore —
+      // legacyUnknownComposition still only fires on its own original,
+      // narrower case (no composition field present at all).
+      expect(p.legacyUnknownComposition).toBeUndefined()
+    })
+
+    // R28.2-2's exact reproduction: legacyUnknownComposition's weight-mismatch
+    // heuristic provably misses this case (raw weight happens to equal the
+    // survivor's catalog weight) — proving malformed.invalidComposition is a
+    // genuinely NEW, non-heuristic signal, not a rename of the old one.
+    it('flags invalidComposition even when legacyUnknownComposition\'s weight heuristic would miss it entirely', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'FalseNegativeCase',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [{
+            id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 6, rotated: false, color: '#0ea5e9',
+            weight: 100, // matches A's catalog weight exactly -> legacy heuristic would NOT fire
+            composition: [{ itemId: 'A', layers: 2 }, { itemId: 'A', layers: 3 }, { itemId: 'garbage', layers: 1 }],
+          }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const p = useProjects.getState().projects[0].manualPlacements[0]
+      expect(p.legacyUnknownComposition).toBeUndefined() // confirmed miss, as predicted
+      expect(p.malformed?.invalidComposition).toBe(true) // but the new signal catches it
+    })
+
+    it('does NOT flag unresolvedItem for a composed placement as invalidComposition, and leaves it fully composed (Tier 1 — composition-safe)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'UnresolvedNominalValidComposition',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [
+            { id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 },
+            { id: 'B', name: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 200 },
+          ],
+          manualPlacements: [{
+            id: 'm1', itemId: 'deleted-nominal', name: 'P', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 160,
+            composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+          }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const p = useProjects.getState().projects[0].manualPlacements[0]
+      expect(p.composition).toEqual([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }]) // preserved, valid
+      expect(p.malformed?.unresolvedItem).toBe(true) // still flagged for diagnosis
+      expect(p.malformed?.invalidComposition).toBeUndefined()
+    })
+
+    it('flags BOTH unresolvedItem and invalidComposition when a placement has neither a resolvable itemId nor a valid composition', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'BothBroken',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [{
+            id: 'm1', itemId: 'deleted-item', name: 'P', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: '#0ea5e9', weight: 100,
+            composition: [{ itemId: 'A', layers: 2 }, { itemId: 'ghost', layers: 3 }],
+          }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const p = useProjects.getState().projects[0].manualPlacements[0]
+      expect(p.malformed?.unresolvedItem).toBe(true)
+      expect(p.malformed?.invalidComposition).toBe(true)
+    })
+
+    it('does NOT flag anything for an ordinary valid placement (no false positives)', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'Ordinary',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [{ id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 2, rotated: false, color: '#0ea5e9', weight: 100 }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      expect(useProjects.getState().projects[0].manualPlacements[0].malformed).toBeUndefined()
+    })
+
+    it('applies the identical contract to PINNED placements, not just manual', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'PinnedOrphan',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          pinnedPlacementsByTrip: {
+            0: [{ id: 'p1', itemId: 'item-DELETED', name: 'Ghost', x: 1, y: 1, width: 1, length: 1, layers: 2, rotated: false, color: '#000', weight: 500 }],
+          },
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const pin = useProjects.getState().projects[0].pinnedPlacementsByTrip[0][0]
+      expect(pin.malformed?.unresolvedItem).toBe(true)
+      expect(pin.itemId).toBe('item-DELETED') // preserved
+    })
+
+    // Persistence round-trip (R28.3's own finding: no progressive
+    // degradation across repeated hydration) — re-serialize the ALREADY-
+    // normalized state and hydrate a second time; the malformed marker and
+    // underlying raw data must survive unchanged, not compound or drift.
+    it('round-trip: normalize -> serialize -> normalize again preserves the malformed marker and raw data unchanged', () => {
+      storage['deckload-projects'] = JSON.stringify({
+        projects: [{
+          id: 'p1',
+          name: 'RoundTrip',
+          deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 5 },
+          items: [{ id: 'A', name: 'A', width: 1, length: 1, height: 1, quantity: 5, weight: 100 }],
+          manualPlacements: [{
+            id: 'm1', itemId: 'A', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 6, rotated: false, color: '#0ea5e9', weight: 100,
+            composition: [{ itemId: 'A', layers: 2 }, { itemId: 'A', layers: 3 }, { itemId: 'garbage', layers: 1 }],
+          }],
+        }],
+        activeId: 'p1',
+      })
+      useProjects.getState().hydrate()
+      const first = useProjects.getState().projects[0].manualPlacements[0]
+
+      // Simulate a real save+reload: serialize the ALREADY-normalized store
+      // state (exactly what saveToStorage does) and hydrate a second time.
+      storage['deckload-projects'] = JSON.stringify({ projects: useProjects.getState().projects, activeId: 'p1' })
+      useProjects.setState({ hydrated: false })
+      useProjects.getState().hydrate()
+      const second = useProjects.getState().projects[0].manualPlacements[0]
+
+      expect(second.malformed?.invalidComposition).toBe(first.malformed?.invalidComposition)
+      expect(second.malformed?.rawComposition).toEqual(first.malformed?.rawComposition)
+      expect(second.itemId).toBe(first.itemId)
+      expect(second.layers).toBe(first.layers)
+      expect(second.weight).toBe(first.weight)
+      expect(second.composition).toBe(first.composition) // both undefined
+    })
+  })
+
   // A free note is deliberately placeable OUTSIDE the deck rectangle (see
   // DeckVisualization.tsx's handleAnnotationClick) — negative x/y is real
   // data, not corruption, unlike every other deck-local coordinate in this

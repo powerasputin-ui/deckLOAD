@@ -788,6 +788,47 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalled()
   })
 
+  // R29 corrective pass: a Tier-2 malformed placement (no valid composition
+  // to trust) is excluded from packing/capacity, but checkLayerChange's own
+  // quantity scan reads the raw store arrays directly — before this fix it
+  // still phantom-counted the malformed placement's raw, untrustworthy
+  // `layers` toward A's "already placed" sum (its own itemId is genuinely
+  // 'A'), wrongly blocking a real, legitimate "+" click on a separate,
+  // ordinary placement of the same item. Manual mode (not pinned/AUTO) so
+  // there's no auto-fill of A's own remaining quantity to confound the
+  // merge-source lookup — this isolates checkLayerChange's own fix.
+  it('handleLayerChangeManual("+") is not blocked by a co-existing Tier-2 malformed placement of the same item', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 8 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      // Target: 2 real layers. Malformed sibling: raw layers=6, itemId
+      // genuinely 'A', excluded from packing/merge-source lookup (see the
+      // R29 findMergeSourceManual guard fix) but NOT from this old bug's
+      // phantom quantity count. 2 (real) + 6 (phantom, if wrongly counted)
+      // + 1 (new) = 9 > 8 (blocked, bug). 2 (real) + 1 (new) = 3 <= 8 (fixed).
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'ghost', itemId: itemA.id, name: 'Ghost', x: 5, y: 5, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color,
+        malformed: { invalidComposition: true, rawComposition: [{ itemId: itemA.id, layers: 6 }, { itemId: 'garbage', layers: 1 }] },
+      })
+      useCalculator.setState({ selectedManualIds: ['target'] })
+    })
+
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+
+    const target = useCalculator.getState().manualPlacements.find((m) => m.id === 'target')!
+    expect(target.layers).toBe(3) // succeeded
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
+  })
+
   // K#7e: "+" on a composed placement must gate capacity on the weight of
   // ONE unit of the NOMINAL constituent being added — not `pin.weight`
   // (deliberately seeded with a wrong/stale value below), not the
@@ -961,6 +1002,42 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(texts).not.toContain('Смешанный груз')
     // Base nominal rendering (color) is untouched.
     expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+  })
+
+  // R29 corrective pass: category for a composed placement must be
+  // determined ONLY from `constituentCategories` (composition-derived),
+  // never falling back to `categoryByItemId?.get(p.itemId)` — a Tier-1
+  // placement's nominal itemId isn't guaranteed to resolve, and the old
+  // fallback would silently show NO category label even though the real
+  // constituents share one.
+  it('Tier-1: category still shows the single shared constituent category even with a broken nominal itemId', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      // quantity EXACTLY matches what the composition below consumes (2, 3)
+      // so nothing is left for the AUTO packer to auto-fill elsewhere —
+      // an auto-filled leftover of the same category would render its OWN
+      // correct label and mask a broken fix in THIS placement's own
+      // category computation.
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 2, color: '#ff0000', category: 'Опасный груз' })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, color: '#0000ff', category: 'Опасный груз' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'P', x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        itemId: 'deleted-item', // broken nominal — old code's fallback would find nothing here
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    const texts = svgTextContents()
+    expect(texts).toContain('Опасный груз') // NOT blank/missing despite the broken nominal id
+    expect(texts).not.toContain('Смешанный груз')
   })
 
   it('DeckVisualization: composed [A2,B3] with DIFFERENT categories shows "Смешанный груз" instead of the nominal-only category (K#R22-mixed-category)', () => {
@@ -1431,6 +1508,38 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
   })
 
+  // R29 corrective pass: onPlace's own quantity gate (the third of three
+  // identical `layersOfIdIn` scanners) must not phantom-count a Tier-2
+  // malformed placement's raw layers either — same fix, same reason as
+  // checkLayerChange/updateItem above.
+  it('onPlace quantity gate (MANUAL) is not blocked by a co-existing Tier-2 malformed placement of the same item', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 6, weight: 100 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      // Malformed sibling: raw layers=6, itemId genuinely 'A', excluded
+      // from packing/capacity. Nothing genuinely placed. If wrongly
+      // phantom-counted, 6 (phantom) + 1 (new) = 7 > 6 (quantity) -> blocked.
+      // Correctly excluded: 0 (real) + 1 (new) = 1 <= 6 -> allowed.
+      useCalculator.getState().addManualPlacement({
+        id: 'ghost', itemId: itemA.id, name: 'Ghost', x: 5, y: 5, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color,
+        malformed: { invalidComposition: true, rawComposition: [{ itemId: itemA.id, layers: 6 }, { itemId: 'garbage', layers: 1 }] },
+      })
+      useCalculator.getState().setActiveStamp(itemA.id)
+    })
+    const before = useCalculator.getState().manualPlacements.length
+    withIdentitySvgTransform(() => {
+      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+    })
+    expect(useCalculator.getState().manualPlacements.length).toBe(before + 1)
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
+  })
+
   it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {
     render(<Home />)
     // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants
@@ -1511,6 +1620,104 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
     const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
     expect(pin.rotated).toBe(false)
+  })
+
+  // R29 corrective pass: `rotationLocked` alone is NOT proven authoritative
+  // for every composed placement (only for ones created through the live
+  // merge/+/- pipeline) — a hydrated/imported composed placement can carry
+  // a stale/absent `rotationLocked` even though a real constituent
+  // disallows rotation. Rotation permission for a composed placement must
+  // be checked LIVE from composition + the current catalog.
+  it('Tier-1: rotation is blocked for a composed placement via LIVE composition + catalog, even with a broken nominal itemId and rotationLocked unset', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5, allowRotation: true })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5, allowRotation: false })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'P', x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      // Simulates a hydrated/imported composed placement: valid
+      // composition (B disallows rotation), broken nominal itemId,
+      // rotationLocked deliberately left unset — the exact gap normalizeProject's
+      // hydration doesn't currently re-derive.
+      useCalculator.getState().updatePinned(0, pinId, {
+        itemId: 'deleted-item',
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        rotationLocked: undefined,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    expect(rotateCircle).toBeTruthy()
+    fireEvent.click(rotateCircle!)
+
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
+    const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
+    expect(pin.rotated).toBe(false)
+  })
+
+  // Opposite direction: a Tier-1 placement whose EVERY constituent allows
+  // rotation must NOT be permanently blocked just because its nominal
+  // itemId is broken — proving the fix doesn't over-restrict.
+  it('Tier-1: rotation is ALLOWED for a composed placement whose every real constituent allows it, despite a broken nominal itemId', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 20, length: 20, boardOffset: 0, gap: 0 } })
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5, allowRotation: true })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, quantity: 5, allowRotation: true })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'P', x: 5, y: 5, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        itemId: 'deleted-item',
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        rotationLocked: undefined,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    fireEvent.click(rotateCircle!)
+
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
+    const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
+    expect(pin.rotated).toBe(true)
+  })
+
+  // R29 corrective pass: PlacementPanel's "Снять все закрепления" button
+  // must not appear when the ONLY pinned placement is a Tier-2 quarantined
+  // one — nothing is visibly on the deck to clear. Derived from
+  // `result.quarantined` (authoritative), not a second independent
+  // `malformed && !composition` check.
+  it('PlacementPanel: "Снять все закрепления" does not appear when the only pin is Tier-2 quarantined', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'Ghost', x: 1, y: 1, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color,
+      })
+      const pinId = useCalculator.getState().pinnedPlacementsByTrip[0][0].id
+      useCalculator.getState().updatePinned(0, pinId, {
+        malformed: { invalidComposition: true, rawComposition: [{ itemId: itemA.id, layers: 6 }, { itemId: 'garbage', layers: 1 }] },
+      })
+    })
+
+    expect(screen.queryByText('Снять все закрепления')).toBeNull()
   })
 
   it('warns (once) when a placement newly exceeds a load zone\'s density limit', async () => {
@@ -2323,5 +2530,67 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const placement = useCalculator.getState().manualPlacements[0]
     expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
     expect(placement.layers).toBe(3) // never left desynced at the stale 5
+  })
+
+  // Round 29 (malformed-placement contract). Real end-to-end proof: a
+  // project loaded through useProjects' own "load into calculator" effect
+  // (the actual path a saved/imported project takes), containing a
+  // placement with an invalid composition (the R28 audit's exact
+  // `[A2,B3,garbage]` reproduction). Confirms: the project still opens
+  // (doesn't reject/crash), the load-time warning fires, and the malformed
+  // placement is NOT rendered as an ordinary "A6" cargo item on the deck.
+  it('Round 29: a project with a malformed placement opens normally, warns once, and the malformed cargo is not rendered as ordinary/valid', () => {
+    const badComposition = [{ itemId: 'itemA', layers: 2 }, { itemId: 'itemB', layers: 3 }, { itemId: 'garbage', layers: 1 }]
+    const project = {
+      id: 'p1',
+      name: 'Malformed Project',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      deck: { width: 20, length: 8, unit: 'm' as const, gap: 0.1, boardOffset: 0.2, clearance: 5 },
+      items: [
+        { id: 'itemA', name: 'A', width: 1, length: 1, height: 2, quantity: 5, color: '#0ea5e9', allowRotation: true, weight: 100 },
+        { id: 'itemB', name: 'B', width: 1, length: 1, height: 3, quantity: 5, color: '#0ea5e9', allowRotation: true, weight: 200 },
+      ],
+      manualPlacements: [{
+        id: 'm1', itemId: 'itemA', name: 'Ghost', x: 1, y: 1, width: 1, length: 1, layers: 6, rotated: false, color: '#0ea5e9',
+        weight: 100,
+        malformed: { invalidComposition: true as const, rawComposition: badComposition },
+      }],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'manual' as const,
+      sortStrategy: 'area-desc' as const,
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    }
+
+    act(() => {
+      useProjects.setState({ hydrated: true, activeId: 'p1', projects: [project] })
+    })
+    render(<Home />)
+
+    // Project actually opened — item catalog loaded, not rejected wholesale.
+    expect(useCalculator.getState().items.map((it) => it.name)).toEqual(['A', 'B'])
+    // The malformed placement is still present in state (preserved, not
+    // silently dropped) with its original raw data intact.
+    const stored = useCalculator.getState().manualPlacements[0]
+    expect(stored.malformed?.invalidComposition).toBe(true)
+    expect(stored.layers).toBe(6)
+
+    // But it must NOT render as an ordinary 6-layer "A" cargo item on the
+    // deck — no SVG text label showing "6" stacked layers of A should exist
+    // for this placement's footprint (the "×6" stacked-count badge, or the
+    // item name "Ghost"/"A" appearing as a normal placed cargo label).
+    expect(svgTextContents().some((t) => t === 'Ghost')).toBe(false)
+    expect(svgTextContents().some((t) => t === '×6')).toBe(false)
+
+    // And the load-time warning fired — exactly once, not once per effect
+    // re-run (the project-load effect's own `loadedProjectId` guard should
+    // prevent a duplicate fire on re-render/React StrictMode double-invoke).
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('повреждён'))
+    expect(toast.warning).toHaveBeenCalledTimes(1)
   })
 })

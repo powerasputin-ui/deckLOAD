@@ -3138,8 +3138,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // truncated safety label; a short constant string stays legible
           // at any placement size and never implies a longer list than it
           // shows.
-          const category =
-            constituentCategories.size > 1 ? 'Смешанный груз' : categoryByItemId?.get(p.itemId)
+          //
+          // Round 29 corrective pass: when `composition` is present, this
+          // must NEVER fall back to `categoryByItemId?.get(p.itemId)` — the
+          // nominal itemId isn't guaranteed valid (Tier-1: composition
+          // supersedes it for every physical purpose, including this one).
+          // The `size <= 1` branches below only ever read what
+          // `constituentCategories` already computed FROM composition
+          // itself; `p.itemId` is consulted only for a genuinely uncomposed
+          // placement, where it's the placement's own sole identity anyway.
+          const category = p.composition
+            ? constituentCategories.size > 1
+              ? 'Смешанный груз'
+              : constituentCategories.size === 1
+                ? [...constituentCategories][0]
+                : undefined
+            : categoryByItemId?.get(p.itemId)
           const overlappingOverloadedZones =
             overloadedZonesById.size > 0
               ? zoneIdsOverlapping({ x: p.x, y: p.y, width: p.width, length: p.length }, loadZones)

@@ -20,7 +20,7 @@
 // Rounds 14–24, rather than left resolving a placement's physical
 // properties by its single nominal itemId.
 
-import type { CompositionSegment, StabilityOverride } from './packing'
+import type { CompositionSegment, StabilityOverride, CargoShape } from './packing'
 // From stabilityMath.ts, NOT stability.ts — see stabilityMath.ts's own doc
 // comment. stability.ts's buildCargoWeightMoments will need to import FROM
 // this module in Round 14 to become composition-aware; if this module
@@ -421,4 +421,126 @@ export function segmentLashingInputs(
     const item = items.find((it) => it.id === seg.itemId)
     return { itemId: seg.itemId, layers: seg.layers, category: item?.category, weightKg: seg.layers * (item?.weight ?? 0) }
   })
+}
+
+// Round 29 corrective pass 3 (composition-aware separation). The distinct
+// set of categories physically present in a placement's own constituents —
+// what packing.ts's violatesSeparationForCategories needs instead of a
+// single category resolved from the placement's nominal itemId, which is
+// wrong for a composed placement on two counts: it silently drops every
+// non-nominal constituent's category from separation checks, and (for a
+// Tier-1 malformed placement whose nominal itemId doesn't resolve at all)
+// can return no category whatsoever even though real, physically hazardous
+// constituents are present. Mirrors segmentLashingInputs' own category
+// resolution rather than inventing a second lookup pattern. Degenerates to
+// a single-element set for an uncomposed placement (segmentsOf's implicit
+// one-segment fallback), so it never changes behavior at any existing
+// (uncomposed) call site.
+export function placementCategorySet(p: ComposablePlacement, items: LashingCatalogItem[]): Set<string> {
+  const set = new Set<string>()
+  for (const seg of segmentsOf(p)) {
+    const category = items.find((it) => it.id === seg.itemId)?.category
+    if (category) set.add(category)
+  }
+  return set
+}
+
+// The minimal catalog shape outline resolution needs.
+export interface GeometryCatalogItem {
+  id: string
+  shape?: CargoShape
+  width: number
+  length: number
+  outline?: { x: number; y: number }[]
+}
+
+// Round 29 corrective pass 4 (geometry hardening). `outline` is consumed
+// UNCONDITIONALLY wherever it's set — packing.ts's own collidesPrecisely
+// never gates it on `shape === 'custom'` — so trusting an arbitrary
+// constituent's outline for a composition whose members don't even agree on
+// shape/width/length would feed collision precision a silhouette that
+// doesn't describe the placement's real footprint. That's worse than having
+// no outline at all: no outline makes collidesPrecisely trust the bounding
+// box, which is a SUPERSET of any real shape (can only over-reject a
+// placement, never let a real overlap through) — the same "conservative,
+// not unsafe" direction packDeck's own pin-vs-pin overlap check already
+// relies on.
+//
+// "Uniform" here means every constituent's catalog shape AND width AND
+// length all equal segments[0]'s — exactly the invariant
+// planComposedMerge's own merge gate (page.tsx) enforces, now explicitly
+// CHECKED here rather than assumed to hold for a composition that never
+// went through that gate (a hydrated/imported one, which
+// normalizeComposition does not validate this way — see its own doc
+// comment). Degenerates to segments[0]'s own outline for an uncomposed
+// placement (trivially "uniform" with itself) and for a real merge-created
+// composition (already uniform by the merge gate, so this is a no-op check
+// that always passes) — no behavior change for either case Pass 3 was
+// actually tested against. An empty segment list returns undefined rather
+// than indexing `[0]` on an empty array.
+//
+// Shared by resolveUniformOutline and resolveUniformShape below — NOT
+// shared with resolvePyramidShape (packing.ts), which is a deliberately
+// DIFFERENT, more permissive "ANY constituent qualifies" rule for a
+// different purpose (see its own doc comment): conflating the two would
+// mean a composition like [box, pipe] either gets a genuine PlacedItem.shape
+// of 'cylinder' (wrong — Deck3DView.tsx reads `shape` directly to decide how
+// to draw the WHOLE placement, and 2/5 of this one isn't a pipe) or the
+// pyramid margin silently stops reserving for a real hidden pipe (wrong the
+// other way — the physical collision-safety bug this whole round exists to
+// close). `shape`/`outline` (uniform-only, this function) and pyramid margin
+// (any-constituent, resolvePyramidShape) are answering two different
+// questions and must stay two different functions with two different
+// results, even though both are read for the SAME placement.
+function resolveUniformConstituent(p: ComposablePlacement, items: GeometryCatalogItem[]): GeometryCatalogItem | undefined {
+  const segs = segmentsOf(p)
+  if (segs.length === 0) return undefined
+  const first = items.find((it) => it.id === segs[0].itemId)
+  if (!first) return undefined
+  for (const seg of segs) {
+    const it = items.find((i) => i.id === seg.itemId)
+    if (!it || it.shape !== first.shape || it.width !== first.width || it.length !== first.length) return undefined
+  }
+  return first
+}
+
+function outlinesEqual(a: { x: number; y: number }[] | undefined, b: { x: number; y: number }[] | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((pt, i) => pt.x === b[i].x && pt.y === b[i].y)
+}
+
+export function resolveUniformOutline(
+  p: ComposablePlacement,
+  items: GeometryCatalogItem[]
+): { x: number; y: number }[] | undefined {
+  const first = resolveUniformConstituent(p, items)
+  if (!first) return undefined
+  // shape/width/length agreement alone does NOT prove outline agreement:
+  // nothing in planComposedMerge's gate or normalizeComposition constrains
+  // `outline` at all (isPipeShape requires shape==='cylinder', so merge can
+  // never even involve two DIFFERENT 'custom'-shaped items with their own
+  // distinct outlines in the first place — but a hydrated/imported
+  // composition is not bound by that gate, and could genuinely contain two
+  // same-shape/width/length 'custom' constituents with different stored
+  // outlines). Require every constituent's own outline to be literally
+  // identical to the first's before trusting it for collision precision.
+  const segs = segmentsOf(p)
+  for (const seg of segs) {
+    const it = items.find((i) => i.id === seg.itemId)
+    if (!it || !outlinesEqual(it.outline, first.outline)) return undefined
+  }
+  return first.outline
+}
+
+// Round 29 corrective pass 4A red-team gate (G1). Deliberately separate
+// from resolvePyramidShape (packing.ts) — see resolveUniformConstituent's
+// own doc comment for why conflating "is there a pipe hiding somewhere in
+// here" with "what IS this placement, visually" is wrong in both
+// directions. This is the ONLY function that should ever feed
+// PlacedItem.shape for a composed placement: it returns a shape only when
+// every constituent genuinely agrees (uniform shape+width+length), the same
+// contract resolveUniformOutline already enforces for outline.
+export function resolveUniformShape(p: ComposablePlacement, items: GeometryCatalogItem[]): CargoShape | undefined {
+  return resolveUniformConstituent(p, items)?.shape
 }

@@ -487,6 +487,33 @@ export default function Home() {
     clearCalculatorHistory()
     prevOverloadedZoneCountRef.current = 0
     loadedProjectId.current = activeId
+
+    // R29 (malformed-placement contract, corrected): a placement quarantined
+    // by normalizeProject (no valid `composition` to trust — see
+    // PinnedPlacement.malformed's own doc comment) is preserved in the
+    // project's data and reported per-placement via the dedicated
+    // `result.quarantined` channel (packDeck/packingResultFromManual) — a
+    // deliberately separate channel from `result.unplaced` (see
+    // QuarantinedPlacement's own doc comment for why reusing `unplaced`
+    // would have been wrong). There's no dedicated UI surface for
+    // `quarantined` yet, so this toast is the one load-time signal that
+    // something in the file needed attention, reusing the existing toast
+    // mechanism rather than building a new UI surface for what is expected
+    // to be a rare, untrusted-input-only occurrence. Counted directly from
+    // the loaded project's own store data (not from `result`, which isn't
+    // computed yet at this point in the load sequence) — same
+    // `malformed && !composition` predicate `packDeck`/
+    // `packingResultFromManual` use to populate `quarantined`.
+    const malformedCount =
+      proj.manualPlacements.filter((m) => m.malformed && !m.composition).length +
+      Object.values(proj.pinnedPlacementsByTrip ?? {})
+        .flat()
+        .filter((p) => p.malformed && !p.composition).length
+    if (malformedCount > 0) {
+      toast.warning(
+        `В проекте «${proj.name}» ${malformedCount} груз(ов) с повреждёнными данными — физический состав не удалось определить при загрузке. Они не участвуют в расчётах, но не удалены из проекта.`
+      )
+    }
   }, [hydrated, activeId, projects])
 
   // Auto-save snapshot (debounced). The debounce timer itself lives in
@@ -864,17 +891,58 @@ export default function Home() {
   // be applied to both copies by hand, with nothing enforcing they stay
   // identical — this collapses them into one implementation.
   const attemptRotate = (
-    self: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; clearanceMargin?: ClearanceMargin; rotationLocked?: boolean },
+    self: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; clearanceMargin?: ClearanceMargin; rotationLocked?: boolean; composition?: CompositionSegment[] },
     siblings: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[],
     excludeFromResultPlaced: (p: (typeof result.placed)[number]) => boolean,
     commit: (patch: { x: number; y: number; width: number; length: number; rotated: boolean }) => void
   ): void => {
-    const item = items.find((it) => it.id === self.itemId)
     // rotationLocked (set by a cross-item merge whose dragged item didn't
     // allow rotation) wins even if the placement's own itemId's CargoItem
     // currently allows it — the merge may have folded in units that don't.
-    if (self.rotationLocked || !item?.allowRotation) {
+    //
+    // Round 29 corrective pass: `rotationLocked` alone is NOT proven
+    // authoritative for every composed placement — it's correctly
+    // maintained by every LIVE creation path (merge/`+`/`-`/removeItem),
+    // but hydration only type-checks it (`typeof pin.rotationLocked ===
+    // 'boolean'`), never re-derives it from the loaded `composition` +
+    // current catalog `allowRotation`. An imported/hand-edited project can
+    // carry a composed placement whose `rotationLocked` is stale or absent
+    // even though a real constituent disallows rotation — trusting
+    // `rotationLocked` alone there would wrongly ALLOW rotating cargo that
+    // shouldn't move. For a composed placement, checked live from
+    // `composition` + the current catalog (most-restrictive-wins across
+    // every constituent, the same check planComposedMerge itself uses) —
+    // `rotationLocked` is OR'd in on top, never replaced, so a lock already
+    // set by a live merge can only stay at least as restrictive, never
+    // become more permissive. An uncomposed placement keeps the exact
+    // original single-item check (self.itemId is its own sole identity).
+    const composedNonRotatable = self.composition
+      ? segmentsOf(self as { itemId: string; layers: number; composition?: CompositionSegment[] }).some(
+          (seg) => items.find((it) => it.id === seg.itemId)?.allowRotation === false
+        )
+      : false
+    // Geometry (outline/shape/height, used below for the post-rotation
+    // collision check) still needs SOME catalog item — falls back to the
+    // first composition segment's own item when the nominal `itemId`
+    // doesn't resolve (Tier-1: valid composition, broken nominal identity).
+    // Every real composed placement's constituents share one physical
+    // shape/footprint by construction (planComposedMerge's own pipe-shape/
+    // dimension compatibility gate), so any constituent's own item is an
+    // equally valid geometry source — never a guess about which one.
+    const item =
+      items.find((it) => it.id === self.itemId) ??
+      (self.composition ? items.find((it) => it.id === self.composition![0].itemId) : undefined)
+    if (self.rotationLocked || composedNonRotatable || (!self.composition && !item?.allowRotation)) {
       toast.warning(`Груз «${self.name}» не разрешает поворот`)
+      return
+    }
+    if (!item) {
+      // No catalog item at all could be resolved (composed placement whose
+      // EVERY constituent is unknown — malformed.invalidComposition would
+      // normally already exclude this placement from ever being rendered/
+      // selectable, but this stays a safe, explicit fallback rather than
+      // reading `undefined` fields below).
+      toast.warning(`Груз «${self.name}» повреждён — поворот недоступен`)
       return
     }
     const lashingRects: { x: number; y: number; width: number; length: number; clearanceMargin?: ClearanceMargin }[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
@@ -1184,8 +1252,19 @@ export default function Home() {
     // level first, unchanged. The uncomposed branch keeps the exact old
     // Math.max(1, ...) arithmetic, so this stays byte-identical for every
     // existing (uncomposed) placement.
-    const layersOfIdIn = (p: { id: string; itemId: string; layers: number; composition?: CompositionSegment[] }) =>
-      excluded.has(p.id) ? 0 : p.composition ? placementLayersOfItem(p, itemId) : p.itemId === itemId ? Math.max(1, p.layers) : 0
+    //
+    // Round 29 corrective pass: a Tier-2 malformed placement (`malformed`
+    // set, no valid `composition` to trust — see PinnedPlacement.malformed's
+    // own doc comment) is excluded from `result.placed`/capacity, but this
+    // scan reads the RAW store arrays directly, not `result.placed` — it
+    // used to still phantom-count such a placement's raw, untrustworthy
+    // `layers` toward this itemId's "already placed" sum (since its own
+    // `itemId` is very often a genuinely valid one — the common
+    // `malformed.invalidComposition` case), wrongly blocking the user from
+    // placing more of an item that isn't actually visible anywhere on the
+    // deck. Excluded here the same way it's excluded from packing.
+    const layersOfIdIn = (p: { id: string; itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+      excluded.has(p.id) || (p.malformed && !p.composition) ? 0 : p.composition ? placementLayersOfItem(p, itemId) : p.itemId === itemId ? Math.max(1, p.layers) : 0
     const sumPlaced =
       Object.values(pinnedPlacementsByTrip)
         .flat()
@@ -1252,7 +1331,16 @@ export default function Home() {
     // PlacedItem.composition's own doc comment in packing.ts), and this
     // scan explicitly excludes positions that match an existing pin — so no
     // equivalent guard is needed there.
-    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId && !p.composition)
+    //
+    // Round 29 corrective pass: same reasoning extends to a Tier-2
+    // malformed placement (`malformed` set, no valid `composition` to
+    // trust — see PinnedPlacement.malformed's own doc comment). Offering
+    // one here would feed its raw, untrustworthy `layers` into
+    // handleMergePinned, which would silently absorb (and DELETE) it —
+    // phantom data merged into a real placement, and the malformed record
+    // gone without ever surfacing to the user, defeating the whole "never
+    // dropped, always preserved for diagnosis" contract.
+    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId && !p.composition && !p.malformed)
     if (otherPin) return { id: otherPin.id }
     const freeInstance = result.placed.find((p) => {
       if (p.itemId !== itemId) return false
@@ -1472,7 +1560,10 @@ export default function Home() {
   // since handleMergeManual's drag-to-merge (composition-aware since Round
   // 24) is a deliberately different, bulk-absorption operation.
   const findMergeSourceManual = (itemId: string, excludeId: string): { id: string } | null => {
-    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId && !m.composition)
+    // Round 29 corrective pass: same `!m.malformed` guard as
+    // findMergeSourcePinned above, same reason — never offer a Tier-2
+    // malformed placement as a "+" merge source.
+    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId && !m.composition && !m.malformed)
     return other ? { id: other.id } : null
   }
 
@@ -2390,8 +2481,13 @@ export default function Home() {
                         // applies no floor) — same branching idiom as
                         // checkLayerChange's own layersOfIdIn, so the
                         // uncomposed result is byte-identical to before.
-                        const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[] }) =>
-                          pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
+                        //
+                        // Round 29 corrective pass: same Tier-2 exclusion as
+                        // checkLayerChange's own layersOfIdIn — a malformed
+                        // placement's raw layers must never phantom-count
+                        // toward this gate either.
+                        const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+                          pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
                         const itemPlaced =
                           mode === 'manual'
                             ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)

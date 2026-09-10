@@ -57,7 +57,16 @@ export function PlacementPanel({
 
   const isAuto = mode === 'auto'
   const placements = isAuto ? pinnedPlacements : manualPlacements
-  const hasPlacements = placements.length > 0
+  // Round 29 corrective pass: excludes Tier-2 quarantined placements (see
+  // PinnedPlacement.malformed) from "is there anything to clear" — they're
+  // preserved in the raw arrays above but never rendered/participate in
+  // packing, so counting them here would show the "Снять
+  // закрепления"/"Очистить" button with nothing visibly on the deck to
+  // clear. Reads the authoritative `result.quarantined` (already computed
+  // once by packDeck/packingResultFromManual) rather than re-implementing
+  // the `malformed && !composition` predicate a second time here.
+  const quarantinedIds = new Set(result.quarantined.map((q) => q.id))
+  const hasPlacements = placements.some((p) => !quarantinedIds.has(p.id))
 
   const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
   // What's actually shown on the deck — result.placed includes both

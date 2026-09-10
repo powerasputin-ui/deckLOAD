@@ -24,6 +24,8 @@ import {
   assessLashingRequirement,
   WIRE_ROPE_SPECS,
   violatesSeparation,
+  violatesSeparationForCategories,
+  resolvePyramidShape,
   rotateOutline90,
   polygonsOverlap,
   collidesPrecisely,
@@ -47,12 +49,14 @@ import {
   addClearanceMargins,
   pyramidSpreadAsClearance,
   type CargoItem,
+  type CompositionSegment,
   type ManualPlacement,
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
   type LashingPoint,
 } from './packing'
+import { placementCategorySet, resolveUniformOutline, resolveUniformShape, segmentsOf } from './placementComposition'
 
 function item(partial: Partial<CargoItem> & { id: string }): CargoItem {
   return {
@@ -926,6 +930,25 @@ describe('withHardBlockFootprint', () => {
     const combined = withHardBlockFootprint(pipe)
     expect(combined.x).toBeCloseTo(1 - (0.3 + pyr.onWidth))
     expect(combined.width).toBeCloseTo(9.5 + (0.3 + pyr.onWidth) * 2)
+  })
+
+  // R29 pass 4A (G1 red-team gate). The whole point of PlacedItem.pyramidMargin
+  // is that `shape` can be undefined for a mixed composition even when real
+  // pyramid margin is still owed — this proves withHardBlockFootprint
+  // actually prefers the pre-computed field instead of re-deriving from
+  // `shape` (which would silently see `undefined` and reserve nothing).
+  it('prefers a pre-computed pyramidMargin over re-deriving from shape/height, even when shape is undefined', () => {
+    const mixedComposed = {
+      x: 1, y: 1, width: 9.5, length: 0.15, shape: undefined, height: 0.15, stackedCount: 9,
+      pyramidMargin: { onWidth: 0, onLength: 3.375 },
+    }
+    const result = withHardBlockFootprint(mixedComposed)
+    expect(result).toEqual({
+      x: 1,
+      y: 1 - 3.375,
+      width: 9.5,
+      length: 0.15 + 3.375 * 2,
+    })
   })
 })
 
@@ -2581,5 +2604,551 @@ describe('packDeck reserves real pyramid footprint for stacked pipes (regression
     expect(res.placed[0].width).toBe(9.5)
     expect(res.placed[0].length).toBe(0.25)
     expect(res.placed[0].stackedCount).toBe(8)
+  })
+})
+
+// Round 29 (malformed-placement contract — see the R28/R29 audit). A
+// placement with no valid `composition` to fall back on (either
+// `malformed.invalidComposition`, or `malformed.unresolvedItem` with no
+// composition at all) must never be silently treated as an ordinary
+// single-item placement using its raw, untrustworthy `layers`/`weight` —
+// the exact `[A2,B3,garbage]` -> "A6" reproduction from the audit report.
+// These tests exercise packDeck/packingResultFromManual DIRECTLY on
+// hand-built `malformed` literals (the sanitizer's own construction of
+// `malformed` is tested separately in projects.test.ts) — proving the
+// PHYSICAL consequence, not just that the flag gets set.
+describe('Round 29: malformed placement is quarantined from packing (physical safety)', () => {
+  // quantity: 0 so the AUTO packer's own remaining-quantity fill (unrelated
+  // to this test) never adds extra placed entries alongside the pin under
+  // test — these tests are about the quarantine mechanism, not auto-fill.
+  const A = item({ id: 'A', name: 'A', width: 1, length: 1, height: 2, quantity: 0, weight: 100 })
+  const B = item({ id: 'B', name: 'B', width: 1, length: 1, height: 3, quantity: 0, weight: 200 })
+
+  it('packDeck: a pin with invalidComposition and no composition never appears in placed/totalWeight/unplaced, and is reported ONLY in the disjoint quarantined channel', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'A', name: 'Ghost', x: 1, y: 1, width: 1, length: 1,
+      layers: 6, rotated: false, color: '#000', weight: 100,
+      malformed: { invalidComposition: true, rawComposition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }, { itemId: 'garbage', layers: 1 }] },
+    }
+    const res = packDeck(20, 20, [A, B], { pinned: [pin], clearance: 10 })
+    expect(res.placed.some((p) => p.itemId === 'A')).toBe(false) // no phantom "A6"
+    expect(res.totalWeight).toBe(0)
+    // R29 corrective pass: `unplaced` must stay EMPTY — a malformed
+    // placement is never reported through the cargo-quantity channel
+    // (see QuarantinedPlacement's own doc comment for why: packMultiTrip
+    // would otherwise duplicate this itemId's carried-forward quantity).
+    expect(res.unplaced).toHaveLength(0)
+    expect(res.quarantined).toEqual([{ id: 'p1', itemId: 'A', name: 'Ghost', reason: expect.stringContaining('повреждён') }])
+  })
+
+  it('packDeck: a pin with unresolvedItem and no composition is quarantined the same way (orphan bare itemId), also never in unplaced', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 1, y: 1, width: 1, length: 1,
+      layers: 2, rotated: false, color: '#000', weight: 500,
+      malformed: { unresolvedItem: true },
+    }
+    const res = packDeck(20, 20, [A, B], { pinned: [pin], clearance: 10 })
+    expect(res.placed).toHaveLength(0)
+    expect(res.totalWeight).toBe(0)
+    expect(res.unplaced).toHaveLength(0)
+    expect(res.quarantined).toEqual([{ id: 'p1', itemId: 'deleted-item', name: 'Ghost', reason: expect.stringContaining('повреждён') }])
+  })
+
+  // R29 corrective pass: proves the packMultiTrip duplication bug the R28
+  // audit found is actually closed — a quarantined pin's itemId ('A', a
+  // REAL catalog item, the exact reproduction that triggered the bug)
+  // never enters `unplaced`, so packMultiTrip's carry-forward (which reads
+  // ONLY `result.unplaced`) has nothing to duplicate.
+  it('packMultiTrip: a quarantined pin whose itemId is a real catalog item does not get carried forward into the next trip', () => {
+    const realA = item({ id: 'A', name: 'A', width: 1, length: 1, height: 2, quantity: 3, weight: 100 })
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'A', name: 'Ghost', x: 1, y: 1, width: 1, length: 1,
+      layers: 6, rotated: false, color: '#000', weight: 100,
+      malformed: { invalidComposition: true, rawComposition: [{ itemId: 'A', layers: 6 }, { itemId: 'garbage', layers: 1 }] },
+    }
+    const trips = packMultiTrip(3, 3, [realA], { clearance: 10 }, 3, { 0: [pin] })
+    // A's 3 real units (unrelated to the quarantined pin) place on trip 0
+    // and nothing carries forward BECAUSE of the quarantined pin — if the
+    // old bug were still present, trip 1 would receive an extra phantom
+    // batch of 'A' (this pin's own itemId) on top of any genuine leftover.
+    expect(trips).toHaveLength(1)
+    expect(trips[0].quarantined).toHaveLength(1)
+    expect(trips[0].unplaced).toHaveLength(0)
+  })
+
+  it('packDeck: a pin with unresolvedItem BUT a VALID composition stays fully active — physical calculations already derive from composition alone', () => {
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'deleted-item', name: 'P', x: 1, y: 1, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000', weight: 160,
+      composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      malformed: { unresolvedItem: true },
+    }
+    const res = packDeck(20, 20, [A, B], { pinned: [pin], clearance: 10 })
+    expect(res.placed).toHaveLength(1)
+    expect(res.totalWeight).toBeCloseTo(2 * 100 + 3 * 200, 6) // 800 — true composition weight, unaffected by the broken nominal id
+  })
+
+  it('packingResultFromManual: a placement with invalidComposition and no composition never appears in placed/totalWeight/unplaced, and is reported ONLY in quarantined', () => {
+    const mp: ManualPlacement = {
+      id: 'm1', itemId: 'A', name: 'Ghost', x: 1, y: 1, width: 1, length: 1,
+      layers: 6, rotated: false, color: '#000', weight: 100,
+      malformed: { invalidComposition: true, rawComposition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }, { itemId: 'garbage', layers: 1 }] },
+    }
+    const res = packingResultFromManual(20, 20, [mp], 10, [A, B], 10)
+    expect(res.placed.some((p) => p.itemId === 'A')).toBe(false)
+    expect(res.totalWeight).toBe(0)
+    expect(res.unplaced.every((u) => u.itemId !== 'A')).toBe(true) // A's own genuine shortfall entry (quantity 0 here) may exist, but never THIS placement
+    expect(res.quarantined).toEqual([{ id: 'm1', itemId: 'A', name: 'Ghost', reason: expect.stringContaining('повреждён') }])
+  })
+
+  it('packingResultFromManual: a placement with unresolvedItem BUT a VALID composition stays fully active', () => {
+    const mp: ManualPlacement = {
+      id: 'm1', itemId: 'deleted-item', name: 'P', x: 1, y: 1, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000', weight: 160,
+      composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      malformed: { unresolvedItem: true },
+    }
+    const res = packingResultFromManual(20, 20, [mp], 10, [A, B], 10)
+    expect(res.placed).toHaveLength(1)
+    expect(res.totalWeight).toBeCloseTo(2 * 100 + 3 * 200, 6)
+  })
+})
+
+describe('violatesSeparationForCategories', () => {
+  const rule = (partial: Partial<SeparationRule> & { id: string }): SeparationRule => ({
+    categoryA: 'hazard', categoryB: 'standard', minDistance: 5, ...partial,
+  })
+
+  it('degenerates to a single violatesSeparation call for one-category-per-side (uncomposed) inputs', () => {
+    const rules = [rule({ id: 'r1' })]
+    const others = [{ x: 3, y: 0, width: 1, length: 1, categories: ['standard'] }]
+    expect(
+      violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, ['hazard'], others, rules)
+    ).toBe(true)
+    const farOthers = [{ x: 6, y: 0, width: 1, length: 1, categories: ['standard'] }]
+    expect(
+      violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, ['hazard'], farOthers, rules)
+    ).toBe(false)
+  })
+
+  it('is false when the candidate has no categories at all, even with matching others nearby', () => {
+    const rules = [rule({ id: 'r1' })]
+    const others = [{ x: 0.5, y: 0, width: 1, length: 1, categories: ['standard'] }]
+    expect(violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, [], others, rules)).toBe(false)
+  })
+
+  it('catches a violation from a NON-FIRST category in the candidate set — proves it does not just check categories[0]', () => {
+    const rules = [rule({ id: 'r1' })]
+    const others = [{ x: 3, y: 0, width: 1, length: 1, categories: ['standard'] }]
+    // 'neutral' (first) has no rule at all; 'hazard' (second) is the one that
+    // violates — a segments[0]-only implementation would report false here.
+    expect(
+      violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, ['neutral', 'hazard'], others, rules)
+    ).toBe(true)
+  })
+
+  it('catches a violation from a NON-FIRST category on the OTHER side — proves the others side is not reduced to one category either', () => {
+    const rules = [rule({ id: 'r1' })]
+    const others = [{ x: 3, y: 0, width: 1, length: 1, categories: ['neutral', 'hazard'] }]
+    expect(
+      violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, ['standard'], others, rules)
+    ).toBe(true)
+  })
+})
+
+// R29 corrective pass 3 (Tier-1 composition consumers in packing). The R29
+// pre-commit gate's production sweep found THREE more places where a Tier-1
+// placement's real physical properties (category, pyramid-stack shape/
+// height, 2D collision shape/outline) were still resolved via the
+// placement's own nominal `itemId` unconditionally — bypassing `composition`
+// even though it holds the true, trustworthy constituent data (per the R29
+// contract, a Tier-1 placement stays FULLY physically active; only Tier-2
+// is excluded). Unlike the R29 quarantine work (packing/display safety for
+// Tier-2), these three are genuine physical/collision-safety gaps for
+// Tier-1: a composed hazardous constituent could silently bypass a
+// separation rule, and a composed pipe-pyramid's true footprint could be
+// under-reserved, letting other cargo pack into space the real pyramid
+// physically occupies.
+describe('Round 29 corrective pass 3: Tier-1 composition consumers in packing.ts', () => {
+  describe('R29-S1: packDeck pin-acceptance separation is composition-aware', () => {
+    const rules: SeparationRule[] = [{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }]
+    // A's own category ('standard') is deliberately the FIRST composition
+    // segment and Hz's ('hazard') the second — a naive `segments[0]`-for-
+    // category "fix" would resolve only 'standard' and miss the real
+    // hazard constituent entirely, exactly the shortcut the R29 corrective
+    // pass 3 spec explicitly forbids.
+    // quantity: 0 — composed pins bypass the remaining-quantity clamp for
+    // their constituents, and a nonzero quantity here would let the AUTO
+    // auto-fill loop place an unrelated, genuinely-uncontested fresh 'A'/
+    // 'Hz' unit elsewhere on the (very large) deck, which would then
+    // satisfy an `itemId === 'A'`-style assertion for the WRONG reason
+    // (auto-fill noise, not the pin under test) — the same class of
+    // false-pass already caught and documented earlier in R29's own
+    // mutation-gate history. R29-R1 below needs its own separately-scoped
+    // 'Hz' catalog entry with real quantity, precisely to avoid reusing
+    // this zero-quantity one for an uncomposed pin.
+    const A = item({ id: 'A', name: 'A', width: 1, length: 1, quantity: 0, category: 'standard' })
+    const Hz = item({ id: 'Hz', name: 'Hz', width: 1, length: 1, quantity: 0, category: 'hazard' })
+
+    it('a composed CANDIDATE pin with an unresolved nominal itemId cannot bypass separation via its hidden hazard constituent', () => {
+      const std: PinnedPlacement = {
+        id: 'std', itemId: 'std-real', name: 'Std', x: 0, y: 0, width: 1, length: 1,
+        layers: 1, rotated: false, color: '#000',
+      }
+      const stdItem = item({ id: 'std-real', name: 'Std', width: 1, length: 1, quantity: 1, category: 'standard' })
+      const ghost: PinnedPlacement = {
+        id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 2, y: 0, width: 1, length: 1,
+        layers: 2, rotated: false, color: '#000',
+        composition: [{ itemId: 'A', layers: 1 }, { itemId: 'Hz', layers: 1 }],
+        malformed: { unresolvedItem: true },
+      }
+      // std ends at x=1, ghost starts at x=2 -> edge distance 1 < 5.
+      const res = packDeck(20, 20, [A, Hz, stdItem], { pinned: [std, ghost], separationRules: rules, clearance: 10 })
+      expect(res.placed.some((p) => p.itemId === 'deleted-item')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'deleted-item' && u.reason.includes('сепарац'))).toBe(true)
+    })
+
+    it('an already-ACCEPTED composed pin does not hide its hazard constituent from a later plain candidate', () => {
+      const ghost: PinnedPlacement = {
+        id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 0, y: 0, width: 1, length: 1,
+        layers: 2, rotated: false, color: '#000',
+        composition: [{ itemId: 'A', layers: 1 }, { itemId: 'Hz', layers: 1 }],
+        malformed: { unresolvedItem: true },
+      }
+      const stdItem = item({ id: 'std-real', name: 'Std', width: 1, length: 1, quantity: 1, category: 'standard' })
+      const std: PinnedPlacement = {
+        id: 'std', itemId: 'std-real', name: 'Std', x: 2, y: 0, width: 1, length: 1,
+        layers: 1, rotated: false, color: '#000',
+      }
+      // ghost is processed first (alone, nothing to violate against), std
+      // second, checked against acceptedPins=[ghost].
+      const res = packDeck(20, 20, [A, Hz, stdItem], { pinned: [ghost, std], separationRules: rules, clearance: 10 })
+      expect(res.placed.some((p) => p.itemId === 'deleted-item')).toBe(true) // ghost itself is accepted (nothing before it)
+      expect(res.placed.some((p) => p.itemId === 'std-real')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'std-real' && u.reason.includes('сепарац'))).toBe(true)
+    })
+
+    it('the AUTO auto-fill loop also cannot pack fresh cargo next to an accepted composed pin\'s hidden hazard constituent', () => {
+      const ghost: PinnedPlacement = {
+        id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 0, y: 0, width: 1, length: 1,
+        layers: 2, rotated: false, color: '#000',
+        composition: [{ itemId: 'A', layers: 1 }, { itemId: 'Hz', layers: 1 }],
+        malformed: { unresolvedItem: true },
+      }
+      // Deck sized so the ONLY free rect left after the pin is a single
+      // 1x1 cell immediately to its right (edge distance 0 < 5) — deck
+      // width=2 leaves no farther-away alternative for `findPosition` to
+      // pick instead, making this deterministic.
+      const stdItem = item({ id: 'std-real', name: 'Std', width: 1, length: 1, quantity: 1, category: 'standard' })
+      const res = packDeck(2, 1, [A, Hz, stdItem], { pinned: [ghost], separationRules: rules, gap: 0, clearance: 10 })
+      expect(res.placed.some((p) => p.itemId === 'deleted-item')).toBe(true)
+      expect(res.placed.some((p) => p.itemId === 'std-real')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'std-real' && u.reason.includes('сепарац'))).toBe(true)
+    })
+
+    it('R29-S1 same scenario with a VALID (resolving) nominal itemId is unaffected — preserves existing behavior', () => {
+      const std: PinnedPlacement = {
+        id: 'std', itemId: 'std-real', name: 'Std', x: 0, y: 0, width: 1, length: 1,
+        layers: 1, rotated: false, color: '#000',
+      }
+      const stdItem = item({ id: 'std-real', name: 'Std', width: 1, length: 1, quantity: 1, category: 'standard' })
+      const composedButResolving: PinnedPlacement = {
+        id: 'p1', itemId: 'A', name: 'Composed', x: 2, y: 0, width: 1, length: 1,
+        layers: 2, rotated: false, color: '#000',
+        composition: [{ itemId: 'A', layers: 1 }, { itemId: 'Hz', layers: 1 }],
+      }
+      const res = packDeck(20, 20, [A, Hz, stdItem], { pinned: [std, composedButResolving], separationRules: rules, clearance: 10 })
+      expect(res.placed.some((p) => p.itemId === 'A')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'A' && u.reason.includes('сепарац'))).toBe(true)
+    })
+
+    it('R29-R1: an ordinary uncomposed hazard pin near a standard pin is still rejected (regression guard)', () => {
+      const std: PinnedPlacement = {
+        id: 'std', itemId: 'std-real', name: 'Std', x: 0, y: 0, width: 1, length: 1,
+        layers: 1, rotated: false, color: '#000',
+      }
+      const stdItem = item({ id: 'std-real', name: 'Std', width: 1, length: 1, quantity: 1, category: 'standard' })
+      // Separately-scoped, real-quantity catalog entry — an uncomposed pin
+      // (unlike a composed one) IS clamped to its own remaining quantity,
+      // so it needs enough to be accepted at all; the shared `Hz` const
+      // stays quantity 0 on purpose (composition-only, see its own comment).
+      const hzReal = item({ id: 'hz-real', name: 'HzReal', width: 1, length: 1, quantity: 1, category: 'hazard' })
+      const haz: PinnedPlacement = {
+        id: 'p1', itemId: 'hz-real', name: 'Hz', x: 2, y: 0, width: 1, length: 1,
+        layers: 1, rotated: false, color: '#000',
+      }
+      const res = packDeck(20, 20, [A, Hz, stdItem, hzReal], { pinned: [std, haz], separationRules: rules, clearance: 10 })
+      expect(res.placed.some((p) => p.itemId === 'hz-real')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'hz-real' && u.reason.includes('сепарац'))).toBe(true)
+    })
+  })
+
+  describe('R29-S2: packDeck pin-processing pyramid-spread reservation is composition-aware', () => {
+    // Pipe-pyramid dims mirroring the existing pipePyramidSpreadMargin test
+    // suite (width=9.5 long axis, length=0.15 short axis, both < 1.5x apart
+    // -> isPipeShape true). R24's merge gate guarantees every constituent of
+    // a real composed placement shares shape/width/length/category, but NOT
+    // height (explicitly allowed to differ) — Pa/Pb differ in height on
+    // purpose, proving height's specific value is irrelevant to this margin.
+    const Pa = item({ id: 'Pa', name: 'Pa', shape: 'cylinder', width: 9.5, length: 0.15, height: 0.15, quantity: 0 })
+    const Pb = item({ id: 'Pb', name: 'Pb', shape: 'cylinder', width: 9.5, length: 0.15, height: 0.2, quantity: 0 })
+    const filler = item({ id: 'filler', name: 'Filler', width: 0.2, length: 0.2, quantity: 1 })
+    // The pin's raw footprint sits at y=0.225 so its FULLY-reserved
+    // (margin-inflated) cell exactly covers the whole [0, 0.6] deck height
+    // with zero slack anywhere else — the deck is otherwise completely full
+    // once the true margin is reserved, so `filler` can be placed ONLY if
+    // the engine under-reserves the margin (the bug: an unresolved shape
+    // makes pipePyramidSpreadMargin see a non-cylinder and return {0,0}).
+    const pin: PinnedPlacement = {
+      id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 0, y: 0.225, width: 9.5, length: 0.15,
+      layers: 9, rotated: false, color: '#000',
+      composition: [{ itemId: 'Pa', layers: 2 }, { itemId: 'Pb', layers: 7 }],
+      malformed: { unresolvedItem: true },
+    }
+
+    it('a composed pipe-pyramid pin with an unresolved nominal itemId still fully reserves its true pyramid margin', () => {
+      const res = packDeck(9.5, 0.6, [Pa, Pb, filler], { pinned: [pin], clearance: 10, gap: 0 })
+      expect(res.placed.some((p) => p.itemId === 'deleted-item')).toBe(true)
+      expect(res.placed.some((p) => p.itemId === 'filler')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'filler')).toBe(true)
+    })
+
+    // Distinct from the margin-reservation test above: this checks
+    // packDeck's OWN result.placed.push shape/outline resolution directly
+    // (feeds withHardBlockFootprint's pyramid check downstream, at
+    // interactive drag/rotate time — a separate consumer of the same
+    // composition-aware pinGeomItemId fallback, not exercised by the
+    // margin-reservation test, which only proves the free-rect exclusion).
+    it('the same composed pin resolves shape/outline (in result.placed) from its FIRST composition segment, not the broken nominal id', () => {
+      const res = packDeck(9.5, 0.6, [Pa, Pb], { pinned: [pin], clearance: 10, gap: 0 })
+      const placed = res.placed.find((p) => p.itemId === 'deleted-item')
+      expect(placed?.shape).toBe('cylinder')
+    })
+
+    it('R29-R2: the same scenario with a VALID (resolving), uncomposed pipe stack reserves the identical margin (regression guard)', () => {
+      // Uncomposed pins are clamped to their own remaining quantity (unlike
+      // composed ones, which bypass that clamp) — needs its own catalog
+      // entry with quantity >= layers, unlike the shared Pa/Pb (quantity 0,
+      // relied on by the composed test above to prove they're never
+      // auto-filled on their own).
+      const PaReal = item({ id: 'PaReal', name: 'PaReal', shape: 'cylinder', width: 9.5, length: 0.15, height: 0.15, quantity: 9 })
+      const plainPin: PinnedPlacement = {
+        id: 'p1', itemId: 'PaReal', name: 'Real', x: 0, y: 0.225, width: 9.5, length: 0.15,
+        layers: 9, rotated: false, color: '#000',
+      }
+      const res = packDeck(9.5, 0.6, [PaReal, filler], { pinned: [plainPin], clearance: 10, gap: 0 })
+      expect(res.placed.some((p) => p.itemId === 'PaReal')).toBe(true)
+      expect(res.placed.some((p) => p.itemId === 'filler')).toBe(false)
+    })
+  })
+
+  describe('R29-S3: packingResultFromManual geometry resolution is composition-aware', () => {
+    // A and B are genuinely UNIFORM (same shape/width/length, matching
+    // planComposedMerge's own gate) — the case Pass 3's segments[0] fix was
+    // actually tested against, and still correct under Pass 4's stricter
+    // (explicitly-checked, not assumed) uniformity requirement.
+    const triangleOutline = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]
+    const A = item({ id: 'A', name: 'A', shape: 'cylinder', width: 9.5, length: 0.15, outline: triangleOutline, quantity: 0, weight: 100, height: 2 })
+    const B = item({ id: 'B', name: 'B', shape: 'cylinder', width: 9.5, length: 0.15, outline: triangleOutline, quantity: 0, weight: 200, height: 3 })
+
+    it('a placement with an unresolved nominal itemId resolves shape/outline from its FIRST composition segment, not the broken nominal id', () => {
+      const mp: ManualPlacement = {
+        id: 'm1', itemId: 'deleted-item', name: 'Ghost', x: 1, y: 1, width: 9.5, length: 0.15,
+        layers: 5, rotated: false, color: '#000',
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packingResultFromManual(20, 20, [mp], 10, [A, B], 10)
+      expect(res.placed).toHaveLength(1)
+      expect(res.placed[0].shape).toBe('cylinder')
+      expect(res.placed[0].outline).toEqual(triangleOutline)
+    })
+
+    it('R29-R3: an ordinary uncomposed placement resolves shape/outline via its own itemId unchanged (regression guard)', () => {
+      const mp: ManualPlacement = {
+        id: 'm1', itemId: 'A', name: 'Plain', x: 1, y: 1, width: 9.5, length: 0.15,
+        layers: 1, rotated: false, color: '#000', weight: 100,
+      }
+      const res = packingResultFromManual(20, 20, [mp], 10, [A, B], 10)
+      expect(res.placed).toHaveLength(1)
+      expect(res.placed[0].shape).toBe('cylinder')
+      expect(res.placed[0].outline).toEqual(triangleOutline)
+    })
+  })
+
+  // R29 corrective pass 4 (geometry hardening). Confirmed real gap: the
+  // Pass 3 segments[0] fix was justified ONLY by planComposedMerge's own
+  // gate (which requires every constituent to already agree on shape/width/
+  // length before a merge is allowed) — but `normalizeComposition`
+  // (projects.ts) validates NOTHING about geometry uniformity, only that
+  // every itemId resolves and every `layers` is a positive integer. A
+  // hydrated/imported project can therefore contain a structurally valid
+  // composition mixing incompatible geometries, which segments[0] alone
+  // could silently mis-resolve (miss a real pipe hiding at a later segment,
+  // or trust an arbitrary constituent's outline for a shape it doesn't
+  // actually describe).
+  describe('R29 corrective pass 4: geometry hardening for non-uniform (hydrated) compositions', () => {
+    it('R29-P4-1: a pipe hidden at a NON-FIRST segment still gets its full pyramid margin reserved (the core safety fix)', () => {
+      // Same pipe dims as R29-S2, but composition ORDER swapped: a non-pipe
+      // box is segments[0], the real pipe is segments[1]. Pass 3's fix
+      // would have resolved shape from the box (segments[0]) and silently
+      // dropped the margin to {0,0} — exactly the under-reservation bug
+      // this pass exists to close. shape stays undefined (see the G1
+      // red-team gate below) — the safety proof here is the MARGIN
+      // reservation (filler blocked), not `.shape`.
+      const Box = item({ id: 'Box', name: 'Box', shape: 'box', width: 9.5, length: 0.15, height: 0.5, quantity: 0 })
+      const Pipe = item({ id: 'Pipe', name: 'Pipe', shape: 'cylinder', width: 9.5, length: 0.15, height: 0.15, quantity: 0 })
+      const filler = item({ id: 'filler', name: 'Filler', width: 0.2, length: 0.2, quantity: 1 })
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 0, y: 0.225, width: 9.5, length: 0.15,
+        layers: 9, rotated: false, color: '#000',
+        composition: [{ itemId: 'Box', layers: 2 }, { itemId: 'Pipe', layers: 7 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packDeck(9.5, 0.6, [Box, Pipe, filler], { pinned: [pin], clearance: 10, gap: 0 })
+      expect(res.placed.some((p) => p.itemId === 'deleted-item')).toBe(true)
+      expect(res.placed.some((p) => p.itemId === 'filler')).toBe(false)
+      expect(res.unplaced.some((u) => u.itemId === 'filler')).toBe(true)
+      const ghost = res.placed.find((p) => p.itemId === 'deleted-item')
+      expect(ghost?.pyramidMargin).toBeDefined()
+      expect(ghost?.pyramidMargin?.onLength).toBeGreaterThan(0)
+    })
+
+    it('R29-P4-2: a UNIFORM (same shape/width/length) box-only composition resolves a real, honest shape and reserves no pyramid margin', () => {
+      const Box = item({ id: 'Box', name: 'Box', shape: 'box', width: 9.5, length: 0.15, height: 0.5, quantity: 0 })
+      const Box2 = item({ id: 'Box2', name: 'Box2', shape: 'box', width: 9.5, length: 0.15, height: 0.6, quantity: 0 })
+      const filler = item({ id: 'filler', name: 'Filler', width: 0.2, length: 0.2, quantity: 1 })
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: 'deleted-item', name: 'Ghost', x: 0, y: 0.225, width: 9.5, length: 0.15,
+        layers: 9, rotated: false, color: '#000',
+        composition: [{ itemId: 'Box', layers: 2 }, { itemId: 'Box2', layers: 7 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packDeck(9.5, 0.6, [Box, Box2, filler], { pinned: [pin], clearance: 10, gap: 0 })
+      const ghost = res.placed.find((p) => p.itemId === 'deleted-item')
+      // Box and Box2 genuinely agree on shape/width/length — 'box' IS the
+      // placement's real, honest visual shape here (not a guess).
+      expect(ghost?.shape).toBe('box')
+      expect(ghost?.pyramidMargin).toBeUndefined()
+      // No pyramid margin was ever warranted here — filler fits in the
+      // genuinely-free space around the (non-pipe) pin.
+      expect(res.placed.some((p) => p.itemId === 'filler')).toBe(true)
+    })
+
+    it('R29-P4-3: a HETEROGENEOUS composition (mismatched shape/width/length) resolves BOTH shape and outline to undefined, never an arbitrary constituent\'s value', () => {
+      const triangleOutline = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]
+      const Pipe = item({ id: 'Pipe', name: 'Pipe', shape: 'cylinder', width: 9.5, length: 0.15, outline: triangleOutline, quantity: 0, weight: 100, height: 0.15 })
+      const Box = item({ id: 'Box', name: 'Box', shape: 'box', width: 2, length: 2, quantity: 0, weight: 200, height: 1 })
+      const mp: ManualPlacement = {
+        id: 'm1', itemId: 'deleted-item', name: 'Ghost', x: 1, y: 1, width: 9.5, length: 0.15,
+        layers: 5, rotated: false, color: '#000',
+        composition: [{ itemId: 'Pipe', layers: 2 }, { itemId: 'Box', layers: 3 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packingResultFromManual(20, 20, [mp], 10, [Pipe, Box], 10)
+      expect(res.placed).toHaveLength(1)
+      // G1 red-team gate: shape must NOT be 'cylinder' here even though Pipe
+      // individually qualifies as pipe-shaped — Deck3DView.tsx reads `shape`
+      // directly to decide how to draw the WHOLE placement, and 3/5 of this
+      // one is a box. resolveUniformShape (not resolvePyramidShape) governs
+      // this field precisely to prevent that mis-render.
+      expect(res.placed[0].shape).toBeUndefined()
+      // outline is NOT resolved either — Pipe and Box disagree on shape/
+      // width/length, so trusting Pipe's outline for a footprint that's also
+      // 3/5 Box would be an unproven guess. undefined here degrades to bbox
+      // collision (conservative, never unsafe — see collidesPrecisely).
+      expect(res.placed[0].outline).toBeUndefined()
+      // But the PHYSICAL margin hint is still separately available and
+      // correctly reserves room for the real Pipe constituent — this is the
+      // whole point of G1's split.
+      expect(res.placed[0].pyramidMargin).toBeDefined()
+    })
+
+    it('R29-P4-G1: proves the physical/visual split directly — a [box,pipe] composition has shape=undefined AND a non-zero pyramidMargin simultaneously', () => {
+      const Box = item({ id: 'Box', name: 'Box', shape: 'box', width: 9.5, length: 0.15, height: 0.5, quantity: 0 })
+      const Pipe = item({ id: 'Pipe', name: 'Pipe', shape: 'cylinder', width: 9.5, length: 0.15, height: 0.15, quantity: 0 })
+      const mp: ManualPlacement = {
+        id: 'm1', itemId: 'deleted-item', name: 'Ghost', x: 1, y: 1, width: 9.5, length: 0.15,
+        layers: 9, rotated: false, color: '#000',
+        composition: [{ itemId: 'Box', layers: 2 }, { itemId: 'Pipe', layers: 7 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packingResultFromManual(20, 20, [mp], 10, [Box, Pipe], 10)
+      expect(res.placed).toHaveLength(1)
+      expect(res.placed[0].shape).toBeUndefined()
+      expect(res.placed[0].pyramidMargin).toBeDefined()
+      expect(res.placed[0].pyramidMargin?.onLength).toBeGreaterThan(0)
+    })
+
+    it('R29-P4-G2: same shape/width/length but DIFFERENT custom outlines resolves outline to undefined, even though shape/width/length "match"', () => {
+      const outlineA = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }]
+      const outlineB = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 1, y: 2 }]
+      const CustomA = item({ id: 'CustomA', name: 'CustomA', shape: 'custom', width: 2, length: 2, outline: outlineA, quantity: 0, weight: 100, height: 1 })
+      const CustomB = item({ id: 'CustomB', name: 'CustomB', shape: 'custom', width: 2, length: 2, outline: outlineB, quantity: 0, weight: 200, height: 1 })
+      const mp: ManualPlacement = {
+        id: 'm1', itemId: 'deleted-item', name: 'Ghost', x: 1, y: 1, width: 2, length: 2,
+        layers: 5, rotated: false, color: '#000',
+        composition: [{ itemId: 'CustomA', layers: 2 }, { itemId: 'CustomB', layers: 3 }],
+        malformed: { unresolvedItem: true },
+      }
+      const res = packingResultFromManual(20, 20, [mp], 10, [CustomA, CustomB], 10)
+      expect(res.placed).toHaveLength(1)
+      // shape/width/length all "match" (both 'custom', both 2x2) — but the
+      // outlines genuinely differ. resolveUniformOutline must not trust
+      // segments[0]'s (CustomA's) outline for a footprint that's also 3/5
+      // CustomB's differently-shaped silhouette.
+      expect(res.placed[0].shape).toBe('custom') // shape itself IS genuinely uniform
+      expect(res.placed[0].outline).toBeUndefined() // but outline is NOT
+    })
+
+    it('R29-P4-4: resolvePyramidShape/resolveUniformOutline degrade safely on an empty composition array (defensive length guard)', () => {
+      const Pipe = { id: 'Pipe', shape: 'cylinder' as const, width: 9.5, length: 0.15, height: 0.15, outline: undefined }
+      // `composition: []` is currently unreachable through any real write
+      // path (normalizeComposition/planComposedMerge/every mutation
+      // primitive in placementComposition.ts all provably return undefined
+      // or length >= 2 — see the R29 pass-4 investigation) — this proves
+      // the DEFENSIVE contract itself, not a reachable production scenario.
+      const degenerate = { itemId: 'deleted-item', layers: 5, composition: [] }
+      expect(resolvePyramidShape(degenerate, 9.5, 0.15, [Pipe])).toEqual({ shape: undefined, height: 0 })
+      expect(resolveUniformOutline(degenerate, [Pipe])).toBeUndefined()
+      expect(resolveUniformShape(degenerate, [Pipe])).toBeUndefined()
+    })
+
+    // G3 (red-team gate): `composition === undefined` and `composition ===
+    // []` are NOT the same state — segmentsOf's `??` only substitutes the
+    // synthesized singleton when composition is nullish, so an empty array
+    // (if one ever existed) would NOT degenerate to the uncomposed
+    // single-item behavior, it would degenerate to "zero segments", a
+    // DIFFERENT thing. Every resolver added this pass (resolvePyramidShape,
+    // resolveUniformOutline, resolveUniformShape) explicitly checks
+    // `segs.length === 0` rather than relying on segmentsOf's own fallback
+    // to save it — this test proves the distinction is real, not just that
+    // the resolvers happen to degrade safely.
+    it('R29-P4-G3: segmentsOf(undefined) synthesizes a real singleton segment, segmentsOf([]) does not — the two states are genuinely different', () => {
+      const withUndefined = { itemId: 'A', layers: 3, composition: undefined }
+      const withEmpty = { itemId: 'A', layers: 3, composition: [] as CompositionSegment[] }
+      expect(segmentsOf(withUndefined)).toEqual([{ itemId: 'A', layers: 3 }])
+      expect(segmentsOf(withEmpty)).toEqual([])
+    })
+  })
+
+  // R29 corrective pass 4 (separation edge cases flagged in red-team review).
+  describe('R29 corrective pass 4: violatesSeparationForCategories edge cases', () => {
+    it('R29-P4-5: a self-category rule (A<->A) correctly blocks a composed placement containing its own category too close to a plain match', () => {
+      const rules: SeparationRule[] = [{ id: 'r1', categoryA: 'standard', categoryB: 'standard', minDistance: 5 }]
+      const A = item({ id: 'A', name: 'A', width: 1, length: 1, quantity: 0, category: 'standard' })
+      const Hz = item({ id: 'Hz', name: 'Hz', width: 1, length: 1, quantity: 0, category: 'hazard' })
+      const std = { x: 0, y: 0, width: 1, length: 1, categories: ['standard'] }
+      const composed = { x: 2, y: 0, width: 1, length: 1 }
+      const composedCategories = placementCategorySet({ itemId: 'deleted-item', layers: 2, composition: [{ itemId: 'A', layers: 1 }, { itemId: 'Hz', layers: 1 }] }, [A, Hz])
+      // std ends at x=1, composed starts at x=2 -> edge distance 1 < 5.
+      expect(violatesSeparationForCategories(composed, composedCategories, [std], rules)).toBe(true)
+    })
+
+    it('R29-P4-6: both sides categoryless behaves exactly like the old single-category violatesSeparation (false) — regression guard', () => {
+      const rules: SeparationRule[] = [{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }]
+      const others = [{ x: 0.5, y: 0, width: 1, length: 1, categories: [] as string[] }]
+      expect(violatesSeparationForCategories({ x: 0, y: 0, width: 1, length: 1 }, [], others, rules)).toBe(false)
+    })
   })
 })

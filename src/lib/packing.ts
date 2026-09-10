@@ -9,7 +9,17 @@ import { type Unit, toMeters } from './units'
 // back from this file (`import type {...} from './packing'`) — type-only
 // imports are erased at compile time, so this can never form a runtime
 // circular dependency, confirmed before adding this.
-import { placementTotalWeightKg, placementTotalHeightM, placementTotalLayers, placementConstituents } from './placementComposition'
+import {
+  placementTotalWeightKg,
+  placementTotalHeightM,
+  placementTotalLayers,
+  placementConstituents,
+  placementCategorySet,
+  segmentsOf,
+  resolveUniformOutline,
+  resolveUniformShape,
+  type ComposablePlacement,
+} from './placementComposition'
 
 export interface Rect {
   x: number
@@ -669,6 +679,48 @@ export function violatesSeparation(
   return false
 }
 
+// Composition-aware wrapper around violatesSeparation above — that function
+// itself is NOT modified (its single-category-pair contract is exactly what
+// every existing uncomposed call site still needs, and is already proven
+// correct for that case). Reusing a single reduced category string for a
+// composed placement — whether the synthetic 'Смешанный груз' display label
+// or an arbitrary constituent's own category — is WRONG for a separation
+// check: no real SeparationRule is ever configured against a synthetic UI
+// label (so that placement would become invisible to separation entirely),
+// and picking one constituent's category silently drops every OTHER
+// constituent's own hazard class from the check (worse than "unchecked" —
+// it LOOKS checked). The correct contract is per-constituent-category-SET
+// matching: every distinct category physically present in the candidate
+// checked against every distinct category physically present in each
+// `other`, so a composed placement with e.g. both an ordinary and a
+// dangerous-goods constituent is caught by a rule naming the dangerous
+// category even though the placement's nominal itemId might be the
+// ordinary one (exactly the R29 Tier-1 scenario: nominal itemId broken/
+// unresolved, composition still holds the real constituent categories).
+// Degenerates to a single violatesSeparation call for an uncomposed
+// candidate/other pair (one-element category sets), so existing behavior is
+// unchanged when composition is never involved.
+export function violatesSeparationForCategories(
+  candidate: { x: number; y: number; width: number; length: number },
+  candidateCategories: Iterable<string>,
+  others: { x: number; y: number; width: number; length: number; categories: Iterable<string> }[],
+  rules: SeparationRule[] | undefined
+): boolean {
+  if (!rules || rules.length === 0) return false
+  const candCats = [...new Set(candidateCategories)]
+  if (candCats.length === 0) return false
+  const expandedOthers: { x: number; y: number; width: number; length: number; category?: string }[] = []
+  for (const other of others) {
+    for (const cat of new Set(other.categories)) {
+      expandedOthers.push({ x: other.x, y: other.y, width: other.width, length: other.length, category: cat })
+    }
+  }
+  for (const candCat of candCats) {
+    if (violatesSeparation({ ...candidate, category: candCat }, expandedOthers, rules)) return true
+  }
+  return false
+}
+
 export interface PlacedItem {
   itemId: string
   name: string
@@ -718,6 +770,21 @@ export interface PlacedItem {
   // which constituent contributed what, e.g. VCG, which is why stability.ts
   // reads `composition` directly instead of trusting this fallback).
   composition?: CompositionSegment[]
+  // Round 29 corrective pass 4A red-team gate (G1). Pre-computed pyramid
+  // spread margin via resolvePyramidShape's "ANY constituent is pipe" rule —
+  // DELIBERATELY separate from `shape` above. `shape` (resolveUniformShape)
+  // is undefined for a composition whose constituents don't all agree, since
+  // Deck3DView.tsx reads it directly to decide how to draw the WHOLE
+  // placement and a mixed [box,pipe] stack has no single honest visual
+  // shape. But pyramid margin is a pure collision-safety reservation, not a
+  // visual claim — it must still reserve room whenever ANY constituent could
+  // physically be a pipe, even when `shape` itself has to stay undefined.
+  // withHardBlockFootprint (and the free-space overlay in
+  // computeFreeRects/zone code) prefer this field when present instead of
+  // re-deriving from `shape`/`height`, which would silently lose the margin
+  // the moment `shape` is undefined for a mixed composition. undefined here
+  // means "no pyramid margin needed" (no pipe-shaped constituent at all).
+  pyramidMargin?: { onWidth: number; onLength: number }
 }
 
 export interface UnplacedItem {
@@ -725,6 +792,30 @@ export interface UnplacedItem {
   name: string
   width: number
   length: number
+  reason: string
+}
+
+// Round 29 (malformed-placement contract, corrected — see the R29 audit's
+// own finding that `UnplacedItem` was the wrong channel). `UnplacedItem`
+// means "N units of catalog item X couldn't be placed" — a cargo-QUANTITY
+// aggregate, never a placement record (it has no id of its own, and
+// packMultiTrip's carry-forward treats every entry as more of that catalog
+// item to try on the next trip). A malformed placement (see
+// PinnedPlacement.malformed) is a different kind of fact — a specific,
+// individually-identified STORE RECORD whose physical identity couldn't be
+// trusted — and routing it through `unplaced` let packMultiTrip silently
+// duplicate a real catalog item's carried-forward quantity whenever the
+// malformed placement's raw `itemId` happened to also be a valid one (the
+// common case for `malformed.invalidComposition`). `QuarantinedPlacement`
+// is a deliberately separate, disjoint channel: diagnostic-only, never
+// read by packMultiTrip/packDeckVariants/any capacity or quantity
+// calculation, and never intended as a means to reconstruct the original
+// placement (see PinnedPlacement.malformed's own `rawComposition` for
+// that, purely for future human/tooling diagnosis).
+export interface QuarantinedPlacement {
+  id: string // the placement's OWN id — unlike UnplacedItem, this names a specific store record
+  itemId: string
+  name: string
   reason: string
 }
 
@@ -744,6 +835,9 @@ export interface ItemBreakdown {
 export interface PackingResult {
   placed: PlacedItem[]
   unplaced: UnplacedItem[]
+  // Round 29 (corrected) — see QuarantinedPlacement's own doc comment for
+  // why this is a separate channel from `unplaced`, never merged into it.
+  quarantined: QuarantinedPlacement[]
   breakdown: ItemBreakdown[]
   requestedCount: number // total number of item units requested
   placedCount: number // total units placed (including stacking)
@@ -1196,7 +1290,51 @@ export interface PinnedPlacement {
   // contract — a human has to explicitly clear this, nothing does so
   // automatically (in particular, updateItem's weight-sync must NOT
   // silently resync a placement carrying this flag).
+  //
+  // Distinct from `malformed.invalidComposition` below: this fires ONLY
+  // when the raw saved placement never had a `composition` field at all —
+  // a pre-Round-24 merge ghost, detected purely by a weight-vs-catalog
+  // mismatch heuristic. It is NOT a proxy for "composition was present but
+  // rejected" — that is a different, non-heuristic signal (see `malformed`).
   legacyUnknownComposition?: true
+  // Round 29 (malformed-placement hydration contract — see the migration
+  // plan's cross-path state-integrity audit, R28/R29). Set by
+  // normalizeProject when a placement's physical identity can't be fully
+  // trusted after loading untrusted/hand-edited/corrupted JSON:
+  //   - `unresolvedItem`: the top-level `itemId` doesn't resolve to any
+  //     CargoItem in the project's own catalog (unknown id, or missing/
+  //     non-string input normalized to `''`). Set REGARDLESS of whether
+  //     `composition` is present and valid — see the two-tier contract
+  //     below for why that still matters.
+  //   - `invalidComposition`: the raw saved `composition` value WAS
+  //     present (not `undefined`) but failed validation (unknown
+  //     constituent, bad segment shape, etc.) — normalizeComposition
+  //     rejects the WHOLE array in this case, so `composition` above ends
+  //     up `undefined` exactly as it would for a placement that never had
+  //     one; this flag is the only way to tell those two apart.
+  //   - `rawComposition`: the original (rejected) raw composition value,
+  //     preserved VERBATIM (not re-validated, not typed) purely for future
+  //     diagnosis/recovery tooling — never read by any calculation.
+  //
+  // Two-tier contract (see the R29 report for the full reasoning): a
+  // placement with `composition` present and valid stays FULLY ACTIVE in
+  // packing/stability/capacity/quantity even if `unresolvedItem` is also
+  // set — every physical calculation already derives from `composition`
+  // alone once it exists (segmentsOf never reads `itemId` when
+  // `composition` is set), proven by R28.3's own consumer sweep. A
+  // placement with NO valid composition to fall back on (either
+  // `invalidComposition`, or `unresolvedItem` with no composition at all)
+  // is excluded from `packDeck`/`packingResultFromManual`'s `result.placed`
+  // entirely (reported in `result.unplaced` instead) — it must never be
+  // silently treated as an ordinary single-item placement using its raw,
+  // untrustworthy `layers`/`weight`. The underlying record is NEVER deleted
+  // or auto-repaired either way — only which physical calculations it may
+  // participate in changes.
+  malformed?: {
+    unresolvedItem?: true
+    invalidComposition?: true
+    rawComposition?: unknown
+  }
 }
 
 // Compute how many tiers (layers) can be stacked for an item. When the deck
@@ -1291,9 +1429,7 @@ export function packDeck(
     // upstream having already filtered it.
     weight: it.weight === undefined || it.weight < 0 ? undefined : toFinite(it.weight, 0),
   }))
-  const categoryByItemId = new Map(items.map((it) => [it.id, it.category]))
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
-  const shapeByItemId = new Map(items.map((it) => [it.id, it.shape]))
   const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
   const contentsByItemId = new Map(items.map((it) => [it.id, it.contents]))
   const stabilityOverrideByItemId = new Map(items.map((it) => [it.id, it.stabilityOverride]))
@@ -1309,6 +1445,7 @@ export function packDeck(
   const result: PackingResult = {
     placed: [],
     unplaced: [],
+    quarantined: [],
     breakdown: [],
     requestedCount,
     placedCount: 0,
@@ -1407,6 +1544,35 @@ export function packDeck(
   let index = 0
   const acceptedPins: PinnedPlacement[] = []
   for (const pin of pinned) {
+    // R29 (malformed-placement contract, corrected after the R29 audit
+    // found the original version routed through `result.unplaced` —
+    // `packMultiTrip`'s carry-forward reads that array by catalog itemId
+    // and would silently duplicate a real item's carried-forward quantity
+    // whenever the malformed pin's raw itemId happened to also be valid).
+    // A pin with no valid `composition` to fall back on (either
+    // `malformed.invalidComposition`, or `malformed.unresolvedItem` with no
+    // composition at all) must never be treated as an ordinary single-item
+    // placement using its raw, untrustworthy `layers`/`weight` — that would
+    // silently reinterpret it as a different physical cargo (see the R28
+    // audit's `[A2,B3,garbage]` -> "A6" finding). Excluded from
+    // `result.placed` entirely, reported in the separate, disjoint
+    // `result.quarantined` channel instead (see QuarantinedPlacement's own
+    // doc comment) — never `unplaced`, which packMultiTrip/packDeckVariants
+    // and capacity/quantity math all treat as "more of this catalog item
+    // to place." The pin itself is never mutated or dropped from the
+    // project. A pin with a VALID `composition` stays fully active even if
+    // `unresolvedItem` is also set — every physical calculation below
+    // already derives from `composition` alone, never from `itemId`, once
+    // it exists.
+    if (pin.malformed && !pin.composition) {
+      result.quarantined.push({
+        id: pin.id,
+        itemId: pin.itemId,
+        name: pin.name,
+        reason: 'Груз повреждён — физический состав не удалось определить при загрузке проекта',
+      })
+      continue
+    }
     // A pin's own `layers` is user/import-supplied and was never checked
     // against how many units of that item are actually left to place — a
     // pin with layers=10 when only 2 remain used to be placed in full,
@@ -1494,15 +1660,20 @@ export function packDeck(
       })
       continue
     }
-    const pinCategory = categoryByItemId.get(pin.itemId)
-    const violatesSep = violatesSeparation(
-      { x: pin.x, y: pin.y, width: pin.width, length: pin.length, category: pinCategory },
+    // Composition-aware (R29 corrective pass 3): a Tier-1 pin's real
+    // hazard categories live in its `composition`, not necessarily its
+    // (possibly broken/unresolved) nominal itemId — see
+    // violatesSeparationForCategories' own doc comment for why a single
+    // reduced category string is wrong here.
+    const violatesSep = violatesSeparationForCategories(
+      { x: pin.x, y: pin.y, width: pin.width, length: pin.length },
+      placementCategorySet(pin, items),
       acceptedPins.map((ap) => ({
         x: ap.x,
         y: ap.y,
         width: ap.width,
         length: ap.length,
-        category: categoryByItemId.get(ap.itemId),
+        categories: placementCategorySet(ap, items),
       })),
       separationRules
     )
@@ -1547,8 +1718,13 @@ export function packDeck(
     // or other cargo could still be auto-packed into space its pyramid
     // actually occupies once other stacks are laid out around it.
     const cm = pin.clearanceMargin
+    // Composition-aware geometry fallback (R29 corrective pass 4 — see
+    // resolvePyramidShape's own doc comment for why segments[0] alone,
+    // Pass 3's fix, isn't safe for a hydrated/imported composition that
+    // never went through planComposedMerge's uniformity gate).
+    const pinGeom = resolvePyramidShape(pin, pin.width, pin.length, items)
     const pinSpread = pipePyramidSpreadMargin(
-      { shape: shapeByItemId.get(pin.itemId), width: pin.width, length: pin.length, height: heightByItemId.get(pin.itemId) ?? 0 },
+      { shape: pinGeom.shape, width: pin.width, length: pin.length, height: pinGeom.height },
       layers
     )
     placeRect(
@@ -1585,8 +1761,30 @@ export function packDeck(
       color: pin.color,
       weight: pinWeight,
       index: index++,
-      shape: shapeByItemId.get(pin.itemId),
-      outline: outlineByItemId.get(pin.itemId),
+      // shape/outline (R29 pass 4A, G1 red-team gate): resolveUniformShape,
+      // NOT pinGeom above — `shape` feeds Deck3DView.tsx directly to decide
+      // how to draw the WHOLE placement, so it must stay undefined unless
+      // every constituent genuinely agrees, exactly like outline below.
+      // pinGeom's "any constituent is pipe" rule is deliberately used ONLY
+      // for the physical margin reservation above and pyramidMargin below —
+      // conflating the two would either mis-render a mixed [box,pipe] stack
+      // as a pure cylinder, or (the other direction) silently drop the
+      // margin reservation the moment shape has to stay undefined for a
+      // mixed composition. contents/stabilityOverride/nest are deliberately
+      // left on pin.itemId: contents is cosmetic tooltip text; stability.ts
+      // never reads PlacedItem.stabilityOverride for a composed placement
+      // (it derives VCG/TCG/LCG per-segment from `composition` directly);
+      // nest is structurally impossible on a composed placement (isPipeShape's
+      // own merge gate excludes nested pipe items from ever merging) — so all
+      // three are either inert or harmless for a Tier-1 placement regardless
+      // of which itemId resolves.
+      shape: resolveUniformShape(pin, items),
+      outline: resolveUniformOutline(pin, items),
+      // See PlacedItem.pyramidMargin's own doc comment — the physical
+      // reservation computed above, carried forward so downstream
+      // interactive-collision consumers (withHardBlockFootprint) don't have
+      // to (and can't correctly) re-derive it from `shape` alone.
+      pyramidMargin: pinSpread.onWidth === 0 && pinSpread.onLength === 0 ? undefined : pinSpread,
       contents: contentsByItemId.get(pin.itemId),
       clearanceMargin: pin.clearanceMargin,
       locked: pin.locked,
@@ -1848,15 +2046,22 @@ export function packDeck(
     // rather than let it violate a configured category separation rule. This
     // does not retry an alternate free rectangle for this stack — a v1
     // simplification matching how "no space" also doesn't retry.
+    // Composition-aware (R29 corrective pass 3): `item` here always comes
+    // straight from the catalog (AUTO never creates a composition itself),
+    // but `result.placed` can already contain an accepted Tier-1 pin whose
+    // composition holds real hazard categories its own (possibly broken)
+    // nominal itemId can't resolve — see violatesSeparationForCategories'
+    // own doc comment.
     if (
-      violatesSeparation(
-        { x: itemX, y: itemY, width: visW, length: visL, category: item.category },
+      violatesSeparationForCategories(
+        { x: itemX, y: itemY, width: visW, length: visL },
+        item.category ? [item.category] : [],
         result.placed.map((p) => ({
           x: p.x,
           y: p.y,
           width: p.width,
           length: p.length,
-          category: categoryByItemId.get(p.itemId),
+          categories: placementCategorySet(p, items),
         })),
         separationRules
       )
@@ -2238,7 +2443,11 @@ export function computeFreeRects(
     const cm = p.clearanceMargin
     // Same pyramid-spread widening as packDeck's own reservation, so this
     // overlay never shows a stacked pipe pyramid's true footprint as free.
-    const spread = pipePyramidSpreadMargin({ shape: p.shape, width: pw, length: pl, height: p.height }, p.stackedCount)
+    // Prefers the pre-computed `p.pyramidMargin` when present — see
+    // PlacedItem.pyramidMargin's own doc comment (R29 pass 4A, G1): `p.shape`
+    // alone can be undefined for a composed placement that still needs
+    // margin reserved (a pipe constituent among non-uniform siblings).
+    const spread = p.pyramidMargin ?? pipePyramidSpreadMargin({ shape: p.shape, width: pw, length: pl, height: p.height }, p.stackedCount)
     placeRect(
       {
         x: p.x - g / 2 - (cm?.left ?? 0) - spread.onWidth,
@@ -2279,6 +2488,12 @@ export interface ManualPlacement {
   composition?: CompositionSegment[]
   // See PinnedPlacement.legacyUnknownComposition above — same meaning here.
   legacyUnknownComposition?: true
+  // See PinnedPlacement.malformed above — same meaning and two-tier contract here.
+  malformed?: {
+    unresolvedItem?: true
+    invalidComposition?: true
+    rawComposition?: unknown
+  }
 }
 
 // Snap-to-grid step for dragging/nudging placements, scaled to the deck's
@@ -2386,6 +2601,53 @@ export function pipePyramidSpreadMargin(
   return item.width <= item.length ? { onWidth: half, onLength: 0 } : { onWidth: 0, onLength: half }
 }
 
+// R29 corrective pass 4 (geometry hardening). The R29 corrective pass 3 fix
+// resolved a Tier-1 placement's pyramid shape/height via its FIRST
+// composition segment, justified by a proof that only actually holds for a
+// composition created through planComposedMerge (page.tsx): that gate
+// requires isPipeShape(it) to be true for EVERY constituent INDIVIDUALLY —
+// using that constituent's own catalog width/length/height — before a merge
+// is even allowed, so any constituent's height was guaranteed to keep the
+// isPipeShape gate open. `normalizeComposition` (hydration/import) enforces
+// NO such invariant: a structurally valid composition (every itemId
+// resolves, every `layers` a positive integer) can mix a genuine pipe
+// constituent with one that would fail its own isPipeShape check, or even a
+// non-cylinder shape entirely. Trusting segments[0] alone could therefore
+// silently MISS a real pipe constituent sitting at a later segment index,
+// under-reserving the pyramid margin — a physical collision-safety gap, not
+// a cosmetic one.
+//
+// The general (not merge-specific) rule: reserve pyramid margin whenever
+// ANY constituent, using the PLACEMENT's own real width/length (always
+// trustworthy — a placement-level field, never itemId-derived) together
+// with THAT constituent's own catalog height, independently qualifies as
+// pipe-shaped. This can only ever resolve to AS MUCH OR MORE margin than a
+// segments[0]-only resolution — never less — so it's strictly safer, not
+// merely differently-shaped risk. It degenerates to exactly today's
+// behavior for an uncomposed placement (segmentsOf's one-element fallback)
+// and for a real merge-created composition (every constituent already
+// qualifies by the merge gate above, so "any" is trivially satisfied by
+// segments[0] itself — no behavior change for the case Pass 3 was actually
+// tested against). An empty segment list (composition: [] — currently
+// unreachable through any real write path, see placementComposition.ts's
+// own writers, but not something the type system forbids) falls through
+// the loop to the safe `{ shape: undefined, height: 0 }` default rather
+// than throwing or silently indexing `[0]` on an empty array.
+export function resolvePyramidShape(
+  p: ComposablePlacement,
+  width: number,
+  length: number,
+  items: { id: string; shape?: CargoShape; height: number }[]
+): { shape: CargoShape | undefined; height: number } {
+  for (const seg of segmentsOf(p)) {
+    const it = items.find((i) => i.id === seg.itemId)
+    if (it && isPipeShape({ shape: it.shape, width, length, height: it.height ?? 0 })) {
+      return { shape: it.shape, height: it.height ?? 0 }
+    }
+  }
+  return { shape: undefined, height: 0 }
+}
+
 // Independent hard-block margin per side of a placement's footprint —
 // lets the exclusion zone be wider on, say, the side a rigger needs to work
 // from, rather than a single symmetric radius.
@@ -2462,10 +2724,17 @@ export function withHardBlockFootprint<
     shape?: CargoShape
     height?: number
     stackedCount?: number
+    // R29 corrective pass 4A (G1) — see PlacedItem.pyramidMargin's own doc
+    // comment. Preferred over re-deriving from shape/height below, since a
+    // composed placement's `shape` can be undefined (no single uniform
+    // shape) even when it genuinely needs pyramid margin reserved (a pipe
+    // constituent hiding among non-uniform siblings) — re-deriving from
+    // `shape` alone would silently lose that margin here.
+    pyramidMargin?: { onWidth: number; onLength: number }
   }
 >(p: T): { x: number; y: number; width: number; length: number } {
   const cm = p.clearanceMargin
-  const pyr = pipePyramidSpreadMargin({ shape: p.shape, width: p.width, length: p.length, height: p.height ?? 0 }, p.stackedCount ?? 1)
+  const pyr = p.pyramidMargin ?? pipePyramidSpreadMargin({ shape: p.shape, width: p.width, length: p.length, height: p.height ?? 0 }, p.stackedCount ?? 1)
   const left = (cm?.left ?? 0) + pyr.onWidth
   const right = (cm?.right ?? 0) + pyr.onWidth
   const top = (cm?.top ?? 0) + pyr.onLength
@@ -3244,6 +3513,16 @@ export function packingResultFromManual(
   const dl = toFinite(deckLength, 0)
   const totalArea = outline && outline.length >= 3 ? polygonArea(outline) : dw * dl
   const totalRequestedSafe = toPositiveInt(totalRequested, 0)
+  // R29 (malformed-placement contract, corrected — see QuarantinedPlacement's
+  // own doc comment): same exclusion as packDeck's pin loop — a placement
+  // with no valid `composition` to fall back on must never be treated as an
+  // ordinary single-item placement using its raw, untrustworthy
+  // `layers`/`weight`. Excluded from every calculation below (weight/
+  // layers/breakdown/quantity); reported in the separate `result.quarantined`
+  // channel, never `unplaced`. The placement itself is never mutated or
+  // dropped from the project.
+  const quarantinedPlacements = placements.filter((p) => p.malformed && !p.composition)
+  const activePlacements = placements.filter((p) => !(p.malformed && !p.composition))
   // `composition` is this placement's sole source of physical truth once
   // present (see PlacedItem.composition's doc comment) — its own segment
   // total is authoritative, not `p.layers` (a stale/corrupted `p.layers`
@@ -3260,9 +3539,9 @@ export function packingResultFromManual(
   // that invariant staying correct upstream).
   const weightFor = (p: ManualPlacement) =>
     p.composition ? placementTotalWeightKg(p, items ?? []) : toFinite(p.weight ?? 0, 0) * layersFor(p)
-  const usedArea = placements.reduce((s, p) => s + toFinite(p.width, 0) * toFinite(p.length, 0), 0)
-  const totalWeight = placements.reduce((s, p) => s + weightFor(p), 0)
-  const placedCount = placements.reduce((s, p) => s + layersFor(p), 0)
+  const usedArea = activePlacements.reduce((s, p) => s + toFinite(p.width, 0) * toFinite(p.length, 0), 0)
+  const totalWeight = activePlacements.reduce((s, p) => s + weightFor(p), 0)
+  const placedCount = activePlacements.reduce((s, p) => s + layersFor(p), 0)
 
   // Build per-item map for requested quantity and max layers — also feeds
   // each placement's own height below (manual placements don't carry their
@@ -3276,7 +3555,7 @@ export function packingResultFromManual(
     }
   }
 
-  const placed = placements.map((p, i) => {
+  const placed = activePlacements.map((p, i) => {
     const layers = layersFor(p)
     // Copied through verbatim, NEVER synthesized — see PlacedItem.composition's
     // own doc comment. `weight`/`height` become the backward-compatible
@@ -3303,8 +3582,30 @@ export function packingResultFromManual(
       color: p.color,
       weight: pWeight,
       index: i,
-      shape: itemMap.get(p.itemId)?.shape,
-      outline: itemMap.get(p.itemId)?.outline,
+      // Composition-aware geometry (R29 pass 4A, G1 red-team gate), mirrors
+      // packDeck's identical construction — shape/outline use
+      // resolveUniformShape/resolveUniformOutline (uniform-only: every
+      // constituent must genuinely agree), NOT resolvePyramidShape's more
+      // permissive "any constituent is pipe" rule, which is reserved
+      // exclusively for the physical pyramidMargin field below — see
+      // PlacedItem.pyramidMargin's own doc comment for why conflating the
+      // two is wrong in both directions. contents/stabilityOverride/nest are
+      // deliberately left resolving via the nominal p.itemId only: contents
+      // is cosmetic tooltip text; stability.ts never reads
+      // PlacedItem.stabilityOverride for a composed placement (it derives
+      // VCG/TCG/LCG per-segment from `composition` directly — see
+      // stability.ts's buildCargoWeightMoments); nest is structurally
+      // impossible on a composed placement (isPipeShape's own merge gate
+      // excludes nested pipe items from ever merging) — all three are either
+      // inert or harmless for a Tier-1 placement regardless of which itemId
+      // resolves.
+      shape: resolveUniformShape(p, items ?? []),
+      outline: resolveUniformOutline(p, items ?? []),
+      pyramidMargin: (() => {
+        const geom = resolvePyramidShape(p, p.width, p.length, items ?? [])
+        const m = pipePyramidSpreadMargin({ shape: geom.shape, width: p.width, length: p.length, height: geom.height }, layers)
+        return m.onWidth === 0 && m.onLength === 0 ? undefined : m
+      })(),
       contents: itemMap.get(p.itemId)?.contents,
       clearanceMargin: p.clearanceMargin,
       // The placement's OWN override (if ever set — nothing writes one today,
@@ -3431,10 +3732,17 @@ export function packingResultFromManual(
       }
     }
   }
+  const quarantined: QuarantinedPlacement[] = quarantinedPlacements.map((p) => ({
+    id: p.id,
+    itemId: p.itemId,
+    name: p.name,
+    reason: 'Груз повреждён — физический состав не удалось определить при загрузке проекта',
+  }))
 
   return {
     placed,
     unplaced,
+    quarantined,
     breakdown: [...map.values()],
     requestedCount: totalRequestedSafe,
     placedCount,
