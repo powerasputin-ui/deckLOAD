@@ -323,6 +323,72 @@ export function placementRemoveItem(itemId: string, composition: CompositionSegm
   return { composition: null, remainingSingleton: null, removedLayers }
 }
 
+export interface ClampItemLayersResult {
+  // Same two-case shape as PopResult/RemoveItemResult. `remainingSingleton`
+  // is unreachable in practice for this operation specifically (clamping
+  // never removes a segment belonging to a DIFFERENT itemId, and `maxLayers`
+  // is always >= 1 — see maxLayersFor's own contract — so `itemId`'s own
+  // presence in the composition is reduced, never fully eliminated), but
+  // the shape is kept symmetric with the other composition-mutation
+  // primitives above rather than silently assuming a 2+-segment result.
+  composition: CompositionSegment[] | null
+  remainingSingleton: CompositionSegment | null
+  // How many layers were actually discarded — 0 if `itemId`'s own total was
+  // already within `maxLayers` (including when `itemId` isn't present in
+  // `composition` at all).
+  removedLayers: number
+}
+
+// Reduces `itemId`'s own total layers within `composition` down to at most
+// `maxLayers`, discarding the excess. This is the composition-aware form of
+// the exact same destructive clamp an ordinary (uncomposed) placement has
+// always been subject to when its item's maxLayers/height is tightened
+// after it's already placed (see calculator.ts's updateItem,
+// layerCapChanged): the excess is simply gone — not stood up as a new
+// placement elsewhere (unlike `-`/placementPop), not returned to catalog
+// quantity (unlike placementRemoveItem/removeItem). Extending that same
+// established, already-destructive precedent to composed placements at the
+// CONSTITUENT level (only `itemId`'s own segment(s) are touched, at most
+// down to `itemId`'s own limit) is the minimal, non-novel behavior — it
+// does not invent a new "return quantity" or "re-place elsewhere" contract
+// that doesn't already exist for the uncomposed case.
+//
+// Removes from the topmost (highest-index, i.e. bottom-to-top order's own
+// top) matching segment(s) first, mirroring placementPop's "physically
+// topmost first" convention, until `itemId`'s own total is at most
+// `maxLayers`. Segments belonging to any OTHER itemId are never touched; if
+// removing one of `itemId`'s segments entirely leaves two segments of the
+// SAME other itemId newly adjacent, they're coalesced — the same rule
+// placementRemoveItem already applies, for the same reason.
+export function placementClampItemLayers(
+  composition: CompositionSegment[],
+  itemId: string,
+  maxLayers: number
+): ClampItemLayersResult {
+  const currentTotal = composition.reduce((sum, s) => (s.itemId === itemId ? sum + s.layers : sum), 0)
+  const excessToRemove = currentTotal - maxLayers
+  if (excessToRemove <= 0) return { composition, remainingSingleton: null, removedLayers: 0 }
+  const working = composition.map((s) => ({ ...s }))
+  let remainingToRemove = excessToRemove
+  for (let i = working.length - 1; i >= 0 && remainingToRemove > 0; i--) {
+    const seg = working[i]
+    if (seg.itemId !== itemId) continue
+    const take = Math.min(seg.layers, remainingToRemove)
+    seg.layers -= take
+    remainingToRemove -= take
+  }
+  const remaining = working.filter((s) => s.layers > 0)
+  const coalesced: CompositionSegment[] = []
+  for (const seg of remaining) {
+    const last = coalesced[coalesced.length - 1]
+    if (last && last.itemId === seg.itemId) last.layers += seg.layers
+    else coalesced.push({ ...seg })
+  }
+  if (coalesced.length >= 2) return { composition: coalesced, remainingSingleton: null, removedLayers: excessToRemove }
+  if (coalesced.length === 1) return { composition: null, remainingSingleton: coalesced[0], removedLayers: excessToRemove }
+  return { composition: null, remainingSingleton: null, removedLayers: excessToRemove }
+}
+
 // The minimal catalog shape lashing needs — `category` (and `name`, for
 // segment labels in the UI/PDF) in addition to `weight`
 // (CompositionCatalogItem above has neither, since VCG/weight/height

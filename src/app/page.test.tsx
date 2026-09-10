@@ -2252,4 +2252,76 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // reconcileCrossItemMerge) — A's own quantity is untouched.
     expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(5)
   })
+
+  // Round 27 (fixes R26-1/R26-2): both bugs originate in the ordinary
+  // "Грузы" list catalog-edit fields (ItemList.tsx's NumField), not a
+  // drag/drop path — these two tests drive that real DOM input, through
+  // onUpdate -> updateItem -> live store state, rather than calling the
+  // store action directly (already covered at the unit level in
+  // calculator.test.ts).
+  function findItemNumInput(itemName: string, labelPrefix: string): HTMLInputElement {
+    const nameBtn = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === itemName)
+    if (!nameBtn) throw new Error(`R27 test: item row not found for "${itemName}"`)
+    let row: HTMLElement | null = nameBtn.parentElement
+    while (row && !row.textContent?.includes(labelPrefix)) row = row.parentElement
+    if (!row) throw new Error(`R27 test: no ancestor row containing label "${labelPrefix}" found for "${itemName}"`)
+    const label = Array.from(row.querySelectorAll('label')).find((l) => l.textContent?.startsWith(labelPrefix))
+    const input = label?.parentElement?.querySelector('input')
+    if (!input) throw new Error(`R27 test: input not found for label "${labelPrefix}" on "${itemName}"`)
+    return input
+  }
+
+  it('Round 27: editing a NON-NOMINAL composed constituent\'s weight through the real ItemList field is blocked when it would exceed maxDeckCargoT', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, maxDeckCargoT: 1 } }) // 1000kg
+      useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, quantity: 5, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, quantity: 5, weight: 100 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      // Composed [A2,B3], nominal itemId=A. True weight 500kg, under the 1000kg cap.
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: itemA.color, weight: 100,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    const weightInput = findItemNumInput('B', 'Вес, кг за ед.')
+    fireEvent.change(weightInput, { target: { value: '1000' } }) // true new total would be 3200kg
+
+    expect(toast.error).toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.weight).toBe(100) // rejected
+    expect(useCalculator.getState().manualPlacements[0].composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+  })
+
+  it('Round 27: tightening a NON-NOMINAL composed constituent\'s "Ярусов" through the real ItemList field clamps only that constituent, keeping layers in sync with composition', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
+      useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 5, rotated: false, color: itemA.color,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    const maxLayersInput = findItemNumInput('B', 'Ярусов') // B is NOT the nominal itemId (A is)
+    fireEvent.change(maxLayersInput, { target: { value: '1' } })
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
+    expect(placement.layers).toBe(3) // never left desynced at the stale 5
+  })
 })

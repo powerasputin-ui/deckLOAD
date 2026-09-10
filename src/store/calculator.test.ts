@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useCalculator, clearCalculatorHistory, roundForDisplay } from './calculator'
+import { packingResultFromManual } from '@/lib/packing'
 import { toast } from 'sonner'
 
 describe('calculator store', () => {
@@ -712,6 +713,172 @@ describe('calculator store', () => {
     expect(placement.layers).toBe(2)
   })
 
+  // R27 (fixes R26-2): the layerCapChanged clamp used to write
+  // `{ layers: newMaxLayers }` directly whenever `p.itemId === id` — for a
+  // composed placement whose NOMINAL itemId was the edited item, this
+  // overwrote the placement's top-level `layers` while leaving
+  // `composition` completely untouched, desyncing `layers` from
+  // `placementTotalLayers(composition)` — an explicit, documented
+  // invariant violation. This is the exact reproduction from the R26 audit
+  // report: A's own maxLayers tightened from unset (5, via deck.clearance)
+  // to 2 on a composed [A2,B3] placement.
+  it('R26-2: tightening the NOMINAL constituent\'s maxLayers reduces only that constituent\'s own segment, keeping layers in sync with composition', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 5 })
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.updateItem(itemA.id, { maxLayers: 1 }) // A's own 2 layers must clamp down to 1; B's 3 are untouched
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 3 }])
+    // Never desynced from composition's own total (1 + 3 = 4) — the exact
+    // invariant violation R26-2 found (old code would have left this at 2,
+    // the raw newMaxLayers value, ignoring B's 3 layers entirely).
+    expect(placement.layers).toBe(4)
+  })
+
+  // Opposite direction: the old clamp's `p.itemId === id` filter never
+  // fired at all when the edited item was a NON-NOMINAL constituent,
+  // leaving that constituent's own physical layer count over its own new
+  // limit with no enforcement whatsoever.
+  it('R26-2: tightening a NON-NOMINAL constituent\'s maxLayers still clamps that constituent\'s own segment inside the composed placement', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 5 })
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.updateItem(itemB.id, { maxLayers: 1 }) // B is NOT the nominal itemId (A is)
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
+    expect(placement.layers).toBe(3) // 2 + 1, never left at the stale 5
+  })
+
+  it('R26-2: tightening height (which lowers the clearance-derived cap) clamps a composed constituent\'s own segment the same way maxLayers does', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 4 }) // floor(4/height) layers allowed per item
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 }) // maxLayersFor = 4
+    s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.updateItem(itemA.id, { height: 2 }) // maxLayersFor(A) becomes floor(4/2) = 2 -- A's own 2 layers already fit exactly
+
+    let placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
+    expect(placement.layers).toBe(5)
+
+    s.updateItem(itemB.id, { height: 3 }) // maxLayersFor(B) becomes floor(4/3) = 1 -- B's own 3 layers must clamp to 1
+
+    placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
+    expect(placement.layers).toBe(3)
+  })
+
+  it('R26-2: tightening maxStackHeightM on a composed constituent clamps that constituent\'s own segment the same way maxLayers/height do', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 10 }) // generous clearance -- maxStackHeightM below is the binding constraint
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.updateItem(itemB.id, { maxStackHeightM: 1 }) // maxLayersFor(B) becomes floor(1/1) = 1 -- B's own 3 layers must clamp to 1
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
+    expect(placement.layers).toBe(3)
+  })
+
+  // R27 height-consistency audit (requested before COMMIT GO): ManualPlacement/
+  // PinnedPlacement have NO `height` field of their own to cache or desync —
+  // grep-confirmed absent from both interfaces (packing.ts). A composed
+  // placement's height is ALWAYS derived fresh at PlacedItem-construction
+  // time, inside packingResultFromManual/packDeck, via `placementTotalHeightM`
+  // (composed) or a plain catalog lookup (uncomposed) — never read from a
+  // stored field on the placement, so updateItem's resyncComposed (which only
+  // touches `layers`/`weight`, the two fields that ARE cached on the
+  // placement) has nothing stale to leave behind for height. This test
+  // proves that empirically rather than by code-reading alone: clamps a
+  // BOTTOM constituent (A, composition index 0) down from 3 to 1 layers
+  // underneath an untouched top constituent (B) — the exact scenario raised
+  // in review — then re-derives a fresh PackingResult and confirms the
+  // placed item's height reflects the NEW composition immediately, with no
+  // separate step required.
+  it('R27 height audit: clamping a BOTTOM composed constituent is immediately reflected in the next-computed PlacedItem.height (no stale cache)', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 10, width: 10, length: 10 })
+    s.addItem({ name: 'A', width: 1, length: 1, height: 2, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, height: 3, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    // [A3, B3]: A is the BOTTOM (first) segment. True height = 3*2 + 3*3 = 15.
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 6, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 3 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.updateItem(itemA.id, { maxLayers: 1 }) // A (bottom) clamps 3 -> 1; B (top) untouched
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 3 }])
+
+    // Re-derive a fresh PackingResult exactly as the real render path does
+    // (page.tsx's `trips` useMemo calls packingResultFromManual on every
+    // render) — no separate "resync height" step exists or is needed.
+    const result = packingResultFromManual(10, 10, useCalculator.getState().manualPlacements, 100, useCalculator.getState().items, 10)
+    const placed = result.placed.find((p) => p.index === 0)!
+    // New true height = 1*2 (A, clamped) + 3*3 (B, untouched) = 11 -- the
+    // OLD (pre-clamp) value would have been 15. If height were ever cached
+    // stale on the placement, this would still read 15/6=2.5 avg or similar
+    // stale figure instead of the freshly-correct 11/4=2.75 average.
+    expect(placed.height).toBeCloseTo((1 * 2 + 3 * 3) / 4, 6)
+  })
+
+  // Standalone regression: confirms the fix did not change the pre-existing,
+  // already-established uncomposed clamp behavior (same scenario as the
+  // maxStackHeightM test above, repeated for maxLayers directly on a
+  // NON-composed placement).
+  it('R26-2 regression guard: standalone placement maxLayers-tightening clamp is unchanged', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 5 })
+    s.addItem({ name: 'Box', width: 2, length: 1, height: 1, quantity: 5 })
+    const item = useCalculator.getState().items[0]
+    s.addManualPlacement({
+      id: 'm1', itemId: item.id, name: 'Box', x: 0, y: 0, width: 2, length: 1, layers: 5, rotated: false, color: '#000',
+    })
+    s.updateItem(item.id, { maxLayers: 2 })
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.layers).toBe(2)
+    expect(placement.composition).toBeUndefined()
+  })
+
   // Regression: pinFromPlaced copied itemId/name/x/y/width/length/layers/
   // rotated/color/weight but not stabilityOverride, dropping it silently on
   // "Закрепить" even in the (currently theoretical) case a placement carries
@@ -1163,6 +1330,119 @@ describe('calculator store', () => {
     expect(useCalculator.getState().items[0].weight).toBe(8000) // rejected
     expect(useCalculator.getState().items[0].width).toBe(2) // still applied
     errorSpy.mockRestore()
+  })
+
+  // R27 (fixes R26-1): the maxDeckCargoT weight-edit guard used to compute
+  // a composed placement's contribution via `p.itemId === id ? newWeight :
+  // p.weight` — for a NON-NOMINAL constituent (id !== p.itemId), that
+  // always fell back to the placement's stale cached weight, completely
+  // ignoring the edit and never detecting the resulting over-capacity
+  // total. This is the exact reproduction from the R26 audit report.
+  it('R26-1: blocks a weight increase on a NON-NOMINAL composed constituent that would push the true composed weight over maxDeckCargoT', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 1 }) // 1000kg
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 5, weight: 100 })
+    s.addItem({ name: 'B', width: 1, length: 1, quantity: 5, weight: 100 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    // P: nominal itemId = A, physically [A2, B3]. True weight = 2*100+3*100 = 500kg, under the 1000kg cap.
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000', weight: 100,
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    // True new weight would be 2*100 + 3*1000 = 3200kg — over the 1000kg cap.
+    s.updateItem(itemB.id, { weight: 1000 })
+
+    expect(errorSpy).toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.weight).toBe(100) // rejected
+    expect(useCalculator.getState().manualPlacements[0].composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+    errorSpy.mockRestore()
+  })
+
+  // Same root cause, opposite direction: the old formula multiplied
+  // newWeight by the placement's WHOLE layer count when `id` matched the
+  // NOMINAL itemId, overestimating and falsely blocking an edit that keeps
+  // the TRUE composed weight under the cap.
+  it('R26-1: allows a weight increase on the NOMINAL composed constituent when the true composed weight stays under maxDeckCargoT', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 0.7 }) // 700kg
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 5, weight: 100 })
+    s.addItem({ name: 'B', width: 1, length: 1, quantity: 5, weight: 100 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000', weight: 100,
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    // True new weight = 2*150 + 3*100 = 600kg (under 700kg, should be ALLOWED).
+    // Old flat formula: 150 * 5 layers = 750kg (over 700kg) -> would have falsely blocked.
+    s.updateItem(itemA.id, { weight: 150 })
+
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.weight).toBe(150)
+    // Composed placement's derived mirror must reflect the true recomputed total.
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.weight).toBeCloseTo(600 / 5, 6) // 120 kg/unit average
+    expect(placement.layers).toBe(5)
+    errorSpy.mockRestore()
+  })
+
+  it('R26-1: a composed placement whose true weight lands EXACTLY at maxDeckCargoT remains allowed', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 1 }) // 1000kg
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 5, weight: 100 })
+    s.addItem({ name: 'B', width: 1, length: 1, quantity: 5, weight: 100 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000', weight: 100,
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+    const errorSpy = vi.spyOn(toast, 'error')
+
+    // 2*100 + 3*(1000/3 rounded away)... use a clean number: B -> 200 => 2*100+3*200=800.
+    // Pick B's new weight so total lands exactly at 1000: 2*100 + 3*x = 1000 -> x = 800/3 (not clean).
+    // Use A instead: 2*x + 3*100 = 1000 -> x = 350.
+    s.updateItem(itemA.id, { weight: 350 })
+
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.weight).toBe(350)
+    errorSpy.mockRestore()
+  })
+
+  it('R26-1: a weight edit is rejected if it pushes ANY single pinned trip over maxDeckCargoT, but not merely because the SUM across multiple trips would exceed it', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ maxDeckCargoT: 1 }) // 1000kg per trip
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 10, weight: 100 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    // Trip 0: 6 layers of A = 600kg. Trip 1: 6 layers of A = 600kg.
+    // Aggregate (1200kg) exceeds 1000kg, but EACH trip individually (600kg) doesn't.
+    s.pinFromPlaced(0, { itemId: itemA.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 6, rotated: false, color: '#000', weight: 100 })
+    s.pinFromPlaced(1, { itemId: itemA.id, name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 6, rotated: false, color: '#000', weight: 100 })
+    // 150 * 6 = 900kg per trip -- under 1000kg each, must be ALLOWED despite
+    // the cross-trip sum (1800kg) exceeding the cap.
+    const errorSpy1 = vi.spyOn(toast, 'error')
+    s.updateItem(itemA.id, { weight: 150 })
+    expect(errorSpy1).not.toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.weight).toBe(150)
+    errorSpy1.mockRestore()
+
+    // 200 * 6 = 1200kg per trip -- over 1000kg on EACH trip, must be BLOCKED.
+    const errorSpy2 = vi.spyOn(toast, 'error')
+    s.updateItem(itemA.id, { weight: 200 })
+    expect(errorSpy2).toHaveBeenCalled()
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.weight).toBe(150) // unchanged from the prior successful edit
+    errorSpy2.mockRestore()
   })
 
   it('reflows existing placements when the item width/length changes', () => {

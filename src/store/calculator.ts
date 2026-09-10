@@ -43,7 +43,7 @@ import {
   type VariableWeightItem,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
-import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
   return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
@@ -1175,6 +1175,24 @@ export const useCalculator = create<CalculatorState>()(
       // PER-TRIP capacity (see StatsPanel's comment on this same field),
       // and MANUAL has no trip concept of its own, so summing across all
       // trips together would incorrectly reject valid multi-trip plans.
+      //
+      // R27 (fixes R26-1): the original guard here re-implemented its own
+      // flat `p.itemId === id ? newWeight : p.weight` arithmetic instead of
+      // reusing placementTotalWeightKg — for a COMPOSED placement where
+      // `id` is a non-nominal constituent, `p.itemId === id` is false, so
+      // the guard fell back to the placement's stale cached `p.weight`
+      // (ignoring the edit entirely) and could never detect a resulting
+      // over-capacity total, silently bypassing the hard limit. Conversely,
+      // when `id` IS the nominal itemId, the old formula multiplied
+      // newWeight by the placement's WHOLE layer count (as if every layer
+      // were the edited item), overestimating and falsely blocking valid
+      // edits. placementTotalWeightKg already resolves each segment's own
+      // weight from a supplied catalog and degenerates correctly for an
+      // uncomposed placement (segmentsOf's own single-segment fallback), so
+      // passing it a catalog snapshot with `id`'s hypothetical new weight
+      // substituted in gives the exact right answer for both directions,
+      // for composed and uncomposed placements alike, with no separate
+      // formula needed.
       if (
         sanitizedPatch.weight !== undefined &&
         sanitizedPatch.weight !== prevItem.weight &&
@@ -1182,8 +1200,9 @@ export const useCalculator = create<CalculatorState>()(
       ) {
         const maxKg = s.deck.maxDeckCargoT * 1000
         const newWeight = sanitizedPatch.weight
-        const weightOf = (p: { itemId: string; weight?: number; layers?: number }) =>
-          (p.itemId === id ? newWeight : (p.weight ?? 0)) * Math.max(1, p.layers ?? 1)
+        const hypotheticalItems = s.items.map((it) => (it.id === id ? { ...it, weight: newWeight } : it))
+        const weightOf = (p: { itemId: string; layers: number; composition?: CompositionSegment[] }) =>
+          placementTotalWeightKg(p, hypotheticalItems)
         const overManual = s.manualPlacements.reduce((sum, p) => sum + weightOf(p), 0) > maxKg
         const overSomeTrip = Object.values(s.pinnedPlacementsByTrip).some(
           (list) => list.reduce((sum, p) => sum + weightOf(p), 0) > maxKg
@@ -1216,8 +1235,19 @@ export const useCalculator = create<CalculatorState>()(
       // wrong weight in totals, collision checks against outdated geometry).
       const newWidth = sanitizedPatch.width ?? prevItem.width
       const newLength = sanitizedPatch.length ?? prevItem.length
-      const applyWeight = <T extends { itemId: string; weight?: number }>(p: T): T =>
-        p.itemId === id && weightChanged ? { ...p, weight: sanitizedPatch.weight } : p
+      // R27 (fixes R26-1's second half): a composed placement's top-level
+      // `weight` is a derived/cached mirror (see PinnedPlacement.composition's
+      // own doc comment — "never written independently for a composed
+      // placement"), never an independently-writable field the way it is
+      // for an ordinary placement. Overwriting it here with the edited
+      // item's raw new per-unit weight — what the old code did whenever
+      // `id` happened to be the composed placement's own nominal itemId —
+      // corrupts that cache into a number that isn't an average of
+      // anything. Composed placements are deliberately excluded here and
+      // recomputed correctly afterward (see the resync pass below,
+      // alongside the layerCapChanged clamp) instead.
+      const applyWeight = <T extends { itemId: string; weight?: number; composition?: CompositionSegment[] }>(p: T): T =>
+        !p.composition && p.itemId === id && weightChanged ? { ...p, weight: sanitizedPatch.weight } : p
 
       let manualPlacements = s.manualPlacements.map(applyWeight)
       let pinnedPlacementsByTrip: typeof s.pinnedPlacementsByTrip = Object.fromEntries(
@@ -1254,14 +1284,57 @@ export const useCalculator = create<CalculatorState>()(
       // which is the exact bug this closes. Only clamps down, mirroring the
       // clearance-driven clamp in setDeck's reflow above: raising the cap
       // never grows an existing stack on its own.
+      //
+      // R27 (fixes R26-2): the original clamp here used the same
+      // `p.itemId === id` filter as applyWeight above, with the same two
+      // failures for a composed placement — if `id` was the nominal itemId,
+      // it overwrote the WHOLE placement's `layers` field directly,
+      // desyncing it from `placementTotalLayers(composition)` (an explicit,
+      // documented invariant violation: "layers... must equal
+      // placementTotalLayers... never written independently for a composed
+      // placement"); if `id` was a non-nominal constituent, the clamp never
+      // fired at all, leaving that constituent's own physical layer count
+      // over its own new limit. placementClampItemLayers extends the SAME
+      // pre-existing destructive "just discard the excess, don't return it
+      // anywhere" precedent this whole clamp has always applied to a plain
+      // placement, but at the correct granularity — only `id`'s own
+      // segment(s) within the composition, checked against `id`'s own new
+      // maxLayersFor(), matching the identical per-constituent
+      // most-restrictive-wins rule planComposedMerge already enforces at
+      // merge time (checkLayerChange run once per distinct constituent
+      // itemId). It is NOT a new "reduce quantity"/"return to pool"
+      // behavior — a plain placement's clamp has never returned anything to
+      // catalog quantity either; this just applies the identical discard to
+      // one constituent instead of a whole flat placement.
       let layersClamped = false
       if (layerCapChanged) {
         const newItem = items.find((it) => it.id === id)!
         const newMaxLayers = maxLayersFor(newItem, s.deck.clearance)
-        const clampLayers = <T extends { itemId: string; layers: number }>(p: T): T =>
-          p.itemId === id && p.layers > newMaxLayers
+        const clampLayers = <T extends { itemId: string; layers: number; composition?: CompositionSegment[] }>(p: T): T => {
+          if (p.composition) {
+            const result = placementClampItemLayers(p.composition, id, newMaxLayers)
+            if (result.removedLayers === 0) return p
+            layersClamped = true
+            if (result.composition) return { ...p, composition: result.composition }
+            // Unreachable in practice for this specific operation (see
+            // placementClampItemLayers's own doc comment), but handled for
+            // correctness rather than assumed away: collapse back to the
+            // plain/uncomposed representation, same as every other
+            // composition-mutating primitive does when exactly one segment
+            // remains.
+            const singleton = result.remainingSingleton!
+            return {
+              ...p,
+              composition: undefined,
+              itemId: singleton.itemId,
+              layers: singleton.layers,
+              weight: items.find((it) => it.id === singleton.itemId)?.weight,
+            }
+          }
+          return p.itemId === id && p.layers > newMaxLayers
             ? ((layersClamped = true), { ...p, layers: newMaxLayers })
             : p
+        }
         manualPlacements = manualPlacements.map(clampLayers)
         pinnedPlacementsByTrip = Object.fromEntries(
           Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(clampLayers)])
@@ -1269,6 +1342,31 @@ export const useCalculator = create<CalculatorState>()(
       }
       if (layersClamped) {
         toast.info('Число ярусов уже размещённого груза уменьшено под новый лимит')
+      }
+
+      // R27: composed placements never derive `layers`/`weight`
+      // independently — `composition` is the sole source of truth (see
+      // PinnedPlacement.composition's own doc comment). Both the weight
+      // edit above (applyWeight deliberately skips composed placements) and
+      // the layerCapChanged clamp above (which can change a composed
+      // placement's own composition) can leave a composed placement's
+      // cached `layers`/`weight` mirror stale relative to its own
+      // composition + the just-updated catalog — recompute it here, once,
+      // from whichever composition each placement ended up with above,
+      // rather than mutating either field independently at either step.
+      // Idempotent/harmless for a composed placement neither step actually
+      // touched (recomputes the same values it already had).
+      if (weightChanged || layerCapChanged) {
+        const resyncComposed = <T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(p: T): T => {
+          if (!p.composition) return p
+          const layers = placementTotalLayers(p)
+          const weight = placementTotalWeightKg(p, items) / Math.max(1, layers)
+          return { ...p, layers, weight }
+        }
+        manualPlacements = manualPlacements.map(resyncComposed)
+        pinnedPlacementsByTrip = Object.fromEntries(
+          Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(resyncComposed)])
+        )
       }
 
       return { items, manualPlacements, pinnedPlacementsByTrip }
