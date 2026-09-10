@@ -110,26 +110,3 @@ export function wouldExceedDeckCapacity(
   }, 0)
   return currentKg + addedWeightKg > maxKg
 }
-
-// Used by handleMergePinned/handleMergeManual (page.tsx) when the user
-// drags one placement onto another to stack them. reconcileCrossItemMerge
-// only requires the two source CargoItems to share width/length/height
-// (pipe cargo split across two tracked stacks is a real workflow) — it
-// does NOT require them to share weight, so a cross-item merge can combine
-// layers from two items with different per-unit weights. Simply keeping
-// the target's old weight while bumping its layers (the previous
-// behavior) silently mis-recorded the merged stack's true weight in
-// either direction. A layer-weighted average keeps `weight * layers`
-// physically correct for the combined stack; for a same-item merge this
-// is a no-op, since both sides already share one weight by updateItem's
-// own weight-propagation invariant.
-export function mergedPlacementWeight(
-  targetWeight: number | undefined,
-  targetLayers: number,
-  draggedWeight: number | undefined,
-  draggedLayers: number
-): number | undefined {
-  const totalLayers = targetLayers + draggedLayers
-  if (totalLayers <= 0) return targetWeight
-  return ((targetWeight ?? 0) * targetLayers + (draggedWeight ?? 0) * draggedLayers) / totalLayers
-}

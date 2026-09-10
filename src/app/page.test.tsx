@@ -570,14 +570,15 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [plainPinId] })
     })
 
-    // "+" on the PLAIN pin — before the fix, findMergeSourcePinned(A, ...)
+    // "+" on the PLAIN pin — before this Round 21 fix, findMergeSourcePinned(A, ...)
     // returned the composed pin (its own itemId is also A) as the merge
-    // source, and handleMergePinned — still composition-blind — absorbed
-    // it: blended `layers`/`weight` as flat fields and DELETED the
-    // composed placement outright, discarding B's provenance/quantity
-    // permanently. With generous quantity and no competing auto-placed
-    // instance, that merge would have gone through cleanly under the old
-    // code, making this assertion fail without the guard.
+    // source, and handleMergePinned — composition-blind at the time (this
+    // predates Round 24's composition-aware rewrite) — absorbed it: blended
+    // `layers`/`weight` as flat fields and DELETED the composed placement
+    // outright, discarding B's provenance/quantity permanently. With
+    // generous quantity and no competing auto-placed instance, that merge
+    // would have gone through cleanly under the old code, making this
+    // assertion fail without the guard.
     fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
 
     const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()

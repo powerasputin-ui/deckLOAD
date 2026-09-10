@@ -8,7 +8,6 @@ import {
   sanitizeCargoMaxLayers,
   sanitizeCargoMaxStackHeightM,
   wouldExceedDeckCapacity,
-  mergedPlacementWeight,
 } from './cargoValidation'
 import { normalizeProject } from '@/store/projects'
 import { useCalculator } from '@/store/calculator'
@@ -211,31 +210,6 @@ describe('wouldExceedDeckCapacity', () => {
       expect(wouldExceedDeckCapacity([composed, uncomposed], 0, 4, catalog)).toBe(false)
       expect(wouldExceedDeckCapacity([composed, uncomposed], 1, 4, catalog)).toBe(true)
     })
-  })
-})
-
-// Regression: a cross-item pipe merge (two CargoItems with matching
-// dimensions but different weight — reconcileCrossItemMerge in page.tsx
-// never required weight to match) used to leave the target placement's
-// weight untouched while bumping its layers, silently corrupting the
-// stack's real total weight in either direction.
-describe('mergedPlacementWeight', () => {
-  it('is a no-op for a same-item merge (both sides already share one weight)', () => {
-    expect(mergedPlacementWeight(500, 2, 500, 3)).toBe(500)
-  })
-  it('layer-weights a cross-item merge so total weight is preserved', () => {
-    // target: 800kg/layer x 2 layers = 1600kg. dragged: 500kg/layer x 3 layers = 1500kg.
-    // merged: 5 layers, total 3100kg -> 620kg/layer.
-    const merged = mergedPlacementWeight(800, 2, 500, 3)
-    expect(merged).toBeCloseTo(620, 6)
-    expect((merged ?? 0) * 5).toBeCloseTo(1600 + 1500, 6)
-  })
-  it('treats a missing weight as 0 on either side', () => {
-    expect(mergedPlacementWeight(undefined, 2, 500, 3)).toBeCloseTo((0 * 2 + 500 * 3) / 5, 6)
-    expect(mergedPlacementWeight(500, 2, undefined, 3)).toBeCloseTo((500 * 2 + 0 * 3) / 5, 6)
-  })
-  it('falls back to targetWeight when total layers is zero (degenerate input)', () => {
-    expect(mergedPlacementWeight(500, 0, 500, 0)).toBe(500)
   })
 })
 

@@ -1156,32 +1156,34 @@ export interface PinnedPlacement {
   // the formula suggests, but that must be a stated reason, not a silent
   // shortfall. Surfaced as-is in the PDF export.
   lashingJustification?: string
-  // Set when a cross-item merge (reconcileCrossItemMerge, page.tsx) combines
-  // this placement with an item whose CargoItem.allowRotation is false —
-  // rotation permission is normally resolved fresh from `items.find(itemId)`
-  // by itemId alone, which after a merge only ever sees the SURVIVING
-  // item's own allowRotation, silently forgetting whichever item was
-  // dragged in. Most-restrictive-wins: once set, this placement can never
-  // rotate again regardless of what its own itemId's CargoItem allows,
-  // since the merge may have folded in units that don't allow it. Never
+  // Set when a merge (planComposedMerge, page.tsx) combines this placement
+  // with a constituent whose CargoItem.allowRotation is false — rotation
+  // permission is normally resolved fresh from `items.find(itemId)` by
+  // itemId alone, which only ever sees ONE item's own allowRotation.
+  // planComposedMerge aggregates this across EVERY constituent on BOTH
+  // sides of the merge (not just the two nominal itemIds), so a
+  // non-rotatable unit folded in anywhere in the resulting composition sets
+  // this. Most-restrictive-wins: once set, this placement can never rotate
+  // again regardless of what its own itemId's CargoItem allows. Never
   // cleared automatically — a merge is a one-way operation here.
   rotationLocked?: boolean
-  // Round 13 (data-model foundation only — see src/lib/placementComposition.ts):
-  // present ONLY on a placement produced by a cross-item merge, i.e. one
-  // that physically contains units of more than one CargoItem. When
-  // present, this is the SOLE source of truth for the placement's physical
-  // makeup — `itemId`/`layers`/`weight` above become nominal/derived
-  // mirrors (itemId = whichever constituent currently "owns" the stack's
-  // identity; layers/weight must equal placementTotalLayers/
-  // placementTotalWeightKg of this array, never written independently for
-  // a composed placement). Absent (the overwhelming common case) means an
-  // ordinary single-item placement — itemId/layers/weight keep their
-  // existing, unchanged meaning and every existing consumer keeps working
-  // exactly as before. AS OF ROUND 13, nothing in the real merge/+/-/
-  // removeItem UI paths creates or reads this field yet — those still use
-  // the pre-Round-13 flat-field logic verbatim. This field and the pure
-  // helpers around it exist now so they can be built and tested in
-  // isolation before Round 14 switches the real merge UI over to them.
+  // Present ONLY on a placement that physically contains units of more than
+  // one CargoItem (a composed placement). When present, this is the SOLE
+  // source of truth for the placement's physical makeup — `itemId`/
+  // `layers`/`weight` above become nominal/derived mirrors (itemId =
+  // whichever constituent currently "owns" the stack's identity;
+  // layers/weight must equal placementTotalLayers/placementTotalWeightKg of
+  // this array, never written independently for a composed placement).
+  // Absent (still the common case) means an ordinary single-item
+  // placement — itemId/layers/weight keep their existing meaning. Created
+  // exclusively by planComposedMerge's bulk-absorption merge (page.tsx) and
+  // consumed throughout: packDeck's pin loop, packingResultFromManual,
+  // stability.ts's per-segment VCG/TCG/LCG, lashing (Sidebar.tsx,
+  // exportPdf.ts), rendering (Deck3DView.tsx's per-segment tier height),
+  // the `+`/`-` push/pop handlers, removeItem's per-constituent quantity
+  // surgery, and quantity accounting (checkLayerChange). See
+  // src/lib/placementComposition.ts for the shared arithmetic every one of
+  // these consumers is meant to call into rather than re-derive locally.
   composition?: CompositionSegment[]
   // Set by normalizeProject (projects.ts) on load, ONLY for a placement
   // with no `composition` whose `weight` doesn't match its own itemId's

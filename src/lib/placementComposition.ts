@@ -3,37 +3,22 @@
 // in packing.ts for the full contract). This is the ONLY place that should
 // ever do composition arithmetic — every consumer (packDeck's pin loop,
 // packingResultFromManual, stability.ts, lashing, the merge/+/- UI
-// handlers) is meant to call into these functions rather than re-derive
-// the same logic locally, which is exactly how the weight-blend bug
-// (Round 10) and its downstream siblings (height, category, stability,
-// maxLayers, allowRotation — Rounds 11/12) happened: the same "sum across
-// constituents" arithmetic got re-implemented ad hoc in several places,
-// and some of them were simply never updated.
+// handlers, removeItem, rendering) is meant to call into these functions
+// rather than re-derive the same logic locally, which is exactly how the
+// weight-blend bug (Round 10) and its downstream siblings (height,
+// category, stability, maxLayers, allowRotation — Rounds 11/12) happened:
+// the same "sum across constituents" arithmetic got re-implemented ad hoc
+// in several places, and some of them were simply never updated.
 //
-// Round 13 scope: this module and its tests only. Nothing in the real
-// merge/+/-/removeItem UI paths (src/app/page.tsx) calls into this module
-// yet — they still use the pre-Round-13 flat-field logic verbatim, and
-// keep doing so until Round 14 (merge) and Round 15 (removeItem/quantity)
-// explicitly switch them over. Existing consumers that still use the OLD
-// (pre-composition) arithmetic after this round, deliberately unchanged:
-//   - src/app/page.tsx: reconcileCrossItemMerge, handleMergePinned,
-//     handleMergeManual, handleLayerChangePinned/Manual's "+"/"-" branches,
-//     handleRemovePinned, checkLayerChange, onPlace's itemPlaced count
-//   - src/store/calculator.ts: removeItem, updateItem's applyWeight/
-//     decrease-warning
-//   - src/lib/packing.ts: packDeck's pin-processing loop,
-//     packingResultFromManual (still resolve height/category/weight by a
-//     single itemId lookup, never read `.composition`)
-//   - src/lib/stability.ts: computeItemVCG, buildCargoWeightMoments (still
-//     called once per placement with the placement's own flat weight/height)
-//   - src/components/calculator/Sidebar.tsx, src/lib/exportPdf.ts,
-//     src/app/page.tsx's handleExportPdf (lashing — still one category/
-//     weight per placement)
-//   - src/components/calculator/Deck3DView.tsx (still one tierPitch per
-//     placement)
-// All of the above are intentionally out of scope until later rounds —
-// composition can exist on a placement (in principle) without any of them
-// noticing, since nothing outside this module and its tests produces one.
+// Every one of the consumers listed above is composition-aware today —
+// planComposedMerge (page.tsx, Round 24) is the sole writer that ever
+// creates a `composition`, and each reader (packDeck/packingResultFromManual,
+// stability.ts's per-segment VCG/TCG/LCG, Sidebar.tsx/exportPdf.ts's
+// lashing, Deck3DView.tsx's per-segment tiers, the `+`/`-` push/pop
+// handlers, checkLayerChange's quantity accounting, removeItem's
+// constituent surgery) was migrated onto this module's functions across
+// Rounds 14–24, rather than left resolving a placement's physical
+// properties by its single nominal itemId.
 
 import type { CompositionSegment, StabilityOverride } from './packing'
 // From stabilityMath.ts, NOT stability.ts — see stabilityMath.ts's own doc

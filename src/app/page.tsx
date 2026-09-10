@@ -1234,22 +1234,24 @@ export default function Home() {
   // still-auto-placed instance, which gets pinned so it can be merged) and
   // returns what handleMergePinned needs to absorb it.
   const findMergeSourcePinned = (itemId: string, excludeId: string): { id: string } | null => {
-    // Round 21 corrective pass: a composed placement's nominal `itemId` can
-    // coincidentally match `itemId` even though it also carries OTHER
-    // constituents — offering it here would feed it straight into
-    // handleMergePinned below, which is still the old composition-BLIND
-    // writer (blends `weight`/`layers` as flat fields and deletes the
-    // dragged placement outright). That would silently discard every
-    // non-nominal constituent's provenance/quantity, permanently. Excluding
-    // composed candidates here is the minimal fix: it never makes this
-    // function (or the merge writer) composition-AWARE, it just keeps a
-    // composed placement from ever being offered as a source through this
-    // "+" path. A freely-still-auto-placed instance (the second branch,
-    // below) can never be composed in the first place — composition only
-    // ever exists on an already-PINNED source (see PlacedItem.composition's
-    // own doc comment in packing.ts), and this scan explicitly excludes
-    // positions that match an existing pin — so no equivalent guard is
-    // needed there.
+    // Round 21 corrective pass (reasoning updated after Round 24): a
+    // composed placement's nominal `itemId` can coincidentally match
+    // `itemId` even though it also carries OTHER constituents — offering it
+    // here would feed it into handleMergePinned below as a "+" source. That
+    // handler is composition-AWARE since Round 24 (planComposedMerge), but
+    // "+" and drag-to-merge are still two deliberately DIFFERENT
+    // operations: "+" is Round 21's single-unit push (pulls exactly one
+    // more layer of the SAME nominal item off the deck), while
+    // handleMergePinned performs a bulk absorption of the WHOLE dragged
+    // placement's composition. Letting a composed placement through this
+    // "+" path would silently turn a single-unit push into a bulk multi-
+    // constituent merge instead — the guard stays, just for that reason now
+    // instead of composition-blindness. A freely-still-auto-placed instance
+    // (the second branch, below) can never be composed in the first place —
+    // composition only ever exists on an already-PINNED source (see
+    // PlacedItem.composition's own doc comment in packing.ts), and this
+    // scan explicitly excludes positions that match an existing pin — so no
+    // equivalent guard is needed there.
     const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId && !p.composition)
     if (otherPin) return { id: otherPin.id }
     const freeInstance = result.placed.find((p) => {
@@ -1464,9 +1466,11 @@ export default function Home() {
   // Manual-mode equivalent of findMergeSourcePinned — every placement here
   // is already a manual placement (no separate "still auto-placed" pool to
   // fall back to), so this just looks for another one of the same item.
-  // Round 21 corrective pass: same `!m.composition` guard as
-  // findMergeSourcePinned above, same reason — never offer a composed
-  // placement to the still composition-blind handleMergeManual.
+  // Round 21 corrective pass (reasoning updated after Round 24): same
+  // `!m.composition` guard as findMergeSourcePinned above, same reason —
+  // never offer a composed placement through the single-unit "+" path,
+  // since handleMergeManual's drag-to-merge (composition-aware since Round
+  // 24) is a deliberately different, bulk-absorption operation.
   const findMergeSourceManual = (itemId: string, excludeId: string): { id: string } | null => {
     const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId && !m.composition)
     return other ? { id: other.id } : null
