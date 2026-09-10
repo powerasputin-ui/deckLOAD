@@ -60,7 +60,7 @@ import {
   type PackingResult,
   type CompositionSegment,
 } from '@/lib/packing'
-import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -79,7 +79,7 @@ import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf, buildLashingRequirementRows } from '@/lib/exportPdf'
-import { wouldExceedDeckCapacity, mergedPlacementWeight } from '@/lib/cargoValidation'
+import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
 // Once a visitor clicks through the intro, this survives reloads/new tabs
@@ -1598,83 +1598,135 @@ export default function Home() {
     }
   }
 
-  // Drag one pinned placement onto another of the same item — merges them
-  // into a single stacked footprint (target absorbs the dragged one's
-  // layers) instead of leaving two separate places side by side. Reuses the
-  // same clearance/quantity escalation as the "+" button, since merging is
-  // conceptually "add N layers to the target", just sourced from an existing
-  // placement instead of the unplaced pool.
-  // When the dragged and target placements belong to DIFFERENT cargo items
-  // (e.g. an item and its "Дублировать" copy — DeckVisualization's
-  // findMergeTarget already gated on matching footprint, but not shape/
-  // height, which it can't see), this verifies they're truly physically
-  // identical and that the merged layer count still fits under the height/
-  // clearance cap — BOTH checked before touching any state, so there is
-  // nothing to roll back on rejection. Since merging just RELABELS existing
-  // physical units as belonging to the target's item rather than creating
-  // or destroying any, it moves `delta` units of quantity from the dragged
-  // item to the target item so both items' own "Кол-во" stay truthful. If
-  // that empties the dragged item's quantity entirely, it's removed from
-  // the "Грузы" list, matching what the user asked for: "убирать груз
-  // который я взял" — the source disappears once every one of its units
-  // has been folded into the target. Returns false (having changed
-  // nothing) if the merge can't proceed for any reason.
-  const reconcileCrossItemMerge = (draggedItemId: string, targetItemId: string, targetLayers: number, delta: number): boolean => {
-    if (draggedItemId === targetItemId) return true
-    const draggedItem = items.find((it) => it.id === draggedItemId)
-    const targetItem = items.find((it) => it.id === targetItemId)
-    if (!draggedItem || !targetItem) return false
-    // Restricted to pipe-shaped cargo only, per explicit user request — a
-    // pyramid of round stock is the one case where "two separately-tracked
-    // stacks of the same physical item" is a real, common workflow (split a
-    // delivery, duplicate to place the rest, then recombine into one
-    // pyramid). For boxes/pallets/etc. two same-dimension items are more
-    // likely genuinely different cargo that just happens to share a
-    // footprint, so silently folding one into the other would be surprising.
-    if (!isPipeShape(draggedItem) || !isPipeShape(targetItem)) {
-      toast.warning('Объединение перетаскиванием доступно только для труб')
-      return false
+  // Round 24 (merge switch-on): drag one placement onto another — target
+  // absorbs the dragged one's ENTIRE physical composition via
+  // placementConcatComposition, instead of the pre-Round-24 flat
+  // mergedPlacementWeight/layers arithmetic that blended two different
+  // items' weight into a single scalar and lost per-constituent identity
+  // (the original Round 10 bug this whole migration exists to fix).
+  // `composition` is the source of truth for the merge result; `layers`/
+  // `weight` are DERIVED from it, never computed independently. The
+  // target's itemId always survives as the nominal identity, regardless of
+  // whether target or dragged was itself already composed.
+  //
+  // Quantity semantics — planComposedMerge itself never mutates catalog
+  // quantity (it only VALIDATES it via checkLayerChange, exactly as `+`
+  // does). Whether a merge ALSO moves catalog quantity between the two
+  // items is a separate, narrower decision, split by whether composition is
+  // actually involved — see legacyStandaloneCrossItemQuantityTransfer right
+  // below this function for the full explanation and the exact boundary
+  // (pure standalone cross-item merge: legacy transfer preserved
+  // byte-for-byte; anything where either side already carries a
+  // `composition`: no transfer at all, on purpose). This does not reinterpret
+  // the Round 16 quantity-direction invariant (remove/unpin still decreases
+  // quantity, never restores it) in either case.
+  const planComposedMerge = (
+    target: { id: string; itemId: string; layers: number; composition?: CompositionSegment[]; rotationLocked?: boolean },
+    dragged: { id: string; itemId: string; layers: number; composition?: CompositionSegment[]; rotationLocked?: boolean }
+  ):
+    | { ok: true; composition: CompositionSegment[] | undefined; itemId: string; layers: number; weight: number; rotationLocked: boolean }
+    | { ok: false; reason: string } => {
+    const targetComposition = segmentsOf(target)
+    const draggedComposition = segmentsOf(dragged)
+    const distinctIds = Array.from(new Set([...targetComposition, ...draggedComposition].map((s) => s.itemId)))
+    const sumLayersOfId = (segs: CompositionSegment[], id: string) =>
+      segs.filter((s) => s.itemId === id).reduce((sum, s) => sum + s.layers, 0)
+
+    if (distinctIds.length > 1) {
+      // Pipe-shape/dimension/category compatibility — generalized from the
+      // old reconcileCrossItemMerge's single-pair check to the FULL
+      // constituent set on BOTH sides. A merge between two placements that
+      // happen to share the same NOMINAL itemId used to skip this check
+      // entirely even when their non-nominal constituents actually
+      // differed — a transitive gap the Round 24 investigation identified
+      // (e.g. composed(A+B) onto composed(A+C) with B/C incompatible,
+      // hidden behind the matching nominal A on both sides).
+      const catalogItems = distinctIds.map((id) => items.find((it) => it.id === id))
+      const missingIndex = catalogItems.findIndex((it) => !it)
+      if (missingIndex !== -1) return { ok: false, reason: 'Груз не найден' }
+      const resolved = catalogItems as NonNullable<(typeof catalogItems)[number]>[]
+      const first = resolved[0]
+      for (const it of resolved) {
+        if (!isPipeShape(it)) return { ok: false, reason: 'Объединение перетаскиванием доступно только для труб' }
+        if (it.width !== first.width || it.length !== first.length) {
+          return { ok: false, reason: `«${it.name}» и «${first.name}» — разные размеры труб, объединить нельзя` }
+        }
+        if (it.category !== first.category) {
+          return { ok: false, reason: `«${it.name}» и «${first.name}» — разные категории груза, объединить нельзя` }
+        }
+      }
     }
-    const physicallySame =
-      draggedItem.width === targetItem.width &&
-      draggedItem.length === targetItem.length &&
-      draggedItem.height === targetItem.height
-    if (!physicallySame) {
-      toast.warning(`«${draggedItem.name}» и «${targetItem.name}» — разные размеры труб, объединить нельзя`)
-      return false
+
+    // Per-constituent maxLayers/quantity — reuse checkLayerChange (the same
+    // tested primitive `+`/`-` and same-item merge already rely on), once
+    // per distinct itemId across the COMBINED result. currentLayers=0 and
+    // delta=combinedOwnLayers makes it check the new total for that item
+    // directly; excluding target+dragged drops their current (about to be
+    // replaced) layers from the "already placed elsewhere" sum.
+    for (const id of distinctIds) {
+      const combinedOwnLayers = sumLayersOfId(targetComposition, id) + sumLayersOfId(draggedComposition, id)
+      const check = checkLayerChange(id, 0, combinedOwnLayers, [target.id, dragged.id])
+      if (!check.ok) return { ok: false, reason: check.reason ?? 'Невозможно объединить' }
     }
-    // Two different pipe-shaped items can carry different separation-rule
-    // categories (e.g. one "Опасный груз", the other not) despite matching
-    // dimensions — merging them used to silently drop the dragged item's
-    // category from the resulting stack (only the target's itemId survives,
-    // and category is always resolved fresh by itemId), letting a merge
-    // bypass a separation rule that would otherwise keep the two apart.
-    // Blocking the merge outright when categories differ is simpler and
-    // safer than trying to represent "this one stack has two categories" —
-    // that would need real composition tracking, out of scope here.
-    if (draggedItem.category !== targetItem.category) {
-      toast.warning(`«${draggedItem.name}» и «${targetItem.name}» — разные категории груза, объединить нельзя`)
-      return false
+
+    const newComposition = placementConcatComposition(targetComposition, draggedComposition)
+    const newLayers = newComposition.reduce((sum, s) => sum + s.layers, 0)
+    const newWeightTotal = newComposition.reduce((sum, s) => sum + s.layers * (items.find((it) => it.id === s.itemId)?.weight ?? 0), 0)
+    const newWeight = newWeightTotal / Math.max(1, newLayers)
+
+    // Rotation: most-restrictive-wins across EVERY constituent on BOTH
+    // sides (the pre-Round-24 code only ever checked the dragged side's
+    // NOMINAL item) — keeps the existing sticky rotationLocked flag/field
+    // architecture unchanged, just widens what feeds into it.
+    const anyNonRotatable = distinctIds.some((id) => items.find((it) => it.id === id)?.allowRotation === false)
+    const rotationLocked = Boolean(target.rotationLocked || dragged.rotationLocked || anyNonRotatable)
+
+    if (newComposition.length === 1) {
+      // Collapse back to the plain/uncomposed representation — the data
+      // model's invariant is that `composition` only exists for 2+ segments.
+      return { ok: true, composition: undefined, itemId: newComposition[0].itemId, layers: newLayers, weight: newWeight, rotationLocked }
     }
-    // maxDeckCargoT (weight) is checked separately by the caller via
-    // wouldExceedMaxDeckCargo — this is the PHYSICAL layer/height limit
-    // only. Used to check only the target's own cap, silently ignoring the
-    // dragged item's own (possibly tighter) maxLayers/maxStackHeightM —
-    // most-restrictive-wins is the only physically sound rule once two
-    // different items' units end up stacked in the same pile: neither
-    // item's own stacking limit can be safely exceeded by units of the
-    // OTHER item any more than by its own.
-    const maxPhys = Math.min(maxLayersFor(targetItem, deck.clearance), maxLayersFor(draggedItem, deck.clearance))
-    if (targetLayers + delta > maxPhys) {
-      toast.warning('Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус')
-      return false
-    }
+    return { ok: true, composition: newComposition, itemId: target.itemId, layers: newLayers, weight: newWeight, rotationLocked }
+  }
+
+  // Round 24 corrective pass: the pre-Round-24 reconcileCrossItemMerge did
+  // ONE more thing besides the physical checks planComposedMerge above now
+  // owns — it moved catalog quantity from the dragged item to the target
+  // item, since the old blended-weight representation could only attribute
+  // a merged stack to ONE catalog item (the survivor), and moving quantity
+  // was the only way to keep both items' own "Кол-во" truthful under that
+  // constraint. That is a LEGACY contract this pass deliberately preserves
+  // byte-for-byte for the exact case it originally covered — a pure
+  // standalone (uncomposed on BOTH sides) cross-item merge — since nothing
+  // about composition existing elsewhere in the app changes what a plain,
+  // never-composed merge has always done.
+  //
+  // The moment EITHER side already carries a `composition`, this must NOT
+  // fire: composition already tracks each constituent's units individually
+  // (see planComposedMerge's own doc comment), so transferring quantity on
+  // top of that would incorrectly shrink/zero a constituent's catalog
+  // quantity even though its units remain legitimately placed — just now
+  // nested inside a placement's composition instead of standing alone. This
+  // is a strict superset-safe split, not a new quantity rule: a same-item
+  // merge (target.itemId === dragged.itemId) never transferred quantity
+  // either, before or after Round 24 — only a genuine cross-item, fully
+  // uncomposed merge does. Does not touch remove/unpin's own quantity
+  // semantics (Round 16's decrease-only contract, untouched) or removeItem.
+  const legacyStandaloneCrossItemQuantityTransfer = (
+    target: { itemId: string; layers: number; composition?: CompositionSegment[] },
+    dragged: { itemId: string; layers: number; composition?: CompositionSegment[] }
+  ) => {
+    if (target.composition || dragged.composition) return
+    if (target.itemId === dragged.itemId) return
     const store = useCalculator.getState()
+    const draggedItem = store.items.find((it) => it.id === dragged.itemId)
+    const targetItem = store.items.find((it) => it.id === target.itemId)
+    if (!draggedItem || !targetItem) return
+    const delta = dragged.layers
     const remaining = draggedItem.quantity - delta
     if (remaining <= 0) store.removeItem(draggedItem.id)
     else store.updateItem(draggedItem.id, { quantity: remaining })
     store.updateItem(targetItem.id, { quantity: targetItem.quantity + delta })
-    return true
   }
 
   const handleMergePinned = (draggedId: string, targetId: string) => {
@@ -1682,30 +1734,21 @@ export default function Home() {
     const dragged = pinnedPlacements.find((p) => p.id === draggedId)
     const target = pinnedPlacements.find((p) => p.id === targetId)
     if (!dragged || !target) return
-    const delta = dragged.layers
-    const crossItem = dragged.itemId !== target.itemId
-    if (crossItem) {
-      if (!reconcileCrossItemMerge(dragged.itemId, target.itemId, target.layers, delta)) return
-    } else {
-      const check = checkLayerChange(target.itemId, target.layers, delta, [target.id, dragged.id])
-      if (!check.ok) {
-        toast.warning(check.reason ?? 'Невозможно объединить')
-        return
-      }
+    const plan = planComposedMerge(target, dragged)
+    if (!plan.ok) {
+      toast.warning(plan.reason)
+      return
     }
-    const mergedLayers = target.layers + delta
-    const mergedWeight = mergedPlacementWeight(target.weight, target.layers, dragged.weight, delta)
-    // Most-restrictive-wins: if the DRAGGED item doesn't allow rotation, the
-    // merged stack can never rotate again — its own itemId's allowRotation
-    // alone can no longer be trusted once units of a non-rotatable item are
-    // folded in. `|| target.rotationLocked` preserves a lock from an
-    // earlier merge (a target that was itself already a merged, locked
-    // stack) rather than accidentally clearing it on a further merge.
-    const draggedItem = items.find((it) => it.id === dragged.itemId)
-    const rotationLocked = target.rotationLocked || draggedItem?.allowRotation === false
-    updatePinned(clampedTripIndex, target.id, { layers: mergedLayers, weight: mergedWeight, rotationLocked })
+    legacyStandaloneCrossItemQuantityTransfer(target, dragged)
+    updatePinned(clampedTripIndex, target.id, {
+      composition: plan.composition,
+      itemId: plan.itemId,
+      layers: plan.layers,
+      weight: plan.weight,
+      rotationLocked: plan.rotationLocked,
+    })
     removePinned(clampedTripIndex, dragged.id)
-    toast.success(`Объединено: ${mergedLayers} яр. груза «${target.name}»`)
+    toast.success(`Объединено: ${plan.layers} яр. груза «${target.name}»`)
   }
 
   const handleMergeManual = (draggedId: string, targetId: string) => {
@@ -1713,26 +1756,21 @@ export default function Home() {
     const dragged = manualPlacements.find((m) => m.id === draggedId)
     const target = manualPlacements.find((m) => m.id === targetId)
     if (!dragged || !target) return
-    const targetLayers = Math.max(1, target.layers)
-    const delta = Math.max(1, dragged.layers)
-    const crossItem = dragged.itemId !== target.itemId
-    if (crossItem) {
-      if (!reconcileCrossItemMerge(dragged.itemId, target.itemId, targetLayers, delta)) return
-    } else {
-      const check = checkLayerChange(target.itemId, targetLayers, delta, [target.id, dragged.id])
-      if (!check.ok) {
-        toast.warning(check.reason ?? 'Невозможно объединить')
-        return
-      }
+    const plan = planComposedMerge(target, dragged)
+    if (!plan.ok) {
+      toast.warning(plan.reason)
+      return
     }
-    const mergedLayers = targetLayers + delta
-    const mergedWeight = mergedPlacementWeight(target.weight, targetLayers, dragged.weight, delta)
-    // Same most-restrictive-wins rule as handleMergePinned.
-    const draggedItem = items.find((it) => it.id === dragged.itemId)
-    const rotationLocked = target.rotationLocked || draggedItem?.allowRotation === false
-    updateManualPlacement(target.id, { layers: mergedLayers, weight: mergedWeight, rotationLocked })
+    legacyStandaloneCrossItemQuantityTransfer(target, dragged)
+    updateManualPlacement(target.id, {
+      composition: plan.composition,
+      itemId: plan.itemId,
+      layers: plan.layers,
+      weight: plan.weight,
+      rotationLocked: plan.rotationLocked,
+    })
     removeManualPlacement(dragged.id)
-    toast.success(`Объединено: ${mergedLayers} яр. груза «${target.name}»`)
+    toast.success(`Объединено: ${plan.layers} яр. груза «${target.name}»`)
   }
 
   // Switch mode while preserving placements:

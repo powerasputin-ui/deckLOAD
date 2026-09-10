@@ -1899,4 +1899,356 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // segment's own verdict actually rendered, not just incidental text.
     expect(screen.getByText(/требуется найтовов/)).toBeTruthy()
   })
+
+  // Round 24 (merge switch-on): real drag-to-merge through the actual
+  // rendered <Home/> DOM (pointerdown/pointermove/pointerup on the deck's
+  // SVG), not direct calls to a helper — planComposedMerge itself has no
+  // export, so this is the only way to prove the wired-up handlers actually
+  // behave as designed. Reuses the identity-SVG-transform technique from
+  // the onPlace tests above: screenToDeck's mocked math is a pure linear
+  // function of clientX/clientY, so an arbitrary pointerdown origin plus a
+  // pointermove offset of (targetX-draggedX)*scale, (targetY-draggedY)*scale
+  // deterministically lands the dragged placement exactly on the target's
+  // own (x,y) — full-footprint overlap, comfortably past findMergeTarget's
+  // 0.65 threshold. Each placement is given its own unique frozen `name` so
+  // its <g data-cargo-placement> can be found by its on-deck text label,
+  // which stays reliable even when two placements share an itemId (same
+  // fill color) or when rendering order isn't guaranteed to match array
+  // order.
+  const DECK_SCALE_R24 = 49.6
+
+  function placementGroupByLabel(label: string): Element {
+    const groups = Array.from(document.querySelectorAll('g[data-cargo-placement="true"]'))
+    const match = groups.find((g) => Array.from(g.querySelectorAll('text')).some((t) => t.textContent === label))
+    if (!match) throw new Error(`Round 24 test: placement group not found for label "${label}"`)
+    return match
+  }
+
+  function dragMergeR24(fromLabel: string, dxDeck: number, dyDeck: number) {
+    const svg = document.querySelector('svg.w-full.h-auto')!
+    const g = placementGroupByLabel(fromLabel)
+    const downX = 100
+    const downY = 100
+    withIdentitySvgTransform(() => {
+      fireEvent.pointerDown(g, { clientX: downX, clientY: downY, button: 0 })
+      fireEvent.pointerMove(svg, { clientX: downX + dxDeck * DECK_SCALE_R24, clientY: downY + dyDeck * DECK_SCALE_R24 })
+      fireEvent.pointerUp(svg, { clientX: downX + dxDeck * DECK_SCALE_R24, clientY: downY + dyDeck * DECK_SCALE_R24 })
+    })
+  }
+
+  // All cross-item Round 24 scenarios use pipe-shaped cargo (shape:
+  // 'cylinder', long/short span and long/height ratios both > 1.5) since
+  // planComposedMerge's compatibility gate — same as the old
+  // reconcileCrossItemMerge it replaces — only allows a merge spanning more
+  // than one distinct itemId when every constituent is pipe-shaped.
+  function setupPipeDeck() {
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 25 } })
+    })
+  }
+
+  it('Round 24: pure standalone + standalone cross-item merge creates a real composition AND preserves the legacy catalog quantity-transfer', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 200, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 4, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemB.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 1, rotated: false, color: itemB.color, weight: 200,
+      })
+    })
+
+    dragMergeR24('DRAG', 5, 5)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements.length).toBe(1)
+    const merged = placements[0]
+    expect(merged.id).toBe('target')
+    expect(merged.itemId).toBe(itemB.id) // target survives as nominal identity
+    expect(merged.composition).toEqual([{ itemId: itemB.id, layers: 1 }, { itemId: itemA.id, layers: 1 }])
+    expect(merged.layers).toBe(2)
+    expect(merged.weight).toBeCloseTo(150, 6) // (200*1 + 100*1) / 2
+    // Round 24 corrective pass: a PURE standalone (uncomposed on both
+    // sides) cross-item merge keeps the exact pre-Round-24
+    // reconcileCrossItemMerge quantity-transfer contract — dragged's own
+    // `delta` (1 layer) moves out of A's catalog quantity and into B's.
+    // Before: A=5, B=5. After: A=5-1=4, B=5+1=6.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(4)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(6)
+  })
+
+  it('Round 24: composed target + standalone dragged appends the new segment on top, keeping the target\'s nominal itemId', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 200, category: 'X' })
+      useCalculator.getState().addItem({ name: 'C', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 300, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    const itemC = useCalculator.getState().items.find((it) => it.name === 'C')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 1, y: 1, width: 4, length: 1, layers: 5, rotated: false, color: itemA.color, weight: 140,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemC.id, name: 'DRAGC', x: 6, y: 6, width: 4, length: 1, layers: 1, rotated: false, color: itemC.color, weight: 300,
+      })
+    })
+
+    dragMergeR24('DRAGC', 1 - 6, 1 - 6)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements.length).toBe(1)
+    const merged = placements[0]
+    expect(merged.id).toBe('target')
+    expect(merged.itemId).toBe(itemA.id)
+    expect(merged.composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+      { itemId: itemC.id, layers: 1 },
+    ])
+    expect(merged.layers).toBe(6)
+    expect(merged.weight).toBeCloseTo((2 * 100 + 3 * 200 + 1 * 300) / 6, 6)
+    // Round 24 corrective pass: the target is composed, so this must NOT
+    // touch catalog quantity for any constituent — A/B/C's own quantity
+    // (10 each) stays exactly as it was before the merge.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemC.id)?.quantity).toBe(10)
+  })
+
+  it('Round 24: standalone target + composed dragged — target survives as nominal identity even though it was itself uncomposed', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 200, category: 'X' })
+      useCalculator.getState().addItem({ name: 'C', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 300, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    const itemC = useCalculator.getState().items.find((it) => it.name === 'C')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemC.id, name: 'TARGETC', x: 1, y: 1, width: 4, length: 1, layers: 1, rotated: false, color: itemC.color, weight: 300,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAG', x: 6, y: 6, width: 4, length: 1, layers: 5, rotated: false, color: itemA.color, weight: 140,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    dragMergeR24('DRAG', 1 - 6, 1 - 6)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements.length).toBe(1)
+    const merged = placements[0]
+    expect(merged.id).toBe('target')
+    expect(merged.itemId).toBe(itemC.id) // target (standalone C) survives, NOT dragged's nominal A
+    expect(merged.composition).toEqual([
+      { itemId: itemC.id, layers: 1 },
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+    ])
+    expect(merged.layers).toBe(6)
+    // Round 24 corrective pass: the DRAGGED side is composed, so this must
+    // NOT touch catalog quantity for any constituent either — A/B/C's own
+    // quantity (10 each) stays exactly as it was before the merge.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemC.id)?.quantity).toBe(10)
+  })
+
+  it('Round 24: composed + composed concatenates both compositions, never coalescing non-adjacent same-itemId segments', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 200, category: 'X' })
+      useCalculator.getState().addItem({ name: 'C', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 300, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    const itemC = useCalculator.getState().items.find((it) => it.name === 'C')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 1, y: 1, width: 4, length: 1, layers: 5, rotated: false, color: itemA.color, weight: 140,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemC.id, name: 'DRAGCA', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemC.color, weight: 200,
+        composition: [{ itemId: itemC.id, layers: 1 }, { itemId: itemA.id, layers: 1 }],
+      })
+    })
+
+    dragMergeR24('DRAGCA', 1 - 6, 1 - 6)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements.length).toBe(1)
+    const merged = placements[0]
+    // [A2,B3] ++ [C1,A1] -> [A2,B3,C1,A1] — the two A segments are NOT
+    // adjacent (B and C sit between them) so they must stay separate.
+    expect(merged.composition).toEqual([
+      { itemId: itemA.id, layers: 2 },
+      { itemId: itemB.id, layers: 3 },
+      { itemId: itemC.id, layers: 1 },
+      { itemId: itemA.id, layers: 1 },
+    ])
+    expect(merged.layers).toBe(7)
+    // Round 24 corrective pass: BOTH sides are composed, so this must NOT
+    // touch catalog quantity for any constituent — A/B/C's own quantity
+    // (10 each) stays exactly as it was before the merge.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(10)
+    expect(useCalculator.getState().items.find((it) => it.id === itemC.id)?.quantity).toBe(10)
+  })
+
+  it('Round 24: merge is blocked (no state change) when a constituent\'s combined layers would exceed its own catalog quantity', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      // A's own quantity is 3 — the composed target already uses 2, and the
+      // dragged standalone placement carries 2 more of A: 2+2=4 > 3.
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 3, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 200, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 1, y: 1, width: 4, length: 1, layers: 5, rotated: false, color: itemA.color, weight: 140,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAGA2', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+      })
+    })
+
+    const before = useCalculator.getState().manualPlacements.map((m) => ({ ...m }))
+    dragMergeR24('DRAGA2', 1 - 6, 1 - 6)
+
+    expect(useCalculator.getState().manualPlacements).toEqual(before)
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
+  })
+
+  it('Round 24: category mismatch on a NON-NOMINAL constituent blocks the merge even when both placements share the same nominal itemId', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'Обычный' })
+      useCalculator.getState().addItem({ name: 'X', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'Обычный' })
+      useCalculator.getState().addItem({ name: 'Y', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'Опасный груз' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemX = useCalculator.getState().items.find((it) => it.name === 'X')!
+    const itemY = useCalculator.getState().items.find((it) => it.name === 'Y')!
+    act(() => {
+      // Both placements' own NOMINAL itemId is A — the old
+      // reconcileCrossItemMerge compared only the two nominal items'
+      // categories (A vs A: equal), completely missing that X and Y
+      // (each hidden inside its own placement's composition) actually
+      // conflict.
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 1, y: 1, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+        composition: [{ itemId: itemA.id, layers: 1 }, { itemId: itemX.id, layers: 1 }],
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAGAY', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+        composition: [{ itemId: itemA.id, layers: 1 }, { itemId: itemY.id, layers: 1 }],
+      })
+    })
+
+    const before = useCalculator.getState().manualPlacements.map((m) => ({ ...m }))
+    dragMergeR24('DRAGAY', 1 - 6, 1 - 6)
+
+    expect(useCalculator.getState().manualPlacements).toEqual(before)
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('разные категории груза'))
+  })
+
+  it('Round 24: rotation lock aggregates across EVERY constituent on both sides, not just the dragged side\'s nominal item', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'D', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'E', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X' })
+      // F is the NON-nominal constituent of the dragged composed placement
+      // and is the one with allowRotation: false — the pre-Round-24 code
+      // only ever consulted the dragged side's own nominal item (E, which
+      // allows rotation), so this is exactly the gap Round 24 closes.
+      useCalculator.getState().addItem({ name: 'F', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 10, weight: 100, category: 'X', allowRotation: false })
+    })
+    const itemD = useCalculator.getState().items.find((it) => it.name === 'D')!
+    const itemE = useCalculator.getState().items.find((it) => it.name === 'E')!
+    const itemF = useCalculator.getState().items.find((it) => it.name === 'F')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemD.id, name: 'TARGETD', x: 1, y: 1, width: 4, length: 1, layers: 1, rotated: false, color: itemD.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemE.id, name: 'DRAGEF', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemE.color, weight: 100,
+        composition: [{ itemId: itemE.id, layers: 1 }, { itemId: itemF.id, layers: 1 }],
+      })
+    })
+
+    dragMergeR24('DRAGEF', 1 - 6, 1 - 6)
+
+    const placements = useCalculator.getState().manualPlacements
+    expect(placements.length).toBe(1)
+    expect(placements[0].rotationLocked).toBe(true)
+  })
+
+  it('Round 24 (pinned/AUTO mode): same-item merge collapses back to the plain uncomposed representation and does NOT move catalog quantity', () => {
+    render(<Home />)
+    clearDemoCargo()
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      const targetId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'TARGET', x: 1, y: 1, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+      })
+      const dragId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'DRAG', x: 4, y: 4, width: 4, length: 1, layers: 3, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.setState({ selectedPinIds: [targetId, dragId] })
+    })
+
+    dragMergeR24('DRAG', 1 - 4, 1 - 4)
+
+    const pins = useCalculator.getState().pinnedPlacementsByTrip[0] ?? []
+    expect(pins.length).toBe(1)
+    expect(pins[0].composition).toBeUndefined() // collapsed back to plain
+    expect(pins[0].itemId).toBe(itemA.id)
+    expect(pins[0].layers).toBe(5)
+    expect(pins[0].weight).toBeCloseTo(100, 6)
+    // Round 24 doesn't move catalog quantity on merge (unlike the old
+    // reconcileCrossItemMerge) — A's own quantity is untouched.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(5)
+  })
 })
