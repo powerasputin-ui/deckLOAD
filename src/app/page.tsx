@@ -2330,15 +2330,32 @@ export default function Home() {
                         // second A anyway).
                         const item = items.find((it) => it.id === p.itemId)
                         const itemRequested = item?.quantity ?? 0
+                        // Round 23: composition-aware — placementLayersOfItem
+                        // (already the canonical primitive checkLayerChange
+                        // uses, see its own layersOfIdIn helper above) counts
+                        // only THIS itemId's own layers within each
+                        // placement, not the placement's flat total. A plain
+                        // `pin.itemId === p.itemId` filter-and-sum-whole-
+                        // layers (the pre-fix code) both MISSES a non-nominal
+                        // constituent (e.g. B inside a composed [A2,B3]
+                        // reports 0 here, letting the user silently
+                        // over-place B past its declared quantity) and
+                        // OVER-counts the nominal one (A would report the
+                        // full 5, wrongly blocking a legitimate further A
+                        // placement). For an uncomposed placement this keeps
+                        // the exact same `Math.max(1, layers)` defensive
+                        // floor the pre-fix code had (segmentsOf itself
+                        // applies no floor) — same branching idiom as
+                        // checkLayerChange's own layersOfIdIn, so the
+                        // uncomposed result is byte-identical to before.
+                        const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[] }) =>
+                          pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
                         const itemPlaced =
                           mode === 'manual'
-                            ? manualPlacements
-                                .filter((m) => m.itemId === p.itemId)
-                                .reduce((s, m) => s + Math.max(1, m.layers), 0)
+                            ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
                             : Object.values(pinnedPlacementsByTrip)
                                 .flat()
-                                .filter((pin) => pin.itemId === p.itemId)
-                                .reduce((s, pin) => s + Math.max(1, pin.layers), 0)
+                                .reduce((s, pin) => s + layersOfIdIn(pin), 0)
                         if (itemPlaced >= itemRequested) {
                           toast.warning(
                             `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`

@@ -9,7 +9,7 @@ import { type Unit, toMeters } from './units'
 // back from this file (`import type {...} from './packing'`) — type-only
 // imports are erased at compile time, so this can never form a runtime
 // circular dependency, confirmed before adding this.
-import { placementTotalWeightKg, placementTotalHeightM, placementTotalLayers } from './placementComposition'
+import { placementTotalWeightKg, placementTotalHeightM, placementTotalLayers, placementConstituents } from './placementComposition'
 
 export interface Rect {
   x: number
@@ -1944,11 +1944,63 @@ export function packDeck(
     })
   }
 
-  // Build per-item breakdown
+  // Build per-item breakdown — Round 23: composition-aware attribution.
+  // Before this fix, a composed placement's ENTIRE stackedCount/weight was
+  // filtered-and-summed under its own nominal `p.itemId` alone
+  // (`result.placed.filter(p => p.itemId === item.id)`), which for
+  // `[A2,B3]` (nominal itemId = A) attributed all 5 units / 800kg to A's
+  // row and left B's row at 0 — even though 3 real physical units of B are
+  // inside that same placement. Each constituent segment is now attributed
+  // to its OWN itemId's accumulator instead, via `placementConstituents`
+  // (placementComposition.ts) — degenerates to the exact prior per-
+  // placement attribution for an uncomposed placement (segmentsOf's
+  // implicit one-segment fallback), so every existing (uncomposed) item's
+  // breakdown row is unchanged. `footprints`/`area` are attributed in FULL
+  // to every distinct constituent itemId a placement contains — a shared
+  // physical footprint, not something to divide between constituents (this
+  // matches how an ordinary single-item placement already counts its own
+  // whole footprint once) — not a new geometry model, just extending the
+  // existing whole-footprint-per-item convention to every constituent
+  // present, not just the nominal one.
+  const constituentAcc = new Map<string, { units: number; footprints: number; area: number; weight: number; maxSegLayers: number }>()
+  const emptyAcc = () => ({ units: 0, footprints: 0, area: 0, weight: 0, maxSegLayers: 0 })
+  for (const p of result.placed) {
+    if (p.composition) {
+      for (const c of placementConstituents(p, items)) {
+        const acc = constituentAcc.get(c.itemId) ?? emptyAcc()
+        acc.units += c.layers
+        acc.weight += c.weightKg
+        acc.maxSegLayers = Math.max(acc.maxSegLayers, c.layers)
+        constituentAcc.set(c.itemId, acc)
+      }
+      // Footprint/area counted once per DISTINCT constituent itemId, even
+      // if that itemId appears in more than one non-adjacent segment of
+      // this same placement (e.g. [A2,B3,A1] — A's footprint count from
+      // this one placement is still 1, not 2).
+      const uniqueIds = new Set(p.composition.map((seg) => seg.itemId))
+      for (const itemId of uniqueIds) {
+        const acc = constituentAcc.get(itemId) ?? emptyAcc()
+        acc.footprints += 1
+        acc.area += p.width * p.length
+        constituentAcc.set(itemId, acc)
+      }
+    } else {
+      const acc = constituentAcc.get(p.itemId) ?? emptyAcc()
+      // Sum the placement's actual weight (not always item.weight): a
+      // pinned stack's weight can be overridden independently of its
+      // source item — unchanged from the pre-Round-23 formula, only moved
+      // from a per-item filter-reduce into this per-placement accumulation.
+      const unitWeight = items.find((it) => it.id === p.itemId)?.weight ?? 0
+      acc.units += p.stackedCount
+      acc.footprints += 1
+      acc.area += p.width * p.length
+      acc.weight += (p.weight ?? unitWeight) * p.stackedCount
+      acc.maxSegLayers = Math.max(acc.maxSegLayers, p.stackedCount)
+      constituentAcc.set(p.itemId, acc)
+    }
+  }
   for (const item of items) {
-    const placedForItem = result.placed.filter((p) => p.itemId === item.id)
-    const placedUnits = placedForItem.reduce((s, p) => s + p.stackedCount, 0)
-    const footprints = placedForItem.length
+    const acc = constituentAcc.get(item.id)
     // Prefer the user's own "Ярусов" cap from the item card — that's the
     // number they explicitly set and expect to see reflected here. Only
     // fall back to the real tallest stack actually placed when no cap is
@@ -1956,33 +2008,18 @@ export function packDeck(
     // clearance-derived theoretical number there was the original bug this
     // fallback fixed (see git history), but an explicit user-entered cap is
     // not that — it's the number they typed, not a derived guess.
-    const layers =
-      item.maxLayers && item.maxLayers > 0
-        ? item.maxLayers
-        : placedForItem.length > 0
-          ? Math.max(...placedForItem.map((p) => p.stackedCount))
-          : 0
-    const area = placedForItem.reduce((s, p) => s + p.width * p.length, 0)
-    const unitWeight = item.weight ?? 0
-    // Sum each placement's actual weight (not always item.weight): a pinned
-    // stack's weight can be overridden independently of its source item, and
-    // this must stay consistent with result.totalWeight, which already sums
-    // real per-placement weight.
-    const weight = placedForItem.reduce(
-      (s, p) => s + (p.weight ?? unitWeight) * p.stackedCount,
-      0
-    )
+    const layers = item.maxLayers && item.maxLayers > 0 ? item.maxLayers : (acc?.maxSegLayers ?? 0)
     result.breakdown.push({
       itemId: item.id,
       name: item.name,
       color: item.color,
       requested: item.quantity,
-      placed: placedUnits,
-      footprints,
+      placed: acc?.units ?? 0,
+      footprints: acc?.footprints ?? 0,
       layers,
-      area,
-      weight,
-      unitWeight,
+      area: acc?.area ?? 0,
+      weight: acc?.weight ?? 0,
+      unitWeight: item.weight ?? 0,
     })
   }
 
@@ -3277,41 +3314,95 @@ export function packingResultFromManual(
     }
   })
 
-  // Breakdown by itemId
+  // Breakdown by itemId — Round 23: composition-aware attribution, same
+  // fix and same reasoning as packDeck's breakdown builder above (see its
+  // comment for the full [A2,B3] example). Before this fix, a composed
+  // placement's `p.itemId` (nominal only) was the SOLE key into `map`, so
+  // a non-nominal constituent (B in [A2,B3]) never got its own row at all
+  // — which also cascaded into `unplaced` below, since that reads
+  // `map.get(it.id)?.placed` directly.
   const map = new Map<string, ItemBreakdown>()
   let maxStackHeight = 0
+  // `preferredName`/`preferredColor` (undefined for a composed non-nominal
+  // constituent — it has no placement-level frozen identity of its own to
+  // prefer) win over the catalog lookup when given, so an UNCOMPOSED
+  // placement's row keeps using the placement's own frozen `p.name`/
+  // `p.color` exactly as before this fix — never the live catalog name/
+  // color, which is a deliberate, pre-existing distinction (frozen
+  // snapshot vs live catalog) this round does not touch.
+  const getOrInitRow = (
+    itemId: string,
+    preferredName: string | undefined,
+    preferredColor: string | undefined,
+    preferredUnitWeight: number | undefined,
+    maxSegLayers: number
+  ): ItemBreakdown => {
+    const itemInfo = itemMap.get(itemId)
+    const catalogItem = (items ?? []).find((it) => it.id === itemId)
+    return (
+      map.get(itemId) ?? {
+        itemId,
+        name: preferredName ?? catalogItem?.name ?? itemId,
+        color: preferredColor ?? catalogItem?.color ?? '#999999',
+        requested: itemInfo?.quantity ?? 0,
+        placed: 0,
+        footprints: 0,
+        // Prefer the user's own "Ярусов" cap (see the matching comment in
+        // packDeck's breakdown builder above) — only fall back to the real
+        // tallest stack actually placed when no cap is set.
+        layers: itemInfo?.maxLayers && itemInfo.maxLayers > 0 ? itemInfo.maxLayers : maxSegLayers,
+        area: 0,
+        weight: 0,
+        // Same "placement's own weight can be overridden independently of
+        // its source item" precedence as the pre-Round-23 uncomposed
+        // formula — a composed constituent has no such placement-level
+        // override field of its own, so it falls straight to the live
+        // catalog weight (preferredUnitWeight undefined in that case).
+        unitWeight: preferredUnitWeight ?? catalogItem?.weight ?? 0,
+      }
+    )
+  }
   for (const p of placed) {
-    const itemInfo = itemMap.get(p.itemId)
     // p.height is already the correct per-unit value (composition-aware
     // average when composed, plain catalog height otherwise) — using it
     // instead of a fresh itemInfo lookup keeps this composition-aware for
     // free, since average * stackedCount reconstructs the true total.
     const stackHeight = p.height * p.stackedCount
     if (stackHeight > maxStackHeight) maxStackHeight = stackHeight
-    const b = map.get(p.itemId) ?? {
-      itemId: p.itemId,
-      name: p.name,
-      color: p.color,
-      requested: itemInfo?.quantity ?? 0,
-      placed: 0,
-      footprints: 0,
-      // Prefer the user's own "Ярусов" cap (see the matching comment in
-      // packDeck's breakdown builder above) — only fall back to the real
-      // tallest stack actually placed when no cap is set.
-      layers:
-        itemInfo?.maxLayers && itemInfo.maxLayers > 0 ? itemInfo.maxLayers : p.stackedCount,
-      area: 0,
-      weight: 0,
-      unitWeight: p.weight ?? 0,
+
+    if (p.composition) {
+      for (const c of placementConstituents(p, items ?? [])) {
+        const itemInfo = itemMap.get(c.itemId)
+        const b = getOrInitRow(c.itemId, undefined, undefined, undefined, c.layers)
+        if (!(itemInfo?.maxLayers && itemInfo.maxLayers > 0)) {
+          b.layers = Math.max(b.layers, c.layers)
+        }
+        b.placed += c.layers
+        b.weight += c.weightKg
+        map.set(c.itemId, b)
+      }
+      // Footprint/area counted once per DISTINCT constituent itemId this
+      // placement contains — same whole-footprint-per-constituent
+      // convention as packDeck's breakdown builder (see its comment).
+      const uniqueIds = new Set(p.composition.map((seg) => seg.itemId))
+      for (const itemId of uniqueIds) {
+        const b = getOrInitRow(itemId, undefined, undefined, undefined, 0)
+        b.footprints += 1
+        b.area += p.width * p.length
+        map.set(itemId, b)
+      }
+    } else {
+      const itemInfo = itemMap.get(p.itemId)
+      const b = getOrInitRow(p.itemId, p.name, p.color, p.weight ?? 0, p.stackedCount)
+      if (!(itemInfo?.maxLayers && itemInfo.maxLayers > 0)) {
+        b.layers = Math.max(b.layers, p.stackedCount)
+      }
+      b.placed += p.stackedCount
+      b.footprints += 1
+      b.area += p.width * p.length
+      b.weight += (p.weight ?? 0) * p.stackedCount
+      map.set(p.itemId, b)
     }
-    if (!(itemInfo?.maxLayers && itemInfo.maxLayers > 0)) {
-      b.layers = Math.max(b.layers, p.stackedCount)
-    }
-    b.placed += p.stackedCount
-    b.footprints += 1
-    b.area += p.width * p.length
-    b.weight += (p.weight ?? 0) * p.stackedCount
-    map.set(p.itemId, b)
   }
 
   // Manual mode never had this populated — nothing is "rejected" by an

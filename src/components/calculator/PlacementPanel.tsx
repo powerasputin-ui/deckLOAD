@@ -21,6 +21,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
 import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
+import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -68,13 +69,20 @@ export function PlacementPanel({
   // though they were already visible on the deck.
   const totalPlaced = result.placedCount
 
-  // Per-item placed count (same result.placed source, grouped by itemId —
-  // mirrors ItemList's own placedCount computation) for the "всего / не
-  // распределено" line on each StampRow.
+  // Per-item placed count (same result.placed source, grouped by
+  // constituent itemId — mirrors ItemList's own placedCount computation)
+  // for the "всего / не распределено" line on each StampRow. Round 23:
+  // composition-aware — segmentsOf degenerates to the placement's own
+  // single implicit segment for an uncomposed placement, so this is
+  // unchanged there; a composed placement now attributes each constituent
+  // segment's own layers to its own itemId instead of dumping the whole
+  // stack onto the nominal itemId alone.
   const placedByItemId = new Map<string, number>()
   for (const p of result.placed) {
-    const count = Number.isFinite(p.stackedCount) && p.stackedCount > 0 ? p.stackedCount : 1
-    placedByItemId.set(p.itemId, (placedByItemId.get(p.itemId) ?? 0) + count)
+    for (const seg of segmentsOf(p)) {
+      const count = Number.isFinite(seg.layers) && seg.layers > 0 ? seg.layers : 1
+      placedByItemId.set(seg.itemId, (placedByItemId.get(seg.itemId) ?? 0) + count)
+    }
   }
 
   const handleClearAll = () => {

@@ -1241,6 +1241,195 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(document.querySelector('svg [stroke="#7c3aed"]')).toBeTruthy()
   })
 
+  // Round 23 — composition-aware quantity attribution in ItemList,
+  // PlacementPanel, and onPlace's quantity gate. Before this round, all
+  // three independently grouped `result.placed`/store placements by
+  // nominal `itemId` alone, so a composed [A2,B3] (nominal itemId=A)
+  // showed "A: 5 placed, B: 0 placed" instead of "A: 2, B: 3".
+  it('ItemList: composed [A2,B3] shows 2/2 placed for A and 3/3 for B, not 5/2 and 0/3 (K#R23-itemlist)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 2, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    // ItemRow's name button carries `title={item.name}` — its parent flex
+    // container also holds the "N/M разм." badge, scoped this way since
+    // plain item names ("A"/"B") are not unique page-wide (PlacementPanel
+    // renders them too).
+    const aRow = screen.getByTitle('A')
+    const bRow = screen.getByTitle('B')
+    expect(aRow.parentElement?.textContent).toContain('2/2 разм.')
+    expect(bRow.parentElement?.textContent).toContain('3/3 разм.')
+  })
+
+  it('PlacementPanel: composed [A2,B3] attributes remaining quantity per constituent, not to the nominal itemId alone (K#R23-placementpanel)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    // Manual mode — AUTO would auto-place A's 2 genuinely-remaining units
+    // somewhere else on the deck on its own (nothing wrong with that, but
+    // it would then make the true "remaining" legitimately 0, defeating
+    // the point of this test), so this needs a mode where nothing places
+    // itself without an explicit action.
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      // A: 2 used by the composition, 2 more genuinely available.
+      // B: 3 used by the composition, fully consumed.
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 4, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+      })
+    })
+
+    // StampRow renders as a single <button> containing both the item name
+    // and "Не распределено" — scanning for a button whose text includes
+    // both disambiguates it from ItemList's own (differently-shaped) row.
+    const stampRowText = (name: string) =>
+      Array.from(document.querySelectorAll('button')).find(
+        (btn) => btn.textContent?.includes(name) && btn.textContent?.includes('Не распределено')
+      )?.textContent
+    // Pre-fix, A would wrongly show 0 remaining (over-counted at 5 placed
+    // against quantity 4) and B would wrongly show 3 remaining (never
+    // credited with its 3 units at all).
+    expect(stampRowText('A')).toContain('Не распределено: 2')
+    expect(stampRowText('B')).toContain('Не распределено: 0')
+  })
+
+  // onPlace's quantity gate (page.tsx) — functional, not just display: it
+  // decides whether a stamp click is allowed to actually place a unit.
+  //
+  // The deck click path (DeckVisualization's handleDeckClick) converts
+  // clientX/clientY to deck coordinates via `svg.createSVGPoint()` /
+  // `svg.getScreenCTM()` — real SVG geometry APIs jsdom doesn't implement
+  // (no layout engine), so an un-mocked click would silently no-op before
+  // ever reaching onPlace, making the test pass for the wrong reason (it
+  // did nothing). These two tests install a local identity-transform
+  // polyfill for exactly this pair of methods so clientX/clientY behave
+  // as literal deck-space screen coordinates once translated through the
+  // deck's own offX/offY/scale — restored after each test so no other
+  // test's environment is affected.
+  const withIdentitySvgTransform = (fn: () => void) => {
+    const proto = SVGSVGElement.prototype as unknown as {
+      createSVGPoint?: () => { x: number; y: number; matrixTransform: (m: unknown) => { x: number; y: number } }
+      getScreenCTM?: () => { inverse: () => unknown } | null
+    }
+    const origCreateSVGPoint = proto.createSVGPoint
+    const origGetScreenCTM = proto.getScreenCTM
+    proto.createSVGPoint = function (this: { __x?: number; __y?: number }) {
+      const pt = {
+        x: 0,
+        y: 0,
+        matrixTransform: () => ({ x: pt.x, y: pt.y }),
+      }
+      return pt
+    }
+    proto.getScreenCTM = () => ({ inverse: () => ({}) })
+    try {
+      fn()
+    } finally {
+      proto.createSVGPoint = origCreateSVGPoint
+      proto.getScreenCTM = origGetScreenCTM
+    }
+  }
+  // Deck is fixed at 10x10 (deck units) with the default clearance for
+  // both tests below, so the same offX/offY/scale (and thus the same
+  // clientX/clientY -> deck-space mapping) applies to both. scale =
+  // min((900-64)/10, (560-64)/10) = min(83.6, 49.6) = 49.6; deck not
+  // "rotated" (length == width); offX = (900 - 10*49.6)/2 = 202,
+  // offY = (560 - 10*49.6)/2 = 32. clientX=450/clientY=280 maps to
+  // deck-space (5,5) — clear of the existing pin at [1,3]x[1,2].
+  const DECK_CLICK_CLIENT_X = 450
+  const DECK_CLICK_CLIENT_Y = 280
+
+  it('onPlace quantity gate: composed [A2,B3] blocks placing more B once its own 3 units are accounted for (K#R23-onplace-block-B)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 4, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    // Arm B's stamp and click empty deck space — B's own 3 units are
+    // already fully accounted for (composition-aware), so this must be
+    // BLOCKED. Pre-fix, B's flat `pin.itemId === B` filter found nothing
+    // (the composed pin's own itemId is A) and would have wrongly ALLOWED
+    // this, silently over-placing B past its declared quantity.
+    act(() => {
+      useCalculator.getState().setActiveStamp(itemB.id)
+    })
+    const before = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length
+    withIdentitySvgTransform(() => {
+      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+    })
+    expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length).toBe(before)
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
+  })
+
+  it('onPlace quantity gate: composed [A2,B3] still allows placing more A when A\'s true remaining quantity is positive (K#R23-onplace-allow-A)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      // A: quantity 4, only 2 used by the composition -> 2 genuinely remain.
+      // Pre-fix, the flat filter would have summed this ONE placement's
+      // full `pin.layers` (5, the total) as "A placed", wrongly reporting
+      // 5 >= 4 and blocking this click outright.
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 4, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+    })
+
+    act(() => {
+      useCalculator.getState().setActiveStamp(itemA.id)
+    })
+    const before = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length
+    withIdentitySvgTransform(() => {
+      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+    })
+    expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length).toBe(before + 1)
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
+  })
+
   it('selecting different auto-redistribute variants actually applies each one (regression: applyVariant ignored the chosen variant in auto mode)', () => {
     render(<Home />)
     // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants

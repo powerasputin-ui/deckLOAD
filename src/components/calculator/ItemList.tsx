@@ -39,6 +39,7 @@ import {
   type Unit,
 } from '@/store/calculator'
 import type { CargoItem, PackingResult } from '@/lib/packing'
+import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -93,11 +94,18 @@ export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToT
     new Set([...DEFAULT_CATEGORIES, ...items.map((it) => it.category).filter((c): c is string => !!c)])
   )
 
-  // count placed UNITS per item id (stackedCount, not footprints)
+  // count placed UNITS per item id (stackedCount, not footprints) — Round
+  // 23: composition-aware. Before this fix, grouping by `p.itemId` alone
+  // attributed a composed placement's ENTIRE stackedCount to its nominal
+  // itemId only (e.g. [A2,B3] showed "A: 5, B: 0" instead of "A: 2, B:
+  // 3") — segmentsOf degenerates to the placement's own single implicit
+  // segment for an uncomposed placement, so this is unchanged there.
   const placedCount = new Map<string, number>()
   for (const p of result.placed) {
-    const count = Number.isFinite(p.stackedCount) && p.stackedCount > 0 ? p.stackedCount : 1
-    placedCount.set(p.itemId, (placedCount.get(p.itemId) ?? 0) + count)
+    for (const seg of segmentsOf(p)) {
+      const count = Number.isFinite(seg.layers) && seg.layers > 0 ? seg.layers : 1
+      placedCount.set(seg.itemId, (placedCount.get(seg.itemId) ?? 0) + count)
+    }
   }
 
   return (

@@ -101,6 +101,38 @@ export function placementTotalWeightKg(p: ComposablePlacement, items: Compositio
   return segmentsOf(p).reduce((sum, seg) => sum + seg.layers * (findItem(items, seg.itemId)?.weight ?? 0), 0)
 }
 
+// Round 23 (composition-aware quantity/weight attribution). The one place
+// every accounting consumer that needs to attribute a composed placement's
+// units AND weight to each of its OWN constituent itemIds — not the
+// placement's nominal itemId — is meant to call into, instead of
+// re-deriving `segmentsOf(p).map(...)` locally (which is exactly how the
+// breakdown misattribution bug happened independently in packDeck AND
+// packingResultFromManual: the same "resolve each segment's own catalog
+// weight" arithmetic re-implemented ad hoc rather than shared). Narrow on
+// purpose — mirrors segmentLashingInputs' shape (itemId/layers/weightKg
+// only, no name/color/category), since callers that need those resolve
+// them from their OWN already-available catalog data, not from here.
+//
+// For plain unit/layer counting (no weight involved), use the existing
+// `placementLayersOfItem` instead of this — it already IS the canonical
+// per-itemId layer-count primitive and doesn't need a composed placement's
+// full constituent breakdown to answer "how many of X does this placement
+// contain".
+//
+// Degenerates to the placement's own single implicit segment for an
+// uncomposed placement (segmentsOf's fallback), so every existing
+// (uncomposed) call site is unaffected if it switches to this.
+export function placementConstituents(
+  p: ComposablePlacement,
+  items: CompositionCatalogItem[]
+): { itemId: string; layers: number; weightKg: number }[] {
+  return segmentsOf(p).map((seg) => ({
+    itemId: seg.itemId,
+    layers: seg.layers,
+    weightKg: seg.layers * (findItem(items, seg.itemId)?.weight ?? 0),
+  }))
+}
+
 export function placementTotalHeightM(p: ComposablePlacement, items: CompositionCatalogItem[]): number {
   return segmentsOf(p).reduce((sum, seg) => sum + seg.layers * (findItem(items, seg.itemId)?.height ?? 0), 0)
 }
