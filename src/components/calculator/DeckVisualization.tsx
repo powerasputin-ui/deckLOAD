@@ -21,6 +21,7 @@ import {
   checkLashingBalance,
   DEFAULT_VESSEL_MOTION,
   violatesSeparation,
+  violatesSeparationForCategories,
   pipePyramidSpreadMargin,
   decomposePipePyramid,
   withHardBlockFootprint,
@@ -611,6 +612,22 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     kind: 'manual' | 'pin'
   } | null>(null)
   const dragTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Round 30 (existing-placement separation warning). Tracks the actual
+  // resolved candidate position that WILL be (or was just) committed for
+  // the current drag — updated in lockstep with every scheduleDragCommit
+  // call, unlike `pendingDrag` above, which flushPendingDrag nulls out on
+  // each individual commit. The drop-time separation check reads THIS ref
+  // rather than recomputing anything from raw pointerup screen coordinates,
+  // so it can never check a stale/different position than what actually
+  // lands in the store. Cleared on every new drag start and whenever a
+  // drag resolves into a merge (see handlePointerUp) so a check can never
+  // fire using a position left over from a DIFFERENT, already-finished drag.
+  const lastResolvedDrag = useRef<{
+    id: string
+    x: number
+    y: number
+    kind: 'manual' | 'pin'
+  } | null>(null)
 
   useEffect(() => {
     return () => {
@@ -638,6 +655,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   const scheduleDragCommit = useCallback(
     (id: string, x: number, y: number, kind: 'manual' | 'pin') => {
+      lastResolvedDrag.current = { id, x, y, kind }
       pendingDrag.current = { id, x, y, kind }
       const now = performance.now()
       if (now - lastDragCommit.current >= 50) {
@@ -655,6 +673,67 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     },
     [flushPendingDrag]
   )
+
+  // Round 30 (bug #15: dragging an EXISTING manual/pinned placement never
+  // checked separation rules at all — only the brand-new-stamp click-place
+  // path in handleDeckClick did). Runs ONCE per completed drag, at drop
+  // time, reading lastResolvedDrag (the real committed position, not a
+  // freshly-recomputed pointerup coordinate — see that ref's own comment)
+  // — never on every pointermove, which would spam a toast every ~50ms for
+  // a slow drag sitting over a violating spot. Deliberately warning-only:
+  // this NEVER gates or reverses the position commit, which has already
+  // happened (via flushPendingDrag, called by handlePointerUp before this)
+  // by the time this runs — reuses violatesSeparationForCategories
+  // unmodified (packing.ts, R29) rather than any new spatial/geometry logic.
+  //
+  // Self-exclusion is by the placement's own stable `.id` (ManualPlacement/
+  // PinnedPlacement both have one), filtered directly out of the raw
+  // manualPlacements/pinnedPlacements prop arrays — NOT the fuzzy
+  // itemId+position `draggedRendered` match the collision code above uses
+  // for PlacedItem lookups, and not object-reference equality either. `.id`
+  // is a real, stable identity key, so this holds regardless of whether the
+  // dragged placement is composed.
+  //
+  // Compares only against OTHER placements of the SAME kind (other manual
+  // placements when dragging manual, other pins when dragging a pin) — not
+  // against auto-filled (non-pinned) cargo in AUTO mode. MANUAL mode has no
+  // auto-fill concept at all, so this is a complete check there; for PINNED
+  // drag, an auto-filled neighbor is a disclosed, narrow limitation (see
+  // the Round 30 report), not something this fix silently claims to cover.
+  const checkDroppedPlacementSeparation = useCallback(() => {
+    const pending = lastResolvedDrag.current
+    lastResolvedDrag.current = null
+    if (!pending) return
+    if (!separationRules || separationRules.length === 0) return
+    const { id, x, y, kind } = pending
+    const list: (ManualPlacement | PinnedPlacement)[] = kind === 'manual' ? manualPlacements : pinnedPlacements
+    const moving = list.find((p) => p.id === id)
+    if (!moving) return
+    // Real declared categories only — mirrors the existing mixed-load label
+    // logic a few hundred lines down (segmentsOf + categoryByItemId,
+    // dropping constituents with no category set at all rather than
+    // treating "no category" as its own category that could conflict with
+    // a real one). Never the synthetic 'Смешанный груз' display label.
+    const categoriesOf = (p: ManualPlacement | PinnedPlacement): string[] =>
+      segmentsOf(p)
+        .map((seg) => categoryByItemId?.get(seg.itemId))
+        .filter((c): c is string => !!c)
+    const movingCategories = categoriesOf(moving)
+    if (movingCategories.length === 0) return
+    const others = list
+      .filter((p) => p.id !== id)
+      .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, categories: categoriesOf(p) }))
+    if (
+      violatesSeparationForCategories(
+        { x, y, width: moving.width, length: moving.length },
+        movingCategories,
+        others,
+        separationRules
+      )
+    ) {
+      toast.warning('Перемещённый груз нарушает правило сепарации грузов')
+    }
+  }, [manualPlacements, pinnedPlacements, separationRules, categoryByItemId])
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
 
@@ -1904,6 +1983,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (dragState && onMergeManual) onMergeManual(dragState.id, mergeTargetId)
       else if (pinDrag && onMergePinned) onMergePinned(pinDrag.id, mergeTargetId)
       pendingDrag.current = null
+      // Round 30 (contract): a drag that resolves into a merge is NOT an
+      // "existing placement settled at a new position" — the dragged
+      // placement's own identity is being absorbed into the target, not
+      // staying separate at these coordinates, so no separation check
+      // applies here. lastResolvedDrag may still hold a stale position from
+      // before merge-targeting armed (scheduleDragCommit stops being called
+      // the moment a merge target is active — see handlePointerMove) —
+      // discarded, never checked.
+      lastResolvedDrag.current = null
       setMergeTargetId(null)
       setDragState(null)
       setPinDrag(null)
@@ -1935,6 +2023,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     }
     // Always flush any pending drag position before releasing the pointer
     flushPendingDrag()
+    // Round 30: separation is checked strictly AFTER the position commit
+    // above, never before/instead of it — this is warning-only and must
+    // never gate or reverse a drop (see checkDroppedPlacementSeparation's
+    // own doc comment).
+    checkDroppedPlacementSeparation()
     // Click on empty deck area clears selection (pins/unpinned highlight in
     // auto mode, manual selection, load zones always) — but not while a
     // stamp is armed: that click is about placing a NEW item elsewhere, not
@@ -1977,6 +2070,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const handlePointerCancel = (e: React.PointerEvent) => {
     ;(e.target as Element).releasePointerCapture?.(e.pointerId)
     pendingDrag.current = null
+    // Round 30: a cancelled gesture never commits a position (no
+    // flushPendingDrag call below), so there's nothing to separation-check
+    // — discard rather than let it leak into a later, unrelated drag.
+    lastResolvedDrag.current = null
     if (dragTimeout.current) {
       clearTimeout(dragTimeout.current)
       dragTimeout.current = null

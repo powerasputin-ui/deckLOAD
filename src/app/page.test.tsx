@@ -2593,4 +2593,263 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('повреждён'))
     expect(toast.warning).toHaveBeenCalledTimes(1)
   })
+
+  // Round 30 (bug #15): dragging an EXISTING manual or pinned placement to a
+  // position that violates a configured separation rule never warned — only
+  // the brand-new-stamp click-place path did (see checkDroppedPlacementSeparation
+  // in DeckVisualization.tsx). Separation stays warning-only here: it never
+  // blocks or reverses the drop, matching the product's existing
+  // warning-only stance (see calculator.ts's own deck-resize separation
+  // check). Reuses dragMergeR24/withIdentitySvgTransform/setupPipeDeck
+  // (already proven pointerdown/pointermove/pointerup + identity-SVG-CTM
+  // machinery from Round 24) — a real production drag through the actual
+  // rendered DOM, not a direct call to the tested-in-R29 predicate.
+  describe('Round 30: existing-placement drag separation warning', () => {
+    it('S30-1: dragging an existing uncomposed MANUAL placement into a violating position warns, and the drop still commits (warning-only)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'Cat1' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'Cat2' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'target', itemId: itemB.id, name: 'TARGET', x: 6, y: 5, width: 1, length: 1, layers: 1, rotated: false, color: itemB.color, weight: 200,
+        })
+        useCalculator.getState().addSeparationRule({ categoryA: 'Cat1', categoryB: 'Cat2', minDistance: 3 })
+      })
+
+      // (1,1) -> (7.1,5): footprints end up NOT overlapping (7.1 > 6+1),
+      // so this never latches a merge target — a plain move, landing 0.1m
+      // from TARGET's edge, well inside the 3m rule.
+      dragMergeR24('DRAG', 6.1, 4)
+
+      const dragged = useCalculator.getState().manualPlacements.find((p) => p.id === 'drag')!
+      expect(dragged.x).toBeCloseTo(7.1, 1)
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('сепарац'))
+    })
+
+    it('S30-2: dragging an existing placement to a SAFE position does not warn (regression guard)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'Cat1' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'Cat2' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'target', itemId: itemB.id, name: 'TARGET', x: 6, y: 5, width: 1, length: 1, layers: 1, rotated: false, color: itemB.color, weight: 200,
+        })
+        useCalculator.getState().addSeparationRule({ categoryA: 'Cat1', categoryB: 'Cat2', minDistance: 3 })
+      })
+
+      // (1,1) -> ~(1,9): far from TARGET on every axis (exact landing spot
+      // may clamp slightly inside the deck edge — the point of this test is
+      // "moved, and no separation warning", not the precise coordinate).
+      dragMergeR24('DRAG', 0, 8)
+
+      const dragged = useCalculator.getState().manualPlacements.find((p) => p.id === 'drag')!
+      expect(dragged.y).toBeGreaterThan(7)
+      expect(toast.warning).not.toHaveBeenCalled()
+    })
+
+    it('S30-3: dragging a COMPOSED placement checks its constituent\'s category, not just the nominal itemId', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'CatA' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'CatB' })
+        useCalculator.getState().addItem({ name: 'C', width: 1, length: 1, height: 1, quantity: 1, weight: 300, category: 'CatC' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      const itemC = useCalculator.getState().items.find((it) => it.name === 'C')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 150,
+          composition: [{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 1 }],
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'target', itemId: itemC.id, name: 'TARGET', x: 6, y: 5, width: 1, length: 1, layers: 1, rotated: false, color: itemC.color, weight: 300,
+        })
+        // No rule at all for CatA<->CatC — only the constituent B's category
+        // conflicts. A naive nominal-itemId-only check (pre-Round-30) would
+        // resolve only 'CatA' and never see this violation.
+        useCalculator.getState().addSeparationRule({ categoryA: 'CatB', categoryB: 'CatC', minDistance: 3 })
+      })
+
+      dragMergeR24('DRAG', 6.1, 4)
+
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('сепарац'))
+    })
+
+    it('S30-4: multi-category composition vs composition — conflict via one specific constituent PAIR is still caught', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'CatA' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'CatB' })
+        useCalculator.getState().addItem({ name: 'C', width: 1, length: 1, height: 1, quantity: 1, weight: 300, category: 'CatC' })
+        useCalculator.getState().addItem({ name: 'D', width: 1, length: 1, height: 1, quantity: 1, weight: 400, category: 'CatD' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      const itemC = useCalculator.getState().items.find((it) => it.name === 'C')!
+      const itemD = useCalculator.getState().items.find((it) => it.name === 'D')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 150,
+          composition: [{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 1 }],
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'target', itemId: itemC.id, name: 'TARGET', x: 6, y: 5, width: 1, length: 1, layers: 2, rotated: false, color: itemC.color, weight: 350,
+          composition: [{ itemId: itemC.id, layers: 1 }, { itemId: itemD.id, layers: 1 }],
+        })
+        // Only B<->D conflicts — A-C, A-D, B-C all have no rule.
+        useCalculator.getState().addSeparationRule({ categoryA: 'CatB', categoryB: 'CatD', minDistance: 3 })
+      })
+
+      dragMergeR24('DRAG', 6.1, 4)
+
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('сепарац'))
+    })
+
+    it('S30-5: self-exclusion — a placement is never checked against itself, even under a self-pairing rule', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'CatSelf' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+        })
+        // Self-pairing rule: CatSelf <-> CatSelf. With no OTHER placement on
+        // the deck, this must never fire against the moving placement itself.
+        useCalculator.getState().addSeparationRule({ categoryA: 'CatSelf', categoryB: 'CatSelf', minDistance: 3 })
+      })
+
+      dragMergeR24('DRAG', 3, 3)
+
+      const dragged = useCalculator.getState().manualPlacements.find((p) => p.id === 'drag')!
+      expect(dragged.x).toBeCloseTo(4, 1)
+      expect(toast.warning).not.toHaveBeenCalled()
+    })
+
+    it('S30-6: a placement in a DIFFERENT trip never participates in the separation check (cross-trip isolation)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      // AUTO/pinned mode — trips only exist here (MANUAL is architecturally
+      // single-trip, see the Round 30 investigation).
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'Cat1' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'Cat2' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: itemA.id, name: 'PINA', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+        // A DIFFERENT trip's placement, positioned exactly where it WOULD
+        // violate separation with PINA's drop target if the two were ever
+        // compared — proving the check never reaches across trips, not just
+        // that it happens not to conflict.
+        useCalculator.getState().pinFromPlaced(1, {
+          itemId: itemB.id, name: 'PINB_OTHER_TRIP', x: 7, y: 5, width: 1, length: 1, layers: 1, rotated: false, color: itemB.color,
+        })
+        useCalculator.getState().addSeparationRule({ categoryA: 'Cat1', categoryB: 'Cat2', minDistance: 3 })
+      })
+      // activeTripIndex defaults to 0 — trip 1's pin is never rendered or
+      // passed to DeckVisualization at all while viewing trip 0.
+      expect(screen.queryByText('PINB_OTHER_TRIP')).toBeNull()
+
+      dragMergeR24('PINA', 6.1, 4)
+
+      const trip0 = useCalculator.getState().pinnedPlacementsByTrip[0] ?? []
+      expect(trip0.find((p) => p.name === 'PINA')?.x).toBeCloseTo(7.1, 1)
+      expect(toast.warning).not.toHaveBeenCalled()
+    })
+
+    it('S30-7: dragging an existing PINNED placement into a violating position also warns (same contract as manual)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupPipeDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 1, weight: 100, category: 'Cat1' })
+        useCalculator.getState().addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 1, weight: 200, category: 'Cat2' })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: itemA.id, name: 'PINA', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: itemB.id, name: 'PINB', x: 6, y: 5, width: 1, length: 1, layers: 1, rotated: false, color: itemB.color,
+        })
+        useCalculator.getState().addSeparationRule({ categoryA: 'Cat1', categoryB: 'Cat2', minDistance: 3 })
+      })
+
+      dragMergeR24('PINA', 6.1, 4)
+
+      const trip0 = useCalculator.getState().pinnedPlacementsByTrip[0] ?? []
+      expect(trip0.find((p) => p.name === 'PINA')?.x).toBeCloseTo(7.1, 1)
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('сепарац'))
+    })
+
+    it('S30-8: a drag that resolves into a merge never fires the separation warning (contract: merge and separation-check are mutually exclusive)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      setupPipeDeck()
+      act(() => {
+        // Self-pairing rule so that IF the merge-target's final overlapping
+        // position were (incorrectly) separation-checked, it would violate.
+        useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 2, weight: 100, category: 'CatSelf' })
+        useCalculator.getState().addSeparationRule({ categoryA: 'CatSelf', categoryB: 'CatSelf', minDistance: 3 })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'target', itemId: itemA.id, name: 'TARGET', x: 6, y: 6, width: 1, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+        })
+      })
+
+      // Full-overlap drag onto TARGET — same itemId, so planComposedMerge's
+      // pipe-shape gate never applies (distinctIds.length === 1) and the
+      // merge succeeds outright.
+      dragMergeR24('DRAG', 5, 5)
+
+      const placements = useCalculator.getState().manualPlacements
+      expect(placements.length).toBe(1) // merge actually happened
+      expect(placements[0].layers).toBe(2)
+      expect(toast.warning).not.toHaveBeenCalled()
+    })
+  })
 })
