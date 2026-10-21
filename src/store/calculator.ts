@@ -8,6 +8,7 @@ import {
   withClearanceFootprint,
   resolveSnappedDragPosition,
   maxLayersFor,
+  stackHeightBudget,
   violatesSeparation,
   DEFAULT_VESSEL_MOTION,
   type StabilityOverride,
@@ -43,7 +44,7 @@ import {
   type VariableWeightItem,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
-import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
   return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
@@ -538,13 +539,29 @@ function removeItemFromPlacements<T extends { itemId: string; layers: number; we
   return result
 }
 
-// setDeck's reflow for a composed placement, when a tightened deck clearance
+// Turns a clamp of a composed placement's composition back into the
+// placement: a still-composed stack gets `layers`/`weight` re-derived from it
+// (a composed placement's `layers` is never written on its own); a single
+// survivor collapses back to the plain representation.
+function applyComposedClamp<T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(
+  p: T,
+  clamp: ClampItemLayersResult,
+  catalog: CargoItem[]
+): T {
+  if (clamp.composition) {
+    const layers = placementTotalLayers({ itemId: p.itemId, layers: 0, composition: clamp.composition })
+    const weight = placementTotalWeightKg({ itemId: p.itemId, layers, composition: clamp.composition }, catalog) / Math.max(1, layers)
+    return { ...p, composition: clamp.composition, layers, weight }
+  }
+  const singleton = clamp.remainingSingleton!
+  return { ...p, itemId: singleton.itemId, composition: undefined, layers: singleton.layers, weight: catalog.find((it) => it.id === singleton.itemId)?.weight }
+}
+
+// setDeck's reflow for a composed placement when a tightened deck clearance
 // lowers its constituents' ceilings: each constituent's own share is clamped
-// to its own maxLayersFor — the exact per-constituent rule updateItem's
-// layerCapChanged clamp applies (placementClampItemLayers) — and `layers`/
-// `weight` are re-derived from the result, since a composed placement's
-// `layers` is never written on its own. Returns the same object when nothing
-// had to go.
+// to its own maxLayersFor — the per-constituent rule updateItem's
+// layerCapChanged clamp applies (placementClampItemLayers). Returns the same
+// object when nothing had to go.
 function clampComposedConstituents<T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(
   p: T,
   catalog: CargoItem[],
@@ -553,25 +570,42 @@ function clampComposedConstituents<T extends { itemId: string; layers: number; w
 ): T {
   if (!p.composition) return p
   let composition: CompositionSegment[] = p.composition
-  let removed = 0
+  let removedLayers = 0
   for (const id of new Set(p.composition.map((seg) => seg.itemId))) {
     const item = catalog.find((it) => it.id === id)
     if (!item) continue
     const clamp = placementClampItemLayers(composition, id, maxLayersFor(item, clearance, unit))
     if (clamp.removedLayers === 0) continue
-    removed += clamp.removedLayers
-    if (!clamp.composition) {
-      // Unreachable in practice (see placementClampItemLayers's own doc
-      // comment) — collapse to the plain representation if it ever happens.
-      const singleton = clamp.remainingSingleton!
-      return { ...p, itemId: singleton.itemId, composition: undefined, layers: singleton.layers, weight: catalog.find((it) => it.id === singleton.itemId)?.weight }
-    }
+    // Unreachable in practice (see placementClampItemLayers's own doc
+    // comment), but handled rather than assumed away.
+    if (!clamp.composition) return applyComposedClamp(p, clamp, catalog)
     composition = clamp.composition
+    removedLayers += clamp.removedLayers
   }
-  if (removed === 0) return p
-  const layers = placementTotalLayers({ itemId: p.itemId, layers: 0, composition })
-  const weight = placementTotalWeightKg({ itemId: p.itemId, layers, composition }, catalog) / Math.max(1, layers)
-  return { ...p, composition, layers, weight }
+  return removedLayers === 0 ? p : applyComposedClamp(p, { composition, remainingSingleton: null, removedLayers }, catalog)
+}
+
+// A composed placement is ONE physical column: when its height budget
+// tightens (deck clearance, a constituent's height or maxStackHeightM), its
+// TOTAL height has to fit stackHeightBudget — the same rule page.tsx's
+// checkStackHeight enforces on merge and "+". The excess is trimmed off the
+// top (placementClampTotalHeight). Returns the same object when nothing had
+// to go.
+function clampComposedHeight<T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(
+  p: T,
+  catalog: CargoItem[],
+  clearance: number,
+  unit: Unit
+): T {
+  if (!p.composition) return p
+  const budgetOf = (segs: CompositionSegment[]) =>
+    stackHeightBudget(
+      [...new Set(segs.map((seg) => seg.itemId))].map((id) => catalog.find((it) => it.id === id)).filter((it): it is CargoItem => !!it),
+      clearance,
+      unit
+    )
+  const clamp = placementClampTotalHeight(p.composition, catalog, budgetOf)
+  return clamp.removedLayers === 0 ? p : applyComposedClamp(p, clamp, catalog)
 }
 
 // Re-position and re-size just the placements of one resized item, keeping
@@ -913,9 +947,14 @@ export const useCalculator = create<CalculatorState>()(
           // A composed stack's `layers` is derived from its composition and
           // used to be overwritten here on its own (the nominal item's cap
           // written over the whole stack's total, composition left as it
-          // was) — clamp its constituents instead.
+          // was) — clamp its constituents, then the whole column's height.
           if (item.composition) {
-            const clamped = clampComposedConstituents(item, s.items, nextDeck.clearance, nextDeck.unit)
+            const clamped = clampComposedHeight(
+              clampComposedConstituents(item, s.items, nextDeck.clearance, nextDeck.unit),
+              s.items,
+              nextDeck.clearance,
+              nextDeck.unit
+            )
             if (clamped !== item) layersClamped = true
             return clamped
           }
@@ -1385,9 +1424,17 @@ export const useCalculator = create<CalculatorState>()(
             ? ((layersClamped = true), { ...p, layers: newMaxLayers })
             : p
         }
-        manualPlacements = manualPlacements.map(clampLayers)
+        // ...then the whole column, whose height budget `id`'s new height or
+        // maxStackHeightM can now break even when `id`'s own share fits.
+        const clampHeight = <T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(p: T): T => {
+          if (!p.composition?.some((seg) => seg.itemId === id)) return p
+          const clamped = clampComposedHeight(p, items, s.deck.clearance, s.deck.unit)
+          if (clamped !== p) layersClamped = true
+          return clamped
+        }
+        manualPlacements = manualPlacements.map(clampLayers).map(clampHeight)
         pinnedPlacementsByTrip = Object.fromEntries(
-          Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(clampLayers)])
+          Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, list.map(clampLayers).map(clampHeight)])
         )
       }
       if (layersClamped) {

@@ -430,7 +430,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      // 6, not 5: the column [A2, B3] is 5 m of 1 m units, and since Round 34
+      // its TOTAL height has to fit the clearance — the pushed unit makes 6.
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 6 } })
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 10, weight: 100 })
       useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 10, weight: 200 })
     })
@@ -623,7 +625,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      // 6, not 5: the column [A2, B3] is 5 m of 1 m units, and since Round 34
+      // its TOTAL height has to fit the clearance — the pushed unit makes 6.
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 6 } })
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 4, weight: 100 })
       useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 10, weight: 200 })
     })
@@ -647,6 +651,39 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }, { itemId: itemA.id, layers: 1 }])
     expect(pin.layers).toBe(6)
     expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  // Round 34: "+" on a composed pin checked only the nominal item's own
+  // share (2 + 1 = 3 of its cap 5), so the 5 m column [A2, B3] could grow to
+  // 6 m under a 5 m clearance — a single-item stack of the same height was
+  // already refused.
+  it('handleLayerChangePinned("+") on a composed pin is refused when the column would stand above the clearance', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 10, weight: 100 })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 10, weight: 200 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    let pinId = ''
+    act(() => {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, {
+        composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+        layers: 5,
+      })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+
+    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+
+    const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
+    expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Превышена высота штабеля'))
   })
 
   // Same guard, manual-mode path (findMergeSourceManual).
@@ -2219,7 +2256,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
   }
 
-  it('Round 24: pure standalone + standalone cross-item merge creates a real composition AND preserves the legacy catalog quantity-transfer', () => {
+  it('Round 24/34: a partial standalone cross-item merge creates a real composition and leaves both catalog quantities alone', () => {
     render(<Home />)
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
@@ -2249,13 +2286,44 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(merged.composition).toEqual([{ itemId: itemB.id, layers: 1 }, { itemId: itemA.id, layers: 1 }])
     expect(merged.layers).toBe(2)
     expect(merged.weight).toBeCloseTo(150, 6) // (200*1 + 100*1) / 2
-    // Round 24 corrective pass: a PURE standalone (uncomposed on both
-    // sides) cross-item merge keeps the exact pre-Round-24
-    // reconcileCrossItemMerge quantity-transfer contract — dragged's own
-    // `delta` (1 layer) moves out of A's catalog quantity and into B's.
-    // Before: A=5, B=5. After: A=5-1=4, B=5+1=6.
-    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(4)
-    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(6)
+    // Round 34: A keeps 4 units elsewhere, so this is a PARTIAL transfer.
+    // Round 24 still moved dragged's `delta` (1) from A's quantity to B's on
+    // top of the composition, counting that unit twice — under A inside the
+    // composition and again as B's quantity (AUTO then placed a ghost B and
+    // left one A unplaced). The composition alone accounts for both units.
+    expect(useCalculator.getState().items.find((it) => it.id === itemA.id)?.quantity).toBe(5)
+    expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(5)
+  })
+
+  // Round 34: the merged stack is ONE column — its total height has to fit
+  // the clearance just like a single-item stack of the same height. 3 + 3
+  // pipes of 0.5 m (3 m) under a 2.5 m clearance: each item's own share (3)
+  // fits its own cap (5), which is all the merge used to check.
+  it('Round 34: a cross-item merge whose combined stack would stand above the clearance is refused', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 2.5 } })
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 200, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 4, length: 1, layers: 3, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemB.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 3, rotated: false, color: itemB.color, weight: 200,
+      })
+    })
+
+    dragMergeR24('DRAG', 5, 5)
+
+    expect(useCalculator.getState().manualPlacements).toHaveLength(2)
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Превышена высота штабеля'))
   })
 
   // Round 31: the one standalone cross-item merge shape Round 24's tests never

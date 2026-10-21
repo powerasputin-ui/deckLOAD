@@ -152,4 +152,85 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await expect(page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Контейнер 20ft' })).toHaveCount(2)
     await expect(boxRects).toHaveCount(2)
   })
+
+  // Round 34. An ORIGINAL pipe stack of 8 and a duplicate whose 9 units stand
+  // as 8 + 1 (its own «Ярусов» cap of 8 splits them); the duplicate's 8-stack
+  // is then dragged onto the original's — a PARTIAL merge, since one unit of
+  // the duplicate stays elsewhere. Returns the toasts' text afterwards.
+  async function mergePartOfDuplicateOntoOriginal(page: Page, clearance: string) {
+    await page.goto('/')
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    await clearCalculation(page)
+    await setNumber(page.locator('label', { hasText: 'Высота над палубой' }).locator('..').locator('input'), clearance)
+
+    await page.getByRole('button', { name: 'Пресеты' }).click()
+    await page.getByRole('button', { name: 'Смешанный' }).click()
+    await page.getByText('Обсадная труба', { exact: true }).click()
+    const background = page.locator('svg [data-deck-background="true"]').first()
+    await background.click({ position: { x: 60, y: 60 }, force: true })
+    const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
+    await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
+    await page.getByRole('button', { name: 'Автораспределение' }).click()
+    const pipePlacements = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])')
+    await expect(pipePlacements).toHaveCount(1)
+
+    await originalCard.getByTitle('Дублировать').click()
+    await expect(page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' })).toHaveCount(2)
+    await page.keyboard.press('Escape')
+    const copyCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба (копия)' }).first()
+    await setNumber(copyCard.locator('label:has-text("Ярусов") + input'), '8')
+    await setNumber(copyCard.locator('label:has-text("Кол-во") + input'), '9')
+    await expect(pipePlacements).toHaveCount(3)
+    await expect(headerBadge(page)).toHaveText(/^17\/17 ед\./)
+
+    // The two 8-stacks are the ones labelled "×8" (the lone unit has no
+    // count label). Nudge both so they become pins — only pins merge in
+    // auto mode (see the first test) — then drag the duplicate's onto the
+    // original's.
+    await pipePlacements.nth(0).scrollIntoViewIfNeeded()
+    const eightStacks = async () => {
+      const labels = await pipePlacements.allTextContents()
+      return labels.map((t, i) => [t, i] as const).filter(([t]) => /×8$/.test(t)).map(([t, i]) => ({ copy: t.includes('(копия)'), i }))
+    }
+    for (const { i } of await eightStacks()) {
+      const box = await pipePlacements.nth(i).boundingBox()
+      if (!box) throw new Error(`pipe stack ${i} not found before nudge`)
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 5 })
+      await page.mouse.up()
+    }
+    const stacks = await eightStacks()
+    const from = await pipePlacements.nth(stacks.find((st) => st.copy)!.i).boundingBox()
+    const onto = await pipePlacements.nth(stacks.find((st) => !st.copy)!.i).boundingBox()
+    if (!from || !onto) throw new Error('8-stacks not found after nudge')
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(onto.x + onto.width / 2, onto.y + onto.height / 2, { steps: 10 })
+    await page.mouse.up()
+    return pipePlacements
+  }
+
+  test('a PARTIAL merge of a duplicate keeps both items\' counts — no ghost stack, no double-counted units', async ({ page }) => {
+    // 10 m clearance: the merged 16 x 0.25 m = 4 m column fits.
+    const pipePlacements = await mergePartOfDuplicateOntoOriginal(page, '10')
+
+    await expect(page.getByText(/Объединено: 16 яр\./)).toBeVisible()
+    // Used to read 24/17: the 8 moved units were counted under the duplicate
+    // inside the merged stack AND again as the original's quantity, which
+    // AUTO then placed as a ghost stack of 8.
+    await expect(headerBadge(page)).toHaveText(/^17\/17 ед\./)
+    await expect(pipePlacements).toHaveCount(2) // the mixed 16-stack + the duplicate's own lone unit
+    await expect(page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба (копия)' })).toContainText('9/9')
+  })
+
+  test('a merge whose combined stack would stand above the clearance is refused', async ({ page }) => {
+    // 2 m clearance: each stack of 8 x 0.25 m fits exactly, 16 of them don't
+    // — the same 16 pipes of ONE item were already refused.
+    const pipePlacements = await mergePartOfDuplicateOntoOriginal(page, '2')
+
+    await expect(page.getByText('Превышена высота штабеля: 4 м при допустимых 2 м')).toBeVisible()
+    await expect(pipePlacements).toHaveCount(3)
+    await expect(headerBadge(page)).toHaveText(/^17\/17 ед\./)
+  })
 })

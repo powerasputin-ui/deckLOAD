@@ -389,6 +389,54 @@ export function placementClampItemLayers(
   return { composition: null, remainingSingleton: null, removedLayers: excessToRemove }
 }
 
+// Physical height of a (possibly mixed) stack: Σ layers × each constituent's
+// own catalog height, in the deck's display unit like every height.
+export function stackHeight(composition: CompositionSegment[], items: CompositionCatalogItem[]): number {
+  return composition.reduce((sum, seg) => sum + seg.layers * Math.max(0, findItem(items, seg.itemId)?.height ?? 0), 0)
+}
+
+// Whether a stack `height` tall stands above `budget` (packing.ts's
+// stackHeightBudget; Infinity = none configured). The tolerance is of the
+// same order as maxLayersFor's own floor(budget / height + 1e-9), so float
+// noise on an exact fit (3 x 0.1 m under 0.3 m) never refuses it.
+export function exceedsHeightBudget(height: number, budget: number): boolean {
+  return Number.isFinite(budget) && height > budget + 1e-9 * Math.max(1, budget)
+}
+
+// Whole-column counterpart of placementClampItemLayers for a tightened
+// HEIGHT budget (deck clearance, a constituent's height or maxStackHeightM):
+// a composed placement is ONE physical column, so its TOTAL height is what
+// has to fit. Same destructive precedent as placementClampItemLayers — the
+// excess is simply gone — taken physically topmost first like placementPop,
+// and never below one unit (maxLayersFor's own "at least one tier" floor).
+// `budgetOf` is asked again after every unit taken: once the last unit of an
+// item with its own tighter maxStackHeightM is gone, its limit no longer
+// applies to what's left (packing.ts's stackHeightBudget over the remaining
+// constituents).
+export function placementClampTotalHeight(
+  composition: CompositionSegment[],
+  items: CompositionCatalogItem[],
+  budgetOf: (remaining: CompositionSegment[]) => number
+): ClampItemLayersResult {
+  const working = composition.map((s) => ({ ...s }))
+  let height = stackHeight(working, items)
+  let units = working.reduce((sum, s) => sum + s.layers, 0)
+  let removedLayers = 0
+  while (exceedsHeightBudget(height, budgetOf(working)) && units > 1) {
+    const top = working[working.length - 1]
+    height -= Math.max(0, findItem(items, top.itemId)?.height ?? 0)
+    top.layers -= 1
+    units -= 1
+    removedLayers += 1
+    if (top.layers === 0) working.pop()
+  }
+  if (removedLayers === 0) return { composition, remainingSingleton: null, removedLayers: 0 }
+  // Only the top is ever trimmed, so the survivors keep their order and no
+  // two same-item segments can become newly adjacent.
+  if (working.length >= 2) return { composition: working, remainingSingleton: null, removedLayers }
+  return { composition: null, remainingSingleton: working[0] ?? null, removedLayers }
+}
+
 // The minimal catalog shape lashing needs — `category` (and `name`, for
 // segment labels in the UI/PDF) in addition to `weight`
 // (CompositionCatalogItem above has neither, since VCG/weight/height

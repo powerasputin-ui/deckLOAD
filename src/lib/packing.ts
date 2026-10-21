@@ -1366,14 +1366,12 @@ export function maxLayersFor(
   unit: Unit = 'm'
 ): number {
   const h = toFinite(item.height, 0)
-  const c = toFinite(clearance, 0)
-  const itemCapM = toFinite(item.maxStackHeightM ?? 0, 0)
-  const itemCap = itemCapM > 0 ? convertLength(itemCapM, 'm', unit) : 0
   const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : undefined
   // Whichever height budget is actually configured (and tighter) wins; a
-  // budget of 0 means "not configured", not "zero metres allowed".
-  const budget = c > 0 && itemCap > 0 ? Math.min(c, itemCap) : c > 0 ? c : itemCap > 0 ? itemCap : 0
-  if (budget <= 0) return userCap ?? 1
+  // clearance or cap of 0 means "not configured", not "zero metres allowed".
+  // The same budget a mixed stack's whole column is held to.
+  const budget = stackHeightBudget([item], clearance, unit)
+  if (!Number.isFinite(budget)) return userCap ?? 1
   let heightCap = 1
   if (h > 0) {
     const raw = budget / h
@@ -1381,6 +1379,28 @@ export function maxLayersFor(
     if (Number.isFinite(raw)) heightCap = Math.max(1, Math.floor(raw + 1e-9))
   }
   return Math.max(1, Math.min(heightCap, userCap ?? Infinity))
+}
+
+// The height budget of ONE physical stack that may mix catalog items: the
+// deck clearance and every constituent's own maxStackHeightM (real metres,
+// brought into the deck's unit), whichever is tightest — maxLayersFor's own
+// height budget, generalized to a mixed column. maxLayersFor only ever sees
+// one item's share of a mixed stack, so a merge could stand e.g. 8 + 8 pipes
+// of 0.25 m (4 m) under a 2 m clearance while the same 16 pipes of ONE item
+// were refused. Infinity when no height budget is configured; the per-item
+// «Ярусов» caps stay per item either way (see maxLayersFor).
+export function stackHeightBudget(
+  items: { maxStackHeightM?: number }[],
+  clearance: number,
+  unit: Unit = 'm'
+): number {
+  const c = toFinite(clearance, 0)
+  let budget = c > 0 ? c : Infinity
+  for (const it of items) {
+    const capM = toFinite(it.maxStackHeightM ?? 0, 0)
+    if (capM > 0) budget = Math.min(budget, convertLength(capM, 'm', unit))
+  }
+  return budget
 }
 
 export function packDeck(

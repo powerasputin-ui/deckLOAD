@@ -59,8 +59,10 @@ import {
   type PackVariant,
   type PackingResult,
   type CompositionSegment,
+  type CargoItem,
+  stackHeightBudget,
 } from '@/lib/packing'
-import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -1296,6 +1298,24 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, deck.restrictionZones, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned, items, result])
 
+  // A composed stack is ONE physical column: its total height has to fit the
+  // whole-column budget (stackHeightBudget — the deck clearance and each
+  // constituent's own maxStackHeightM), exactly as a single-item stack of the
+  // same height must. checkLayerChange only ever sees one item's share, so a
+  // merge of 8 + 8 pipes of 0.25 m used to stand 4 m tall under a 2 m
+  // clearance (and "+" could grow a composed stack past it the same way).
+  // The per-item «Ярусов» caps stay with checkLayerChange.
+  const checkStackHeight = (segs: CompositionSegment[]): { ok: true } | { ok: false; reason: string } => {
+    const constituents = [...new Set(segs.map((seg) => seg.itemId))]
+      .map((id) => items.find((it) => it.id === id))
+      .filter((it): it is CargoItem => !!it)
+    const budget = stackHeightBudget(constituents, deck.clearance, deck.unit)
+    const height = stackHeight(segs, items)
+    if (!exceedsHeightBudget(height, budget)) return { ok: true }
+    const unitLabel = UNIT_LABEL[deck.unit]
+    return { ok: false, reason: `Превышена высота штабеля: ${roundForDisplay(height)} ${unitLabel} при допустимых ${roundForDisplay(budget)} ${unitLabel}` }
+  }
+
   // Check whether a layer change is allowed for a placement.
   // - maxPhys: physical ceiling from clearance / item.height
   // - totalPlacedForItem: current sum of layers across all placements of this item
@@ -1489,6 +1509,11 @@ export default function Home() {
           return
         }
         const composition = placementPush(pin.composition, pin.itemId, 1)
+        const height = checkStackHeight(composition)
+        if (!height.ok) {
+          toast.warning(height.reason)
+          return
+        }
         const layers = placementTotalLayers({ itemId: pin.itemId, layers: 0, composition })
         // `weight` is stored PER-UNIT (existing convention) — divide the
         // composition's total back down.
@@ -1682,6 +1707,11 @@ export default function Home() {
           return
         }
         const composition = placementPush(mp.composition, mp.itemId, 1)
+        const height = checkStackHeight(composition)
+        if (!height.ok) {
+          toast.warning(height.reason)
+          return
+        }
         const layers = placementTotalLayers({ itemId: mp.itemId, layers: 0, composition })
         const weight = placementTotalWeightKg({ itemId: mp.itemId, layers, composition }, items) / Math.max(1, layers)
         updateManualPlacement(id, { composition, layers, weight })
@@ -1803,9 +1833,10 @@ export default function Home() {
   // items is a separate, narrower decision, split by whether composition is
   // actually involved — see legacyStandaloneCrossItemQuantityTransfer right
   // below this function for the full explanation and the exact boundary
-  // (pure standalone cross-item merge: legacy transfer preserved
-  // byte-for-byte; anything where either side already carries a
-  // `composition`: no transfer at all, on purpose). This does not reinterpret
+  // (pure standalone cross-item merge that drains the dragged item: legacy
+  // transfer, collapsed into the target; any other merge — partial, or with
+  // a `composition` on either side: no transfer at all, on purpose). This
+  // does not reinterpret
   // the Round 16 quantity-direction invariant (remove/unpin still decreases
   // quantity, never restores it) in either case.
   const planComposedMerge = (
@@ -1858,6 +1889,8 @@ export default function Home() {
     }
 
     const newComposition = placementConcatComposition(targetComposition, draggedComposition)
+    const height = checkStackHeight(newComposition)
+    if (!height.ok) return height
     const newLayers = newComposition.reduce((sum, s) => sum + s.layers, 0)
     const newWeightTotal = newComposition.reduce((sum, s) => sum + s.layers * (items.find((it) => it.id === s.itemId)?.weight ?? 0), 0)
     const newWeight = newWeightTotal / Math.max(1, newLayers)
@@ -1901,6 +1934,16 @@ export default function Home() {
   // uncomposed merge does. Does not touch remove/unpin's own quantity
   // semantics (Round 16's decrease-only contract, untouched) or removeItem.
   //
+  // Round 34: ...and it only ever applies when it DRAINS the dragged item
+  // (Round 31's collapse below — the dragged units become the target's). A
+  // partial transfer used to fire on top of the composition planComposedMerge
+  // builds for every cross-item merge, so the moved units were counted twice:
+  // once inside the composition under the dragged item, once more as the
+  // target's quantity — AUTO then placed a ghost stack (24 units on deck from
+  // 17, weight inflated to match) and the dragged item showed "8/1 разм.".
+  // The composition alone already accounts for every unit, exactly as for the
+  // composed case above.
+  //
   // legacyCrossItemTransferOf is the ONE place that decides whether that
   // transfer applies (and by how much) — shared by planMerge (which needs to
   // know in advance) and the applier below, so the two can't disagree.
@@ -1915,7 +1958,9 @@ export default function Home() {
     const targetItem = store.items.find((it) => it.id === target.itemId)
     if (!draggedItem || !targetItem) return null
     const delta = dragged.layers
-    return { draggedItem, targetItem, delta, remaining: draggedItem.quantity - delta }
+    const remaining = draggedItem.quantity - delta
+    if (remaining > 0) return null
+    return { draggedItem, targetItem, delta, remaining }
   }
 
   const legacyStandaloneCrossItemQuantityTransfer = (
@@ -1925,8 +1970,8 @@ export default function Home() {
     const transfer = legacyCrossItemTransferOf(target, dragged)
     if (!transfer) return
     const store = useCalculator.getState()
-    if (transfer.remaining <= 0) store.removeItem(transfer.draggedItem.id)
-    else store.updateItem(transfer.draggedItem.id, { quantity: transfer.remaining })
+    // A transfer only ever drains the dragged item (see above).
+    store.removeItem(transfer.draggedItem.id)
     store.updateItem(transfer.targetItem.id, { quantity: transfer.targetItem.quantity + transfer.delta })
   }
 
@@ -1951,7 +1996,7 @@ export default function Home() {
     const plan = planComposedMerge(target, dragged)
     if (!plan.ok) return plan
     const transfer = legacyCrossItemTransferOf(target, dragged)
-    if (!transfer || transfer.remaining > 0) return plan
+    if (!transfer) return plan
     const merged = checkLayerChange(target.itemId, 0, plan.layers, [target.id, dragged.id], transfer.delta)
     if (!merged.ok) return { ok: false, reason: merged.reason ?? 'Невозможно объединить' }
     return { ...plan, composition: undefined, itemId: target.itemId, weight: transfer.targetItem.weight ?? 0 }

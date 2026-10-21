@@ -6,6 +6,7 @@ import {
   computeFreeRects,
   packingResultFromManual,
   maxLayersFor,
+  stackHeightBudget,
   collidesWith,
   withClearanceFootprint,
   collidesWithClearance,
@@ -132,6 +133,17 @@ describe('maxLayersFor', () => {
 
   it('still returns 1 with no clearance AND no explicit maxLayers', () => {
     expect(maxLayersFor({ height: 1 }, 0)).toBe(1)
+  })
+
+  // Round 34: the whole-column budget of a (possibly mixed) stack — the
+  // clearance and every constituent's own maxStackHeightM, whichever is
+  // tightest; Infinity when nothing is configured.
+  it('stackHeightBudget takes the tightest of the clearance and each constituent\'s own metre cap (in the deck unit)', () => {
+    expect(stackHeightBudget([{}, {}], 5)).toBe(5)
+    expect(stackHeightBudget([{ maxStackHeightM: 3 }, {}], 5)).toBe(3)
+    expect(stackHeightBudget([{ maxStackHeightM: 3 }], 0)).toBe(3)
+    expect(stackHeightBudget([{}], 0)).toBe(Infinity)
+    expect(stackHeightBudget([{ maxStackHeightM: 3 }], 1000, 'cm')).toBe(300)
   })
 
   // maxStackHeightM is real metres while height/clearance are in the deck's

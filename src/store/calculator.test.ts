@@ -769,37 +769,44 @@ describe('calculator store', () => {
     expect(placement.layers).toBe(3) // 2 + 1, never left at the stale 5
   })
 
-  it('R26-2: tightening height (which lowers the clearance-derived cap) clamps a composed constituent\'s own segment the same way maxLayers does', () => {
+  it('R26-2/34: tightening a constituent\'s height clamps its own share AND trims the whole column back under the clearance', () => {
     const s = useCalculator.getState()
-    s.setDeck({ clearance: 4 }) // floor(4/height) layers allowed per item
-    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 }) // maxLayersFor = 4
+    s.setDeck({ clearance: 6 })
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
     s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    // [A2, B3] of 1 m units: 5 m under a 6 m clearance.
     s.addManualPlacement({
       id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
       layers: 5, rotated: false, color: '#000',
       composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
     })
 
-    s.updateItem(itemA.id, { height: 2 }) // maxLayersFor(A) becomes floor(4/2) = 2 -- A's own 2 layers already fit exactly
+    // A's cap becomes floor(6/2) = 3, so its own 2 still fit — but the column
+    // is now 2*2 + 3*1 = 7 m: one B comes off the top (6 m).
+    s.updateItem(itemA.id, { height: 2 })
 
     let placement = useCalculator.getState().manualPlacements[0]
-    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
-    expect(placement.layers).toBe(5)
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 2 }])
+    expect(placement.layers).toBe(4)
 
-    s.updateItem(itemB.id, { height: 3 }) // maxLayersFor(B) becomes floor(4/3) = 1 -- B's own 3 layers must clamp to 1
+    // B's own cap becomes floor(6/4) = 1 (its 2 clamp to 1), and the column
+    // [A2, B1] = 4 + 4 = 8 m still doesn't fit — B comes off entirely, and
+    // the lone survivor collapses back to a plain placement.
+    s.updateItem(itemB.id, { height: 4 })
 
     placement = useCalculator.getState().manualPlacements[0]
-    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
-    expect(placement.layers).toBe(3)
+    expect(placement.composition).toBeUndefined()
+    expect(placement.itemId).toBe(itemA.id)
+    expect(placement.layers).toBe(2)
   })
 
   // Same per-constituent rule when the DECK's clearance is lowered. setDeck's
   // reflow used to apply the nominal item's cap to the whole placement's
   // `layers` (5 -> 2 here) and leave the composition alone — desyncing the two
   // and clamping nothing that physics actually reads.
-  it('lowering the deck clearance clamps each composed constituent to its own cap, keeping layers in sync with composition', () => {
+  it('lowering the deck clearance clamps a composed stack per constituent and then as a whole column, keeping layers in sync', () => {
     const s = useCalculator.getState()
     s.setDeck({ clearance: 5 })
     s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
@@ -812,14 +819,18 @@ describe('calculator store', () => {
       composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
     })
 
-    s.setDeck({ clearance: 2 }) // maxLayersFor = 2 for both: A's 2 fit, B's 3 clamp to 2
+    // maxLayersFor = 2 for both: A's 2 fit, B's 3 clamp to 2 — and then the
+    // column itself has to fit 2 m: [A2, B2] is 4 m, so B comes off the top
+    // entirely and the survivor collapses to a plain A x2.
+    s.setDeck({ clearance: 2 })
 
     const placement = useCalculator.getState().manualPlacements[0]
-    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 2 }])
-    expect(placement.layers).toBe(4)
+    expect(placement.composition).toBeUndefined()
+    expect(placement.itemId).toBe(itemA.id)
+    expect(placement.layers).toBe(2)
   })
 
-  it('R26-2: tightening maxStackHeightM on a composed constituent clamps that constituent\'s own segment the same way maxLayers/height do', () => {
+  it('R26-2/34: tightening maxStackHeightM on a composed constituent: no stack containing it may stand above that limit', () => {
     const s = useCalculator.getState()
     s.setDeck({ clearance: 10 }) // generous clearance -- maxStackHeightM below is the binding constraint
     s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
@@ -832,11 +843,15 @@ describe('calculator store', () => {
       composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
     })
 
-    s.updateItem(itemB.id, { maxStackHeightM: 1 }) // maxLayersFor(B) becomes floor(1/1) = 1 -- B's own 3 layers must clamp to 1
+    // maxLayersFor(B) becomes floor(1/1) = 1, so B's own 3 clamp to 1 — but
+    // that unit would sit 2-3 m up in a column B may not exceed 1 m in, so it
+    // comes off too. With B gone its limit no longer applies: A's 2 m stays.
+    s.updateItem(itemB.id, { maxStackHeightM: 1 })
 
     const placement = useCalculator.getState().manualPlacements[0]
-    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
-    expect(placement.layers).toBe(3)
+    expect(placement.composition).toBeUndefined()
+    expect(placement.itemId).toBe(itemA.id)
+    expect(placement.layers).toBe(2)
   })
 
   // R27 height-consistency audit (requested before COMMIT GO): ManualPlacement/
@@ -856,7 +871,9 @@ describe('calculator store', () => {
   // separate step required.
   it('R27 height audit: clamping a BOTTOM composed constituent is immediately reflected in the next-computed PlacedItem.height (no stale cache)', () => {
     const s = useCalculator.getState()
-    s.setDeck({ clearance: 10, width: 10, length: 10 })
+    // 20, not 10: the 15 m column below has to fit the clearance as a whole
+    // (Round 34) — this test is about the height cache, not the ceiling.
+    s.setDeck({ clearance: 20, width: 10, length: 10 })
     s.addItem({ name: 'A', width: 1, length: 1, height: 2, quantity: 5 })
     s.addItem({ name: 'B', width: 1, length: 1, height: 3, quantity: 5 })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
@@ -876,7 +893,7 @@ describe('calculator store', () => {
     // Re-derive a fresh PackingResult exactly as the real render path does
     // (page.tsx's `trips` useMemo calls packingResultFromManual on every
     // render) — no separate "resync height" step exists or is needed.
-    const result = packingResultFromManual(10, 10, useCalculator.getState().manualPlacements, 100, useCalculator.getState().items, 10)
+    const result = packingResultFromManual(10, 10, useCalculator.getState().manualPlacements, 100, useCalculator.getState().items, 20)
     const placed = result.placed.find((p) => p.index === 0)!
     // New true height = 1*2 (A, clamped) + 3*3 (B, untouched) = 11 -- the
     // OLD (pre-clamp) value would have been 15. If height were ever cached

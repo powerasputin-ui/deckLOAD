@@ -12,6 +12,9 @@ import {
   placementConcatComposition,
   placementPop,
   placementRemoveItem,
+  stackHeight,
+  exceedsHeightBudget,
+  placementClampTotalHeight,
   type ComposablePlacement,
   type CompositionCatalogItem,
 } from './placementComposition'
@@ -387,5 +390,46 @@ describe('placementRemoveItem (removeItem contract)', () => {
     const composition: CompositionSegment[] = [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }]
     placementRemoveItem('A', composition)
     expect(composition).toEqual([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }])
+  })
+})
+
+// Round 34: a composed placement is ONE physical column, so its total height
+// is what a clearance / maxStackHeightM budget has to hold.
+describe('stackHeight / exceedsHeightBudget / placementClampTotalHeight', () => {
+  it('stackHeight sums layers x each constituent\'s own height', () => {
+    expect(stackHeight([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }], catalog)).toBe(2 * 1 + 3 * 2)
+  })
+
+  it('exceedsHeightBudget: an exact fit is not over (same tolerance as maxLayersFor), Infinity never is', () => {
+    expect(exceedsHeightBudget(0.1 + 0.2, 0.3)).toBe(false) // 0.30000000000000004
+    expect(exceedsHeightBudget(3.01, 3)).toBe(true)
+    expect(exceedsHeightBudget(1e9, Infinity)).toBe(false)
+  })
+
+  it('trims physically topmost units first until the column fits', () => {
+    // [A2, B3] = 2 + 6 = 8 m; 5 m budget -> B comes off one at a time: 6 m, 4 m.
+    const r = placementClampTotalHeight([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }], catalog, () => 5)
+    expect(r).toEqual({ composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 1 }], remainingSingleton: null, removedLayers: 2 })
+  })
+
+  it('collapses to a singleton when the whole top segment has to go', () => {
+    const r = placementClampTotalHeight([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }], catalog, () => 2)
+    expect(r).toEqual({ composition: null, remainingSingleton: { itemId: 'A', layers: 2 }, removedLayers: 3 })
+  })
+
+  it('asks for the budget again after every unit, so a removed item\'s own tighter limit stops applying', () => {
+    // B (on top) caps any column it's in at 1 m; without B the clearance (10 m) applies.
+    const budgetOf = (segs: CompositionSegment[]) => (segs.some((seg) => seg.itemId === 'B') ? 1 : 10)
+    const r = placementClampTotalHeight([{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 1 }], catalog, budgetOf)
+    expect(r).toEqual({ composition: null, remainingSingleton: { itemId: 'A', layers: 2 }, removedLayers: 1 })
+  })
+
+  it('never goes below one unit, and leaves a fitting column (and its array) untouched', () => {
+    const tooTall = placementClampTotalHeight([{ itemId: 'B', layers: 1 }, { itemId: 'B', layers: 2 }], catalog, () => 0.5)
+    expect(tooTall.remainingSingleton).toEqual({ itemId: 'B', layers: 1 })
+    const fits = [{ itemId: 'A', layers: 1 }, { itemId: 'B', layers: 1 }]
+    const r = placementClampTotalHeight(fits, catalog, () => 3)
+    expect(r.removedLayers).toBe(0)
+    expect(r.composition).toBe(fits)
   })
 })
