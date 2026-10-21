@@ -793,6 +793,18 @@ export interface UnplacedItem {
   width: number
   length: number
   reason: string
+  // What kind of "not placed" this is — they mean very different things to
+  // the user, and the UI used to show all of them as «Не поместилось»:
+  // - 'shortfall': units this deck couldn't take. In auto mode they carry
+  //   on to the next trip, so only the LAST trip's shortfall is cargo that
+  //   fits in no trip at all.
+  // - 'pin': an explicit position the packer rejected (off the deck, in an
+  //   obstacle, overlapping, separation, more than the item's quantity).
+  //   Its units are packed elsewhere; the rejected position is the problem.
+  // - 'manual': manual mode's units not placed by hand yet — a to-do.
+  // Optional only so hand-built test fixtures stay valid; every producer in
+  // this file sets it.
+  kind?: 'shortfall' | 'pin' | 'manual'
 }
 
 // Round 29 (malformed-placement contract, corrected — see the R29 audit's
@@ -1632,6 +1644,7 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция превышает доступное количество этого груза',
+        kind: 'pin',
       })
       continue
     }
@@ -1648,6 +1661,7 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция вне палубы',
+        kind: 'pin',
       })
       continue
     }
@@ -1661,6 +1675,7 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция попадает в зону ограничения',
+        kind: 'pin',
       })
       continue
     }
@@ -1684,6 +1699,7 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция пересекается с другим грузом',
+        kind: 'pin',
       })
       continue
     }
@@ -1711,6 +1727,7 @@ export function packDeck(
         width: pin.width,
         length: pin.length,
         reason: 'Закреплённая позиция нарушает сепарацию груза',
+        kind: 'pin',
       })
       continue
     }
@@ -2175,6 +2192,7 @@ export function packDeck(
       width: stat.width,
       length: stat.length,
       reason: reasons.length > 0 ? reasons.join('; ') : 'Не вместилось',
+      kind: 'shortfall',
     })
   }
 
@@ -3760,6 +3778,7 @@ export function packingResultFromManual(
           width: toFinite(it.width, 0),
           length: toFinite(it.length, 0),
           reason: `Не размещено вручную (${remaining} ед.)`,
+          kind: 'manual',
         })
       }
     }

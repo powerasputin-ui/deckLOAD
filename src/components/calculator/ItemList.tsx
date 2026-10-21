@@ -38,13 +38,16 @@ import {
   type Unit,
 } from '@/store/calculator'
 import { NumberField } from '@/components/calculator/NumberField'
-import type { CargoItem, PackingResult } from '@/lib/packing'
+import type { CargoItem, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface ItemListProps {
   result: PackingResult
+  // Every trip's placements — «N/M разм.» counts cargo on any trip, not only
+  // the one open on the deck.
+  placedAcrossTrips?: PlacedItem[]
   unit: Unit
   hoveredItemId: string | null
   onHover: (id: string | null) => void
@@ -53,7 +56,7 @@ interface ItemListProps {
 
 export const DEFAULT_CATEGORIES = ['Обычный', 'Металлопродукция', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
 
-export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToTop }: ItemListProps) {
+export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHover, onScrollPageToTop }: ItemListProps) {
   const items = useCalculator((s) => s.items)
   const addItem = useCalculator((s) => s.addItem)
   const updateItem = useCalculator((s) => s.updateItem)
@@ -101,7 +104,7 @@ export function ItemList({ result, unit, hoveredItemId, onHover, onScrollPageToT
   // 3") — segmentsOf degenerates to the placement's own single implicit
   // segment for an uncomposed placement, so this is unchanged there.
   const placedCount = new Map<string, number>()
-  for (const p of result.placed) {
+  for (const p of placedAcrossTrips ?? result.placed) {
     for (const seg of segmentsOf(p)) {
       const count = Number.isFinite(seg.layers) && seg.layers > 0 ? seg.layers : 1
       placedCount.set(seg.itemId, (placedCount.get(seg.itemId) ?? 0) + count)

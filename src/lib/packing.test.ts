@@ -3196,3 +3196,25 @@ describe('Round 29 corrective pass 3: Tier-1 composition consumers in packing.ts
     })
   })
 })
+
+// Phase 0, L1: the UI tells a carried-over shortfall, a rejected explicit
+// position and manual mode's to-do apart by `kind` instead of by message
+// wording.
+describe('UnplacedItem.kind', () => {
+  it('marks a deck shortfall, a rejected pin and a manual to-do', () => {
+    const box = { id: 'b', name: 'Box', width: 2, length: 1, height: 0, quantity: 2, color: '#000', allowRotation: false }
+    const huge = { id: 'h', name: 'Huge', width: 9, length: 9, height: 0, quantity: 1, color: '#000', allowRotation: false }
+    const short = packDeck(3, 1, [box, huge], { gap: 0, boardOffset: 0 })
+    expect(short.unplaced.map((u) => u.kind)).toEqual(['shortfall', 'shortfall'])
+
+    const offDeck = packDeck(3, 1, [{ ...box, quantity: 1 }], {
+      gap: 0,
+      boardOffset: 0,
+      pinned: [{ id: 'p', itemId: 'b', name: 'Box', x: 5, y: 5, width: 2, length: 1, layers: 1, rotated: false, color: '#000' }],
+    })
+    expect(offDeck.unplaced.find((u) => u.reason === 'Закреплённая позиция вне палубы')?.kind).toBe('pin')
+
+    const manual = packingResultFromManual(3, 1, [], 2, [box])
+    expect(manual.unplaced.map((u) => u.kind)).toEqual(['manual'])
+  })
+})

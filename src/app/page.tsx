@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
-import { fmtNumber } from '@/lib/utils'
+import { fmtNumber, pluralRu } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -32,6 +32,16 @@ import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoC
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   packDeckVariants,
   packMultiTrip,
@@ -443,6 +453,11 @@ export default function Home() {
     builtFor: [],
   })
   const [vesselLibraryOpen, setVesselLibraryOpen] = useState(false)
+  // A mode switch that would quietly change saved data asks first (Phase 0,
+  // L5/L21) — see handleModeChange.
+  const [modeSwitchPrompt, setModeSwitchPrompt] = useState<
+    null | { to: 'auto' } | { to: 'manual'; strandedUnits: number }
+  >(null)
   const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
   // Baseline for the load-zone overload toast below — reset whenever the
@@ -682,8 +697,38 @@ export default function Home() {
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
   // setState-in-effect render cascade for something purely derived.
-  const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, trips.length - 1))
-  const result = trips[clampedTripIndex] ?? trips[0]
+  // packMultiTrip also keeps the trip on which it stopped making progress:
+  // with cargo that can't fit even an empty deck, that's a last tab with
+  // nothing on it. It carries no cargo, so it isn't shown as a trip — its
+  // shortfall still reports what fits nowhere (below).
+  const lastTrip = trips[trips.length - 1]
+  const hasEmptyTrailingTrip =
+    mode === 'auto' &&
+    trips.length > 1 &&
+    lastTrip.placedCount === 0 &&
+    (pinnedPlacementsByTrip[trips.length - 1] ?? []).length === 0
+  const shownTrips = hasEmptyTrailingTrip ? trips.slice(0, -1) : trips
+  const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, shownTrips.length - 1))
+  const result = shownTrips[clampedTripIndex] ?? shownTrips[0]
+  // Each trip's `unplaced` mixes units carried on to the next trip — what
+  // trips are for, not a problem — with positions the packer rejected on
+  // THIS trip. The red strip used to show all of it as «Не поместилось», so
+  // cargo that simply went to trip 2 looked like a failure. Only the last
+  // trip's shortfall is cargo that fits in no trip at all.
+  const unfitAnywhere = mode === 'auto' ? lastTrip.unplaced.filter((u) => u.kind === 'shortfall') : []
+  const unfitUnits = mode === 'auto' ? Math.max(0, lastTrip.requestedCount - lastTrip.placedCount) : 0
+  const rejectedPinsHere = result.unplaced.filter((u) => u.kind === 'pin')
+  const manualToDo = mode === 'manual' ? result.unplaced.filter((u) => u.kind === 'manual') : []
+  // Units entering the next trip are the ones it (or a later trip) will
+  // place plus the unfit ones, which pass through every trip.
+  const nextTrip = mode === 'auto' ? trips[clampedTripIndex + 1] : undefined
+  const carriedToNextTrip = nextTrip ? Math.max(0, nextTrip.requestedCount - unfitUnits) : 0
+  const unfitIds = new Set(unfitAnywhere.map((u) => u.itemId))
+  const carryReasons =
+    carriedToNextTrip > 0
+      ? result.unplaced.filter((u) => u.kind === 'shortfall' && !unfitIds.has(u.itemId))
+      : []
+  const placedAcrossTrips = shownTrips.flatMap((t) => t.placed)
   const variantInputs: unknown[] = [
     activeId,
     clampedTripIndex,
@@ -2099,103 +2144,144 @@ export default function Home() {
   // Switch mode while preserving placements:
   //  - auto -> manual: all placed items (pinned + auto-packed) become manual placements
   //  - manual -> auto: all manual placements become pinned, auto-packer keeps their positions
+  const switchToManual = () => {
+    // Convert current auto-mode result (pinned + auto-packed) into manual placements,
+    // preserving the number of stacked tiers per footprint.
+    const newManual: ManualPlacement[] = result.placed.map((p) => ({
+      id: crypto.randomUUID(),
+      itemId: p.itemId,
+      name: p.name,
+      x: p.x,
+      y: p.y,
+      width: p.width,
+      length: p.length,
+      layers: Math.max(1, p.stackedCount),
+      rotated: p.rotated,
+      color: p.color,
+      weight: p.weight,
+      clearanceMargin: p.clearanceMargin,
+      // Round 20 — composition-only preservation. PlacedItem already
+      // carries `composition` (copied through verbatim by packDeck/
+      // packingResultFromManual, never synthesized — Round 14), so this
+      // is a straight passthrough, not a new source of truth. Dormant
+      // today (nothing writes composition until the merge switch-on
+      // round); scoped deliberately to composition ONLY — stabilityOverride/
+      // lashingWireType/lashingJustification/rotationLocked are NOT
+      // present on PlacedItem at all (a structural gap, not a missed
+      // copy here) and are tracked separately as a future placement-
+      // metadata-ownership decision, not fixed in this round.
+      composition: p.composition,
+    }))
+    // Lashing points only ever attach to a real placement id (pinned or
+    // manual) — auto-mode's non-pinned, algorithm-placed slots never have
+    // one, so only pinnedPlacements (not the full result.placed) can be a
+    // carryover source here.
+    const matches = matchLashingCarryover(pinnedPlacements, newManual)
+    useCalculator.setState({
+      mode: 'manual',
+      manualPlacements: [...newManual, ...pinnedPlacements.filter(isQuarantined)],
+      // Only the trip actually being converted moves into manualPlacements
+      // — every OTHER trip's pins must survive untouched. This used to be
+      // `pinnedPlacementsByTrip: {}`, wiping every other trip's data the
+      // instant the user switched to MANUAL from anywhere but trip 0 —
+      // there was no way back to it after switching back to AUTO.
+      pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [clampedTripIndex]: [] },
+      selectedPinIds: [],
+      activeStampId: null,
+      pendingPresetStamp: null,
+      activePresetCategory: null,
+    })
+    useCalculator.getState().remapLashingPointsForRedistribute(matches)
+    toast.info('Ручной режим — размещения сохранены')
+  }
+
+  // keepPositions: every manual placement becomes a pin of the trip that was
+  // open when the user switched to manual (the old, only behaviour).
+  // Otherwise the cargo is re-packed from scratch on that trip, and lashing
+  // points tied to the dropped placements go with them.
+  const switchToAuto = (keepPositions: boolean) => {
+    if (!keepPositions) {
+      useCalculator.setState({
+        mode: 'auto',
+        pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: [] },
+        manualPlacements: [],
+        selectedPinIds: [],
+        selectedManualIds: [],
+        activeStampId: null,
+        pendingPresetStamp: null,
+        activePresetCategory: null,
+      })
+      useCalculator.getState().pruneStaleLashingPoints()
+      toast.info('Авто-режим — груз расставлен заново')
+      return
+    }
+    // Convert manual placements into pinned placements, preserving layers.
+    const newPinned = manualPlacements.map((m) => ({
+      id: crypto.randomUUID(),
+      itemId: m.itemId,
+      name: m.name,
+      x: m.x,
+      y: m.y,
+      width: m.width,
+      length: m.length,
+      layers: Math.max(1, m.layers),
+      rotated: m.rotated,
+      color: m.color,
+      weight: m.weight,
+      clearanceMargin: m.clearanceMargin,
+      // Round 20 — composition-only preservation. `m` is a raw stored
+      // ManualPlacement here (not PlacedItem), which already carries
+      // `composition` at the type level — straight passthrough.
+      composition: m.composition,
+      // Keeps a quarantined placement quarantined — see isQuarantined.
+      malformed: m.malformed,
+    }))
+    const matches = matchLashingCarryover(manualPlacements, newPinned)
+    useCalculator.setState({
+      mode: 'auto',
+      // Manual mode has no trip concept of its own — the edits go back
+      // into whichever trip was active when the user switched TO manual.
+      // NOT clampedTripIndex: manual's own `trips` array is always
+      // length 1, so `clampedTripIndex = min(activeTripIndex, 0)` is
+      // forced down to 0 for the whole time the user is in manual mode,
+      // regardless of which trip they were on before switching —
+      // activeTripIndex is the one value that still remembers it. Used
+      // to hard-code trip 0 outright and replace the whole map, which
+      // both mis-filed the edit under the wrong trip whenever the user
+      // had switched from trip N != 0, and discarded every other trip's
+      // pins in the process.
+      pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: newPinned },
+      manualPlacements: [],
+      selectedPinIds: [],
+      activeStampId: null,
+      pendingPresetStamp: null,
+      activePresetCategory: null,
+    })
+    useCalculator.getState().remapLashingPointsForRedistribute(matches)
+    toast.info('Авто-режим — размещения сохранены как закреплённые')
+  }
+
   const handleModeChange = (newMode: 'auto' | 'manual') => {
     if (newMode === mode) return
     if (newMode === 'manual') {
-      // Convert current auto-mode result (pinned + auto-packed) into manual placements,
-      // preserving the number of stacked tiers per footprint.
-      const newManual: ManualPlacement[] = result.placed.map((p) => ({
-        id: crypto.randomUUID(),
-        itemId: p.itemId,
-        name: p.name,
-        x: p.x,
-        y: p.y,
-        width: p.width,
-        length: p.length,
-        layers: Math.max(1, p.stackedCount),
-        rotated: p.rotated,
-        color: p.color,
-        weight: p.weight,
-        clearanceMargin: p.clearanceMargin,
-        // Round 20 — composition-only preservation. PlacedItem already
-        // carries `composition` (copied through verbatim by packDeck/
-        // packingResultFromManual, never synthesized — Round 14), so this
-        // is a straight passthrough, not a new source of truth. Dormant
-        // today (nothing writes composition until the merge switch-on
-        // round); scoped deliberately to composition ONLY — stabilityOverride/
-        // lashingWireType/lashingJustification/rotationLocked are NOT
-        // present on PlacedItem at all (a structural gap, not a missed
-        // copy here) and are tracked separately as a future placement-
-        // metadata-ownership decision, not fixed in this round.
-        composition: p.composition,
-      }))
-      // Lashing points only ever attach to a real placement id (pinned or
-      // manual) — auto-mode's non-pinned, algorithm-placed slots never have
-      // one, so only pinnedPlacements (not the full result.placed) can be a
-      // carryover source here.
-      const matches = matchLashingCarryover(pinnedPlacements, newManual)
-      useCalculator.setState({
-        mode: 'manual',
-        manualPlacements: [...newManual, ...pinnedPlacements.filter(isQuarantined)],
-        // Only the trip actually being converted moves into manualPlacements
-        // — every OTHER trip's pins must survive untouched. This used to be
-        // `pinnedPlacementsByTrip: {}`, wiping every other trip's data the
-        // instant the user switched to MANUAL from anywhere but trip 0 —
-        // there was no way back to it after switching back to AUTO.
-        pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [clampedTripIndex]: [] },
-        selectedPinIds: [],
-        activeStampId: null,
-        pendingPresetStamp: null,
-        activePresetCategory: null,
-      })
-      useCalculator.getState().remapLashingPointsForRedistribute(matches)
-      toast.info('Ручной режим — размещения сохранены')
-    } else {
-      // Convert manual placements into pinned placements, preserving layers.
-      const newPinned = manualPlacements.map((m) => ({
-        id: crypto.randomUUID(),
-        itemId: m.itemId,
-        name: m.name,
-        x: m.x,
-        y: m.y,
-        width: m.width,
-        length: m.length,
-        layers: Math.max(1, m.layers),
-        rotated: m.rotated,
-        color: m.color,
-        weight: m.weight,
-        clearanceMargin: m.clearanceMargin,
-        // Round 20 — composition-only preservation. `m` is a raw stored
-        // ManualPlacement here (not PlacedItem), which already carries
-        // `composition` at the type level — straight passthrough.
-        composition: m.composition,
-        // Keeps a quarantined placement quarantined — see isQuarantined.
-        malformed: m.malformed,
-      }))
-      const matches = matchLashingCarryover(manualPlacements, newPinned)
-      useCalculator.setState({
-        mode: 'auto',
-        // Manual mode has no trip concept of its own — the edits go back
-        // into whichever trip was active when the user switched TO manual.
-        // NOT clampedTripIndex: manual's own `trips` array is always
-        // length 1, so `clampedTripIndex = min(activeTripIndex, 0)` is
-        // forced down to 0 for the whole time the user is in manual mode,
-        // regardless of which trip they were on before switching —
-        // activeTripIndex is the one value that still remembers it. Used
-        // to hard-code trip 0 outright and replace the whole map, which
-        // both mis-filed the edit under the wrong trip whenever the user
-        // had switched from trip N != 0, and discarded every other trip's
-        // pins in the process.
-        pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: newPinned },
-        manualPlacements: [],
-        selectedPinIds: [],
-        activeStampId: null,
-        pendingPresetStamp: null,
-        activePresetCategory: null,
-      })
-      useCalculator.getState().remapLashingPointsForRedistribute(matches)
-      toast.info('Авто-режим — размещения сохранены как закреплённые')
+      // Manual mode has a single trip: only the open trip's cargo moves onto
+      // the manual deck, everything on the other trips becomes unplaced until
+      // the user goes back to auto. That used to happen without a word.
+      const strandedUnits = shownTrips.reduce((sum, t, i) => (i === clampedTripIndex ? sum : sum + t.placedCount), 0)
+      if (strandedUnits > 0) {
+        setModeSwitchPrompt({ to: 'manual', strandedUnits })
+        return
+      }
+      switchToManual()
+      return
     }
+    // Every manual placement used to turn into a pin silently, after which
+    // auto mode no longer packed that cargo — ask instead.
+    if (manualPlacements.some((m) => !isQuarantined(m))) {
+      setModeSwitchPrompt({ to: 'auto' })
+      return
+    }
+    switchToAuto(true)
   }
 
   // Generate several packing variants so the user can choose the best one.
@@ -2555,22 +2641,51 @@ export default function Home() {
           header) so it's visible the instant something doesn't fit, instead
           of requiring a scroll all the way down to the bottom of the
           Статистика card to discover it. */}
-      {result.unplaced.length > 0 && (
+      {unfitAnywhere.length + rejectedPinsHere.length > 0 && (
         <div className="shrink-0 border-b bg-red-50 dark:bg-red-950/30 px-4 py-2">
           <div className="flex items-start gap-2 flex-wrap">
             <span className="flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-400 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5" />
-              Не поместилось ({result.unplaced.length}):
+              Не поместилось ({unfitAnywhere.length + rejectedPinsHere.length}):
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
-              {result.unplaced.map((u, i) => (
+              {unfitAnywhere.map((u, i) => {
+                const where = trips.length >= 10 ? 'не помещается за 10 рейсов' : 'ни в один рейс'
+                return (
+                  <Badge
+                    key={`unfit-${u.itemId}-${i}`}
+                    variant="destructive"
+                    className="text-[10px] font-normal"
+                    title={`${where}: ${u.reason}`}
+                  >
+                    {u.name} — {where}: {u.reason}
+                  </Badge>
+                )
+              })}
+              {rejectedPinsHere.map((u, i) => (
                 <Badge
-                  key={`${u.itemId}-${i}`}
+                  key={`pin-${u.itemId}-${i}`}
                   variant="destructive"
                   className="text-[10px] font-normal"
                   title={u.reason}
                 >
                   {u.name} — {u.reason}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {manualToDo.length > 0 && (
+        <div className="shrink-0 border-b bg-amber-50 dark:bg-amber-950/30 px-4 py-2">
+          <div className="flex items-start gap-2 flex-wrap">
+            <span className="text-xs font-medium text-amber-800 dark:text-amber-300 shrink-0">
+              Ещё не размещено вручную:
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {manualToDo.map((u, i) => (
+                <Badge key={`todo-${u.itemId}-${i}`} variant="outline" className="text-[10px] font-normal">
+                  {u.name} — {u.reason.replace(/^Не размещено вручную \((.*)\)$/, '$1')}
                 </Badge>
               ))}
             </div>
@@ -2634,9 +2749,9 @@ export default function Home() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {trips.length > 1 && (
+                  {shownTrips.length > 1 && (
                     <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                      {trips.map((t, i) => (
+                      {shownTrips.map((t, i) => (
                         <Button
                           key={i}
                           size="sm"
@@ -2644,10 +2759,17 @@ export default function Home() {
                           className="h-7 px-2.5 text-xs"
                           onClick={() => { setActiveTripIndex(i); clearSelection() }}
                         >
-                          Рейс {i + 1} ({t.placedCount}/{t.requestedCount})
+                          Рейс {i + 1} · {t.placedCount} ед.
                         </Button>
                       ))}
                     </div>
+                  )}
+                  {carriedToNextTrip > 0 && (
+                    <p className="mb-3 text-xs text-muted-foreground" data-testid="trip-carry-over">
+                      {carriedToNextTrip} ед. {pluralRu(carriedToNextTrip, 'уходит', 'уходят', 'уходят')} в рейс {clampedTripIndex + 2}
+                      {carryReasons.length > 0 &&
+                        ` — ${carryReasons.map((u) => `${u.name}: ${u.reason}`).join('; ')}`}
+                    </p>
                   )}
                   {viewMode === '3d' ? (
                     <Deck3DView
@@ -2914,6 +3036,7 @@ export default function Home() {
                 onAutoRedistribute={handleAutoRedistribute}
                 variants={variants}
                 onSelectVariant={handleSelectVariant}
+                placedAcrossTrips={placedAcrossTrips}
               />
             </div>
 
@@ -2929,6 +3052,15 @@ export default function Home() {
                 deckOutline={deck.outline}
                 maxDeckCargoT={deck.maxDeckCargoT}
                 tenFootContainerCapacity={deck.tenFootContainerCapacity}
+                unplaced={
+                  mode === 'auto'
+                    ? {
+                        count: unfitUnits,
+                        label: 'Не влезло',
+                        note: carriedToNextTrip > 0 ? `ещё ${carriedToNextTrip} в рейс ${clampedTripIndex + 2}` : undefined,
+                      }
+                    : { count: Math.max(0, result.requestedCount - result.placedCount), label: 'Не размещено' }
+                }
               />
               <StabilityPanel
                 result={result}
@@ -2944,6 +3076,7 @@ export default function Home() {
             <div className="xl:col-span-4 self-start" data-tour="cargo-list">
               <ItemList
                 result={result}
+                placedAcrossTrips={placedAcrossTrips}
                 unit={deck.unit}
                 hoveredItemId={hoveredItemId}
                 onHover={handleHover}
@@ -2954,6 +3087,47 @@ export default function Home() {
         </main>
       </div>
       <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />
+      <AlertDialog open={modeSwitchPrompt !== null} onOpenChange={(open) => { if (!open) setModeSwitchPrompt(null) }}>
+        <AlertDialogContent>
+          {modeSwitchPrompt?.to === 'auto' ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Перейти в авто-режим?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Как поступить с грузом, который вы расставили вручную? «Оставить позиции» — штабели
+                  останутся на местах и будут закреплены, остальное расставится само. «Переразместить» —
+                  весь груз расставится заново.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-background text-foreground border hover:bg-accent"
+                  onClick={() => switchToAuto(false)}
+                >
+                  Переразместить
+                </AlertDialogAction>
+                <AlertDialogAction onClick={() => switchToAuto(true)}>Оставить позиции</AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : modeSwitchPrompt?.to === 'manual' ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Перейти в ручной режим?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  В ручном режиме один рейс. На палубе останется рейс {clampedTripIndex + 1}, а{' '}
+                  {modeSwitchPrompt.strandedUnits} ед. из других рейсов станут неразмещёнными, пока вы не
+                  вернётесь в авто-режим.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction onClick={switchToManual}>Перейти</AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : null}
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCalculator } from '@/store/calculator'
-import type { CargoItem, PackVariant, PackingResult } from '@/lib/packing'
+import type { CargoItem, PackVariant, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -32,6 +32,9 @@ interface PlacementPanelProps {
   onAutoRedistribute: () => void
   variants?: PackVariant[]
   onSelectVariant?: (v: PackVariant) => void
+  // Every trip's placements. `result` is only the open trip, so counting
+  // from it alone showed units sitting on another trip as «Не распределено».
+  placedAcrossTrips?: PlacedItem[]
 }
 
 export function PlacementPanel({
@@ -41,6 +44,7 @@ export function PlacementPanel({
   onAutoRedistribute,
   variants,
   onSelectVariant,
+  placedAcrossTrips,
 }: PlacementPanelProps) {
   const items = useCalculator((s) => s.items)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
@@ -76,7 +80,10 @@ export function PlacementPanel({
   // an item's quantity in auto mode auto-places the extra units without
   // pinning them, so "Не распределено" kept showing units as missing even
   // though they were already visible on the deck.
-  const totalPlaced = result.placedCount
+  const placedForCounts = placedAcrossTrips ?? result.placed
+  const totalPlaced = placedAcrossTrips
+    ? placedAcrossTrips.reduce((s, p) => s + p.stackedCount, 0)
+    : result.placedCount
 
   // Per-item placed count (same result.placed source, grouped by
   // constituent itemId — mirrors ItemList's own placedCount computation)
@@ -87,7 +94,7 @@ export function PlacementPanel({
   // segment's own layers to its own itemId instead of dumping the whole
   // stack onto the nominal itemId alone.
   const placedByItemId = new Map<string, number>()
-  for (const p of result.placed) {
+  for (const p of placedForCounts) {
     for (const seg of segmentsOf(p)) {
       const count = Number.isFinite(seg.layers) && seg.layers > 0 ? seg.layers : 1
       placedByItemId.set(seg.itemId, (placedByItemId.get(seg.itemId) ?? 0) + count)

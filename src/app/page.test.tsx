@@ -123,6 +123,80 @@ describe('Home (page.tsx)', () => {
     expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
   })
 
+  // Phase 0, L1: units carried on to trip 2 sat in trip 1's red «Не
+  // поместилось» strip and its «Не влезло»/«N/M разм.» counters, as if they
+  // had failed.
+  it('cargo carried to the next trip is a calm note, not a red «Не поместилось»', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().setDeck({ width: 3, length: 1, gap: 0, boardOffset: 0 })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
+    })
+    expect(screen.getByRole('button', { name: /Рейс 1 · 1 ед\./ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Рейс 2 · 1 ед\./ })).toBeTruthy()
+    expect(screen.queryByText(/Не поместилось/)).toBeNull()
+    expect(screen.getByTestId('trip-carry-over').textContent).toMatch(/^1 ед\. уходит в рейс 2/)
+    expect(document.body.textContent).toMatch(/2\/2 разм\./)
+  })
+
+  it('cargo that fits in no trip stays red and gets no empty trip tab of its own', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().setDeck({ width: 3, length: 1, gap: 0, boardOffset: 0 })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+      useCalculator.getState().addItem({ name: 'Huge', width: 5, length: 5, quantity: 1 })
+    })
+    expect(screen.queryByRole('button', { name: /Рейс 2/ })).toBeNull()
+    expect(screen.getByText(/Huge — ни в один рейс/)).toBeTruthy()
+  })
+
+  it('manual mode lists units not placed yet as a to-do, not as a failure', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
+    })
+    expect(screen.queryByText(/Не поместилось/)).toBeNull()
+    expect(screen.getByText('Ещё не размещено вручную:')).toBeTruthy()
+  })
+
+  // Phase 0, L5: Manual → Auto turned every hand-placed stack into a pin
+  // without asking, after which auto mode no longer packed that cargo.
+  it('Manual → Auto asks whether to keep the hand-placed positions or re-pack', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
+    })
+    fireEvent.click(screen.getByText('Ручной'))
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+    fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+    expect(useCalculator.getState().mode).toBe('manual')
+    fireEvent.click(screen.getByRole('button', { name: 'Переразместить' }))
+    expect(useCalculator.getState().mode).toBe('auto')
+    expect(useCalculator.getState().manualPlacements).toHaveLength(0)
+    expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()).toHaveLength(0)
+  })
+
+  // Phase 0, L21: manual mode has one trip, so switching from a multi-trip
+  // plan left the other trips' cargo unplaced without a word.
+  it('Auto → Manual with several trips warns that the other trips become unplaced', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().setDeck({ width: 3, length: 1, gap: 0, boardOffset: 0 })
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
+    })
+    fireEvent.click(screen.getByText('Ручной'))
+    expect(useCalculator.getState().mode).toBe('auto')
+    expect(screen.getByText(/В ручном режиме один рейс/).textContent).toMatch(/1 ед\. из других рейсов/)
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+    expect(useCalculator.getState().mode).toBe('auto')
+  })
+
   it('handleRemovePinned deletes the cargo (decrements quantity), not just unpins it', () => {
     render(<Home />)
     clearDemoCargo()
@@ -1938,6 +2012,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+    // Manual → Auto asks first (Phase 0, L5); these tests cover the
+    // keep-positions conversion.
+    fireEvent.click(screen.getByRole('button', { name: 'Оставить позиции' }))
 
     const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
     expect(pins).toHaveLength(1)
@@ -2099,6 +2176,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // Switch to trip 2 (index 1) before switching mode.
     fireEvent.click(screen.getByText(/Рейс 2/))
     fireEvent.click(screen.getByText('Ручной'))
+    // Trip 1's cargo goes unplaced in single-trip manual mode — confirmed
+    // through the warning (Phase 0, L21).
+    fireEvent.click(screen.getByRole('button', { name: 'Перейти' }))
 
     expect(useCalculator.getState().mode).toBe('manual')
     // Trip 0's pin must survive completely untouched.
@@ -2110,6 +2190,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     // Switch back to AUTO — the edit must land back in trip 1, not trip 0.
     fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+    // Manual → Auto asks first (Phase 0, L5); these tests cover the
+    // keep-positions conversion.
+    fireEvent.click(screen.getByRole('button', { name: 'Оставить позиции' }))
 
     expect(useCalculator.getState().mode).toBe('auto')
     expect(useCalculator.getState().manualPlacements).toHaveLength(0)
@@ -2136,6 +2219,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // getByText('Авто') is now ambiguous — PlacementPanel's preset category
     // picker also has an "Авто" (vehicles) button. Scope to the mode toggle.
     fireEvent.click(screen.getByRole('radio', { name: 'Авто' }))
+    // Manual → Auto asks first (Phase 0, L5); these tests cover the
+    // keep-positions conversion.
+    fireEvent.click(screen.getByRole('button', { name: 'Оставить позиции' }))
 
     expect(useCalculator.getState().mode).toBe('auto')
     expect(useCalculator.getState().manualPlacements).toHaveLength(0)

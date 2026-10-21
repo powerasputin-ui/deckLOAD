@@ -26,9 +26,13 @@ interface StatsPanelProps {
   // See DeckConfig.tenFootContainerCapacity's doc comment — purely
   // informational, never enforced.
   tenFootContainerCapacity?: number
+  // The red «Не влезло» tile. `result` is one trip, so on its own it counts
+  // units carried on to the next trip as failures; the page passes what
+  // fits in no trip at all instead, plus a note about the carry-over.
+  unplaced?: { count: number; label: string; note?: string }
 }
 
-export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity, unplaced }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -44,7 +48,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
 
   const utilPct = Math.round(utilization * 100)
   const unitSym = UNIT_LABEL[unit]
-  const unplacedCount = Math.max(0, requestedCount - placedCount)
+  const unplacedCount = unplaced?.count ?? Math.max(0, requestedCount - placedCount)
   const overLoadedZoneCount =
     loadZones && loadZones.length > 0
       ? checkZoneLoads(
@@ -177,12 +181,13 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
           <div className="rounded-lg border bg-red-50/50 dark:bg-red-950/20 p-3">
             <div className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
               <AlertTriangle className="h-4 w-4" />
-              <span className="text-xs font-medium">Не влезло</span>
+              <span className="text-xs font-medium">{unplaced?.label ?? 'Не влезло'}</span>
             </div>
             <div className="text-xl font-bold tabular-nums mt-1">
               {unplacedCount}
             </div>
             <div className="text-[10px] text-muted-foreground">ед. груза</div>
+            {unplaced?.note && <div className="text-[10px] text-muted-foreground mt-0.5">{unplaced.note}</div>}
           </div>
         </div>
 

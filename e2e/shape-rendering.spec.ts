@@ -21,8 +21,10 @@ test.describe('Non-rectangular cargo shape rendering', () => {
     // non-rectangular preset silently fell back to a plain <rect>.
     await expect(page.locator('svg ellipse')).toHaveCount(1)
 
-    // Switching to auto mode and back must not regress it either.
+    // Switching to auto mode and back must not regress it either. Manual →
+    // Auto asks what to do with the hand-placed cargo; keep it in place.
     await page.getByText('Авто').first().click()
+    await page.getByRole('button', { name: 'Оставить позиции' }).click()
     await page.getByText('Ручной').first().click()
     await expect(page.locator('svg ellipse')).toHaveCount(1)
   })
