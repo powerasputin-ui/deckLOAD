@@ -89,6 +89,40 @@ describe('Home (page.tsx)', () => {
     expect(body).toMatch(/20×8 м/)
   })
 
+  // Phase 0, L10: the vessel library stayed open over the deck after a vessel
+  // had already been applied.
+  it('closes the vessel library once a vessel is applied and confirms the new calculation', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
+    expect(screen.queryByText(/Создаёт новый расчёт с палубой/)).toBeNull()
+    expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
+  })
+
+  // Phase 0, L13: variants are a snapshot of one project's cargo; they used
+  // to stay listed after the cargo changed, and clicking one wrote a stale
+  // layout over the current one.
+  it('drops the variants list once the cargo changes', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
+    act(() => {
+      const first = useCalculator.getState().items[0]
+      useCalculator.getState().updateItem(first.id, { quantity: first.quantity + 1 })
+    })
+    expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
+  })
+
+  it('drops the variants list when another calculation becomes active', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
+    act(() => {
+      useProjects.getState().createProject()
+    })
+    expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
+  })
+
   it('handleRemovePinned deletes the cargo (decrements quantity), not just unpins it', () => {
     render(<Home />)
     clearDemoCargo()

@@ -12,6 +12,21 @@ test.describe('PDF export', () => {
     await expect(page.getByText('PDF скачан')).toBeVisible()
   })
 
+  // Phase 0, L15: the plan is rasterized from the 2D <svg>, which the 3D
+  // view doesn't have — exporting from 3D failed with «Схема палубы ещё не
+  // готова». It now switches to 2D for the export and back afterwards.
+  test('exporting from the 3D view still downloads the plan and returns to 3D', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('radio', { name: '3D' }).click()
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 15000 })
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 15000 }),
+      page.getByRole('button', { name: 'Скачать PDF' }).click(),
+    ])
+    expect(download.suggestedFilename()).toMatch(/^deckload-.*\.pdf$/)
+    await expect(page.getByRole('radio', { name: '3D' })).toHaveAttribute('data-state', 'on')
+  })
+
   test('exporting an empty deck does not crash', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)

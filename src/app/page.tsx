@@ -433,7 +433,16 @@ export default function Home() {
   // 3D is a read-only camera-orbit snapshot of the same layout — no
   // drag/pin/zone editing there, that stays exclusively in the 2D view.
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
-  const [variants, setVariants] = useState<PackVariant[]>([])
+  // Variants are a snapshot of one project's cargo on one trip. Applying one
+  // after switching project or trip, or after editing the cargo or the deck,
+  // used to write a stale layout over the current one — so they're kept
+  // together with what they were built from and only shown while that still
+  // matches (see `variants` below the trip clamp).
+  const [variantsSnapshot, setVariantsSnapshot] = useState<{ list: PackVariant[]; builtFor: unknown[] }>({
+    list: [],
+    builtFor: [],
+  })
+  const [vesselLibraryOpen, setVesselLibraryOpen] = useState(false)
   const [activeTripIndex, setActiveTripIndex] = useState(0)
   const loadedProjectId = useRef<string | null>(null)
   // Baseline for the load-zone overload toast below — reset whenever the
@@ -675,6 +684,24 @@ export default function Home() {
   // setState-in-effect render cascade for something purely derived.
   const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, trips.length - 1))
   const result = trips[clampedTripIndex] ?? trips[0]
+  const variantInputs: unknown[] = [
+    activeId,
+    clampedTripIndex,
+    items,
+    deck.width,
+    deck.length,
+    deck.unit,
+    deck.gap,
+    deck.boardOffset,
+    deck.clearance,
+    deck.outline,
+    deck.restrictionZones,
+  ]
+  const variants =
+    variantsSnapshot.builtFor.length === variantInputs.length &&
+    variantsSnapshot.builtFor.every((v, i) => Object.is(v, variantInputs[i]))
+      ? variantsSnapshot.list
+      : []
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
 
@@ -770,9 +797,29 @@ export default function Home() {
   // user-chosen position as possible instead of discarding them. `setDeck`
   // is now the single source of truth for this; see calculator.ts.
 
+  // The 2D deck's <svg>, once mounted — right away when it already is, a few
+  // frames after leaving 3D otherwise. Gives up after ~3 s so a deck that
+  // never mounts can't hang the export.
+  const waitForDeckSvg = () =>
+    new Promise<SVGSVGElement | null>((resolve) => {
+      const started = performance.now()
+      const poll = () => {
+        if (deckSvgRef.current) return resolve(deckSvgRef.current)
+        if (performance.now() - started > 3000) return resolve(null)
+        requestAnimationFrame(poll)
+      }
+      poll()
+    })
+
   const handleExportPdf = async () => {
-    const svgEl = deckSvgRef.current
+    // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D —
+    // exporting from 3D used to fail with «Схема палубы ещё не готова».
+    // Switch to 2D for the export and come back afterwards.
+    const from3d = viewMode === '3d'
+    if (from3d) setViewMode('2d')
+    const svgEl = await waitForDeckSvg()
     if (!svgEl) {
+      if (from3d) setViewMode('3d')
       toast.error('Схема палубы ещё не готова')
       return
     }
@@ -799,6 +846,8 @@ export default function Home() {
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')
+    } finally {
+      if (from3d) setViewMode('3d')
     }
   }
 
@@ -901,7 +950,7 @@ export default function Home() {
       showLabels: true,
       showCargoContents: true,
     })
-    toast.success(`Судно «${tpl.label}» загружено`)
+    toast.success(`Создан расчёт для «${tpl.label}»`)
     // Deck-strength limit is a genuinely conflicting range for some vessels
     // (see VesselTemplate.limits.deckStrengthTPerM2's own doc comment) —
     // never auto-picked. Offer both real sourced values as an explicit
@@ -2241,7 +2290,7 @@ export default function Home() {
       },
       3
     )
-    setVariants(newVariants)
+    setVariantsSnapshot({ list: newVariants, builtFor: variantInputs })
     // Apply the best variant immediately
     if (newVariants.length > 0) {
       applyVariant(newVariants[0])
@@ -2414,7 +2463,7 @@ export default function Home() {
             >
               <HelpCircle className="h-4 w-4" />
             </Button>
-            <Popover>
+            <Popover open={vesselLibraryOpen} onOpenChange={setVesselLibraryOpen}>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8" data-tour="vessel-library">
                   <Ship className="h-3.5 w-3.5 sm:mr-1" />
@@ -2428,7 +2477,10 @@ export default function Home() {
                 {VESSEL_TEMPLATES.map((tpl) => (
                   <button
                     key={tpl.id}
-                    onClick={() => handleApplyVesselTemplate(tpl)}
+                    onClick={() => {
+                      setVesselLibraryOpen(false)
+                      handleApplyVesselTemplate(tpl)
+                    }}
                     className="w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
                   >
                     <span className="block">{tpl.label}</span>
