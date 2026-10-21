@@ -47,13 +47,20 @@ export default function RootLayout({
         // page, so the whole app rendered in the OS default font instead.
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground`}
       >
-        {children}
         {/* top-center used to sit directly over the header's undo/redo
             buttons — a toast from the action that made undo available was
             often still showing right when the user reached for it, silently
             eating the click. bottom-right stays clear of every header
-            control and the deck canvas. */}
+            control and the deck canvas.
+            Rendered BEFORE the page on purpose: the Toaster only shows toasts
+            published after its own mount effect subscribes, and effects run
+            in tree order — after the page, it silently dropped every toast
+            fired while the page mounts (e.g. hydrate()'s "couldn't save"
+            warning on a first visit with storage unavailable, which was
+            therefore never seen — and then muted every later one too, see
+            hasWarnedAboutStorageFailure in projects.ts). */}
         <Toaster position="bottom-right" richColors closeButton />
+        {children}
       </body>
     </html>
   );

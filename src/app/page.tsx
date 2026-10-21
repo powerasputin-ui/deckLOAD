@@ -28,7 +28,7 @@ import {
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
-import { useProjects, scheduleAutosave } from '@/store/projects'
+import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -462,6 +462,43 @@ export default function Home() {
   useEffect(() => {
     hydrate()
   }, [hydrate])
+
+  // The saved record turned out unreadable: projects.ts refuses every write
+  // until the user decides, so say so for exactly as long as that holds — the
+  // warning can't be dismissed, and goes away by itself once the record is
+  // given up. The explanation and the buttons sit in `description` because
+  // sonner's own action/cancel buttons share one row with the text, which
+  // squeezed this message to a two-letter column and pushed the buttons
+  // off-screen.
+  const storageLocked = useProjects((s) => s.storageLocked)
+  const discardCorruptedStorage = useProjects((s) => s.discardCorruptedStorage)
+  useEffect(() => {
+    if (!storageLocked) return
+    const id = toast.error('Сохранённые данные повреждены и не читаются', {
+      duration: Infinity,
+      dismissible: false,
+      closeButton: false,
+      description: (
+        <div className="space-y-2">
+          <p>
+            Чтобы их не потерять, приложение ничего не сохраняет, пока вы не решите, что с ними делать: работа идёт с
+            демо-проектом в памяти и пропадёт при перезагрузке.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={downloadCorruptedStorage}>
+              Скачать копию
+            </Button>
+            <Button size="sm" variant="destructive" onClick={discardCorruptedStorage}>
+              Удалить и начать заново
+            </Button>
+          </div>
+        </div>
+      ),
+    })
+    return () => {
+      toast.dismiss(id)
+    }
+  }, [storageLocked, discardCorruptedStorage])
 
   // Load project into calculator store when activeId changes (after hydration)
   useEffect(() => {
@@ -1248,7 +1285,7 @@ export default function Home() {
     const excluded = new Set(excludeIds ? (Array.isArray(excludeIds) ? excludeIds : [excludeIds]) : [])
     const item = items.find((it) => it.id === itemId)
     if (!item) return { ok: false, reason: 'Груз не найден', maxPhys: 1 }
-    const maxPhys = maxLayersFor(item, deck.clearance)
+    const maxPhys = maxLayersFor(item, deck.clearance, deck.unit)
     const newLayers = currentLayers + delta
     if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
     if (newLayers > maxPhys) {
@@ -2627,7 +2664,7 @@ export default function Home() {
                     onLayerChangeManual={handleLayerChangeManual}
                     getLayerInfo={(itemId, currentLayers) => {
                       const item = items.find((it) => it.id === itemId)
-                      const maxPhys = item ? maxLayersFor(item, deck.clearance) : 1
+                      const maxPhys = item ? maxLayersFor(item, deck.clearance, deck.unit) : 1
                       // Stays clickable even when currently blocked by height/quantity —
                       // clicking always explains why via a toast (handleLayerChangePinned/
                       // Manual), rather than presenting a permanently greyed-out button.

@@ -4,7 +4,7 @@
 // Reference: Jukka Jylänki - "A Thousand Ways to Pack the Bin".
 
 import type { PipeNestSpec } from './pipeNest'
-import { type Unit, toMeters } from './units'
+import { type Unit, toMeters, convertLength } from './units'
 // Value-level import from placementComposition.ts, which only imports TYPES
 // back from this file (`import type {...} from './packing'`) — type-only
 // imports are erased at compile time, so this can never form a runtime
@@ -1357,15 +1357,22 @@ export interface PinnedPlacement {
 // itself, which then silently capped every other cargo type too.
 export function maxLayersFor(
   item: { height: number; maxLayers?: number; maxStackHeightM?: number },
-  clearance: number
+  clearance: number,
+  // Display unit of `item.height` and `clearance` (the deck's own unit).
+  // `maxStackHeightM` alone is real metres, so it's brought into that unit
+  // before the budgets are compared — otherwise a 3 m cap was read as
+  // "3 ft" (or "3 cm") and cut the stack far below what actually fits.
+  // 'm' (a no-op) when omitted.
+  unit: Unit = 'm'
 ): number {
   const h = toFinite(item.height, 0)
   const c = toFinite(clearance, 0)
   const itemCapM = toFinite(item.maxStackHeightM ?? 0, 0)
+  const itemCap = itemCapM > 0 ? convertLength(itemCapM, 'm', unit) : 0
   const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : undefined
   // Whichever height budget is actually configured (and tighter) wins; a
   // budget of 0 means "not configured", not "zero metres allowed".
-  const budget = c > 0 && itemCapM > 0 ? Math.min(c, itemCapM) : c > 0 ? c : itemCapM > 0 ? itemCapM : 0
+  const budget = c > 0 && itemCap > 0 ? Math.min(c, itemCap) : c > 0 ? c : itemCap > 0 ? itemCap : 0
   if (budget <= 0) return userCap ?? 1
   let heightCap = 1
   if (h > 0) {
@@ -1815,7 +1822,7 @@ export function packDeck(
     if (item.width <= 0 || item.length <= 0) continue
     const remaining = remainingByItem.get(item.id) ?? 0
     if (remaining <= 0) continue
-    const layers = maxLayersFor(item, clearance)
+    const layers = maxLayersFor(item, clearance, unit)
     let r = remaining
     while (r > 0) {
       const units = Math.min(layers, r)
@@ -3555,7 +3562,7 @@ export function packingResultFromManual(
     }
   }
 
-  const placed = activePlacements.map((p, i) => {
+  const placed = activePlacements.map((p) => {
     const layers = layersFor(p)
     // Copied through verbatim, NEVER synthesized — see PlacedItem.composition's
     // own doc comment. `weight`/`height` become the backward-compatible
@@ -3581,7 +3588,12 @@ export function packingResultFromManual(
       rotated: p.rotated,
       color: p.color,
       weight: pWeight,
-      index: i,
+      // Position in the caller's own `placements` array, NOT in
+      // `activePlacements` — every consumer resolves the placement as
+      // manualPlacements[p.index] (2D/3D selection, drag, rotate, nudge), so
+      // one quarantined placement ahead of this one would otherwise shift
+      // every later id by one and make clicks/drags act on the wrong cargo.
+      index: placements.indexOf(p),
       // Composition-aware geometry (R29 pass 4A, G1 red-team gate), mirrors
       // packDeck's identical construction — shape/outline use
       // resolveUniformShape/resolveUniformOutline (uniform-only: every

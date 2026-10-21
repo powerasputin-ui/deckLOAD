@@ -2155,8 +2155,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // that a hand-rebuilt object here previously had to remember to copy one
   // by one and silently could (and did) drop. `manualId` is resolved the
   // same index-matching way Deck3DView already does it (placementIdFor) —
-  // packingResultFromManual builds placed[i].index = i from this exact
-  // manualPlacements array in the same order, so the two stay aligned.
+  // packingResultFromManual sets each placed[i].index to that placement's
+  // position in this exact manualPlacements array (quarantined placements
+  // are left out of `placed` but keep their slot), so the two stay aligned.
   const renderedItems: (PlacedItem & { manualId?: string })[] =
     mode === 'manual'
       ? result.placed.map((p) => ({ ...p, manualId: manualPlacements[p.index]?.id }))

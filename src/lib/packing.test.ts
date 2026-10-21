@@ -134,6 +134,17 @@ describe('maxLayersFor', () => {
     expect(maxLayersFor({ height: 1 }, 0)).toBe(1)
   })
 
+  // maxStackHeightM is real metres while height/clearance are in the deck's
+  // display unit — a 3 m cap used to be read as "3 ft"/"3 cm".
+  it('converts the per-item metre cap into the deck unit before comparing (ft, cm)', () => {
+    const FT_PER_M = 1 / 0.3048
+    expect(maxLayersFor({ height: 1, maxStackHeightM: 3 }, 0, 'm')).toBe(3)
+    expect(maxLayersFor({ height: 1 * FT_PER_M, maxStackHeightM: 3 }, 0, 'ft')).toBe(3)
+    expect(maxLayersFor({ height: 100, maxStackHeightM: 3 }, 0, 'cm')).toBe(3)
+    // Still the tighter of the two budgets once both are in the same unit.
+    expect(maxLayersFor({ height: 1 * FT_PER_M, maxStackHeightM: 3 }, 2 * FT_PER_M, 'ft')).toBe(2)
+  })
+
   // maxStackHeightM — a per-ITEM metre-valued ceiling (e.g. "pipes of this
   // type cap at 3.0 m"), independent of the deck-wide clearance setting.
   it('applies the item-specific maxStackHeightM when clearance is unset (0)', () => {
@@ -2711,6 +2722,27 @@ describe('Round 29: malformed placement is quarantined from packing (physical sa
     const res = packingResultFromManual(20, 20, [mp], 10, [A, B], 10)
     expect(res.placed).toHaveLength(1)
     expect(res.totalWeight).toBeCloseTo(2 * 100 + 3 * 200, 6)
+  })
+
+  // Every consumer resolves a manual placement as manualPlacements[p.index]
+  // (2D/3D selection, drag, rotate, keyboard nudge). `index` used to count
+  // positions in the FILTERED list, so one quarantined placement ahead of the
+  // others shifted every later id by one — clicking a visible stack picked
+  // up the hidden quarantined one, and the last stack couldn't be selected.
+  it('packingResultFromManual: index still points into the caller\'s own array when a quarantined placement precedes the active ones', () => {
+    const mk = (id: string, x: number, extra: Partial<ManualPlacement> = {}): ManualPlacement => ({
+      id, itemId: 'A', name: id, x, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000', weight: 100, ...extra,
+    })
+    const placements = [
+      mk('ghost', 1, { itemId: 'deleted-item', malformed: { unresolvedItem: true } }),
+      mk('m1', 3),
+      mk('m2', 5),
+    ]
+    const res = packingResultFromManual(20, 20, placements, 2, [A, B], 10)
+    expect(res.placed.map((p) => ({ x: p.x, id: placements[p.index]?.id }))).toEqual([
+      { x: 3, id: 'm1' },
+      { x: 5, id: 'm2' },
+    ])
   })
 })
 

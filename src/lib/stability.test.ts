@@ -870,6 +870,38 @@ describe('golden: unit-safety regression — deck-unit geometry must convert to 
     expect(feet.overallLCG).toBeCloseTo(metres.overallLCG, 6)
   })
 
+  // A composed (merged) stack takes its VCG/TCG/LCG from its segments'
+  // CATALOG items, not from the placement — and the catalog's height and
+  // override arms are stored in the display unit too. Only the placement
+  // fields used to be converted, so in centimetres a 2 m composed stack
+  // came out with KG ≈ 200 m.
+  it('a composed stack\'s catalog heights and override arms convert too (feet and centimetres)', () => {
+    const run = (unit: 'm' | 'ft' | 'cm', s: number) => {
+      const items = [
+        { id: 'A', weight: 4_000, height: 1 * s },
+        { id: 'B', weight: 6_000, height: 2 * s, stabilityOverride: { tcgOffsetM: 0.5 * s, lcgOffsetM: -0.25 * s } },
+      ]
+      const placements = [{
+        itemId: 'A', x: 9 * s, y: 3 * s, width: 2 * s, length: 2 * s, height: 1.5 * s, layers: 2, weight: 5_000,
+        composition: [{ itemId: 'A', layers: 1 }, { itemId: 'B', layers: 1 }],
+      }]
+      return buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20 * s, length: 8 * s }, true, placements, unit, items)
+    }
+    const metres = run('m', 1)
+    for (const [unit, s] of [['ft', 1 / 0.3048], ['cm', 100]] as const) {
+      const other = run(unit, s)
+      expect(other.KG).toBeCloseTo(metres.KG, 6)
+      expect(other.overallTCG).toBeCloseTo(metres.overallTCG, 6)
+      expect(other.overallLCG).toBeCloseTo(metres.overallLCG, 6)
+    }
+    // Not passing by coincidence: B's override really moves the stack off
+    // the centreline, and the composed cargo really lifts KG above the
+    // lightship's own 5 m (cargo VCG = 4 m deck + 1.4 m: A's 0.5 m and B's
+    // 2.0 m, weighted 4:6).
+    expect(Math.abs(metres.overallTCG)).toBeGreaterThan(1e-6)
+    expect(metres.KG).toBeGreaterThan(5)
+  })
+
   it('defaults to metres (no-op) when `unit` is omitted — every existing metres-only caller keeps working unchanged', () => {
     const placements = [{ x: 9, y: 3, width: 2, length: 2, height: 1, layers: 1, weight: 10_000 }]
     const withDefault = buildLoadingConditionFromPlacements(vessel, shipFrame, { width: 20, length: 8 }, true, placements)

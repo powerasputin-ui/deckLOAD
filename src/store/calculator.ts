@@ -877,7 +877,7 @@ export const useCalculator = create<CalculatorState>()(
           let layers = item.layers
           const cargo = itemById.get(item.itemId)
           if (cargo) {
-            const maxLayers = maxLayersFor(cargo, nextDeck.clearance)
+            const maxLayers = maxLayersFor(cargo, nextDeck.clearance, nextDeck.unit)
             if (layers > maxLayers) {
               layers = maxLayers
               layersClamped = true
@@ -1314,7 +1314,7 @@ export const useCalculator = create<CalculatorState>()(
       let layersClamped = false
       if (layerCapChanged) {
         const newItem = items.find((it) => it.id === id)!
-        const newMaxLayers = maxLayersFor(newItem, s.deck.clearance)
+        const newMaxLayers = maxLayersFor(newItem, s.deck.clearance, s.deck.unit)
         const clampLayers = <T extends { itemId: string; layers: number; composition?: CompositionSegment[] }>(p: T): T => {
           if (p.composition) {
             const result = placementClampItemLayers(p.composition, id, newMaxLayers)

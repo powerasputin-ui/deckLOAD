@@ -358,6 +358,21 @@ function variableWeightsToMoments(items: VariableWeightItem[]): WeightMoment[] {
     .map((w) => ({ weightKg: w.weightKg, vcgM: w.vcgM, tcgM: w.tcgM, lcgM: w.lcgM }))
 }
 
+// stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are typed in metres
+// but actually stored in the deck's display unit (see ItemList.tsx's
+// StabilityOverrideField, which labels the input with `unit` and writes the
+// raw typed number with no conversion; setUnit converts them like any other
+// length) — on placements and catalog items alike.
+function stabilityOverrideToMeters(o: StabilityOverride | undefined, unit: Unit): StabilityOverride | undefined {
+  return (
+    o && {
+      vcgAboveDeckM: o.vcgAboveDeckM !== undefined ? toMeters(o.vcgAboveDeckM, unit) : undefined,
+      tcgOffsetM: o.tcgOffsetM !== undefined ? toMeters(o.tcgOffsetM, unit) : undefined,
+      lcgOffsetM: o.lcgOffsetM !== undefined ? toMeters(o.lcgOffsetM, unit) : undefined,
+    }
+  )
+}
+
 export function buildLoadingConditionFromPlacements(
   vessel: VesselStabilityData,
   shipFrame: DeckShipFrame,
@@ -390,8 +405,11 @@ export function buildLoadingConditionFromPlacements(
   unit: Unit = 'm',
   // Catalog — see buildCargoWeightMoments's own doc comment on this same
   // param. `composition` itself is never unit-converted below: its segments
-  // reference itemIds and layer counts, not physical lengths/weights, so
-  // there is nothing in it for toMeters to touch.
+  // reference itemIds and layer counts, not physical lengths/weights. But a
+  // composed placement's VCG/TCG/LCG are built from its segments' CATALOG
+  // items (placementTotalVCG & co.), whose `height` and stabilityOverride
+  // arms are in the display unit too — so the catalog is converted below
+  // exactly like the placements (only `weight`, in kg, is unit-free).
   items: CompositionCatalogItem[] = []
 ): LoadingCondition {
   const lightship: WeightMoment = {
@@ -412,23 +430,19 @@ export function buildLoadingConditionFromPlacements(
           length: toMeters(p.length, unit),
           height: toMeters(p.height, unit),
           outline: p.outline?.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) })),
-          // stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are typed
-          // in metres but actually stored in the deck's display unit (see
-          // ItemList.tsx's StabilityOverrideField, which labels the input
-          // with `unit` and writes the raw typed number with no
-          // conversion) — same leak, same fix.
-          stabilityOverride: p.stabilityOverride && {
-            vcgAboveDeckM:
-              p.stabilityOverride.vcgAboveDeckM !== undefined ? toMeters(p.stabilityOverride.vcgAboveDeckM, unit) : undefined,
-            tcgOffsetM:
-              p.stabilityOverride.tcgOffsetM !== undefined ? toMeters(p.stabilityOverride.tcgOffsetM, unit) : undefined,
-            lcgOffsetM:
-              p.stabilityOverride.lcgOffsetM !== undefined ? toMeters(p.stabilityOverride.lcgOffsetM, unit) : undefined,
-          },
+          stabilityOverride: stabilityOverrideToMeters(p.stabilityOverride, unit),
           // nest.vcgAboveDeckM is computed by pipeNest.ts in real metres
           // throughout (independent of deck display unit) — left as-is.
         }))
-  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY, items)
+  const itemsM =
+    unit === 'm'
+      ? items
+      : items.map((it) => ({
+          ...it,
+          height: toMeters(it.height, unit),
+          stabilityOverride: stabilityOverrideToMeters(it.stabilityOverride, unit),
+        }))
+  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY, itemsM)
   const variable = variableWeightsToMoments(vessel.variableWeights)
   return computeLoadingCondition(lightship, [...variable, ...cargo])
 }

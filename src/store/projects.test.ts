@@ -6,7 +6,7 @@ describe('projects store', () => {
 
   beforeEach(() => {
     storage = {}
-    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false, storageLocked: false })
     vi.stubGlobal('localStorage', {
       getItem: (key: string) => storage[key] ?? null,
       setItem: (key: string, value: string) => { storage[key] = value },
@@ -1320,6 +1320,59 @@ describe('projects store', () => {
     // ...but the corrupted string in storage must be left untouched, not
     // clobbered by an automatic save of that in-memory demo.
     expect(storage['deckload-projects']).toBe('{not valid json')
+  })
+
+  // Regression: hydrate() itself skipped the save, but page.tsx's autosave
+  // called saveSnapshot ~400ms after load and destroyed the record anyway —
+  // right after the toast had promised the opposite. Every write path is
+  // refused until the user explicitly gives the record up.
+  it('keeps refusing every write after a corrupted load — autosave and project actions leave the record untouched', () => {
+    storage['deckload-projects'] = '{not valid json'
+    useProjects.getState().hydrate()
+    expect(useProjects.getState().storageLocked).toBe(true)
+
+    const demo = useProjects.getState().projects[0]
+    // What page.tsx's debounced autosave does once the demo is loaded.
+    useProjects.getState().saveSnapshot({
+      id: demo.id,
+      deck: { ...demo.deck, width: 33 },
+      items: demo.items,
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    const second = useProjects.getState().createProject('Second')
+    useProjects.getState().renameProject(second, 'Renamed')
+    useProjects.getState().switchTo(demo.id)
+    useProjects.getState().deleteProject(second)
+
+    expect(storage['deckload-projects']).toBe('{not valid json')
+    // The session itself keeps working in memory.
+    expect(useProjects.getState().projects[0].deck.width).toBe(33)
+  })
+
+  it('discardCorruptedStorage replaces the record with the current session and unlocks saving', () => {
+    storage['deckload-projects'] = '{not valid json'
+    useProjects.getState().hydrate()
+    const demoId = useProjects.getState().projects[0].id
+    useProjects.getState().renameProject(demoId, 'Kept')
+
+    useProjects.getState().discardCorruptedStorage()
+
+    expect(useProjects.getState().storageLocked).toBe(false)
+    const saved = JSON.parse(storage['deckload-projects'])
+    expect(saved.activeId).toBe(demoId)
+    expect(saved.projects.map((p: { name: string }) => p.name)).toEqual(['Kept'])
+    // ...and later writes go through as usual.
+    useProjects.getState().renameProject(demoId, 'Later')
+    expect(JSON.parse(storage['deckload-projects']).projects[0].name).toBe('Later')
   })
 
   it('normalizes cleanly to vessel:undefined for a legacy project with no vessel field at all', () => {

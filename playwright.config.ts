@@ -7,6 +7,15 @@ import { defineConfig, devices } from '@playwright/test'
 const PORT = Number(process.env.E2E_PORT ?? 3210)
 const BASE_URL = `http://127.0.0.1:${PORT}`
 
+// Chromium names a download using the POSIX locale's charset: under a bare
+// C/POSIX locale (usual in containers and CI) a Cyrillic file name such as
+// "deckload-демо-расчёт-….json" silently becomes "download", failing the
+// export specs for a reason that has nothing to do with the app. The
+// browser inherits this process's environment, so give it a UTF-8 one.
+if (!/utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || '')) {
+  process.env.LC_ALL = 'C.UTF-8'
+}
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,

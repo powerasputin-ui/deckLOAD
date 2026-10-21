@@ -103,8 +103,14 @@ interface ProjectsState {
   projects: Project[]
   activeId: string | null
   hydrated: boolean
+  // True after hydrate() found a stored record it couldn't parse: every
+  // write to localStorage is refused until the user explicitly gives that
+  // record up (discardCorruptedStorage), so it can't be overwritten behind
+  // their back — see the corrupted branch in hydrate().
+  storageLocked: boolean
 
   hydrate: () => void
+  discardCorruptedStorage: () => void
   createProject: (name?: string) => string
   renameProject: (id: string, name: string) => void
   deleteProject: (id: string) => void
@@ -906,6 +912,8 @@ function loadFromStorage(): { projects: Project[]; activeId: string | null; hasS
   try {
     parsed = JSON.parse(raw)
   } catch {
+    // hydrate() locks every write when it sees this (storageLocked), so the
+    // record stays exactly as it is until the user decides what to do.
     return { projects: [], activeId: null, hasStoredData: false, corrupted: true }
   }
   try {
@@ -950,6 +958,10 @@ let hasWarnedAboutStorageFailure = false
 
 function saveToStorage(projects: Project[], activeId: string | null): boolean {
   if (typeof window === 'undefined') return true
+  // Silent on purpose: page.tsx's corrupted-storage warning already says
+  // nothing is being saved and why. `useProjects` is resolved lazily — it's
+  // defined below.
+  if (useProjects.getState().storageLocked) return false
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -966,38 +978,80 @@ function saveToStorage(projects: Project[], activeId: string | null): boolean {
   }
 }
 
+// "Скачать копию" on page.tsx's corrupted-storage warning. Writes are locked
+// while that warning is up, so the unreadable record is still sitting
+// untouched under STORAGE_KEY and is read straight from there.
+export function downloadCorruptedStorage(): void {
+  let raw: string | null = null
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    // fall through to the error below
+  }
+  if (raw === null) {
+    toast.error('Не удалось прочитать сохранённые данные')
+    return
+  }
+  const url = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `deckload-damaged-data-${new Date().toISOString().slice(0, 10)}.txt`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export const useProjects = create<ProjectsState>((set, get) => ({
   projects: [],
   activeId: null,
   hydrated: false,
+  storageLocked: false,
 
   hydrate: () => {
     if (get().hydrated) return
     const { projects, activeId, hasStoredData, corrupted } = loadFromStorage()
     if (corrupted) {
       // The saved record exists but doesn't parse — NOT the same as a
-      // fresh visit. Seed an in-memory demo so the app isn't blank, but
-      // deliberately skip saveToStorage: overwriting now would permanently
+      // fresh visit. Seed an in-memory demo so the app isn't blank, and lock
+      // every write until the user decides: overwriting would permanently
       // destroy whatever is actually sitting in localStorage, however
-      // corrupted, before the user has any chance to notice or recover it.
-      toast.error('Сохранённые данные повреждены и не читаются. Чтобы не потерять их случайно, автосохранение временно не перезапишет старые данные — работа сейчас идёт с демо-проектом в памяти.')
+      // corrupted, before they have any chance to recover it. Merely
+      // skipping the save here wasn't enough — page.tsx's autosave saved
+      // that demo ~400ms after load and destroyed the original anyway.
+      // page.tsx shows the warning (and the way out) for as long as
+      // storageLocked stays set.
       const p = freshProject('Демо-расчёт', true)
-      set({ projects: [p], activeId: p.id, hydrated: true })
+      set({ projects: [p], activeId: p.id, hydrated: true, storageLocked: true })
     } else if (!hasStoredData) {
       // Truly the first visit ever (nothing saved yet) — seed a demo project
       // so the app isn't empty. If the user later deletes it, `hasStoredData`
       // will be true next time (the key still exists, just with an empty
       // list) and it won't come back.
       const p = freshProject('Демо-расчёт', true)
-      set({ projects: [p], activeId: p.id, hydrated: true })
+      set({ projects: [p], activeId: p.id, hydrated: true, storageLocked: false })
       saveToStorage([p], p.id)
     } else if (projects.length === 0) {
-      set({ projects: [], activeId: null, hydrated: true })
+      set({ projects: [], activeId: null, hydrated: true, storageLocked: false })
     } else {
       const active = activeId && projects.some((p) => p.id === activeId)
         ? activeId
         : projects[0].id
-      set({ projects, activeId: active, hydrated: true })
+      set({ projects, activeId: active, hydrated: true, storageLocked: false })
+    }
+  },
+
+  // The user's explicit "give the unreadable record up" — the only way out
+  // of storageLocked.
+  discardCorruptedStorage: () => {
+    if (!get().storageLocked) return
+    set({ storageLocked: false })
+    // Everything edited while locked only reached the in-memory store (or is
+    // still waiting in the autosave debounce) — persist it now, replacing
+    // the record the user just chose to give up.
+    flushPendingAutosave((d) => get().saveSnapshot(d))
+    if (saveToStorage(get().projects, get().activeId)) {
+      toast.success('Повреждённые данные удалены — изменения снова сохраняются')
     }
   },
 
