@@ -35,9 +35,9 @@ import {
 import {
   useCalculator,
   UNIT_LABEL,
-  roundForDisplay,
   type Unit,
 } from '@/store/calculator'
+import { NumberField } from '@/components/calculator/NumberField'
 import type { CargoItem, PackingResult } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
@@ -548,23 +548,24 @@ function NumField({
   integer?: boolean
   allowZero?: boolean
 }) {
+  const id = useId()
   const min = allowZero ? 0 : integer ? 1 : 0.1
   return (
     <div className="space-y-0.5">
-      <Label className="text-[10px] text-muted-foreground leading-none">
+      <Label htmlFor={id} className="text-[10px] text-muted-foreground leading-none">
         {label}
         {unit ? ` (${unit})` : ''}
       </Label>
-      <Input
-        type="number"
+      {/* Applies on Enter/blur, not per keystroke: updateItem() resizes and
+          clamps placements already on the deck, so a half-typed "2" on the way
+          to "24" (or "1" on the way to "12" layers) must never reach it. */}
+      <NumberField
+        id={id}
+        value={value}
         min={min}
+        integer={integer}
         step={integer ? 1 : 0.1}
-        value={roundForDisplay(value)}
-        onChange={(e) => {
-          const v = Number(e.target.value)
-          if (isNaN(v)) return
-          onChange(v < min ? min : v)
-        }}
+        onCommit={onChange}
         className="h-7 text-xs px-1.5"
       />
     </div>
@@ -587,22 +588,19 @@ function StabilityOverrideField({
   unit: Unit
   onChange: (v: number | undefined) => void
 }) {
+  const id = useId()
   return (
     <div className="space-y-0.5">
-      <Label className="text-[10px] text-muted-foreground leading-none">
+      <Label htmlFor={id} className="text-[10px] text-muted-foreground leading-none">
         {label} ({UNIT_LABEL[unit]})
       </Label>
-      <Input
-        type="number"
-        step={0.1}
-        value={value ?? ''}
+      <NumberField
+        id={id}
+        value={value}
         placeholder="авто"
-        onChange={(e) => {
-          const raw = e.target.value
-          if (raw === '') { onChange(undefined); return }
-          const v = Number(raw)
-          if (!isNaN(v)) onChange(v)
-        }}
+        step={0.1}
+        onCommit={onChange}
+        onClear={() => onChange(undefined)}
         className="h-7 text-xs px-1.5"
       />
     </div>

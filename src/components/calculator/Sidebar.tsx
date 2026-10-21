@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 // Stable empty-array references for zustand selectors — `s.deck.x ?? []`
 // would allocate a new array every call, which useSyncExternalStore treats
 // as "the snapshot changed" and re-renders forever.
@@ -68,6 +68,7 @@ import {
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
 import { segmentLashingInputs } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
+import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
@@ -144,6 +145,16 @@ export function Sidebar({
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+  // "Очистить" and "Сбросить к примеру" replace the whole calculator state —
+  // cargo, placements AND the deck itself (photo, outline, zones, lashing
+  // points, vessel data) — and drop the undo history, so both go through a
+  // confirmation first.
+  const [pendingReset, setPendingReset] = useState<ResetKind | null>(null)
+  const confirmReset = (kind: ResetKind) => {
+    setPendingReset(null)
+    if (kind === 'clear') onNewCalculation()
+    else onResetCurrent()
+  }
 
   const handleCreate = () => {
     createProject()
@@ -186,7 +197,7 @@ export function Sidebar({
         <TooltipProvider delayDuration={200}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={onNewCalculation} className="h-9 w-9">
+              <Button variant="ghost" size="icon" onClick={() => setPendingReset('clear')} className="h-9 w-9">
                 <RotateCcw className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -196,6 +207,7 @@ export function Sidebar({
         <div className="mt-auto flex flex-col items-center gap-1">
           <Separator className="my-1" />
         </div>
+        <ConfirmResetDialog kind={pendingReset} onCancel={() => setPendingReset(null)} onConfirm={confirmReset} />
       </aside>
     )
   }
@@ -259,7 +271,7 @@ export function Sidebar({
             <Plus className="h-3.5 w-3.5 mr-1" />
             Новый
           </Button>
-          <Button size="sm" variant="outline" onClick={onNewCalculation} className="h-8">
+          <Button size="sm" variant="outline" onClick={() => setPendingReset('clear')} className="h-8">
             <RotateCcw className="h-3.5 w-3.5 mr-1" />
             Очистить
           </Button>
@@ -401,14 +413,67 @@ export function Sidebar({
               </div>
             </div>
             <Separator />
-            <Button variant="ghost" size="sm" onClick={onResetCurrent} className="w-full h-8 text-xs">
+            <Button variant="ghost" size="sm" onClick={() => setPendingReset('demo')} className="w-full h-8 text-xs">
               <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
               Сбросить к примеру
             </Button>
           </PopoverContent>
         </Popover>
       </div>
+      <ConfirmResetDialog kind={pendingReset} onCancel={() => setPendingReset(null)} onConfirm={confirmReset} />
     </aside>
+  )
+}
+
+type ResetKind = 'clear' | 'demo'
+
+const RESET_COPY: Record<ResetKind, { title: string; description: string; action: string }> = {
+  clear: {
+    title: 'Очистить текущий расчёт?',
+    description:
+      'Будут удалены все грузы и расстановка, а также фото палубы, контур, зоны нагрузки, точки крепления и данные судна. Размеры палубы вернутся к 20×8 м. Вернуть расчёт будет нельзя — история отмены тоже сбрасывается.',
+    action: 'Очистить',
+  },
+  demo: {
+    title: 'Заменить расчёт демонстрационным примером?',
+    description:
+      'Текущие грузы, расстановка и все настройки палубы (фото, контур, зоны, крепления, данные судна) будут заменены демонстрационным расчётом. Вернуть прежний расчёт будет нельзя — история отмены тоже сбрасывается.',
+    action: 'Заменить на пример',
+  },
+}
+
+function ConfirmResetDialog({
+  kind,
+  onCancel,
+  onConfirm,
+}: {
+  kind: ResetKind | null
+  onCancel: () => void
+  onConfirm: (kind: ResetKind) => void
+}) {
+  // Keep the last copy while the dialog animates out, so the text doesn't
+  // blank mid-fade when `kind` flips back to null.
+  const [shown, setShown] = useState<ResetKind>('clear')
+  if (kind !== null && kind !== shown) setShown(kind)
+  const copy = RESET_COPY[shown]
+  return (
+    <AlertDialog open={kind !== null} onOpenChange={(open) => { if (!open) onCancel() }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => kind && onConfirm(kind)}
+          >
+            {copy.action}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -485,89 +550,92 @@ function DeckSettings() {
   const setUnit = useCalculator((s) => s.setUnit)
   const sortStrategy = useCalculator((s) => s.sortStrategy)
   const setSortStrategy = useCalculator((s) => s.setSortStrategy)
+  const uid = useId()
+  const maxDeckInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
 
+  // Every field here applies on Enter/blur, not per keystroke: setDeck()
+  // reflows and clamps the placements already on the deck whenever the size,
+  // gap, board offset or clearance changes, and a transient "2" on the way to
+  // "24" would rearrange (or discard stacked layers from) the user's layout
+  // for good. See NumberField.
   return (
     <Section icon={<Settings2 className="h-4 w-4" />} title="Палуба" tourId="deck-settings">
       <div className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <label className="text-[10px] text-muted-foreground">Ширина</label>
-            <Input
-              type="number"
+            <label htmlFor={`${uid}-width`} className="text-[10px] text-muted-foreground">Ширина</label>
+            <NumberField
+              id={`${uid}-width`}
               min={0.1}
-              max={convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)}
+              max={maxDeckInUnit}
               step={0.1}
-              value={roundForDisplay(deck.width)}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                const maxInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
-                if (v > maxInUnit) toast.warning(`Максимальная ширина палубы — ${fmtNumber(maxInUnit)} ${UNIT_LABEL[deck.unit]}`)
-                setDeck({ width: !isNaN(v) && v > 0 ? Math.min(v, maxInUnit) : 0.1 })
+              value={deck.width}
+              onClamp={({ bound, limit }) => {
+                if (bound === 'max') toast.warning(`Максимальная ширина палубы — ${fmtNumber(limit)} ${UNIT_LABEL[deck.unit]}`)
               }}
+              onCommit={(v) => setDeck({ width: v })}
               className="h-8 text-xs"
             />
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] text-muted-foreground">Длина</label>
-            <Input
-              type="number"
+            <label htmlFor={`${uid}-length`} className="text-[10px] text-muted-foreground">Длина</label>
+            <NumberField
+              id={`${uid}-length`}
               min={0.1}
-              max={convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)}
+              max={maxDeckInUnit}
               step={0.1}
-              value={roundForDisplay(deck.length)}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                const maxInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
-                if (v > maxInUnit) toast.warning(`Максимальная длина палубы — ${fmtNumber(maxInUnit)} ${UNIT_LABEL[deck.unit]}`)
-                setDeck({ length: !isNaN(v) && v > 0 ? Math.min(v, maxInUnit) : 0.1 })
+              value={deck.length}
+              onClamp={({ bound, limit }) => {
+                if (bound === 'max') toast.warning(`Максимальная длина палубы — ${fmtNumber(limit)} ${UNIT_LABEL[deck.unit]}`)
               }}
+              onCommit={(v) => setDeck({ length: v })}
               className="h-8 text-xs"
             />
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-gap`} className="text-[10px] text-muted-foreground flex items-center gap-1">
             <Layers className="h-3 w-3" /> Отступ между грузами
           </label>
           <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
+            <NumberField
+              id={`${uid}-gap`}
               min={0}
               step={0.05}
-              value={roundForDisplay(deck.gap)}
-              onChange={(e) => { const v = Number(e.target.value); setDeck({ gap: !isNaN(v) && v >= 0 ? v : 0 }) }}
+              value={deck.gap}
+              onCommit={(v) => setDeck({ gap: v })}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-offset`} className="text-[10px] text-muted-foreground flex items-center gap-1">
             <Anchor className="h-3 w-3" /> Отступ от борта
           </label>
           <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
+            <NumberField
+              id={`${uid}-offset`}
               min={0}
               step={0.05}
-              value={roundForDisplay(deck.boardOffset)}
-              onChange={(e) => { const v = Number(e.target.value); setDeck({ boardOffset: !isNaN(v) && v >= 0 ? v : 0 }) }}
+              value={deck.boardOffset}
+              onCommit={(v) => setDeck({ boardOffset: v })}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-clearance`} className="text-[10px] text-muted-foreground flex items-center gap-1">
             <Layers className="h-3 w-3" /> Высота над палубой (зазор)
           </label>
           <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
+            <NumberField
+              id={`${uid}-clearance`}
               min={0}
               step={0.1}
-              value={roundForDisplay(deck.clearance)}
-              onChange={(e) => { const v = Number(e.target.value); setDeck({ clearance: !isNaN(v) && v >= 0 ? v : 0 }) }}
+              value={deck.clearance}
+              onCommit={(v) => setDeck({ clearance: v })}
               className="h-8 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
@@ -749,12 +817,12 @@ function SeparationRulesSection() {
             </SelectContent>
           </Select>
           <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
+            <NumberField
+              aria-label="Минимальное расстояние, м"
               min={0}
               step={0.5}
               value={minDistance}
-              onChange={(e) => { const v = Number(e.target.value); setMinDistance(!isNaN(v) && v >= 0 ? v : 0) }}
+              onCommit={setMinDistance}
               className="h-7 text-xs flex-1"
             />
             <span className="text-[10px] text-muted-foreground">м</span>

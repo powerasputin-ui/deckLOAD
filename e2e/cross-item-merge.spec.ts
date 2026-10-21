@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { clearCalculation, setNumber } from './helpers'
 
 function headerBadge(page: Page) {
   return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
@@ -12,7 +13,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // anything — clicking "Очистить" too early raced with it in earlier
     // runs of this test and left a stray leftover placement behind.
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     // Generous clearance so 16 layers of a 0.25m-tall pipe (4m) fit well
     // under the physical height cap — this test is about the merge
@@ -35,7 +36,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // pyramid before duplicating — otherwise the two stacks being merged
     // wouldn't each cleanly hold 8, making the expected "16" unpredictable.
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
-    await originalCard.locator('label:has-text("Кол-во") + input').fill('8')
+    await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     // A stacked pipe pyramid now draws as several <rect> capsule segments
     // sharing the same fill (see DeckVisualization's per-row pipe render) —
@@ -103,7 +104,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
   test('dragging a duplicated BOX (non-pipe) onto its original does not merge — cross-item merge is pipe-only', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     // Manual mode: unlike auto mode, a manual placement never gets silently
     // reflowed/rotated by the packing algorithm when a SIBLING placement is

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('PDF export', () => {
   test('downloading the deck plan produces a deckload-*.pdf file', async ({ page }) => {
@@ -13,7 +14,7 @@ test.describe('PDF export', () => {
 
   test('exporting an empty deck does not crash', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),
       page.getByRole('button', { name: 'Скачать PDF' }).click(),
@@ -23,7 +24,7 @@ test.describe('PDF export', () => {
 
   test('exporting with a power-socket marker on the deck still works (regression: foreignObject tainted the rasterization canvas)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Объекты' }).click()
     await page.getByRole('button', { name: /Розетка/ }).click()

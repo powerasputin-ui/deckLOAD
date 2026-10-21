@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation, setNumber } from './helpers'
 
 test.describe('Non-rectangular deck outline', () => {
   test('right-click menu edits the deck outline, cargo is blocked from the cut corner, and 3D floor matches', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -31,7 +32,7 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByText('Ручной').first().click()
     await page.getByRole('button', { name: 'Добавить груз' }).click()
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await itemCard.locator('label:has-text("Кол-во") + input').fill('5')
+    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '5')
 
     await expect(page.getByText(/0\/5 ед\./)).toBeVisible()
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
@@ -55,10 +56,9 @@ test.describe('Non-rectangular deck outline', () => {
 
   test('board offset is still enforced near the deck\'s straight edges after drawing a custom outline', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
-    const inputs = page.locator('input[type="number"]')
-    await inputs.nth(3).fill('1') // board offset = 1m
+    await setNumber(page.getByLabel('Отступ от борта'), '1') // board offset = 1m
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -78,7 +78,7 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByText('Ручной').first().click()
     await page.getByRole('button', { name: 'Добавить груз' }).click()
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await itemCard.locator('label:has-text("Кол-во") + input').fill('3')
+    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '3')
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
 
     const bgBox = await background.boundingBox()
@@ -104,7 +104,7 @@ test.describe('Non-rectangular deck outline', () => {
   // generator itself had silently ignored the outline.
   test('"Автораспределение" on a non-rectangular deck does not flag its own placements as outside the deck', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -127,9 +127,9 @@ test.describe('Non-rectangular deck outline', () => {
     // the outline-blind bug, not a genuine capacity shortfall.
     await page.getByRole('button', { name: 'Добавить груз' }).click()
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await itemCard.locator('label:has-text("Кол-во") + input').fill('2')
-    await itemCard.locator('label:has-text("Шир. (m)") + input').fill('6')
-    await itemCard.locator('label:has-text("Длин. (m)") + input').fill('2.4')
+    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '2')
+    await setNumber(itemCard.locator('label:has-text("Шир. (m)") + input'), '6')
+    await setNumber(itemCard.locator('label:has-text("Длин. (m)") + input'), '2.4')
 
     await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
     await page.getByText(/Вариант 1/).click()

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { setNumber } from './helpers'
 
 // Placed/total + utilization text lives in the deck card's footer (e.g.
 // "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
@@ -13,8 +14,8 @@ test.describe('Deck settings', () => {
     await page.goto('/')
     const initial = await headerBadge(page).textContent()
     // Use the first "Ширина" input in the sidebar (deck settings)
-    await page.locator('aside label:has-text("Ширина") + input').first().fill('5')
-    await page.locator('aside label:has-text("Длина") + input').first().fill('5')
+    await setNumber(page.locator('aside label:has-text("Ширина") + input').first(), '5')
+    await setNumber(page.locator('aside label:has-text("Длина") + input').first(), '5')
     // The badge text should eventually differ from the initial value
     await expect(headerBadge(page)).not.toHaveText(initial ?? '')
   })

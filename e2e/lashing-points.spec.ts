@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Lashing points (securing-force check)', () => {
   test('attaching a point to a cargo corner shows a pass/fail marker computed by checkLashingBalance', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('radio', { name: 'Ручной' }).click()
 
     // Manual mode + a freshly placed item gives a deterministic corner: the

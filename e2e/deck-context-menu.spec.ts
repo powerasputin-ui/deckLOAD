@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 // A minimal valid 1x1 PNG, base64-encoded — enough for createImageBitmap to
 // decode without needing a real photo asset in the repo.
@@ -8,7 +9,7 @@ const TINY_PNG_BASE64 =
 test.describe('Deck right-click context menu', () => {
   test('dismisses on outside click and on Escape', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -26,9 +27,9 @@ test.describe('Deck right-click context menu', () => {
     await expect(page.getByRole('button', { name: 'Редактировать' })).not.toBeVisible()
   })
 
-  test('"Загрузить фото" opens the same crop flow as the toolbar upload button', async ({ page }) => {
+  test('"Загрузить фото" uploads the same way as the toolbar photo button — the photo lands whole on the deck', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -41,11 +42,9 @@ test.describe('Deck right-click context menu', () => {
       buffer: Buffer.from(TINY_PNG_BASE64, 'base64'),
     })
 
-    await expect(page.getByText('Настройте фото палубы')).toBeVisible()
-    await page.getByRole('button', { name: 'Сохранить' }).click()
-    await expect(page.getByText('Настройте фото палубы')).not.toBeVisible()
-
-    // The cropped/compressed photo is now rendered as the deck background.
+    // No crop dialog any more: the photo is rendered on the deck right away
+    // (compressed, never cropped) and can then be moved/scaled in place.
     await expect(page.locator('svg image')).toHaveCount(1)
+    await expect(page.getByText('Настройте фото палубы')).toHaveCount(0)
   })
 })

@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation, setNumber } from './helpers'
 
 test.describe('Cargo management', () => {
   test('adding a cargo item increases requested count', async ({ page }) => {
     await page.goto('/')
     // Start with a clean project
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Добавить', exact: true }).click()
     await expect(
       page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз 1' }).first()
@@ -13,14 +14,14 @@ test.describe('Cargo management', () => {
 
   test('cargo bigger than deck is reported as unplaced', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Добавить', exact: true }).click()
 
     // Fill the new cargo dimensions via labelled inputs (first item card)
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await itemCard.locator('label:has-text("Шир.") + input').fill('100')
-    await itemCard.locator('label:has-text("Длин.") + input').fill('100')
-    await itemCard.locator('label:has-text("Кол-во") + input').fill('1')
+    await setNumber(itemCard.locator('label:has-text("Шир.") + input'), '100')
+    await setNumber(itemCard.locator('label:has-text("Длин.") + input'), '100')
+    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '1')
 
     await expect(page.getByText('Превышает размеры палубы')).toBeVisible()
   })
@@ -58,7 +59,7 @@ test.describe('Cargo management', () => {
   // after -- which is exactly the behavior that was missing.
   test('dragging a manually placed cargo item tracks the cursor smoothly, not only on release', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByText('Ручной').first().click()
     await page.getByRole('button', { name: 'Добавить груз' }).click()
 

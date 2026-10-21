@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Custom hand-drawn cargo outline', () => {
   test('drawing an L-shape places a real polygon and blocks a placement that overlaps its solid part', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Объекты' }).click()

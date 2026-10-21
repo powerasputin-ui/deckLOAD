@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Restriction (obstacle) zones', () => {
   test('drag-to-create a zone hard-blocks placement inside it and allows placement outside it', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
@@ -60,7 +61,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('the drawn shape stays visible on the deck between drag-release and confirming the name (regression)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
     await page.getByRole('button', { name: 'Прямоугольник' }).click()
@@ -83,7 +84,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('freeform point-by-point drawing produces a zone that also hard-blocks placement', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
     await page.getByRole('button', { name: /произвольная область/ }).click()
@@ -120,7 +121,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('a freeform zone gets corner resize handles that scale its outline, and the delete button does not overlap them (regression)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
     await page.getByRole('button', { name: /произвольная область/ }).click()
@@ -183,7 +184,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('dragging a freeform zone across many pointer-move steps keeps its outline in sync with its position (regression: used to drift off the deck)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
     await page.getByRole('button', { name: /произвольная область/ }).click()
@@ -234,7 +235,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('zone chip width/length fields resize the zone, and the round delete button removes it', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
     await page.getByRole('button', { name: 'Прямоугольник' }).click()
@@ -273,7 +274,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
   test('the drawing tool disarms itself the moment a zone is finished, so a stray click does not start a second one (regression)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Зоны ограничений' }).click()
 

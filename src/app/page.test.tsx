@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import Home from './page'
 import { useCalculator } from '@/store/calculator'
@@ -2194,6 +2194,80 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.quantity).toBe(6)
   })
 
+  // Round 31: the one standalone cross-item merge shape Round 24's tests never
+  // covered — the legacy quantity transfer takes the dragged item's WHOLE
+  // remaining quantity, so the item is deleted from the catalog. The merged
+  // placement used to keep a composition segment pointing at it (an orphan),
+  // and the target's inflated quantity then had AUTO mode place the "missing"
+  // units as a ghost second stack (the e2e suite saw counts like 24/16).
+  it('Round 31: a standalone cross-item merge that DRAINS the dragged item re-attributes its units to the target — no orphan segment, no ghost stack', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 3, weight: 100, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemB.id, name: 'DRAGB', x: 1, y: 1, width: 4, length: 1, layers: 3, rotated: false, color: itemB.color, weight: 100,
+      })
+    })
+
+    dragMergeR24('DRAGB', 5, 5)
+
+    const state = useCalculator.getState()
+    expect(state.manualPlacements).toHaveLength(1)
+    const merged = state.manualPlacements[0]
+    expect(merged.id).toBe('target')
+    expect(merged.composition).toBeUndefined() // plain placement of the target item — nothing left to orphan
+    expect(merged.itemId).toBe(itemA.id)
+    expect(merged.layers).toBe(5)
+    expect(merged.weight).toBeCloseTo(100, 6)
+    // B was drained (3 → 0) and removed; its 3 units moved into A (5 + 3), so
+    // A's catalog quantity now matches the units physically on the deck + the
+    // 3 still unplaced — the same total as before the merge.
+    expect(state.items.find((it) => it.id === itemB.id)).toBeUndefined()
+    expect(state.items.find((it) => it.id === itemA.id)?.quantity).toBe(8)
+  })
+
+  it('Round 31: a drained cross-item merge is checked against the TARGET item\'s own limits for the merged total, not for the two halves', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X', maxLayers: 4 })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 3, weight: 100, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemB.id, name: 'DRAGB', x: 1, y: 1, width: 4, length: 1, layers: 3, rotated: false, color: itemB.color, weight: 100,
+      })
+    })
+
+    // 2 (A's own) is within A's cap of 4 and 3 (B's own) is within B's — but
+    // once B's units become A's, the merged stack would be 5 high.
+    dragMergeR24('DRAGB', 5, 5)
+
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('лимит ярусов'))
+    const state = useCalculator.getState()
+    expect(state.manualPlacements).toHaveLength(2) // nothing merged
+    expect(state.items.find((it) => it.id === itemB.id)?.quantity).toBe(3) // and nothing transferred
+    expect(state.items.find((it) => it.id === itemA.id)?.quantity).toBe(5)
+  })
+
   it('Round 24: composed target + standalone dragged appends the new segment on top, keeping the target\'s nominal itemId', () => {
     render(<Home />)
     clearDemoCargo()
@@ -2498,6 +2572,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     const weightInput = findItemNumInput('B', 'Вес, кг за ед.')
     fireEvent.change(weightInput, { target: { value: '1000' } }) // true new total would be 3200kg
+    fireEvent.blur(weightInput) // NumberField applies the edit on blur/Enter, not per keystroke
 
     expect(toast.error).toHaveBeenCalled()
     expect(useCalculator.getState().items.find((it) => it.id === itemB.id)?.weight).toBe(100) // rejected
@@ -2526,10 +2601,148 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     const maxLayersInput = findItemNumInput('B', 'Ярусов') // B is NOT the nominal itemId (A is)
     fireEvent.change(maxLayersInput, { target: { value: '1' } })
+    fireEvent.blur(maxLayersInput) // NumberField applies the edit on blur/Enter, not per keystroke
 
     const placement = useCalculator.getState().manualPlacements[0]
     expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
     expect(placement.layers).toBe(3) // never left desynced at the stale 5
+  })
+
+  // Round 31: setDeck()/updateItem() reflow, resize and clamp placements that
+  // are already on the deck. The numeric fields used to push every keystroke
+  // into them (and snap an emptied field to the minimum), so typing "24" over
+  // "20" passed through a deck 2 m wide and shoved the cargo around for good.
+  // NumberField now applies the value only on blur/Enter.
+  it('Round 31: typing a new deck width never reflows the layout mid-edit — it applies on blur', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 20, length: 8, gap: 0.1, boardOffset: 0 } })
+      useCalculator.getState().addItem({ name: 'A', width: 4, length: 1, quantity: 1 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: 'A', x: 15, y: 0, width: 4, length: 1, layers: 1, rotated: false, color: itemA.color,
+      })
+    })
+
+    const widthInput = screen.getByLabelText('Ширина') as HTMLInputElement
+    fireEvent.change(widthInput, { target: { value: '' } })
+    fireEvent.change(widthInput, { target: { value: '2' } })
+    // Half-typed: the store (and the placement at x=15) must be untouched.
+    expect(useCalculator.getState().deck.width).toBe(20)
+    expect(useCalculator.getState().manualPlacements[0].x).toBe(15)
+
+    fireEvent.change(widthInput, { target: { value: '24' } })
+    expect(useCalculator.getState().deck.width).toBe(20)
+    fireEvent.blur(widthInput)
+
+    expect(useCalculator.getState().deck.width).toBe(24)
+    expect(useCalculator.getState().manualPlacements[0].x).toBe(15) // still fits — not moved
+    expect(widthInput.value).toBe('24')
+  })
+
+  // Round 31: "Очистить" replaces `deck` wholesale (photo, outline, zones,
+  // lashing points, vessel data — not just cargo) and drops the undo history,
+  // with no way back. It used to fire on a single click.
+  it('Round 31: "Очистить" asks first — Cancel changes nothing, confirming wipes the whole calculation', () => {
+    render(<Home />)
+    act(() => {
+      useCalculator.setState({
+        deck: { ...useCalculator.getState().deck, backgroundImage: 'data:image/jpeg;base64,AAAA', width: 33 },
+      })
+    })
+    const itemCount = useCalculator.getState().items.length
+    expect(itemCount).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('Очистить текущий расчёт?')
+    expect(dialog).toHaveTextContent('фото палубы')
+    expect(useCalculator.getState().items).toHaveLength(itemCount) // nothing has happened yet
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(useCalculator.getState().items).toHaveLength(itemCount)
+    expect(useCalculator.getState().deck.width).toBe(33)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Очистить' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(useCalculator.getState().items).toEqual([])
+    expect(useCalculator.getState().deck.backgroundImage).toBeUndefined()
+    expect(useCalculator.getState().deck.width).toBe(20)
+  })
+
+  it('Round 31: "Сбросить к примеру" asks first too — it also replaces the whole calculation', () => {
+    render(<Home />)
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 33 } })
+      useCalculator.getState().addItem({ name: 'Мой груз', width: 1, length: 1, quantity: 1 })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Сбросить к примеру' }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(dialog).toHaveTextContent('Заменить расчёт демонстрационным примером?')
+    expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(true)
+    expect(useCalculator.getState().deck.width).toBe(33)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Заменить на пример' }))
+    expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(false)
+    expect(useCalculator.getState().deck.width).toBe(20)
+  })
+
+  // Round 31: the 2D keyboard handler (arrows nudge / Space rotates the
+  // selection) used to preventDefault() every arrow and Space press, even with
+  // nothing selected and even inside dialogs — killing keyboard scrolling and
+  // the Space key on every dialog button.
+  it('Round 31: arrow keys with nothing selected are left alone, so the page can still scroll', () => {
+    render(<Home />)
+    expect(fireEvent.keyDown(document.body, { key: 'ArrowDown', code: 'ArrowDown' })).toBe(true)
+    expect(fireEvent.keyDown(document.body, { key: 'ArrowLeft', code: 'ArrowLeft' })).toBe(true)
+  })
+
+  it('Round 31: arrow keys with a selected cargo item still nudge it (and are swallowed)', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 1 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: 'A', x: 4, y: 3, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+      })
+      useCalculator.setState({ selectedManualIds: ['m1'] })
+    })
+
+    expect(fireEvent.keyDown(document.body, { key: 'ArrowRight', code: 'ArrowRight' })).toBe(false)
+    expect(useCalculator.getState().manualPlacements[0].x).toBeGreaterThan(4)
+  })
+
+  it('Round 31: Space still does not re-click a focused toolbar button (existing design), but works inside a dialog', () => {
+    render(<Home />)
+    const toolbarButton = screen.getByRole('button', { name: 'Очистить' })
+    expect(fireEvent.keyDown(toolbarButton, { key: ' ', code: 'Space' })).toBe(false)
+
+    fireEvent.click(toolbarButton)
+    const cancel = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Отмена' })
+    expect(fireEvent.keyDown(cancel, { key: ' ', code: 'Space' })).toBe(true)
+  })
+
+  it('Round 31: an emptied deck field is restored on blur instead of snapping to the minimum', () => {
+    render(<Home />)
+    const widthInput = screen.getByLabelText('Ширина') as HTMLInputElement
+    const before = useCalculator.getState().deck.width
+
+    fireEvent.change(widthInput, { target: { value: '' } })
+    fireEvent.blur(widthInput)
+
+    expect(useCalculator.getState().deck.width).toBe(before)
+    expect(widthInput.value).toBe(String(before))
   })
 
   // Round 29 (malformed-placement contract). Real end-to-end proof: a

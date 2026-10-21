@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Power socket markers', () => {
   test('placing a socket does not block cargo on top of it, and it can be removed', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('radio', { name: 'Ручной' }).click()
 
     await page.getByRole('button', { name: 'Пресеты' }).click()

@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Click-to-place quantity cap', () => {
   test('is scoped per item, not a global sum across every cargo type', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByText('Ручной').first().click()
 
     // Two items, quantity 1 each — the bug let placing item A a second time

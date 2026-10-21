@@ -27,7 +27,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
 import { useProjects, scheduleAutosave } from '@/store/projects'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -192,6 +192,15 @@ const getIntroSeenSnapshot = () => window.localStorage.getItem(INTRO_SEEN_KEY) =
 const getIntroSeenServerSnapshot = () => false
 
 export default function Home() {
+  // false for the server render AND the hydration pass that must match it,
+  // true from the first real client render on. The two "seen" flags below
+  // report `false` during that first pass no matter what localStorage says,
+  // so on their own they can't tell "visitor hasn't seen it" from "haven't
+  // been able to read it yet" — which made every returning visitor's HTML
+  // start with the intro (poster + 3.5 MB video requested, then thrown away
+  // on hydration) and, wherever `entered` was already true on that pass,
+  // armed the product tour a second time.
+  const clientReady = useSyncExternalStore(noopSubscribe, () => true, () => false)
   const introSeen = useSyncExternalStore(noopSubscribe, getIntroSeenSnapshot, getIntroSeenServerSnapshot)
   // A same-session "just clicked enter" flag — the snapshot above only
   // reflects localStorage from a PAST visit; localStorage.setItem in
@@ -204,8 +213,9 @@ export default function Home() {
   const [replayIntro, setReplayIntro] = useState(false)
   // NEXT_PUBLIC_SKIP_INTRO is inlined as a constant at build time —
   // identical on server and client, so it's safe to read directly here.
-  // Set ONLY in playwright.config.ts's and vitest.config.ts's test
-  // environments, so automated suites skip straight to the calculator.
+  // Set ONLY in vitest.config.ts's test environment, so the unit suite
+  // renders the calculator directly (the e2e suite seeds the "seen"
+  // localStorage flags instead — see playwright.config.ts).
   const entered = !replayIntro && (process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered)
   const handleEnterIntro = () => {
     window.localStorage.setItem(INTRO_SEEN_KEY, '1')
@@ -224,7 +234,7 @@ export default function Home() {
   // would never cross — this simpler "haven't auto-triggered yet" guard
   // fires correctly whether `entered` starts true or becomes true later.
   const [tourAutoTriggered, setTourAutoTriggered] = useState(false)
-  if (entered && !tourSeen && !tourAutoTriggered) {
+  if (clientReady && entered && !tourSeen && !tourAutoTriggered) {
     setTourAutoTriggered(true)
     setTourActive(true)
   }
@@ -1096,13 +1106,15 @@ export default function Home() {
   // view stays camera-only (rotate/zoom), no keyboard-driven editing there.
   // Skipped while focus is inside a text input (same guard as the other two
   // keydown listeners above). The listener stays attached whenever nothing
-  // is selected too — it still needs to swallow Space/arrow keys (via
-  // preventDefault) so they don't fall through to whatever toolbar button
-  // currently has DOM focus (Space on a focused <button> re-clicks it
-  // natively) rather than silently doing nothing. Which item is selected is
-  // read fresh on every keypress rather than once when the effect was set
-  // up, so selecting a new item takes effect immediately without waiting
-  // for the effect to re-subscribe.
+  // is selected too — it still needs to swallow Space (via preventDefault)
+  // so it doesn't fall through to whatever toolbar button currently has DOM
+  // focus (Space on a focused <button> re-clicks it natively) rather than
+  // silently doing nothing. Arrow keys are only swallowed while something is
+  // selected (round 31 — with nothing to nudge they used to kill keyboard
+  // scrolling), and nothing inside a dialog/popover/menu is touched. Which
+  // item is selected is read fresh on every keypress rather than once when
+  // the effect was set up, so selecting a new item takes effect immediately
+  // without waiting for the effect to re-subscribe.
   useEffect(() => {
     if (viewMode !== '2d') return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1121,6 +1133,11 @@ export default function Home() {
       // its option list role="listbox") and would otherwise get hijacked by
       // this listener now that it's active outside the 3D view too.
       if (target?.getAttribute('role') === 'combobox' || target?.closest('[role="listbox"]')) return
+      // Dialogs, popovers and menus own their keyboard too — Space/Enter on
+      // their buttons, arrows between their items. Swallowing Space here made
+      // every button inside them (e.g. "Отмена" in a confirmation) dead to
+      // the keyboard.
+      if (target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
 
       const isSpace = e.key === ' ' || e.code === 'Space'
       let dx = 0
@@ -1130,9 +1147,14 @@ export default function Home() {
       else if (e.key === 'ArrowUp') dy = -1
       else if (e.key === 'ArrowDown') dy = 1
       else if (!isSpace) return
-      e.preventDefault()
 
       const selectedId = mode === 'manual' ? selectedManualIds[0] : selectedPinIds[0]
+      // An arrow key only means "nudge" when there is something to nudge —
+      // with no selection it must keep scrolling the page like any other
+      // arrow press. Space is still swallowed regardless (see the comment
+      // above: it would otherwise re-click whichever toolbar button has focus).
+      if (!selectedId && !isSpace) return
+      e.preventDefault()
       if (!selectedId) return
 
       if (isSpace) {
@@ -1217,7 +1239,11 @@ export default function Home() {
     itemId: string,
     currentLayers: number,
     delta: number,
-    excludeIds?: string | string[]
+    excludeIds?: string | string[],
+    // Quantity the item is ABOUT to gain (the legacy cross-item merge moves the
+    // dragged item's whole quantity into the target before this check can see
+    // it) — added to item.quantity for the "already placed" budget below.
+    extraQuantity = 0
   ): { ok: boolean; reason?: string; maxPhys: number } => {
     const excluded = new Set(excludeIds ? (Array.isArray(excludeIds) ? excludeIds : [excludeIds]) : [])
     const item = items.find((it) => it.id === itemId)
@@ -1270,10 +1296,11 @@ export default function Home() {
         .flat()
         .reduce((s, p) => s + layersOfIdIn(p), 0) +
       manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
-    if (sumPlaced + newLayers > item.quantity) {
+    const quantityBudget = item.quantity + extraQuantity
+    if (sumPlaced + newLayers > quantityBudget) {
       return {
         ok: false,
-        reason: `Все ${item.quantity} ед. этого груза уже размещены — увеличьте количество в списке грузов`,
+        reason: `Все ${quantityBudget} ед. этого груза уже размещены — увеличьте количество в списке грузов`,
         maxPhys,
       }
     }
@@ -1807,21 +1834,61 @@ export default function Home() {
   // either, before or after Round 24 — only a genuine cross-item, fully
   // uncomposed merge does. Does not touch remove/unpin's own quantity
   // semantics (Round 16's decrease-only contract, untouched) or removeItem.
+  //
+  // legacyCrossItemTransferOf is the ONE place that decides whether that
+  // transfer applies (and by how much) — shared by planMerge (which needs to
+  // know in advance) and the applier below, so the two can't disagree.
+  const legacyCrossItemTransferOf = (
+    target: { itemId: string; layers: number; composition?: CompositionSegment[] },
+    dragged: { itemId: string; layers: number; composition?: CompositionSegment[] }
+  ) => {
+    if (target.composition || dragged.composition) return null
+    if (target.itemId === dragged.itemId) return null
+    const store = useCalculator.getState()
+    const draggedItem = store.items.find((it) => it.id === dragged.itemId)
+    const targetItem = store.items.find((it) => it.id === target.itemId)
+    if (!draggedItem || !targetItem) return null
+    const delta = dragged.layers
+    return { draggedItem, targetItem, delta, remaining: draggedItem.quantity - delta }
+  }
+
   const legacyStandaloneCrossItemQuantityTransfer = (
     target: { itemId: string; layers: number; composition?: CompositionSegment[] },
     dragged: { itemId: string; layers: number; composition?: CompositionSegment[] }
   ) => {
-    if (target.composition || dragged.composition) return
-    if (target.itemId === dragged.itemId) return
+    const transfer = legacyCrossItemTransferOf(target, dragged)
+    if (!transfer) return
     const store = useCalculator.getState()
-    const draggedItem = store.items.find((it) => it.id === dragged.itemId)
-    const targetItem = store.items.find((it) => it.id === target.itemId)
-    if (!draggedItem || !targetItem) return
-    const delta = dragged.layers
-    const remaining = draggedItem.quantity - delta
-    if (remaining <= 0) store.removeItem(draggedItem.id)
-    else store.updateItem(draggedItem.id, { quantity: remaining })
-    store.updateItem(targetItem.id, { quantity: targetItem.quantity + delta })
+    if (transfer.remaining <= 0) store.removeItem(transfer.draggedItem.id)
+    else store.updateItem(transfer.draggedItem.id, { quantity: transfer.remaining })
+    store.updateItem(transfer.targetItem.id, { quantity: transfer.targetItem.quantity + transfer.delta })
+  }
+
+  // Round 31 (fixes the "orphan constituent" the e2e suite caught): when the
+  // legacy transfer takes the dragged item's ENTIRE remaining quantity it
+  // deletes that item from the catalog (removeItem) — yet planComposedMerge's
+  // result still lists it as a composition segment, so the merged placement
+  // ended up pointing at an item that no longer exists, while the target's
+  // quantity (which now includes the transferred units) was only half
+  // covered by composition. AUTO mode then placed the "missing" units as a
+  // ghost second stack (counts like 24/16). In that one case the dragged
+  // units simply BECOME the target item's units — exactly what the
+  // transferred quantity says — so the result collapses to a plain placement
+  // of the target item, and the target's own limits (cap / height /
+  // quantity incl. the transferred units) are re-checked for the merged
+  // total instead of for the two halves separately. Every other merge
+  // (partial transfer, same item, anything composed) is untouched.
+  const planMerge = (
+    target: Parameters<typeof planComposedMerge>[0],
+    dragged: Parameters<typeof planComposedMerge>[1]
+  ): ReturnType<typeof planComposedMerge> => {
+    const plan = planComposedMerge(target, dragged)
+    if (!plan.ok) return plan
+    const transfer = legacyCrossItemTransferOf(target, dragged)
+    if (!transfer || transfer.remaining > 0) return plan
+    const merged = checkLayerChange(target.itemId, 0, plan.layers, [target.id, dragged.id], transfer.delta)
+    if (!merged.ok) return { ok: false, reason: merged.reason ?? 'Невозможно объединить' }
+    return { ...plan, composition: undefined, itemId: target.itemId, weight: transfer.targetItem.weight ?? 0 }
   }
 
   const handleMergePinned = (draggedId: string, targetId: string) => {
@@ -1829,7 +1896,7 @@ export default function Home() {
     const dragged = pinnedPlacements.find((p) => p.id === draggedId)
     const target = pinnedPlacements.find((p) => p.id === targetId)
     if (!dragged || !target) return
-    const plan = planComposedMerge(target, dragged)
+    const plan = planMerge(target, dragged)
     if (!plan.ok) {
       toast.warning(plan.reason)
       return
@@ -1851,7 +1918,7 @@ export default function Home() {
     const dragged = manualPlacements.find((m) => m.id === draggedId)
     const target = manualPlacements.find((m) => m.id === targetId)
     if (!dragged || !target) return
-    const plan = planComposedMerge(target, dragged)
+    const plan = planMerge(target, dragged)
     if (!plan.ok) {
       toast.warning(plan.reason)
       return
@@ -2186,6 +2253,14 @@ export default function Home() {
     toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
   }
 
+  // Until the visitor's real flags are readable, show neither the intro nor
+  // the app: a plain surface in the app's own background colour, so a
+  // returning visitor goes straight into the calculator without ever
+  // requesting the intro video.
+  if (!clientReady) {
+    return <div className="h-screen bg-muted/30" aria-hidden />
+  }
+
   if (!entered) {
     return <VideoIntro onEnter={handleEnterIntro} />
   }
@@ -2357,7 +2432,7 @@ export default function Home() {
                         ) : (
                           <>
                             Вид сверху
-                            {deck.gap > 0 && ` · отступ ${deck.gap} ${UNIT_LABEL[deck.unit]}`}
+                            {deck.gap > 0 && ` · отступ ${roundForDisplay(deck.gap)} ${UNIT_LABEL[deck.unit]}`}
                             {' · выбрали груз? стрелки/Пробел тоже работают'}
                           </>
                         )}

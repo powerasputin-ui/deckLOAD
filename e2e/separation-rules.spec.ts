@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { clearCalculation, setNumber } from './helpers'
 
 function headerBadge(page: Page) {
   return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
@@ -8,7 +9,7 @@ function headerBadge(page: Page) {
 test.describe('Category separation rules', () => {
   test('a rule soft-blocks placing a violating category near another, and clears once the rule is removed', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByRole('radio', { name: 'Ручной' }).click()
 
     // Two fresh items, each assigned to a different category via the
@@ -67,7 +68,7 @@ test.describe('Category separation rules', () => {
 
   test('"Автораспределение" (auto-packing) itself respects the rule — not just the manual click check', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     // Stays in auto mode (the default after "Очистить") — cargo is placed
     // entirely by the packing algorithm, never a manual click, so this
     // exercises packDeck's own violatesSeparation checks (packing.ts
@@ -88,8 +89,8 @@ test.describe('Category separation rules', () => {
     // either keep both apart (and still fit, since the deck is wide) or
     // reject one — either outcome proves the rule is enforced by the
     // algorithm itself, not just by a UI-level click check.
-    const distanceInput = page.getByRole('button', { name: 'Добавить правило' }).locator('..').locator('input[type="number"]')
-    await distanceInput.fill('15')
+    const distanceInput = page.getByLabel('Минимальное расстояние, м')
+    await setNumber(distanceInput, '15')
     await page.getByRole('button', { name: 'Добавить правило' }).click()
     await expect(page.getByText('Правило добавлено')).toBeVisible()
 

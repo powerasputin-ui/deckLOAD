@@ -3,14 +3,17 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "sonner";
 
+// "cyrillic" matters here: the whole UI is Russian. Without it the Cyrillic
+// face isn't preloaded, so text first paints in the fallback font and then
+// visibly swaps to Geist.
 const geistSans = Geist({
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  subsets: ["latin", "cyrillic"],
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  subsets: ["latin", "cyrillic"],
 });
 
 export const metadata: Metadata = {
@@ -39,7 +42,10 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        // `font-sans` is what actually applies Geist: globals.css maps
+        // --font-sans to --font-geist-sans, but nothing used to put it on the
+        // page, so the whole app rendered in the OS default font instead.
+        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground`}
       >
         {children}
         {/* top-center used to sit directly over the header's undo/redo

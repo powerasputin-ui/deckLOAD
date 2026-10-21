@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 async function cutTopRightCorner(page: import('@playwright/test').Page) {
   const background = page.locator('svg [data-deck-background="true"]').first()
@@ -20,7 +21,7 @@ async function cutTopRightCorner(page: import('@playwright/test').Page) {
 test.describe('Load zones on a non-rectangular deck', () => {
   test('a new zone defaults inside the polygon, not the bounding-box origin', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await cutTopRightCorner(page)
 
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
@@ -35,7 +36,7 @@ test.describe('Load zones on a non-rectangular deck', () => {
 
   test('the zone rectangle is clipped to the real deck outline', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await cutTopRightCorner(page)
 
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
@@ -57,7 +58,7 @@ test.describe('Load zones on a non-rectangular deck', () => {
     // fully inside the polygon made dragging/resizing freeze solid the
     // moment no position satisfied it.
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await cutTopRightCorner(page)
 
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()

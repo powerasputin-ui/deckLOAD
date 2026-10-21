@@ -10,7 +10,8 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     // Skips the video intro gate so page.test.tsx keeps rendering the
-    // calculator directly — see playwright.config.ts for the matching e2e flag.
+    // calculator directly. (The e2e suite doesn't use this build-time flag —
+    // it seeds the "seen" localStorage flags instead, see playwright.config.ts.)
     env: { NEXT_PUBLIC_SKIP_INTRO: '1' },
   },
   resolve: {

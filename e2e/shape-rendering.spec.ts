@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { clearCalculation } from './helpers'
 
 test.describe('Non-rectangular cargo shape rendering', () => {
   test('a preset circle keeps its shape (not a plain box) in manual mode', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByText('Ручной').first().click()
 
     // Open the presets catalog and arm the "Круг" (circle) template from
@@ -28,7 +29,7 @@ test.describe('Non-rectangular cargo shape rendering', () => {
 
   test('rotating a triangle actually turns it (not just squishes the same apex-up shape)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Очистить' }).click()
+    await clearCalculation(page)
     await page.getByText('Ручной').first().click()
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
