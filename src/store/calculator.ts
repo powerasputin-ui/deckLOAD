@@ -538,6 +538,42 @@ function removeItemFromPlacements<T extends { itemId: string; layers: number; we
   return result
 }
 
+// setDeck's reflow for a composed placement, when a tightened deck clearance
+// lowers its constituents' ceilings: each constituent's own share is clamped
+// to its own maxLayersFor — the exact per-constituent rule updateItem's
+// layerCapChanged clamp applies (placementClampItemLayers) — and `layers`/
+// `weight` are re-derived from the result, since a composed placement's
+// `layers` is never written on its own. Returns the same object when nothing
+// had to go.
+function clampComposedConstituents<T extends { itemId: string; layers: number; weight?: number; composition?: CompositionSegment[] }>(
+  p: T,
+  catalog: CargoItem[],
+  clearance: number,
+  unit: Unit
+): T {
+  if (!p.composition) return p
+  let composition: CompositionSegment[] = p.composition
+  let removed = 0
+  for (const id of new Set(p.composition.map((seg) => seg.itemId))) {
+    const item = catalog.find((it) => it.id === id)
+    if (!item) continue
+    const clamp = placementClampItemLayers(composition, id, maxLayersFor(item, clearance, unit))
+    if (clamp.removedLayers === 0) continue
+    removed += clamp.removedLayers
+    if (!clamp.composition) {
+      // Unreachable in practice (see placementClampItemLayers's own doc
+      // comment) — collapse to the plain representation if it ever happens.
+      const singleton = clamp.remainingSingleton!
+      return { ...p, itemId: singleton.itemId, composition: undefined, layers: singleton.layers, weight: catalog.find((it) => it.id === singleton.itemId)?.weight }
+    }
+    composition = clamp.composition
+  }
+  if (removed === 0) return p
+  const layers = placementTotalLayers({ itemId: p.itemId, layers: 0, composition })
+  const weight = placementTotalWeightKg({ itemId: p.itemId, layers, composition }, catalog) / Math.max(1, layers)
+  return { ...p, composition, layers, weight }
+}
+
 // Re-position and re-size just the placements of one resized item, keeping
 // every other placement untouched. Used when an item's width/length changes
 // after it's already been placed — without this, existing placements keep
@@ -870,10 +906,19 @@ export const useCalculator = create<CalculatorState>()(
       // OTHER item's current (possibly just-updated) position — converges
       // to a fully collision-free layout instead, at the cost of moving
       // more items than a minimal fix strictly requires.
-      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; clearanceMargin?: ClearanceMargin }>(
+      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; weight?: number; composition?: CompositionSegment[]; clearanceMargin?: ClearanceMargin }>(
         list: T[]
       ): T[] => {
         const current: T[] = list.map((item) => {
+          // A composed stack's `layers` is derived from its composition and
+          // used to be overwritten here on its own (the nominal item's cap
+          // written over the whole stack's total, composition left as it
+          // was) — clamp its constituents instead.
+          if (item.composition) {
+            const clamped = clampComposedConstituents(item, s.items, nextDeck.clearance, nextDeck.unit)
+            if (clamped !== item) layersClamped = true
+            return clamped
+          }
           let layers = item.layers
           const cargo = itemById.get(item.itemId)
           if (cargo) {
@@ -1968,12 +2013,15 @@ export const useCalculator = create<CalculatorState>()(
           // reverts to where the item actually was before the gesture began.
           if (historyPastState === undefined) historyPastState = { value: pastState }
           if (historyTimer) clearTimeout(historyTimer)
-          historyTimer = setTimeout(() => {
+          commitPendingHistory = () => {
+            if (historyTimer) clearTimeout(historyTimer)
             historyTimer = null
+            commitPendingHistory = null
             const toCommit = historyPastState!.value as HandleSetArgs[0]
             historyPastState = undefined
             handleSet(toCommit, replace)
-          }, 400)
+          }
+          historyTimer = setTimeout(commitPendingHistory, 400)
         }
       },
     }
@@ -1991,13 +2039,30 @@ export const useCalculator = create<CalculatorState>()(
 // closes that race.
 let historyTimer: ReturnType<typeof setTimeout> | null = null
 let historyPastState: { value: unknown } | undefined
+// The pending burst's commit, callable early — see undoCalculator below.
+let commitPendingHistory: (() => void) | null = null
 export function clearCalculatorHistory() {
   if (historyTimer) {
     clearTimeout(historyTimer)
     historyTimer = null
   }
   historyPastState = undefined
+  commitPendingHistory = null
   useCalculator.temporal.getState().clear()
+}
+
+// Ctrl+Z / Ctrl+Y and the undo/redo buttons go through these, never through
+// temporal's undo()/redo() directly: an edit made within handleSet's 400ms
+// debounce isn't in the history yet, so a plain undo() skipped it — reverting
+// that edit AND the one before it in a single press — and the late commit
+// then landed on top of the undone state and wiped the redo stack.
+export function undoCalculator() {
+  commitPendingHistory?.()
+  useCalculator.temporal.getState().undo()
+}
+export function redoCalculator() {
+  commitPendingHistory?.()
+  useCalculator.temporal.getState().redo()
 }
 
 export { UNIT_LABEL, PALETTE, convertLength }

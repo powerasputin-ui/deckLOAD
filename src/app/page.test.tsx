@@ -60,6 +60,19 @@ describe('Home (page.tsx)', () => {
     vi.useRealTimers()
   })
 
+  // With site data blocked, touching window.localStorage throws — and the
+  // intro/tour "seen" flags are read during render, so the whole app used to
+  // be replaced by an error page. Closing the tour writes its flag, too.
+  it('renders and lets the tour be closed when the browser blocks storage access', () => {
+    const denied = () => { throw new DOMException('Access is denied for this document.', 'SecurityError') }
+    vi.stubGlobal('localStorage', { getItem: denied, setItem: denied, removeItem: denied } as unknown as Storage)
+
+    render(<Home />)
+    expect(screen.getByRole('button', { name: 'Очистить' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Пропустить тур' }))
+    expect(screen.queryByRole('button', { name: 'Пропустить тур' })).toBeNull()
+  })
+
   it('handleRemovePinned deletes the cargo (decrements quantity), not just unpins it', () => {
     render(<Home />)
     clearDemoCargo()
@@ -1914,6 +1927,57 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       { itemId: itemA.id, layers: 2 },
       { itemId: itemB.id, layers: 3 },
     ])
+  })
+
+  // A placement quarantined on load (malformed, no composition) is never in
+  // result.placed — the handlers that rebuild a placement list from it used
+  // to delete it (AUTO->MANUAL, applyVariant) or drop its `malformed` flag
+  // (MANUAL->AUTO), which turned it back into an ordinary, counted pin. The
+  // load-time toast promises it stays in the project and out of every
+  // calculation.
+  const ghostPlacement = (itemId: string) => ({
+    id: 'ghost', itemId, name: 'Ghost', x: 5, y: 5, width: 1, length: 1, layers: 6, rotated: false, color: '#000', weight: 100,
+    malformed: { invalidComposition: true as const, rawComposition: [{ itemId, layers: 2 }, { itemId: 'garbage', layers: 4 }] },
+  })
+
+  it('a quarantined placement survives a MANUAL -> AUTO -> MANUAL round trip, still quarantined', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, quantity: 2 })
+    })
+    const itemA = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.setState({ manualPlacements: [ghostPlacement(itemA.id)] })
+    })
+
+    fireEvent.click(screen.getByText('Авто'))
+    const pins = useCalculator.getState().pinnedPlacementsByTrip[0] ?? []
+    expect(pins).toHaveLength(1)
+    expect(pins[0].malformed?.invalidComposition).toBe(true)
+
+    fireEvent.click(screen.getByText('Ручной'))
+    const manual = useCalculator.getState().manualPlacements
+    expect(manual.filter((m) => m.malformed)).toHaveLength(1)
+    expect(manual.find((m) => m.malformed)?.layers).toBe(6)
+  })
+
+  it('a quarantined placement survives auto-redistribute in MANUAL mode', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 1, length: 1, quantity: 2 })
+    })
+    const itemA = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.setState({ manualPlacements: [ghostPlacement(itemA.id)] })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+
+    expect(useCalculator.getState().manualPlacements.filter((m) => m.malformed)).toHaveLength(1)
   })
 
   // Regression: handleModeChange used to convert ONLY the currently-viewed

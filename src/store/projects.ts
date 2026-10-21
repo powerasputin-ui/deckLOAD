@@ -897,7 +897,16 @@ export function normalizeProject(p: Partial<Project>): Project {
 // the demo on the next reload.
 function loadFromStorage(): { projects: Project[]; activeId: string | null; hasStoredData: boolean; corrupted: boolean } {
   if (typeof window === 'undefined') return { projects: [], activeId: null, hasStoredData: false, corrupted: false }
-  const raw = window.localStorage.getItem(STORAGE_KEY)
+  let raw: string | null
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    // Storage is off limits altogether (the browser blocks site data — even
+    // touching window.localStorage throws). Nothing could be loaded, and
+    // nothing can be overwritten either: hydrate() starts a demo in memory
+    // and saveToStorage's first failed write tells the user it won't stick.
+    return { projects: [], activeId: null, hasStoredData: false, corrupted: false }
+  }
   if (!raw) return { projects: [], activeId: null, hasStoredData: false, corrupted: false }
   // JSON.parse failing here means the top-level record itself is corrupt
   // (truncated write, bad bytes) — distinct from `!raw` (truly nothing
@@ -972,7 +981,7 @@ function saveToStorage(projects: Project[], activeId: string | null): boolean {
   } catch {
     if (!hasWarnedAboutStorageFailure) {
       hasWarnedAboutStorageFailure = true
-      toast.error('Не удалось сохранить проект в браузере — возможно, переполнено хранилище или включён приватный режим. Изменения видны только пока открыта эта вкладка.')
+      toast.error('Не удалось сохранить проект в браузере — возможно, переполнено хранилище, включён приватный режим или браузер запрещает сайту хранить данные. Изменения видны только пока открыта эта вкладка.')
     }
     return false
   }

@@ -1358,6 +1358,18 @@ describe('projects store', () => {
     expect(useProjects.getState().projects[0].deck.width).toBe(33)
   })
 
+  // With site data blocked even touching window.localStorage throws. hydrate()
+  // used to let that escape — page.tsx calls it from an effect, and nothing
+  // catches it there.
+  it('hydrates a demo in memory when the browser blocks storage access altogether', () => {
+    const denied = () => { throw new DOMException('Access is denied for this document.', 'SecurityError') }
+    vi.stubGlobal('localStorage', { getItem: denied, setItem: denied, removeItem: denied } as unknown as Storage)
+
+    expect(() => useProjects.getState().hydrate()).not.toThrow()
+    expect(useProjects.getState().projects).toHaveLength(1)
+    expect(useProjects.getState().storageLocked).toBe(false)
+  })
+
   it('discardCorruptedStorage replaces the record with the current session and unlocks saving', () => {
     storage['deckload-projects'] = '{not valid json'
     useProjects.getState().hydrate()

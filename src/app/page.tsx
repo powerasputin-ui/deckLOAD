@@ -27,7 +27,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -92,7 +92,27 @@ const INTRO_SEEN_KEY = 'deckload-intro-seen'
 // independent "seen" states: skipping the tour shouldn't require rewatching
 // the video, and vice versa.
 const TOUR_SEEN_KEY = 'deckload-tour-seen'
-const getTourSeenSnapshot = () => window.localStorage.getItem(TOUR_SEEN_KEY) === '1'
+
+// Touching window.localStorage at all throws (SecurityError) when the browser
+// blocks site data for this page — and the intro/tour flags are read during
+// render, so an unguarded read used to replace the whole app with an error
+// page. Without storage the flags simply aren't remembered between visits.
+function readSeenFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function writeSeenFlag(key: string): void {
+  try {
+    window.localStorage.setItem(key, '1')
+  } catch {
+    // not remembered across visits — nothing else depends on it
+  }
+}
+
+const getTourSeenSnapshot = () => readSeenFlag(TOUR_SEEN_KEY)
 const getTourSeenServerSnapshot = () => false
 
 // Each `selector` targets a `data-tour="..."` attribute placed directly on
@@ -188,8 +208,17 @@ const TOUR_STEPS: TourStep[] = [
 // unchecked) to get the same guarantee, and calling setState directly
 // inside the effect body trips react-hooks/set-state-in-effect.
 const noopSubscribe = () => () => {}
-const getIntroSeenSnapshot = () => window.localStorage.getItem(INTRO_SEEN_KEY) === '1'
+const getIntroSeenSnapshot = () => readSeenFlag(INTRO_SEEN_KEY)
 const getIntroSeenServerSnapshot = () => false
+
+// A placement quarantined when its project was loaded (malformed, with no
+// composition to fall back on — see PinnedPlacement.malformed) is never part
+// of any result.placed. Every handler below that rebuilds a placement list
+// from result.placed must carry these over untouched: the load-time toast
+// promises they stay in the project and out of every calculation, and
+// rebuilding used to delete them (or, manual -> auto, quietly un-quarantine
+// them by dropping the flag).
+const isQuarantined = (p: { malformed?: unknown; composition?: unknown }) => !!p.malformed && !p.composition
 
 export default function Home() {
   // false for the server render AND the hydration pass that must match it,
@@ -218,7 +247,7 @@ export default function Home() {
   // localStorage flags instead — see playwright.config.ts).
   const entered = !replayIntro && (process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered)
   const handleEnterIntro = () => {
-    window.localStorage.setItem(INTRO_SEEN_KEY, '1')
+    writeSeenFlag(INTRO_SEEN_KEY)
     setJustEntered(true)
     setReplayIntro(false)
   }
@@ -239,7 +268,7 @@ export default function Home() {
     setTourActive(true)
   }
   const handleCloseTour = () => {
-    window.localStorage.setItem(TOUR_SEEN_KEY, '1')
+    writeSeenFlag(TOUR_SEEN_KEY)
     setTourActive(false)
   }
   const handleShowTour = () => setTourActive(true)
@@ -426,10 +455,10 @@ export default function Home() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
       if (key === 'y' || (key === 'z' && e.shiftKey)) {
         e.preventDefault()
-        useCalculator.temporal.getState().redo()
+        redoCalculator()
       } else if (key === 'z') {
         e.preventDefault()
-        useCalculator.temporal.getState().undo()
+        undoCalculator()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -2012,7 +2041,7 @@ export default function Home() {
       const matches = matchLashingCarryover(pinnedPlacements, newManual)
       useCalculator.setState({
         mode: 'manual',
-        manualPlacements: newManual,
+        manualPlacements: [...newManual, ...pinnedPlacements.filter(isQuarantined)],
         // Only the trip actually being converted moves into manualPlacements
         // — every OTHER trip's pins must survive untouched. This used to be
         // `pinnedPlacementsByTrip: {}`, wiping every other trip's data the
@@ -2045,6 +2074,8 @@ export default function Home() {
         // ManualPlacement here (not PlacedItem), which already carries
         // `composition` at the type level — straight passthrough.
         composition: m.composition,
+        // Keeps a quarantined placement quarantined — see isQuarantined.
+        malformed: m.malformed,
       }))
       const matches = matchLashingCarryover(manualPlacements, newPinned)
       useCalculator.setState({
@@ -2245,7 +2276,7 @@ export default function Home() {
       }))
       const matches = matchLashingCarryover(s.manualPlacements, newManual)
       useCalculator.setState({
-        manualPlacements: newManual,
+        manualPlacements: [...newManual, ...s.manualPlacements.filter(isQuarantined)],
         // Same fix as handleModeChange: don't wipe every trip's pins just
         // because a variant was applied while in manual mode — this had
         // nothing to do with any AUTO trip and shouldn't destroy them.
@@ -2277,7 +2308,10 @@ export default function Home() {
         // Replace only the current trip's pins — same fix as
         // handleModeChange, this used to overwrite the whole map and
         // silently discard every other trip's pins.
-        pinnedPlacementsByTrip: { ...s.pinnedPlacementsByTrip, [clampedTripIndex]: newPinned },
+        pinnedPlacementsByTrip: {
+          ...s.pinnedPlacementsByTrip,
+          [clampedTripIndex]: [...newPinned, ...(s.pinnedPlacementsByTrip[clampedTripIndex] ?? []).filter(isQuarantined)],
+        },
         manualPlacements: [],
         selectedPinIds: [],
       })
@@ -2443,8 +2477,8 @@ export default function Home() {
           canUndo={canUndo}
           canRedo={canRedo}
           zoneLoads={zoneLoads}
-          onUndo={() => useCalculator.temporal.getState().undo()}
-          onRedo={() => useCalculator.temporal.getState().redo()}
+          onUndo={undoCalculator}
+          onRedo={redoCalculator}
         />
 
         {/* Main content */}

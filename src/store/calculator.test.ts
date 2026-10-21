@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useCalculator, clearCalculatorHistory, roundForDisplay } from './calculator'
+import { useCalculator, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay } from './calculator'
 import { packingResultFromManual } from '@/lib/packing'
 import { toast } from 'sonner'
 
@@ -793,6 +793,30 @@ describe('calculator store', () => {
     placement = useCalculator.getState().manualPlacements[0]
     expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
     expect(placement.layers).toBe(3)
+  })
+
+  // Same per-constituent rule when the DECK's clearance is lowered. setDeck's
+  // reflow used to apply the nominal item's cap to the whole placement's
+  // `layers` (5 -> 2 here) and leave the composition alone — desyncing the two
+  // and clamping nothing that physics actually reads.
+  it('lowering the deck clearance clamps each composed constituent to its own cap, keeping layers in sync with composition', () => {
+    const s = useCalculator.getState()
+    s.setDeck({ clearance: 5 })
+    s.addItem({ name: 'A', width: 1, length: 1, height: 1, quantity: 5 })
+    s.addItem({ name: 'B', width: 1, length: 1, height: 1, quantity: 5 })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    s.addManualPlacement({
+      id: 'm1', itemId: itemA.id, name: 'P', x: 0, y: 0, width: 1, length: 1,
+      layers: 5, rotated: false, color: '#000',
+      composition: [{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }],
+    })
+
+    s.setDeck({ clearance: 2 }) // maxLayersFor = 2 for both: A's 2 fit, B's 3 clamp to 2
+
+    const placement = useCalculator.getState().manualPlacements[0]
+    expect(placement.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 2 }])
+    expect(placement.layers).toBe(4)
   })
 
   it('R26-2: tightening maxStackHeightM on a composed constituent clamps that constituent\'s own segment the same way maxLayers/height do', () => {
@@ -1599,5 +1623,26 @@ describe('calculator store undo/redo history', () => {
     clearCalculatorHistory()
     await waitForHistoryFlush()
     expect(useCalculator.temporal.getState().pastStates).toHaveLength(0)
+  })
+
+  // Regression: an edit still inside the 400ms debounce wasn't in history
+  // yet, so undo() skipped it — one Ctrl+Z reverted that edit AND the one
+  // before it — and the late commit then landed on top of the undone state,
+  // wiping the redo stack (the next Ctrl+Z even went "forward" again).
+  it('Ctrl+Z right after an edit (inside the debounce) undoes exactly that edit, and redo still works', async () => {
+    useCalculator.getState().setDeck({ width: 11 })
+    await waitForHistoryFlush()
+    useCalculator.getState().setDeck({ width: 12 })
+
+    undoCalculator()
+    expect(useCalculator.getState().deck.width).toBe(11)
+
+    await waitForHistoryFlush()
+    expect(useCalculator.getState().deck.width).toBe(11)
+    redoCalculator()
+    expect(useCalculator.getState().deck.width).toBe(12)
+    undoCalculator()
+    undoCalculator()
+    expect(useCalculator.getState().deck.width).toBe(20)
   })
 })
