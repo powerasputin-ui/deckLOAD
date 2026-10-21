@@ -379,7 +379,7 @@ function ItemRow({
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  Максимум единиц этого груза друг на друге (0 = без ограничения, кроме высоты палубы)
+                  Максимум единиц этого груза друг на друге. 0 — если в «Палуба» задана предельная высота штабеля, ярусов столько, сколько влезает по высоте; если не задана — один ярус
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -441,7 +441,7 @@ function ItemRow({
                       ? item.allowRotation
                         ? 'Авто-поворот разрешён — алгоритм может вращать этот груз'
                         : 'Авто-поворот запрещён — нажмите для разрешения'
-                      : 'Включите вращение в «Отображение»'}
+                      : 'Включите «Разрешить вращение» в «Настройки» → «Отображение»'}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -554,7 +554,7 @@ function NumField({
     <div className="space-y-0.5">
       <Label htmlFor={id} className="text-[10px] text-muted-foreground leading-none">
         {label}
-        {unit ? ` (${unit})` : ''}
+        {unit ? ` (${UNIT_LABEL[unit]})` : ''}
       </Label>
       {/* Applies on Enter/blur, not per keystroke: updateItem() resizes and
           clamps placements already on the deck, so a half-typed "2" on the way

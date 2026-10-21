@@ -315,7 +315,7 @@ export function Sidebar({
                     >
                       <div className="text-xs font-medium truncate">{p.name}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        {p.items.length} гр. · {fmtNumber(p.deck.width)}×{fmtNumber(p.deck.length)} {p.deck.unit}
+                        {p.items.length} гр. · {fmtNumber(p.deck.width)}×{fmtNumber(p.deck.length)} {UNIT_LABEL[p.deck.unit]}
                       </div>
                     </button>
                   )}
@@ -627,7 +627,7 @@ function DeckSettings() {
         </div>
         <div className="space-y-1">
           <label htmlFor={`${uid}-clearance`} className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <Layers className="h-3 w-3" /> Высота над палубой (зазор)
+            <Layers className="h-3 w-3" /> Предельная высота штабеля
           </label>
           <div className="flex items-center gap-1.5">
             <NumberField
@@ -641,8 +641,9 @@ function DeckSettings() {
             <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
           <p className="text-[10px] text-muted-foreground">
-            0 = без своего лимита «Ярусов» — один ярус. &gt;0 = ограничивает
-            и «Ярусов» груза, если оно больше физически влезающего по высоте
+            0 — палуба высоту не ограничивает: ярусов столько, сколько указано
+            в «Ярусов» у груза, а если там 0 — один. Больше 0 — штабель не выше
+            этой высоты и не больше «Ярусов»
           </p>
         </div>
         <div className="space-y-1">
@@ -722,10 +723,10 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
           return (
             <div key={z.id} className="rounded-md border p-2 space-y-1.5">
               <div className="grid grid-cols-4 gap-1">
-                <MiniNumField label="X" value={z.x} unit={unit} onChange={(v) => updateLoadZone(z.id, { x: v })} />
-                <MiniNumField label="Y" value={z.y} unit={unit} onChange={(v) => updateLoadZone(z.id, { y: v })} />
-                <MiniNumField label="Шир." value={z.width} unit={unit} onChange={(v) => updateLoadZone(z.id, { width: v })} />
-                <MiniNumField label="Длин." value={z.length} unit={unit} onChange={(v) => updateLoadZone(z.id, { length: v })} />
+                <MiniNumField label="X" value={z.x} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { x: v })} />
+                <MiniNumField label="Y" value={z.y} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { y: v })} />
+                <MiniNumField label="Шир." value={z.width} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { width: v })} />
+                <MiniNumField label="Длин." value={z.length} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { length: v })} />
               </div>
               <div className="flex items-center gap-1.5">
                 <MiniNumField label="Лимит, т/м²" value={z.maxLoadPerArea} unit="" onChange={(v) => updateLoadZone(z.id, { maxLoadPerArea: v })} />
@@ -1328,9 +1329,9 @@ function VesselStabilitySection() {
               </SelectContent>
             </Select>
             <p className="text-[9px] text-muted-foreground">
-              Это относится ТОЛЬКО к подписи в этом разделе — Лёгкий LCG, LCG переменных грузов и «Смещ. центра
-              палубы» ниже должны быть заданы на одной и той же оси, иначе судно и груз молча окажутся на разных
-              шкалах.
+              Это относится ТОЛЬКО к подписи в этом разделе — Лёгкий LCG, LCG переменных грузов и «Центр палубы
+              от миделя / от КП» ниже должны быть заданы на одной и той же оси, иначе судно и груз молча окажутся
+              на разных шкалах.
             </p>
             {lcgPlausibilityWarning && (
               <p className="text-[9px] text-amber-600 dark:text-amber-500">⚠ {lcgPlausibilityWarning}</p>

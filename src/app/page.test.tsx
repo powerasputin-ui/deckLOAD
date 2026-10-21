@@ -73,6 +73,22 @@ describe('Home (page.tsx)', () => {
     expect(screen.queryByRole('button', { name: 'Пропустить тур' })).toBeNull()
   })
 
+  // Phase 0, m1/m2/m5: labels showed the raw unit code («Шир. (m)», «20×8 m»)
+  // while the rest of the app says «м»; the clearance field was called
+  // «Высота над палубой (зазор)»; the project file buttons said «Скачать JSON»
+  // and «Импортировать».
+  it('labels use Russian unit symbols and the new names for the stack height limit and project file buttons', () => {
+    render(<Home />)
+    expect(screen.getByRole('button', { name: 'Сохранить файл проекта' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Открыть файл проекта' })).toBeTruthy()
+    expect(screen.queryByText('Скачать JSON')).toBeNull()
+    expect(screen.getByText('Предельная высота штабеля')).toBeTruthy()
+    const body = document.body.textContent ?? ''
+    expect(body).not.toMatch(/\((m|cm|ft)\)/)
+    expect(body).toMatch(/Шир\. \(м\)/)
+    expect(body).toMatch(/20×8 м/)
+  })
+
   it('handleRemovePinned deletes the cargo (decrements quantity), not just unpins it', () => {
     render(<Home />)
     clearDemoCargo()

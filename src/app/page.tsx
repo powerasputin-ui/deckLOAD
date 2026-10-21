@@ -9,6 +9,7 @@ import {
   MousePointerClick,
   Download,
   Upload,
+  Save,
   AlertTriangle,
   HelpCircle,
 } from 'lucide-react'
@@ -172,7 +173,7 @@ const TOUR_STEPS: TourStep[] = [
     id: 'deck-view',
     selector: '[data-tour="deck-view"]',
     title: 'Схема палубы',
-    body: 'Кликните по грузу слева, затем по палубе — груз встанет на это место. В авто-режиме грузы расставляются сами.',
+    body: 'Выберите груз справа в «Выбор груза для размещения», затем кликните по палубе — груз встанет на это место. В авто-режиме грузы расставляются сами.',
   },
   {
     id: 'auto-redistribute',
@@ -195,8 +196,8 @@ const TOUR_STEPS: TourStep[] = [
   {
     id: 'export',
     selector: '[data-tour="export"]',
-    title: 'Экспорт',
-    body: 'Сохраните расчёт в JSON, чтобы позже открыть его снова или отправить коллегам. Рядом есть кнопка «Скачать PDF» — для печатной версии.',
+    title: 'Файл проекта и PDF',
+    body: '«Сохранить файл проекта» — чтобы позже открыть расчёт снова или отправить коллегам. Рядом «Скачать PDF» — план для печати.',
   },
 ]
 
@@ -1346,7 +1347,7 @@ export default function Home() {
       const reason =
         item.maxLayers && item.maxLayers > 0 && item.maxLayers <= maxPhys
           ? `Превышен лимит ярусов для этого груза (${item.maxLayers}) — измените поле «Ярусов» в списке грузов`
-          : `Превышена высота под палубой — увеличьте зазор (clearance) в настройках, чтобы добавить ярус`
+          : `Превышена предельная высота штабеля — увеличьте её в разделе «Палуба», чтобы добавить ярус`
       return { ok: false, reason, maxPhys }
     }
     // Sum of layers across all placements of this item (excluding the one(s)
@@ -2439,14 +2440,29 @@ export default function Home() {
               </PopoverContent>
             </Popover>
 
-            <Button variant="outline" size="sm" className="h-8" onClick={handleExportJson} data-tour="export">
-              <Download className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Скачать JSON</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={handleExportJson}
+              data-tour="export"
+              aria-label="Сохранить файл проекта"
+              title="Сохранить расчёт в файл, чтобы открыть его позже или на другом компьютере"
+            >
+              <Save className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Сохранить файл проекта</span>
             </Button>
 
-            <Button variant="outline" size="sm" className="h-8" onClick={() => importInputRef.current?.click()}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => importInputRef.current?.click()}
+              aria-label="Открыть файл проекта"
+              title="Открыть сохранённый файл — он станет новым расчётом, текущие не меняются"
+            >
               <Upload className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Импортировать</span>
+              <span className="hidden sm:inline">Открыть файл проекта</span>
             </Button>
             <input
               ref={importInputRef}

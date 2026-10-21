@@ -15,7 +15,7 @@ async function cutTopRightCorner(page: import('@playwright/test').Page) {
   const startY = box.y + box.height / 2
   await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
   await page.mouse.up()
-  await page.getByRole('button', { name: 'Сохранить' }).click()
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 }
 
 test.describe('Load zones on a non-rectangular deck', () => {

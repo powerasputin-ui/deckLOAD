@@ -18,7 +18,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // Generous clearance so 16 layers of a 0.25m-tall pipe (4m) fit well
     // under the physical height cap — this test is about the merge
     // mechanism itself, not the height-cap rejection path.
-    const clearanceInput = page.locator('label', { hasText: 'Высота над палубой' }).locator('..').locator('input')
+    const clearanceInput = page.locator('label', { hasText: 'Предельная высота штабеля' }).locator('..').locator('input')
     await clearanceInput.fill('10')
     await clearanceInput.blur()
 
@@ -161,7 +161,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await clearCalculation(page)
-    await setNumber(page.locator('label', { hasText: 'Высота над палубой' }).locator('..').locator('input'), clearance)
+    await setNumber(page.locator('label', { hasText: 'Предельная высота штабеля' }).locator('..').locator('input'), clearance)
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Смешанный' }).click()

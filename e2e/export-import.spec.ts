@@ -5,7 +5,7 @@ test.describe('Project JSON export/import', () => {
     await page.goto('/')
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Скачать JSON' }).click(),
+      page.getByRole('button', { name: 'Сохранить файл проекта' }).click(),
     ])
     expect(download.suggestedFilename()).toMatch(/^deckload-.*\.json$/)
   })

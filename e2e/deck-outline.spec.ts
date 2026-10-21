@@ -23,7 +23,7 @@ test.describe('Non-rectangular deck outline', () => {
     await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
     await page.mouse.up()
 
-    await page.getByRole('button', { name: 'Сохранить' }).click()
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
     // Deck area shrinks below the plain-rectangle 160 m^2 once the corner is cut.
     await expect(page.getByText(/^\d+\.\d\d м²$/).first()).toBeVisible()
@@ -73,7 +73,7 @@ test.describe('Non-rectangular deck outline', () => {
     const startY = box.y + box.height / 2
     await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
     await page.mouse.up()
-    await page.getByRole('button', { name: 'Сохранить' }).click()
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
     await page.getByText('Ручной').first().click()
     await page.getByRole('button', { name: 'Добавить груз' }).click()
@@ -119,7 +119,7 @@ test.describe('Non-rectangular deck outline', () => {
     const startY = box.y + box.height / 2
     await page.mouse.move(startX - 150, startY + 150, { steps: 10 })
     await page.mouse.up()
-    await page.getByRole('button', { name: 'Сохранить' }).click()
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
     // Auto mode (default) — a sizeable item comfortably below deck capacity
     // (matches the real user report: containers of this size, well under
@@ -128,8 +128,8 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByRole('button', { name: 'Добавить груз' }).click()
     const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
     await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '2')
-    await setNumber(itemCard.locator('label:has-text("Шир. (m)") + input'), '6')
-    await setNumber(itemCard.locator('label:has-text("Длин. (m)") + input'), '2.4')
+    await setNumber(itemCard.locator('label:has-text("Шир. (м)") + input'), '6')
+    await setNumber(itemCard.locator('label:has-text("Длин. (м)") + input'), '2.4')
 
     await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
     await page.getByText(/Вариант 1/).click()
