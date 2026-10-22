@@ -20,7 +20,7 @@ import {
   type DeckShipFrame,
 } from '@/lib/stability'
 import type { Unit } from '@/lib/units'
-import { fmtNumber } from '@/lib/utils'
+import { cn, fmtNumber } from '@/lib/utils'
 
 interface StabilityPanelProps {
   result: PackingResult
@@ -73,19 +73,29 @@ function NoFreeSurfaceDataWarning() {
 }
 
 // Named the same way as NoFreeSurfaceDataWarning above — the ONE reason the
-// criteria table below could look like a normal green PASS while actually
-// resting on a clamped-to-endpoint hydrostatic/KN value instead of the
-// vessel's real current displacement.
-function OutOfRangeWarning() {
+// numbers below could look like a normal green PASS while actually resting on
+// a clamped-to-endpoint hydrostatic/KN value instead of the vessel's real
+// current displacement. It leads the card, in larger type than the values
+// it qualifies, and the values themselves turn grey with «оценка».
+function OutOfRangeWarning({ hydrostatics, kn, displacementT }: { hydrostatics: boolean; kn: boolean; displacementT: number }) {
+  const tables = hydrostatics && kn ? 'таблиц гидростатики и KN' : hydrostatics ? 'таблицы гидростатики' : 'таблицы KN'
   return (
-    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
-      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-      <span>
-        <b>Текущее водоизмещение вне диапазона таблиц гидростатики/KN.</b> Использовано ближайшее табличное значение,
-        а не реальное водоизмещение — критерии ниже не подтверждены для этой загрузки, только справочно.
-      </span>
+    <div role="alert" className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2.5 text-red-800 dark:text-red-300 space-y-1">
+      <div className="flex items-center gap-1.5 text-lg font-semibold leading-tight">
+        <AlertTriangle className="h-5 w-5 shrink-0" />
+        {hydrostatics ? 'Числа ниже — только оценка' : 'Критерии ниже — только оценка'}
+      </div>
+      <p className="text-[11px]">
+        Водоизмещение {fmtNumber(displacementT)} т вне {tables}. Взято ближайшее табличное значение, а не расчёт для
+        этой загрузки, поэтому {hydrostatics ? 'GM, крен, дифферент и критерии' : 'кривая GZ и критерии'} не подтверждены.
+      </p>
     </div>
   )
+}
+
+// Next to a number computed from a clamped table value (see OutOfRangeWarning).
+function EstimateTag() {
+  return <span className="rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">оценка</span>
 }
 
 function MissingWeightWarning({ count }: { count: number }) {
@@ -150,7 +160,11 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   // real offshore vessel it can be many times too lenient (see minGM).
   const gmLimit = minGM ?? G_METACENTRIC_MIN_SAFE
   const gmOk = stability.GM_fluid >= gmLimit
-  const hasOutOfRangeData = stability.extrapolated || (gz?.knOutOfRange ?? false)
+  // Hydrostatics feed GM, list, trim and the GM criterion; KN feeds the GZ
+  // curve and the area/angle criteria.
+  const hydroEstimated = stability.extrapolated
+  const knEstimated = gz?.knOutOfRange ?? false
+  const criteriaEstimated = hydroEstimated || knEstimated
   const listSideLabel = stability.listSide === 'starboard' ? 'на правый борт' : stability.listSide === 'port' ? 'на левый борт' : ''
 
   return (
@@ -162,19 +176,29 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
         </CardTitle>
         <CardDescription>
           {vessel.particulars.name || 'Судно без названия'} · водоизмещение {fmtNumber(stability.displacementKg / 1000)} т
-          {stability.extrapolated && ' · за пределами таблицы гидростатики — использовано ближайшее табличное значение (не экстраполяция)'}
+          {criteriaEstimated && ' · вне таблиц, оценка'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {criteriaEstimated && (
+          <OutOfRangeWarning hydrostatics={hydroEstimated} kn={knEstimated} displacementT={stability.displacementKg / 1000} />
+        )}
         <Disclaimer />
         {!hasFreeSurfaceData && <NoFreeSurfaceDataWarning />}
-        {hasOutOfRangeData && <OutOfRangeWarning />}
         {missingWeightCount > 0 && <MissingWeightWarning count={missingWeightCount} />}
 
         <div className="grid grid-cols-2 gap-2.5">
           <div className="rounded-lg border bg-card p-3">
-            <div className="text-xs font-medium text-muted-foreground">GM (с поправкой на своб. поверхность)</div>
-            <div className={'text-xl font-bold tabular-nums mt-1 ' + (gmOk ? 'text-emerald-600' : 'text-red-600')}>
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              GM (с поправкой на своб. поверхность)
+              {hydroEstimated && <EstimateTag />}
+            </div>
+            <div
+              className={cn(
+                'font-bold tabular-nums mt-1',
+                hydroEstimated ? 'text-base text-muted-foreground' : cn('text-xl', gmOk ? 'text-emerald-600' : 'text-red-600')
+              )}
+            >
               {fmtNumber(stability.GM_fluid)} м
             </div>
             <div className="text-[10px] text-muted-foreground">
@@ -188,8 +212,18 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
             </div>
           </div>
           <div className="rounded-lg border bg-card p-3">
-            <div className="text-xs font-medium text-muted-foreground">Крен</div>
-            <div className={'text-xl font-bold tabular-nums mt-1 ' + (stability.listReliable ? 'text-foreground' : 'text-amber-600')}>
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              Крен
+              {hydroEstimated && <EstimateTag />}
+            </div>
+            <div
+              className={cn(
+                'font-bold tabular-nums mt-1',
+                hydroEstimated
+                  ? 'text-base text-muted-foreground'
+                  : cn('text-xl', stability.listReliable ? 'text-foreground' : 'text-amber-600')
+              )}
+            >
               {fmtNumber(stability.listDeg)}° {listSideLabel}
             </div>
             <div className="text-[10px] text-muted-foreground">
@@ -199,8 +233,11 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
             </div>
           </div>
           <div className="rounded-lg border bg-card p-3 col-span-2">
-            <div className="text-xs font-medium text-muted-foreground">Дифферент</div>
-            <div className="text-xl font-bold tabular-nums mt-1">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              Дифферент
+              {hydroEstimated && stability.trimM !== null && <EstimateTag />}
+            </div>
+            <div className={cn('font-bold tabular-nums mt-1', hydroEstimated ? 'text-base text-muted-foreground' : 'text-xl')}>
               {stability.trimM !== null ? `${fmtNumber(Math.abs(stability.trimM))} м` : '—'}
               {stability.trimDirection === 'by-head' && ' на нос'}
               {stability.trimDirection === 'by-stern' && ' на корму'}
@@ -214,7 +251,10 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
 
         {gz && criteria ? (
           <div className="space-y-1.5">
-            <div className="text-sm font-medium">Критерии IMO IS Code 2008, Часть A</div>
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              Критерии IMO IS Code 2008, Часть A
+              {criteriaEstimated && <EstimateTag />}
+            </div>
             <p className="text-[10px] text-muted-foreground">
               Ветровой критерий (§2.3) для офшорных судов индивидуален и здесь не считается — см. формуляр остойчивости судна.
             </p>
@@ -230,10 +270,15 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
                   {criteria.map((c) => (
                     <tr key={c.id} className="border-t first:border-t-0">
                       <td className="px-2 py-1.5">
+                        {/* An estimate doesn't confirm a pass (or a fail): no green or red. */}
                         {c.pass ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 inline mr-1" />
+                          <CheckCircle2
+                            className={cn('h-3.5 w-3.5 inline mr-1', criteriaEstimated ? 'text-muted-foreground' : 'text-emerald-600')}
+                          />
                         ) : (
-                          <XCircle className="h-3.5 w-3.5 text-red-600 inline mr-1" />
+                          <XCircle
+                            className={cn('h-3.5 w-3.5 inline mr-1', criteriaEstimated ? 'text-muted-foreground' : 'text-red-600')}
+                          />
                         )}
                         {c.description}
                       </td>

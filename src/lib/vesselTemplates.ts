@@ -266,3 +266,7 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
       'подписанных размеров, точность оценки ниже; и основания кранов.',
   },
 ]
+
+export function vesselTemplateById(id: string | undefined): VesselTemplate | undefined {
+  return id ? VESSEL_TEMPLATES.find((t) => t.id === id) : undefined
+}

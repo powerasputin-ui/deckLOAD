@@ -150,6 +150,10 @@ function toOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function toOptionalPositive(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom', 'pipe-nest'])
 function normalizeShape(value: unknown): CargoShape | undefined {
   return typeof value === 'string' && VALID_SHAPES.has(value as CargoShape) ? (value as CargoShape) : undefined
@@ -871,6 +875,8 @@ export function normalizeProject(p: Partial<Project>): Project {
       vessel: normalizeVessel(p.deck?.vessel),
       shipFrame: normalizeShipFrame(p.deck?.shipFrame),
       deckForwardIsPositiveY: toBool(p.deck?.deckForwardIsPositiveY, true),
+      vesselTemplateId: toOptionalString(p.deck?.vesselTemplateId),
+      deckStrengthChoiceTPerM2: toOptionalPositive(p.deck?.deckStrengthChoiceTPerM2),
     },
     items,
     manualPlacements: normalizeManualPlacements(p.manualPlacements, items),

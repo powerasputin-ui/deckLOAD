@@ -138,6 +138,13 @@ export interface DeckConfig {
   // total weight); getting it wrong silently flips the sign of every trim
   // computation.
   deckForwardIsPositiveY?: boolean
+  // Which library vessel (VESSEL_TEMPLATES id) this deck was built from.
+  // Undefined = the user's own deck, or one made before this was recorded.
+  vesselTemplateId?: string
+  // The deck-strength limit (t/m²) picked for that vessel when its sources
+  // disagree. Undefined = not chosen yet, which the sidebar and the stats
+  // keep saying — the choice used to live only in a 20-second toast.
+  deckStrengthChoiceTPerM2?: number
 }
 
 const PALETTE = [
@@ -291,6 +298,10 @@ interface CalculatorState {
   addLoadZone: (zone?: Partial<LoadZone>) => void
   updateLoadZone: (id: string, patch: Partial<LoadZone>) => void
   removeLoadZone: (id: string) => void
+  // Records the deck-strength limit picked for a library vessel and rates
+  // the whole deck with it: one load zone over the full deck, re-rated (not
+  // duplicated) when the choice changes. One undo step.
+  chooseDeckStrength: (limitTPerM2: number) => void
 
   // Lashing/securing points — optionally attached to a placement (placementId
   // + corner) for the CSS-Code-style securing-force check in packing.ts
@@ -1799,6 +1810,20 @@ export const useCalculator = create<CalculatorState>()(
     set((s) => ({
       deck: { ...s.deck, loadZones: (s.deck.loadZones ?? []).filter((z) => z.id !== id) },
     })),
+  chooseDeckStrength: (limitTPerM2) =>
+    set((s) => {
+      const zones = s.deck.loadZones ?? []
+      const coversDeck = (z: LoadZone) => isWholeDeckZone(z, s.deck.width, s.deck.length)
+      return {
+        deck: {
+          ...s.deck,
+          deckStrengthChoiceTPerM2: limitTPerM2,
+          loadZones: zones.some(coversDeck)
+            ? zones.map((z) => (coversDeck(z) ? { ...z, maxLoadPerArea: limitTPerM2 } : z))
+            : [...zones, { id: uuid(), x: 0, y: 0, width: s.deck.width, length: s.deck.length, maxLoadPerArea: limitTPerM2 }],
+        },
+      }
+    }),
 
   addLashingPoint: (point) =>
     set((s) => ({
@@ -2147,4 +2172,21 @@ export { UNIT_LABEL, PALETTE, convertLength }
 // matched to placed stacks by.
 export function autoPlacementKey(p: { itemId: string; x: number; y: number }): string {
   return `${p.itemId}@${p.x.toFixed(3)},${p.y.toFixed(3)}`
+}
+
+// A load zone laid over the whole deck — what a deck-strength choice creates
+// (chooseDeckStrength). The tolerance is relative to the deck, so rounding
+// from a unit conversion doesn't break the match.
+export function isWholeDeckZone(
+  z: { x: number; y: number; width: number; length: number },
+  deckWidth: number,
+  deckLength: number
+): boolean {
+  const tol = Math.max(deckWidth, deckLength) * 1e-3
+  return (
+    Math.abs(z.x) <= tol &&
+    Math.abs(z.y) <= tol &&
+    Math.abs(z.width - deckWidth) <= tol &&
+    Math.abs(z.length - deckLength) <= tol
+  )
 }

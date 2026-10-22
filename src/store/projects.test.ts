@@ -112,6 +112,29 @@ describe('projects store', () => {
     expect(state.activeId).toBe('good-1')
   })
 
+  // Phase 0, L11: which library vessel a deck came from and the deck-strength
+  // limit picked for it. Without them a reload can't tell whether a limit
+  // was ever chosen.
+  it('keeps the applied vessel and the chosen deck-strength limit across a reload, dropping junk', () => {
+    const deck = { width: 16.9, length: 49.1, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 3 }
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        { id: 'v1', name: 'Судно', deck: { ...deck, vesselTemplateId: 'aleksey-kuznetsov', deckStrengthChoiceTPerM2: 5 }, items: [] },
+        { id: 'v2', name: 'Битое', deck: { ...deck, vesselTemplateId: 42, deckStrengthChoiceTPerM2: -5 }, items: [] },
+        { id: 'v3', name: 'Старое', deck, items: [] },
+      ],
+      activeId: 'v1',
+    })
+    useProjects.getState().hydrate()
+    const [good, junk, old] = useProjects.getState().projects
+    expect(good.deck.vesselTemplateId).toBe('aleksey-kuznetsov')
+    expect(good.deck.deckStrengthChoiceTPerM2).toBe(5)
+    expect(junk.deck.vesselTemplateId).toBeUndefined()
+    expect(junk.deck.deckStrengthChoiceTPerM2).toBeUndefined()
+    expect(old.deck.vesselTemplateId).toBeUndefined()
+    expect(old.deck.deckStrengthChoiceTPerM2).toBeUndefined()
+  })
+
   it('normalizes corrupted data on hydrate', () => {
     storage['deckload-projects'] = JSON.stringify({
       projects: [

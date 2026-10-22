@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
-import { fmtNumber, pluralRu } from '@/lib/utils'
+import { pluralRu } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/toggle-group'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems, autoPlacementKey } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
-import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
+import { VESSEL_TEMPLATES, vesselTemplateById, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   AlertDialog,
@@ -757,6 +757,10 @@ export default function Home() {
       : []
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
+  // A library vessel whose sources disagree on deck strength, with no limit
+  // picked yet (the choice sits in the sidebar's «Зоны нагрузки»).
+  const deckStrengthPending =
+    !!vesselTemplateById(deck.vesselTemplateId)?.limits?.deckStrengthTPerM2 && deck.deckStrengthChoiceTPerM2 === undefined
   // The one purely auto-placed stack selected on the deck (no pin yet), if
   // any. Keys and the sidebar's «Крепление груза» act on it like on a pin:
   // the first change pins it, locked, and applies there.
@@ -1003,6 +1007,9 @@ export default function Home() {
         // with only a plain rectangular deck (e.g. Kuznetsov).
         outline: tpl.deck.outline,
         restrictionZones: tpl.restrictionZones,
+        // Remembered, so the deck-strength choice (Sidebar «Зоны нагрузки»)
+        // knows which vessel's sources to offer, also after a reload.
+        vesselTemplateId: tpl.id,
       },
       items: [],
       manualPlacements: [],
@@ -1017,63 +1024,10 @@ export default function Home() {
       showCargoContents: true,
     })
     toast.success(`Создан расчёт для «${tpl.label}»`)
-    // Deck-strength limit is a genuinely conflicting range for some vessels
-    // (see VesselTemplate.limits.deckStrengthTPerM2's own doc comment) —
-    // never auto-picked. Offer both real sourced values as an explicit
-    // one-click choice instead; the zone applies to the whole deck, which
-    // addLoadZone already supports without any drag-UI. Deferred to a toast
-    // (rather than firing addLoadZone synchronously here) because
-    // createProject/saveSnapshot above only stage the new project — the
-    // calculator store is overwritten by a separate effect on the next
-    // commit, so an immediate addLoadZone call here would target the OLD
-    // project and then get clobbered anyway.
-    const strength = tpl.limits?.deckStrengthTPerM2
-    if (strength) {
-      const makeZone = (maxLoadPerArea: number) => {
-        useCalculator.getState().addLoadZone({
-          x: 0,
-          y: 0,
-          width: tpl.deck.width,
-          length: tpl.deck.length,
-          maxLoadPerArea,
-        })
-      }
-      toast.custom(
-        (t) => (
-          <div className="rounded-md border bg-background p-3 shadow-lg text-xs space-y-2 w-72">
-            <div className="font-medium">Зона нагрузки на всю палубу — «{tpl.label}»</div>
-            <div className="text-muted-foreground">
-              Источники расходятся ({strength.sources}) — выберите лимит сами.
-            </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-[11px] flex-1"
-                onClick={() => {
-                  makeZone(strength.min)
-                  toast.dismiss(t)
-                }}
-              >
-                {fmtNumber(strength.min)} т/м²
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-[11px] flex-1"
-                onClick={() => {
-                  makeZone(strength.max)
-                  toast.dismiss(t)
-                }}
-              >
-                {fmtNumber(strength.max)} т/м²
-              </Button>
-            </div>
-          </div>
-        ),
-        { duration: 20000 }
-      )
-    }
+    // A vessel whose sources disagree on deck strength gets no limit picked
+    // for it: the choice waits in «Зоны нагрузки» (opened by itself) and the
+    // stats say «лимит не выбран» until it's made. It used to be a toast
+    // that vanished after 20 seconds, leaving no limit and no reminder.
   }
 
   // Shared by handleRotatePinned/handleRotateManual below — these two were
@@ -3041,6 +2995,7 @@ export default function Home() {
                 deckOutline={deck.outline}
                 maxDeckCargoT={deck.maxDeckCargoT}
                 tenFootContainerCapacity={deck.tenFootContainerCapacity}
+                deckStrengthPending={deckStrengthPending}
                 unplaced={
                   mode === 'auto'
                     ? {

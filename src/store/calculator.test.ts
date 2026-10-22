@@ -1567,6 +1567,39 @@ describe('calculator store', () => {
     expect(useCalculator.getState().selectedPinIds).toEqual([trip0PinId])
   })
 
+  // Phase 0, L11: the deck-strength choice used to exist only as two buttons
+  // in a 20-second toast.
+  describe('chooseDeckStrength', () => {
+    const zones = () => useCalculator.getState().deck.loadZones ?? []
+
+    it('records the choice and lays one load zone over the whole deck', () => {
+      useCalculator.getState().chooseDeckStrength(5)
+      expect(useCalculator.getState().deck.deckStrengthChoiceTPerM2).toBe(5)
+      expect(zones()).toEqual([{ id: expect.any(String), x: 0, y: 0, width: 20, length: 8, maxLoadPerArea: 5 }])
+    })
+
+    it('re-rates that zone when the choice changes instead of adding another', () => {
+      useCalculator.getState().chooseDeckStrength(5)
+      useCalculator.getState().chooseDeckStrength(10)
+      expect(zones()).toHaveLength(1)
+      expect(zones()[0].maxLoadPerArea).toBe(10)
+    })
+
+    it('leaves the user\'s own smaller zones alone', () => {
+      useCalculator.getState().addLoadZone({ x: 1, y: 1, width: 2, length: 2, maxLoadPerArea: 3 })
+      useCalculator.getState().chooseDeckStrength(5)
+      useCalculator.getState().chooseDeckStrength(10)
+      expect(zones().map((z) => z.maxLoadPerArea).sort((a, b) => a - b)).toEqual([3, 10])
+    })
+
+    it('lays the zone again if the whole-deck one was deleted', () => {
+      useCalculator.getState().chooseDeckStrength(5)
+      useCalculator.getState().removeLoadZone(zones()[0].id)
+      useCalculator.getState().chooseDeckStrength(5)
+      expect(zones()).toHaveLength(1)
+    })
+  })
+
   // Phase 0, group D: selecting is separate from pinning.
   describe('selection of auto-placed stacks', () => {
     const key = (x: number) => autoPlacementKey({ itemId: 'a', x, y: 0 })
@@ -1650,6 +1683,14 @@ describe('calculator store undo/redo history', () => {
   // updates collapse into one history step - tests need to wait past that
   // window before checking pastStates.
   const waitForHistoryFlush = () => new Promise((r) => setTimeout(r, 500))
+
+  it('a deck-strength choice and the zone it lays are one undo step', async () => {
+    useCalculator.getState().chooseDeckStrength(5)
+    await waitForHistoryFlush()
+    useCalculator.temporal.getState().undo()
+    expect(useCalculator.getState().deck.deckStrengthChoiceTPerM2).toBeUndefined()
+    expect(useCalculator.getState().deck.loadZones ?? []).toHaveLength(0)
+  })
 
   it('undo/redo restores and re-applies an addItem', async () => {
     useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })

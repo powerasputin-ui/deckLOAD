@@ -99,6 +99,36 @@ describe('Home (page.tsx)', () => {
     expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
   })
 
+  // Phase 0, L11: a vessel whose sources disagree on deck strength offered
+  // its two limits only in a toast that vanished after 20 seconds, leaving no
+  // limit at all and nothing to say so.
+  it('a library vessel keeps asking for its deck-strength limit until one is picked', () => {
+    const custom = vi.spyOn(toast, 'custom').mockImplementation(() => '')
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
+    expect(custom).not.toHaveBeenCalled()
+    expect(useCalculator.getState().deck.vesselTemplateId).toBe('aleksey-kuznetsov')
+    expect(screen.getByText('лимит не выбран')).toBeTruthy()
+    // «Зоны нагрузки» opened by itself, with the choice on top.
+    expect(screen.getByText('Лимит прочности палубы не выбран')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '5 т/м²' }))
+    const deck = useCalculator.getState().deck
+    expect(deck.deckStrengthChoiceTPerM2).toBe(5)
+    expect(deck.loadZones).toEqual([{ id: expect.any(String), x: 0, y: 0, width: deck.width, length: deck.length, maxLoadPerArea: 5 }])
+    expect(screen.queryByText('лимит не выбран')).toBeNull()
+    expect(screen.getByText('Прочность палубы: 5 т/м²')).toBeTruthy()
+  })
+
+  it('a library vessel with no disputed deck strength asks for nothing', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    fireEvent.click(screen.getByText('Коммандер (IMO 9340609)'))
+    expect(useCalculator.getState().deck.vesselTemplateId).toBe('olympic-commander')
+    expect(screen.queryByText('лимит не выбран')).toBeNull()
+    expect(screen.queryByText('Лимит прочности палубы не выбран')).toBeNull()
+  })
+
   // Phase 0, L13: variants are a snapshot of one project's cargo; they used
   // to stay listed after the cargo changed, and clicking one wrote a stale
   // layout over the current one.

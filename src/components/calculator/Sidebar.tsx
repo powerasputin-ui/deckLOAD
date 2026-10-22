@@ -29,6 +29,7 @@ import {
   Undo2,
   Redo2,
   Ship,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -53,7 +54,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, isWholeDeckZone, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
@@ -67,6 +68,7 @@ import {
   type WireRopeType,
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
+import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { NumberField } from '@/components/calculator/NumberField'
@@ -496,6 +498,7 @@ function Section({
   badge,
   children,
   defaultOpen = true,
+  openWhen,
   tourId,
 }: {
   icon: React.ReactNode
@@ -503,12 +506,20 @@ function Section({
   badge?: number
   children: React.ReactNode
   defaultOpen?: boolean
+  // Opens the section whenever this turns true (it can still be collapsed):
+  // for a section holding something that waits on the user.
+  openWhen?: boolean
   // Optional anchor for ProductTour (src/components/onboarding/ProductTour.tsx)
   // — placed on the outer div so the section stays a valid tour target even
   // collapsed (children unmount when `open` is false, the header never does).
   tourId?: string
 }) {
-  const [open, setOpen] = useState(defaultOpen)
+  const [open, setOpen] = useState(defaultOpen || !!openWhen)
+  const [prevOpenWhen, setPrevOpenWhen] = useState(openWhen)
+  if (openWhen !== prevOpenWhen) {
+    setPrevOpenWhen(openWhen)
+    if (openWhen) setOpen(true)
+  }
   return (
     <div data-tour={tourId}>
       <button
@@ -716,10 +727,71 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const addLoadZone = useCalculator((s) => s.addLoadZone)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
   const removeLoadZone = useCalculator((s) => s.removeLoadZone)
+  const vesselTemplateId = useCalculator((s) => s.deck.vesselTemplateId)
+  const strengthChoice = useCalculator((s) => s.deck.deckStrengthChoiceTPerM2)
+  const deckWidth = useCalculator((s) => s.deck.width)
+  const deckLength = useCalculator((s) => s.deck.length)
+  const chooseDeckStrength = useCalculator((s) => s.chooseDeckStrength)
+
+  // A library vessel whose sources disagree on deck strength: the limit is
+  // never picked for the user. The choice stays here, on top, until made.
+  const vessel = vesselTemplateById(vesselTemplateId)
+  const strength = vessel?.limits?.deckStrengthTPerM2
+  const strengthPending = !!strength && strengthChoice === undefined
+  const strengthZoneMissing =
+    !!strength && strengthChoice !== undefined && !zones.some((z) => isWholeDeckZone(z, deckWidth, deckLength))
 
   return (
-    <Section icon={<Scale className="h-4 w-4" />} title="Зоны нагрузки" badge={zones.length} defaultOpen={false} tourId="load-zones">
+    <Section
+      icon={<Scale className="h-4 w-4" />}
+      title="Зоны нагрузки"
+      badge={zones.length}
+      defaultOpen={false}
+      openWhen={strengthPending}
+      tourId="load-zones"
+    >
       <div className="space-y-2">
+        {vessel && strength && (
+          <div
+            className={cn(
+              'rounded-md border p-2 space-y-1.5',
+              strengthPending && 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
+            )}
+          >
+            {strengthPending ? (
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Лимит прочности палубы не выбран
+              </div>
+            ) : (
+              <div className="text-[11px] font-medium">
+                Прочность палубы: {fmtNumber(strengthChoice ?? 0)} т/м²
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              «{vessel.label}»: источники расходятся ({strength.sources}). Выбор задаёт зону нагрузки на всю палубу.
+            </p>
+            {strengthZoneMissing && (
+              <p className="text-[10px] text-amber-800 dark:text-amber-300">
+                Зоны на всю палубу нет, лимит не проверяется. Нажмите выбранное значение, чтобы вернуть её.
+              </p>
+            )}
+            <div className="flex gap-1.5">
+              {(strength.min === strength.max ? [strength.min] : [strength.min, strength.max]).map((v) => (
+                <Button
+                  key={v}
+                  size="sm"
+                  variant={strengthChoice === v ? 'default' : 'outline'}
+                  aria-pressed={strengthChoice === v}
+                  className="h-7 flex-1 text-[11px]"
+                  onClick={() => chooseDeckStrength(v)}
+                >
+                  {fmtNumber(v)} т/м²
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
         <p className="text-[10px] text-muted-foreground">
           Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
         </p>

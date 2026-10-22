@@ -30,9 +30,12 @@ interface StatsPanelProps {
   // units carried on to the next trip as failures; the page passes what
   // fits in no trip at all instead, plus a note about the carry-over.
   unplaced?: { count: number; label: string; note?: string }
+  // A library vessel's deck-strength limit isn't picked yet, so no zone
+  // check runs at all.
+  deckStrengthPending?: boolean
 }
 
-export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity, unplaced }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity, unplaced, deckStrengthPending }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -190,6 +193,19 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
             {unplaced?.note && <div className="text-[10px] text-muted-foreground mt-0.5">{unplaced.note}</div>}
           </div>
         </div>
+
+        {deckStrengthPending && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 p-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2 text-amber-800 dark:text-amber-300">
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Прочность палубы
+              </span>
+              <span className="font-semibold">лимит не выбран</span>
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">Выберите в разделе «Зоны нагрузки» слева</div>
+          </div>
+        )}
 
         {/* Load capacity warnings */}
         {overLoadedZoneCount > 0 && (
