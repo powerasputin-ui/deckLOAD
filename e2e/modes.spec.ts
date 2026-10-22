@@ -25,26 +25,16 @@ test.describe('Auto / manual modes', () => {
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
   })
 
-  test('auto redistribute reshuffles an UNLOCKED placement and warns', async ({ page }) => {
+  // In auto mode an unlocked pin is the packer's own layout (nothing to warn
+  // about); in manual mode every placement is the user's, so the re-arrange
+  // is announced with its count.
+  test('auto redistribute in manual mode says how many hand placements get re-arranged', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
-    // A plain click on an unpinned item selects it and lets it be dragged —
-    // that creates an UNLOCKED placement (see pin-select.spec.ts). Unlocked
-    // placements are exactly what redistribute is meant to reshuffle; only
-    // an explicit right-click "Закрепить" protects one (see the next test).
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
-    // A selected item's own rect gets the purple #7c3aed stroke (see
-    // FootprintShape's strokeColor) — that's the selection signal now that
-    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
-    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
-    await expect(async () => {
-      await placedRect.click({ force: true })
-      await expect(selectedStroke).toBeVisible({ timeout: 1000 })
-    }).toPass({ timeout: 10000 })
-    // Redistribute reshuffles every unlocked placement (page.tsx's
-    // handleAutoRedistribute/applyVariant) and warns the user beforehand.
+    await page.getByText('Ручной').first().click()
+    await expect(page.getByText('ручной режим', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.getByText(/Незакреплённые размещения.*будут переставлены/)).toBeVisible()
+    await expect(page.getByText(/Ручные размещения \(\d+\) будут переставлены заново/)).toBeVisible()
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
   })
 

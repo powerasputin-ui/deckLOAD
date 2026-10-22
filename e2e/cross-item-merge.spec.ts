@@ -6,6 +6,20 @@ function headerBadge(page: Page) {
   return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
 }
 
+// A pipe stamped onto the deck stands where the user put it (locked), so
+// «Автораспределение» leaves it alone — hand it back to the packer first so
+// all of the item's units can be stacked together.
+async function returnStampedPipeToAuto(page: Page) {
+  const pipe = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])').first()
+  const itemMenu = page.locator('div.fixed.z-50.w-40')
+  await expect(async () => {
+    await pipe.click({ button: 'right', force: true })
+    await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 10000 })
+  await itemMenu.getByRole('button', { name: 'Вернуть в авто' }).click()
+  await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
+}
+
 test.describe('Merging two different (e.g. duplicated) cargo items', () => {
   test('dragging a duplicated pipe stack onto its original merges layers and removes the now-empty duplicate item', async ({ page }) => {
     await page.goto('/')
@@ -29,12 +43,12 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 60, y: 60 }, force: true })
 
-    // Original item now placed (1 unit, as a real pin from the click) —
-    // bump its quantity to 8. The click-placed unit stays frozen as its own
-    // 1-layer pin while the other 7 units auto-place separately, so
-    // "Автораспределение" is needed to consolidate all 8 into one clean
-    // pyramid before duplicating — otherwise the two stacks being merged
-    // wouldn't each cleanly hold 8, making the expected "16" unpredictable.
+    // Original item now placed (1 unit, locked where the click put it). Hand
+    // it back to the packer, bump its quantity to 8 and let
+    // "Автораспределение" consolidate all 8 into one clean pyramid before
+    // duplicating — otherwise the two stacks being merged wouldn't each
+    // cleanly hold 8, making the expected "16" unpredictable.
+    await returnStampedPipeToAuto(page)
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
@@ -62,7 +76,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await pipeRects.nth(0).scrollIntoViewIfNeeded()
 
     // Auto mode: a plain click only selects — dragging is what promotes an
-    // algorithmically-placed item to a real (unlocked) pin, and only pins
+    // algorithmically-placed item to a real (locked) pin, and only pins
     // are eligible merge targets/sources. Nudge each stack a bit first so
     // both become pins, before the real merge drag. (40/20px, matching the
     // magnitude already proven reliable in pin-select.spec.ts's own
@@ -168,6 +182,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await page.getByText('Обсадная труба', { exact: true }).click()
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 60, y: 60 }, force: true })
+    await returnStampedPipeToAuto(page)
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
     await page.getByRole('button', { name: 'Автораспределение' }).click()

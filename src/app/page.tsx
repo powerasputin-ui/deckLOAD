@@ -28,7 +28,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems, autoPlacementKey } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -72,6 +72,7 @@ import {
   type CompositionSegment,
   type CargoItem,
   stackHeightBudget,
+  type PlacedItem,
 } from '@/lib/packing'
 import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
@@ -322,6 +323,8 @@ export default function Home() {
   const updatePinned = useCalculator((s) => s.updatePinned)
   const removePinned = useCalculator((s) => s.removePinned)
   const togglePinSelection = useCalculator((s) => s.togglePinSelection)
+  const toggleAutoSelection = useCalculator((s) => s.toggleAutoSelection)
+  const selectedAutoKeys = useCalculator((s) => s.selectedAutoKeys)
   const clearSelection = useCalculator((s) => s.clearSelection)
   const toggleManualSelection = useCalculator((s) => s.toggleManualSelection)
   const clearManualSelection = useCalculator((s) => s.clearManualSelection)
@@ -571,6 +574,7 @@ export default function Home() {
       ),
       separationRules: (proj.separationRules ?? []).map((r) => ({ ...r })),
       selectedPinIds: [],
+      selectedAutoKeys: [],
       selectedManualIds: [],
       mode: proj.mode,
       sortStrategy: proj.sortStrategy,
@@ -717,7 +721,11 @@ export default function Home() {
   // trip's shortfall is cargo that fits in no trip at all.
   const unfitAnywhere = mode === 'auto' ? lastTrip.unplaced.filter((u) => u.kind === 'shortfall') : []
   const unfitUnits = mode === 'auto' ? Math.max(0, lastTrip.requestedCount - lastTrip.placedCount) : 0
-  const rejectedPinsHere = result.unplaced.filter((u) => u.kind === 'pin')
+  // Only a position the user chose is worth a red alarm: a rejected layout
+  // pin (left by an applied variant) just gets its units packed elsewhere.
+  const rejectedPinsHere = result.unplaced.filter(
+    (u) => u.kind === 'pin' && !!(pinnedPlacementsByTrip[clampedTripIndex] ?? []).find((p) => p.id === u.pinId)?.locked
+  )
   const manualToDo = mode === 'manual' ? result.unplaced.filter((u) => u.kind === 'manual') : []
   // Units entering the next trip are the ones it (or a later trip) will
   // place plus the unfit ones, which pass through every trip.
@@ -749,6 +757,17 @@ export default function Home() {
       : []
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
+  // The one purely auto-placed stack selected on the deck (no pin yet), if
+  // any. Keys and the sidebar's «Крепление груза» act on it like on a pin:
+  // the first change pins it, locked, and applies there.
+  const selectedAutoStack =
+    mode === 'auto' && !selectedPinIds[0] && selectedAutoKeys.length === 1
+      ? result.placed.find(
+          (p) =>
+            autoPlacementKey(p) === selectedAutoKeys[0] &&
+            !pinnedPlacements.some((pin) => pin.itemId === p.itemId && Math.abs(pin.x - p.x) < 0.01 && Math.abs(pin.y - p.y) < 0.01)
+        )
+      : undefined
 
   // Resolve a lashing point's attached-placement id (pin id in auto mode,
   // manual placement id in manual mode) back to its cargo item type.
@@ -904,6 +923,7 @@ export default function Home() {
       pinnedPlacementsByTrip: {},
       separationRules: [],
       selectedPinIds: [],
+      selectedAutoKeys: [],
       selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
@@ -924,6 +944,7 @@ export default function Home() {
       pinnedPlacementsByTrip: {},
       separationRules: [],
       selectedPinIds: [],
+      selectedAutoKeys: [],
       selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
@@ -1164,7 +1185,8 @@ export default function Home() {
       pin,
       siblings,
       (p) => p.itemId === pin.itemId && Math.abs(p.x - pin.x) < 0.01 && Math.abs(p.y - pin.y) < 0.01,
-      (patch) => updatePinned(clampedTripIndex, id, patch)
+      // Rotating is the user's choice of how the stack sits — «Закреплён».
+      (patch) => updatePinned(clampedTripIndex, id, { ...patch, locked: true })
     )
   }
 
@@ -1259,9 +1281,107 @@ export default function Home() {
     if (mode === 'manual') {
       useCalculator.getState().addManualPlacement(placement)
     } else {
-      pinFromPlaced(clampedTripIndex, placement)
+      pinFromPlaced(clampedTripIndex, { ...placement, locked: true })
     }
     setPendingCustomShape(null)
+  }
+
+  // Moves the selected placement a quarter grid step (arrow keys), with the
+  // same edge, outline and collision checks as a drag. A pin moved this way
+  // becomes «Закреплён».
+  const nudgePlacement = (selectedId: string, dx: number, dy: number) => {
+    const step = computeGridStep(deck.width, deck.length) / 4
+    const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
+    const current = placements.find((p) => p.id === selectedId)
+    if (!current) return
+    const nudgedItem = items.find((it) => it.id === current.itemId)
+    const target2 = {
+      x: current.x + dx * step,
+      y: current.y + dy * step,
+      width: current.width,
+      length: current.length,
+    }
+    // Clamp the WIDENED footprint (own clearanceMargin + a pipe pyramid's
+    // own base-row spread) against the deck edge/board-offset, not just
+    // the raw single-unit rect — otherwise a nudge can walk the raw rect
+    // flush against the edge while the wider footprint actually drawn on
+    // screen sticks out past it. Same reasoning as resolveSnappedDragPosition's
+    // selfMargin handling.
+    const nudgeMargin = addClearanceMargins(
+      current.clearanceMargin,
+      nudgedItem ? pyramidSpreadAsClearance(nudgedItem, current.layers) : undefined
+    )
+    const ml = nudgeMargin?.left ?? 0
+    const mr = nudgeMargin?.right ?? 0
+    const mt = nudgeMargin?.top ?? 0
+    const mb = nudgeMargin?.bottom ?? 0
+    const wideClamped = clampToDeck(
+      { x: target2.x - ml, y: target2.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
+      deck.width,
+      deck.length,
+      deck.boardOffset
+    )
+    const clamped = { x: wideClamped.x + ml, y: wideClamped.y + mt }
+    if (
+      usableOutline &&
+      !rectInsidePolygon(
+        { x: clamped.x - ml, y: clamped.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
+        usableOutline
+      )
+    )
+      return
+    // Single check (bbox + outline + both-direction clearance margin) —
+    // sourced from result.placed like the rotate handlers above, since
+    // raw ManualPlacement/PinnedPlacement never carry outline data.
+    type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: CargoShape; height?: number; stackedCount?: number }
+    const placedRects: CollisionCandidate[] =
+      mode === 'manual'
+        ? result.placed
+            .filter((p) => manualPlacements[p.index]?.id !== selectedId)
+            .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
+        : result.placed
+            .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
+            .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
+    const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
+    const zoneRects3: CollisionCandidate[] = restrictionZoneExclusions(deck.restrictionZones ?? [])
+    const preciseOthers = [...placedRects, ...lashingRects3, ...zoneRects3]
+    // Same pipe-pyramid self-widening as the rotate handlers above, so a
+    // nudged pipe stack can't be walked closer to a neighbour than its
+    // own pyramid base actually allows.
+    const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin, shape: nudgedItem?.shape, height: nudgedItem?.height, stackedCount: current.layers }
+    if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
+    if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
+    else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y, locked: true })
+  }
+
+  // Buttons and keys that change a purely auto-placed stack (see the store's
+  // selectedAutoKeys) first pin it — locked, the change is the user's choice —
+  // and then act on that pin. The handlers below read placements and the
+  // packing result from this render, which doesn't have the new pin yet, so
+  // the action waits for the render that does (runPendingPinAction).
+  type PinAction = { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' } | { kind: 'nudge'; dx: number; dy: number }
+  const pendingPinActionRef = useRef<{ id: string; action: PinAction } | null>(null)
+  const pinAutoStack = (placed: PlacedItem) =>
+    pinFromPlaced(clampedTripIndex, {
+      itemId: placed.itemId,
+      name: placed.name,
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      length: placed.length,
+      layers: placed.layers,
+      rotated: placed.rotated,
+      color: placed.color,
+      weight: placed.weight,
+      locked: true,
+    })
+  const actOnAutoStack = (placed: PlacedItem, action: PinAction) => {
+    pendingPinActionRef.current = { id: pinAutoStack(placed), action }
+  }
+  // A plain field patch (clearance zone, wire type…) needs no placement
+  // lookups, so it lands on the new pin straight away.
+  const patchAutoStack = (placed: PlacedItem, patch: Partial<PinnedPlacement>) => {
+    updatePinned(clampedTripIndex, pinAutoStack(placed), patch)
   }
 
   // Arrow keys nudge the selected cargo item; Space rotates it — 2D only
@@ -1278,9 +1398,12 @@ export default function Home() {
   // item is selected is read fresh on every keypress rather than once when
   // the effect was set up, so selecting a new item takes effect immediately
   // without waiting for the effect to re-subscribe.
+  // The latest handler, so the window listener below subscribes once per
+  // view instead of on every render (it reads selection, placements and the
+  // packing result, which change all the time).
+  const deckKeyDownRef = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
-    if (viewMode !== '2d') return
-    const onKeyDown = (e: KeyboardEvent) => {
+    deckKeyDownRef.current = (e: KeyboardEvent) => {
       // e.target is typed as HTMLElement by KeyboardEvent's declaration, but
       // at runtime it can be a non-Element EventTarget (document, window —
       // e.g. when nothing has focus, or on a synthetically dispatched
@@ -1311,6 +1434,14 @@ export default function Home() {
       else if (e.key === 'ArrowDown') dy = 1
       else if (!isSpace) return
 
+      // A purely auto-placed stack selected (no pin yet): the key changes
+      // it, so it's pinned first and the change follows (actOnAutoStack).
+      if (selectedAutoStack) {
+        e.preventDefault()
+        actOnAutoStack(selectedAutoStack, isSpace ? { kind: 'rotate' } : { kind: 'nudge', dx, dy })
+        return
+      }
+
       const selectedId = mode === 'manual' ? selectedManualIds[0] : selectedPinIds[0]
       // An arrow key only means "nudge" when there is something to nudge —
       // with no selection it must keep scrolling the page like any other
@@ -1326,72 +1457,15 @@ export default function Home() {
         return
       }
 
-      const step = computeGridStep(deck.width, deck.length) / 4
-      const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
-      const current = placements.find((p) => p.id === selectedId)
-      if (!current) return
-      const nudgedItem = items.find((it) => it.id === current.itemId)
-      const target2 = {
-        x: current.x + dx * step,
-        y: current.y + dy * step,
-        width: current.width,
-        length: current.length,
-      }
-      // Clamp the WIDENED footprint (own clearanceMargin + a pipe pyramid's
-      // own base-row spread) against the deck edge/board-offset, not just
-      // the raw single-unit rect — otherwise a nudge can walk the raw rect
-      // flush against the edge while the wider footprint actually drawn on
-      // screen sticks out past it. Same reasoning as resolveSnappedDragPosition's
-      // selfMargin handling.
-      const nudgeMargin = addClearanceMargins(
-        current.clearanceMargin,
-        nudgedItem ? pyramidSpreadAsClearance(nudgedItem, current.layers) : undefined
-      )
-      const ml = nudgeMargin?.left ?? 0
-      const mr = nudgeMargin?.right ?? 0
-      const mt = nudgeMargin?.top ?? 0
-      const mb = nudgeMargin?.bottom ?? 0
-      const wideClamped = clampToDeck(
-        { x: target2.x - ml, y: target2.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
-        deck.width,
-        deck.length,
-        deck.boardOffset
-      )
-      const clamped = { x: wideClamped.x + ml, y: wideClamped.y + mt }
-      if (
-        usableOutline &&
-        !rectInsidePolygon(
-          { x: clamped.x - ml, y: clamped.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
-          usableOutline
-        )
-      )
-        return
-      // Single check (bbox + outline + both-direction clearance margin) —
-      // sourced from result.placed like the rotate handlers above, since
-      // raw ManualPlacement/PinnedPlacement never carry outline data.
-      type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: CargoShape; height?: number; stackedCount?: number }
-      const placedRects: CollisionCandidate[] =
-        mode === 'manual'
-          ? result.placed
-              .filter((p) => manualPlacements[p.index]?.id !== selectedId)
-              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
-          : result.placed
-              .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
-              .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
-      const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-      const zoneRects3: CollisionCandidate[] = restrictionZoneExclusions(deck.restrictionZones ?? [])
-      const preciseOthers = [...placedRects, ...lashingRects3, ...zoneRects3]
-      // Same pipe-pyramid self-widening as the rotate handlers above, so a
-      // nudged pipe stack can't be walked closer to a neighbour than its
-      // own pyramid base actually allows.
-      const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin, shape: nudgedItem?.shape, height: nudgedItem?.height, stackedCount: current.layers }
-      if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
-      if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
-      else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y })
+      nudgePlacement(selectedId, dx, dy)
     }
+  })
+  useEffect(() => {
+    if (viewMode !== '2d') return
+    const onKeyDown = (e: KeyboardEvent) => deckKeyDownRef.current(e)
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [viewMode, mode, selectedManualIds, selectedPinIds, manualPlacements, pinnedPlacements, deck, deck.restrictionZones, clampedTripIndex, updateManualPlacement, updatePinned, handleRotateManual, handleRotatePinned, items, result])
+  }, [viewMode])
 
   // A composed stack is ONE physical column: its total height has to fit the
   // whole-column budget (stackHeightBudget — the deck clearance and each
@@ -1512,64 +1586,35 @@ export default function Home() {
     return null
   }
 
-  // "+" mirrors "-": "-" takes the top layer off and stands it up as its own
-  // container elsewhere on the deck; "+" should take an existing container
-  // of the same item off the deck and stack it onto the selected one — the
-  // point-and-click equivalent of dragging one placement onto another,
-  // rather than conjuring a new unit out of unplaced quantity. Looks for
-  // another placement of this item already on the deck (a pin first, else a
-  // still-auto-placed instance, which gets pinned so it can be merged) and
-  // returns what handleMergePinned needs to absorb it.
-  const findMergeSourcePinned = (itemId: string, excludeId: string): { id: string } | null => {
-    // Round 21 corrective pass (reasoning updated after Round 24): a
-    // composed placement's nominal `itemId` can coincidentally match
-    // `itemId` even though it also carries OTHER constituents — offering it
-    // here would feed it into handleMergePinned below as a "+" source. That
-    // handler is composition-AWARE since Round 24 (planComposedMerge), but
-    // "+" and drag-to-merge are still two deliberately DIFFERENT
-    // operations: "+" is Round 21's single-unit push (pulls exactly one
-    // more layer of the SAME nominal item off the deck), while
-    // handleMergePinned performs a bulk absorption of the WHOLE dragged
-    // placement's composition. Letting a composed placement through this
-    // "+" path would silently turn a single-unit push into a bulk multi-
-    // constituent merge instead — the guard stays, just for that reason now
-    // instead of composition-blindness. A freely-still-auto-placed instance
-    // (the second branch, below) can never be composed in the first place —
-    // composition only ever exists on an already-PINNED source (see
-    // PlacedItem.composition's own doc comment in packing.ts), and this
-    // scan explicitly excludes positions that match an existing pin — so no
-    // equivalent guard is needed there.
-    //
-    // Round 29 corrective pass: same reasoning extends to a Tier-2
-    // malformed placement (`malformed` set, no valid `composition` to
-    // trust — see PinnedPlacement.malformed's own doc comment). Offering
-    // one here would feed its raw, untrustworthy `layers` into
-    // handleMergePinned, which would silently absorb (and DELETE) it —
-    // phantom data merged into a real placement, and the malformed record
-    // gone without ever surfacing to the user, defeating the whole "never
-    // dropped, always preserved for diagnosis" contract.
-    const otherPin = pinnedPlacements.find((p) => p.id !== excludeId && p.itemId === itemId && !p.composition && !p.malformed)
-    if (otherPin) return { id: otherPin.id }
-    const freeInstance = result.placed.find((p) => {
-      if (p.itemId !== itemId) return false
-      return !pinnedPlacements.some(
-        (pp) => pp.itemId === itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
-      )
-    })
-    if (!freeInstance) return null
-    const newId = pinFromPlaced(clampedTripIndex, {
-      itemId: freeInstance.itemId,
-      name: freeInstance.name,
-      x: freeInstance.x,
-      y: freeInstance.y,
-      width: freeInstance.width,
-      length: freeInstance.length,
-      layers: freeInstance.stackedCount,
-      rotated: freeInstance.rotated,
-      color: freeInstance.color,
-      weight: freeInstance.weight,
-    })
-    return { id: newId }
+  // A unit taken off a stack with «−» stands on its own at the first free
+  // spot instead of going back to the packer, which would stack it onto
+  // another freed unit (a reported bug). In auto mode that takes a pin — a
+  // locked one, so it's visible as «Закреплён» rather than a hidden pin.
+  const standFreedUnit = (freedItemId: string, keepSelectedId: string) => {
+    const item = items.find((it) => it.id === freedItemId)
+    if (!item) return
+    const spot = findFreeSpotForItem(item)
+    if (!spot) return
+    const unit = {
+      itemId: item.id,
+      name: item.name,
+      x: spot.x,
+      y: spot.y,
+      width: spot.rotated ? item.length : item.width,
+      length: spot.rotated ? item.width : item.length,
+      layers: 1,
+      rotated: spot.rotated,
+      color: item.color,
+      weight: item.weight,
+    }
+    if (mode === 'manual') {
+      useCalculator.getState().addManualPlacement({ id: crypto.randomUUID(), ...unit })
+      // Keep acting on the stack the user is clicking «−» on.
+      useCalculator.setState({ selectedManualIds: [keepSelectedId] })
+    } else {
+      pinFromPlaced(clampedTripIndex, { ...unit, locked: true })
+      useCalculator.setState({ selectedPinIds: [keepSelectedId], selectedAutoKeys: [] })
+    }
   }
 
   const handleLayerChangePinned = (id: string, delta: number) => {
@@ -1613,7 +1658,7 @@ export default function Home() {
         // `weight` is stored PER-UNIT (existing convention) — divide the
         // composition's total back down.
         const weight = placementTotalWeightKg({ itemId: pin.itemId, layers, composition }, items) / Math.max(1, layers)
-        updatePinned(clampedTripIndex, id, { composition, layers, weight })
+        updatePinned(clampedTripIndex, id, { composition, layers, weight, locked: true })
         return
       }
       const popped = placementPop(pin.composition)
@@ -1627,12 +1672,13 @@ export default function Home() {
           itemId: singleton.itemId,
           layers: singleton.layers,
           weight: catalogItem?.weight,
+          locked: true,
         })
       } else if (popped.composition) {
         const composition = popped.composition
         const layers = placementTotalLayers({ itemId: pin.itemId, layers: 0, composition })
         const weight = placementTotalWeightKg({ itemId: pin.itemId, layers, composition }, items) / Math.max(1, layers)
-        updatePinned(clampedTripIndex, id, { composition, layers, weight })
+        updatePinned(clampedTripIndex, id, { composition, layers, weight, locked: true })
       } else {
         // Defensive only: a composed placement always has >=2 segments, so
         // a single pop can never empty it. If it somehow does, fall back
@@ -1641,88 +1687,55 @@ export default function Home() {
         handleRemovePinned(id)
         return
       }
-      // Stand the freed unit up as its own single-layer placement, same as
-      // the uncomposed "-" below — but sourced from the segment that was
-      // PHYSICALLY on top (popped.freedItemId), which may differ from the
-      // placement's own nominal `itemId`.
-      const freedItem = items.find((it) => it.id === popped.freedItemId)
-      if (freedItem) {
-        const spot = findFreeSpotForItem(freedItem)
-        if (spot) {
-          pinFromPlaced(clampedTripIndex, {
-            itemId: freedItem.id,
-            name: freedItem.name,
-            x: spot.x,
-            y: spot.y,
-            width: spot.rotated ? freedItem.length : freedItem.width,
-            length: spot.rotated ? freedItem.width : freedItem.length,
-            layers: 1,
-            rotated: spot.rotated,
-            color: freedItem.color,
-            weight: freedItem.weight,
-          })
-          useCalculator.setState({ selectedPinIds: [id] })
-        }
-      }
+      // The unit that was physically on top (popped.freedItemId) may differ
+      // from the placement's nominal itemId.
+      standFreedUnit(popped.freedItemId, id)
       return
     }
 
-    if (delta > 0) {
-      const source = findMergeSourcePinned(pin.itemId, id)
-      if (source) {
-        // A merge just restacks two placements already on the deck (or
-        // promotes an already-auto-placed, already-weight-budgeted unit) —
-        // total deck weight doesn't change, so it's not subject to the cap.
-        handleMergePinned(source.id, id)
-        return
-      }
-      // No merge source: this "+" pulls a fresh unit from unplaced
-      // quantity, genuinely adding weight to the deck — that IS subject to
-      // the cap. Manual mode's own "+" button already checked this
-      // (handleLayerChangeManual); pinned had no equivalent at all.
-      if (wouldExceedMaxDeckCargo(pin.weight ?? 0)) {
-        toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-        return
-      }
-    }
-
+    // «+» adds exactly one unit. It used to absorb a whole other stack of
+    // this cargo, while its own tooltip promised one layer.
     const check = checkLayerChange(pin.itemId, pin.layers, delta, id)
+    if (delta > 0) {
+      if (check.ok) {
+        // A unit the auto-packer placed elsewhere — or one that fit nowhere —
+        // moves onto this stack. It only adds weight to this trip if no such
+        // unit was already on it.
+        const freeUnitOnThisTrip = result.placed.some(
+          (p) =>
+            p.itemId === pin.itemId &&
+            !pinnedPlacements.some((pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01)
+        )
+        if (!freeUnitOnThisTrip && wouldExceedMaxDeckCargo(pin.weight ?? 0)) {
+          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+          return
+        }
+        updatePinned(clampedTripIndex, id, { layers: pin.layers + 1, locked: true })
+        return
+      }
+      // Every unit is already in a placement: take one off the lowest other
+      // stack of this cargo on this trip (same deck, so no weight change).
+      const source =
+        pin.layers + 1 <= check.maxPhys
+          ? pinnedPlacements
+              .filter((p) => p.id !== id && p.itemId === pin.itemId && !p.composition && !p.malformed)
+              .sort((a, b) => a.layers - b.layers)[0]
+          : undefined
+      if (!source) {
+        toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+        return
+      }
+      if (source.layers > 1) updatePinned(clampedTripIndex, source.id, { layers: source.layers - 1 })
+      else removePinned(clampedTripIndex, source.id)
+      updatePinned(clampedTripIndex, id, { layers: pin.layers + 1, locked: true })
+      return
+    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
     }
-    updatePinned(clampedTripIndex, id, { layers: pin.layers + delta })
-    // Popping a layer off just frees one unit of quantity for the
-    // auto-packer's generic remaining-quantity pool — and that pool's
-    // default heuristic re-stacks same-item leftovers up to their physical
-    // layer limit. So a second "-" click elsewhere would silently restack
-    // its freed unit onto this one instead of standing apart. Lock the
-    // freed unit down immediately as its own single-layer pin on open deck
-    // space, so it always lands as an independent container.
-    if (delta < 0) {
-      const item = items.find((it) => it.id === pin.itemId)
-      if (item) {
-        const spot = findFreeSpotForItem(item)
-        if (spot) {
-          pinFromPlaced(clampedTripIndex, {
-            itemId: item.id,
-            name: item.name,
-            x: spot.x,
-            y: spot.y,
-            width: spot.rotated ? item.length : item.width,
-            length: spot.rotated ? item.width : item.length,
-            layers: 1,
-            rotated: spot.rotated,
-            color: item.color,
-            weight: item.weight,
-          })
-          // pinFromPlaced selects the newly freed unit — keep the selection
-          // on the stack the user is actually clicking "-" on instead, so
-          // repeated clicks keep acting on it.
-          useCalculator.setState({ selectedPinIds: [id] })
-        }
-      }
-    }
+    updatePinned(clampedTripIndex, id, { layers: pin.layers - 1, locked: true })
+    standFreedUnit(pin.itemId, id)
   }
 
   // Delete a pinned placement from the deck. Unlike unpinning, this also
@@ -1762,22 +1775,6 @@ export default function Home() {
   // placement's existence.
   const handleTogglePinLock = (id: string, locked: boolean) => {
     updatePinned(clampedTripIndex, id, { locked })
-  }
-
-  // Manual-mode equivalent of findMergeSourcePinned — every placement here
-  // is already a manual placement (no separate "still auto-placed" pool to
-  // fall back to), so this just looks for another one of the same item.
-  // Round 21 corrective pass (reasoning updated after Round 24): same
-  // `!m.composition` guard as findMergeSourcePinned above, same reason —
-  // never offer a composed placement through the single-unit "+" path,
-  // since handleMergeManual's drag-to-merge (composition-aware since Round
-  // 24) is a deliberately different, bulk-absorption operation.
-  const findMergeSourceManual = (itemId: string, excludeId: string): { id: string } | null => {
-    // Round 29 corrective pass: same `!m.malformed` guard as
-    // findMergeSourcePinned above, same reason — never offer a Tier-2
-    // malformed placement as a "+" merge source.
-    const other = manualPlacements.find((m) => m.id !== excludeId && m.itemId === itemId && !m.composition && !m.malformed)
-    return other ? { id: other.id } : null
   }
 
   const handleLayerChangeManual = (id: string, delta: number) => {
@@ -1832,83 +1829,46 @@ export default function Home() {
         removeManualPlacement(id)
         return
       }
-      const freedItem = items.find((it) => it.id === popped.freedItemId)
-      if (freedItem) {
-        const spot = findFreeSpotForItem(freedItem)
-        if (spot) {
-          useCalculator.getState().addManualPlacement({
-            id: crypto.randomUUID(),
-            itemId: freedItem.id,
-            name: freedItem.name,
-            x: spot.x,
-            y: spot.y,
-            width: spot.rotated ? freedItem.length : freedItem.width,
-            length: spot.rotated ? freedItem.width : freedItem.length,
-            layers: 1,
-            rotated: spot.rotated,
-            color: freedItem.color,
-            weight: freedItem.weight,
-          })
-          useCalculator.setState({ selectedManualIds: [id] })
-        }
-      }
+      standFreedUnit(popped.freedItemId, id)
       return
     }
 
     const current = Math.max(1, mp.layers)
 
-    // Same "+" logic as handleLayerChangePinned: grab an existing placement
-    // of this item off the deck and stack it, instead of only pulling from
-    // unplaced quantity.
-    if (delta > 0) {
-      const source = findMergeSourceManual(mp.itemId, id)
-      if (source) {
-        // A merge just restacks two placements already on the deck — total
-        // deck weight doesn't change, so it's not subject to the cargo cap.
-        handleMergeManual(source.id, id)
-        return
-      }
-      // No merge source: this "+" pulls a fresh unit from unplaced quantity,
-      // genuinely adding weight to the deck — that IS subject to the cap.
-      if (wouldExceedMaxDeckCargo(mp.weight ?? 0)) {
-        toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-        return
-      }
-    }
-
+    // «+» adds exactly one unit: one not placed yet if there is one (that
+    // adds weight to the deck), else one off the lowest other stack of this
+    // cargo. It used to merge a whole other stack.
     const check = checkLayerChange(mp.itemId, current, delta, id)
+    if (delta > 0) {
+      if (check.ok) {
+        if (wouldExceedMaxDeckCargo(mp.weight ?? 0)) {
+          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+          return
+        }
+        updateManualPlacement(id, { layers: current + 1 })
+        return
+      }
+      const source =
+        current + 1 <= check.maxPhys
+          ? manualPlacements
+              .filter((m) => m.id !== id && m.itemId === mp.itemId && !m.composition && !m.malformed)
+              .sort((a, b) => Math.max(1, a.layers) - Math.max(1, b.layers))[0]
+          : undefined
+      if (!source) {
+        toast.warning(check.reason ?? 'Невозможно изменить ярусы')
+        return
+      }
+      if (Math.max(1, source.layers) > 1) updateManualPlacement(source.id, { layers: Math.max(1, source.layers) - 1 })
+      else removeManualPlacement(source.id)
+      updateManualPlacement(id, { layers: current + 1 })
+      return
+    }
     if (!check.ok) {
       toast.warning(check.reason ?? 'Невозможно изменить ярусы')
       return
     }
-    updateManualPlacement(id, { layers: current + delta })
-    // Same "-" logic as handleLayerChangePinned: stand the freed unit up as
-    // its own placement on open deck space instead of letting it vanish.
-    if (delta < 0) {
-      const item = items.find((it) => it.id === mp.itemId)
-      if (item) {
-        const spot = findFreeSpotForItem(item)
-        if (spot) {
-          useCalculator.getState().addManualPlacement({
-            id: crypto.randomUUID(),
-            itemId: item.id,
-            name: item.name,
-            x: spot.x,
-            y: spot.y,
-            width: spot.rotated ? item.length : item.width,
-            length: spot.rotated ? item.width : item.length,
-            layers: 1,
-            rotated: spot.rotated,
-            color: item.color,
-            weight: item.weight,
-          })
-          // addManualPlacement doesn't change selection — explicitly keep it
-          // on the placement the user is clicking "-" on, matching the pinned
-          // version's behavior (repeated clicks keep acting on the same one).
-          useCalculator.setState({ selectedManualIds: [id] })
-        }
-      }
-    }
+    updateManualPlacement(id, { layers: current - 1 })
+    standFreedUnit(mp.itemId, id)
   }
 
   // Round 24 (merge switch-on): drag one placement onto another — target
@@ -2114,10 +2074,22 @@ export default function Home() {
       layers: plan.layers,
       weight: plan.weight,
       rotationLocked: plan.rotationLocked,
+      locked: true,
     })
     removePinned(clampedTripIndex, dragged.id)
     toast.success(`Объединено: ${plan.layers} яр. груза «${target.name}»`)
   }
+
+  useEffect(function runPendingPinAction() {
+    const pending = pendingPinActionRef.current
+    if (!pending || !pinnedPlacements.some((p) => p.id === pending.id)) return
+    pendingPinActionRef.current = null
+    const { id, action } = pending
+    if (action.kind === 'rotate') handleRotatePinned(id)
+    else if (action.kind === 'layers') handleLayerChangePinned(id, action.delta)
+    else if (action.kind === 'remove') handleRemovePinned(id)
+    else nudgePlacement(id, action.dx, action.dy)
+  })
 
   const handleMergeManual = (draggedId: string, targetId: string) => {
     if (draggedId === targetId) return
@@ -2187,6 +2159,7 @@ export default function Home() {
       // there was no way back to it after switching back to AUTO.
       pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [clampedTripIndex]: [] },
       selectedPinIds: [],
+      selectedAutoKeys: [],
       activeStampId: null,
       pendingPresetStamp: null,
       activePresetCategory: null,
@@ -2206,6 +2179,7 @@ export default function Home() {
         pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: [] },
         manualPlacements: [],
         selectedPinIds: [],
+        selectedAutoKeys: [],
         selectedManualIds: [],
         activeStampId: null,
         pendingPresetStamp: null,
@@ -2235,6 +2209,9 @@ export default function Home() {
       composition: m.composition,
       // Keeps a quarantined placement quarantined — see isQuarantined.
       malformed: m.malformed,
+      // «Оставить позиции»: the user chose these places by hand — they stay
+      // «Закреплён» (lock badge, kept by «Автораспределение»).
+      locked: true,
     }))
     const matches = matchLashingCarryover(manualPlacements, newPinned)
     useCalculator.setState({
@@ -2253,6 +2230,7 @@ export default function Home() {
       pinnedPlacementsByTrip: { ...pinnedPlacementsByTrip, [activeTripIndex]: newPinned },
       manualPlacements: [],
       selectedPinIds: [],
+      selectedAutoKeys: [],
       activeStampId: null,
       pendingPresetStamp: null,
       activePresetCategory: null,
@@ -2344,15 +2322,18 @@ export default function Home() {
         // by the time it gets there, which it wasn't before this fix.
         composition: p.composition,
       }))
-    // Warn user if pinned placements (across all trips) will be cleared —
-    // excluding the frozen ones above, which specifically will NOT be reset
-    // (in auto mode they're a subset of pinnedPlacementsByTrip; in manual
-    // mode they come from manualPlacements, which was never part of this
-    // count to begin with, so no adjustment needed there).
-    const totalPinnedAllTrips = Object.values(pinnedPlacementsByTrip).reduce((s, list) => s + list.length, 0)
-    const totalPinned = mode === 'auto' ? totalPinnedAllTrips - frozenPinned.length : totalPinnedAllTrips
-    if (totalPinned > 0) {
-      toast.warning(`Незакреплённые размещения (${totalPinned}) будут переставлены заново`)
+    // In auto mode an unlocked pin is the packer's own layout (an applied
+    // variant, a mode switch), not something the user placed — re-arranging
+    // it is what this button is for, so there's nothing to warn about. (The
+    // old warning counted those internal pins, and every trip's, though
+    // only this trip is repacked.) In manual mode every placement is the
+    // user's own: say how many get re-arranged.
+    if (mode === 'manual') {
+      const frozenIds = new Set(frozenPinned.map((p) => p.id))
+      const reshuffled = manualPlacements.filter((p) => !frozenIds.has(p.id) && !isQuarantined(p)).length
+      if (reshuffled > 0) {
+        toast.warning(`Ручные размещения (${reshuffled}) будут переставлены заново`)
+      }
     }
     if (frozenPinned.length > 0) {
       toast.info(`Закреплённый груз, зоны отступа и точки крепления (${frozenPinned.length}) останутся на месте`)
@@ -2463,6 +2444,7 @@ export default function Home() {
         // nothing to do with any AUTO trip and shouldn't destroy them.
         pinnedPlacementsByTrip: { ...s.pinnedPlacementsByTrip, [clampedTripIndex]: [] },
         selectedPinIds: [],
+        selectedAutoKeys: [],
       })
       useCalculator.getState().remapLashingPointsForRedistribute(matches)
     } else {
@@ -2495,6 +2477,7 @@ export default function Home() {
         },
         manualPlacements: [],
         selectedPinIds: [],
+        selectedAutoKeys: [],
       })
       useCalculator.getState().remapLashingPointsForRedistribute(matches)
     }
@@ -2707,6 +2690,8 @@ export default function Home() {
           zoneLoads={zoneLoads}
           onUndo={undoCalculator}
           onRedo={redoCalculator}
+          selectedAutoStack={selectedAutoStack}
+          onPatchAutoStack={patchAutoStack}
         />
 
         {/* Main content */}
@@ -2782,7 +2767,7 @@ export default function Home() {
                       pinnedPlacements={pinnedPlacements}
                       onSelectManual={toggleManualSelection}
                       onSelectPin={togglePinSelection}
-                      onPinInPlace={(p) => pinFromPlaced(clampedTripIndex, p)}
+                      onSelectAuto={(p, additive) => toggleAutoSelection(autoPlacementKey(p), additive)}
                     />
                   ) : (
                   <DeckVisualization
@@ -2890,7 +2875,7 @@ export default function Home() {
                       if (mode === 'manual') {
                         useCalculator.getState().addManualPlacement(placement)
                       } else {
-                        pinFromPlaced(clampedTripIndex, placement)
+                        pinFromPlaced(clampedTripIndex, { ...placement, locked: true })
                       }
                       // Deliberately NOT calling setActiveStamp(itemId) here.
                       // pendingPresetStamp stays armed after this first
@@ -2919,6 +2904,10 @@ export default function Home() {
                     manualPlacements={manualPlacements}
                     pinnedPlacements={pinnedPlacements}
                     selectedPinIds={selectedPinIds}
+                    selectedAutoKeys={selectedAutoKeys}
+                    onToggleAutoSelection={toggleAutoSelection}
+                    onAutoStackAction={actOnAutoStack}
+                    onUnpin={(id) => removePinned(clampedTripIndex, id)}
                     onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
                     onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
                     onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}

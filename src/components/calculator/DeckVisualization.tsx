@@ -47,7 +47,7 @@ import {
   polygonArea,
 } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
-import { UNIT_LABEL } from '@/store/calculator'
+import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
@@ -96,16 +96,30 @@ interface DeckVisualizationProps {
   // Interactive auto mode
   pinnedPlacements: PinnedPlacement[]
   selectedPinIds: string[]
-  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number }) => string | undefined
+  // Auto-placed stacks selected without pinning them (see the store's
+  // selectedAutoKeys / autoPlacementKey).
+  selectedAutoKeys?: string[]
+  onToggleAutoSelection?: (key: string, additive: boolean) => void
+  // A button on a selected auto-placed stack changes it, so the page pins it
+  // (locked) and then performs the action on the pin.
+  onAutoStackAction?: (
+    placed: PlacedItem,
+    action: { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' } | { kind: 'nudge'; dx: number; dy: number }
+  ) => void
+  // `locked`: the position is the user's choice (lock badge, kept by
+  // «Автораспределение») — set for every pin a user action creates.
+  onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number; locked?: boolean }) => string | undefined
   onUpdatePinned?: (id: string, x: number, y: number) => void
   onUpdatePinnedClearance?: (id: string, margin: ClearanceMargin) => void
   onMergePinned?: (draggedId: string, targetId: string) => void
   onRemovePinned?: (id: string) => void
-  // Locks/unlocks a pinned placement — a locked one stops responding to
-  // drag until unlocked via the right-click "Закрепить"/"Открепить" menu.
-  // Purely a drag gate; unlike onRemovePinned it never touches
-  // item.quantity or the placement's existence.
+  // Marks a pinned placement as the user's own choice («Закреплён»: lock
+  // badge, kept by «Автораспределение»). No longer a drag gate — a fixed
+  // stack can still be dragged, and stays fixed where it's dropped.
   onTogglePinLock?: (id: string, locked: boolean) => void
+  // «Вернуть в авто»: drops the pin, the auto-packer places the cargo again.
+  // Unlike onRemovePinned it never touches item.quantity.
+  onUnpin?: (id: string) => void
   onRotatePinned?: (id: string) => void
   onTogglePinSelection?: (id: string, additive: boolean) => void
   onClearSelection?: () => void
@@ -178,6 +192,10 @@ interface DeckVisualizationProps {
   onSetDrawingRestrictionZoneFreeform?: (v: boolean) => void
 }
 
+// A press moves cargo only once the pointer has travelled this far (CSS px):
+// a click that wobbles a pixel or two is still a click, not a drag.
+const DRAG_THRESHOLD_PX = 4
+
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
   result,
   unit,
@@ -210,6 +228,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   manualPlacements,
   pinnedPlacements,
   selectedPinIds,
+  selectedAutoKeys = [],
+  onToggleAutoSelection,
+  onAutoStackAction,
+  onUnpin,
   onPinPlaced,
   onUpdatePinned,
   onUpdatePinnedClearance,
@@ -581,9 +603,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     id: string
     startMouse: { x: number; y: number }
     startPlace: { x: number; y: number }
+    moved?: boolean
   } | null>(null)
+  // `id` is null while the pressed stack is still purely auto-placed: it only
+  // becomes a pin once the pointer has really moved (see DRAG_THRESHOLD_PX).
   const [pinDrag, setPinDrag] = useState<{
-    id: string
+    id: string | null
+    placed: PlacedItem
+    startClient: { x: number; y: number }
     startDeck: { x: number; y: number }
     startPlace: { x: number; y: number }
     moved: boolean
@@ -736,6 +763,41 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   }, [manualPlacements, pinnedPlacements, separationRules, categoryByItemId])
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
+  // With a click-to-act tool armed, a press belongs to the tool alone — it
+  // used to also select (and in auto mode pin) the cargo or deck object under
+  // the cursor, and start dragging it. A stamp is the one exception for cargo
+  // (not counted here): it can't place on top of a stack, and placing a unit
+  // and then dragging it into position is the manual-mode routine.
+  const deckToolArmed =
+    !!placingLashingPoint ||
+    !!placingPowerSocket ||
+    !!placingAnnotation ||
+    !!drawingCustomShape ||
+    !!editingDeckOutline ||
+    !!drawingRestrictionShape ||
+    !!drawingRestrictionZoneFreeform ||
+    rulerMode ||
+    editingBackgroundImage ||
+    bgCalibrateMode
+  // Zones, labels and sockets: a stamp takes the press there too — cargo is
+  // placed inside a load zone all the time.
+  const anyToolArmed = !!activeStamp || deckToolArmed
+  // Pins an auto-placed stack as the user's choice — for actions that are
+  // one (drag, layers, rotate, lashing, «Закрепить»), never for a selection.
+  const pinPlacedStack = (placed: PlacedItem): string | undefined =>
+    onPinPlaced?.({
+      itemId: placed.itemId,
+      name: placed.name,
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      length: placed.length,
+      layers: placed.layers,
+      rotated: placed.rotated,
+      color: placed.color,
+      weight: placed.weight,
+      locked: true,
+    })
 
   const edgePad = boardOffset
 
@@ -1032,12 +1094,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   ): { placementId: string; itemId: string; cornerX: number; cornerY: number } | null => {
     for (const p of renderedItems) {
       if (deckX < p.x || deckX > p.x + p.width || deckY < p.y || deckY > p.y + p.length) continue
+      // A lashing ties to a placement record. An auto-placed stack gets one
+      // here — tying it down is the user's explicit choice of its position,
+      // so it becomes a locked pin. (It used to be pinned by the press that
+      // came before this click, as a side effect of merely selecting it.)
       const placementId =
         mode === 'manual'
           ? p.manualId
-          : pinnedPlacements.find(
+          : (pinnedPlacements.find(
               (pin) => pin.itemId === p.itemId && Math.abs(pin.x - p.x) < 0.01 && Math.abs(pin.y - p.y) < 0.01
-            )?.id
+            )?.id ?? (isInteractiveAuto ? pinPlacedStack(p) : undefined))
       if (!placementId) return null
       const corners = [
         { x: p.x, y: p.y },
@@ -1417,6 +1483,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     mp: ManualPlacement
   ) => {
     if (mode !== 'manual') return
+    if (deckToolArmed) return
     // Right-click is handled entirely by the item's onContextMenu instead —
     // don't let it toggle selection or start a drag.
     if (e.button !== 0) return
@@ -1436,20 +1503,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Auto-mode click on a placed item. Clicking (or dragging) ANY item —
-  // pinned or still purely algorithmic — selects it and lets it be moved,
-  // exactly like manual mode; this is deliberately NOT gated behind a
-  // separate "pin" ceremony any more. "Закрепить"/"Открепить" (see
-  // handleAutoContextMenu) is a SEPARATE, purely explicit lock toggle: a
-  // locked item shows a lock badge and stops responding to drag until
-  // unlocked via the right-click menu — "I moved it, then locked it if I
-  // wanted to, or unlocked it to move it again" is exactly the workflow
-  // requested. An item that was never touched still needs a real
-  // placement record to become draggable at all (that's what "pin" means
-  // structurally in this codebase — see PinnedPlacement) — creating one
-  // on first touch is invisible/inconsequential to the user as long as it
-  // isn't ALSO locked, which is the actual thing that used to feel
-  // "sticky"/permanent about touching cargo.
+  // Auto-mode press on a placed item: selects it and arms a drag. Selecting
+  // never changes saved data — a press used to pin the stack on the spot,
+  // after which the auto-packer stopped placing it, with nothing on screen
+  // to say so. A purely auto-placed stack is selected by its
+  // autoPlacementKey and only becomes a (locked) pin once it's really
+  // dragged (handlePointerMove) or edited.
   const handlePinPointerDown = (
     e: React.PointerEvent,
     placed: PlacedItem,
@@ -1457,38 +1516,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   ) => {
     if (!isInteractiveAuto) return
     if (e.button !== 0) return
+    if (deckToolArmed) return
     e.stopPropagation()
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
-    let pinId = existingPin?.id
-    if (existingPin?.locked) {
-      // Locked: select only, no drag — must be unlocked via the
-      // right-click menu first.
-      onTogglePinSelection?.(existingPin.id, additive)
-      return
-    }
-    if (!pinId) {
-      pinId = onPinPlaced({
-        itemId: placed.itemId,
-        name: placed.name,
-        x: placed.x,
-        y: placed.y,
-        width: placed.width,
-        length: placed.length,
-        layers: placed.layers,
-        rotated: placed.rotated,
-        color: placed.color,
-        weight: placed.weight,
-      })
-    } else if (!additive) {
-      onTogglePinSelection?.(pinId, false)
-    }
-    if (additive && pinId) {
-      onTogglePinSelection?.(pinId, true)
-    }
+    if (existingPin) onTogglePinSelection?.(existingPin.id, additive)
+    else onToggleAutoSelection?.(autoPlacementKey(placed), additive)
+    if (additive) return
     const startDeck = screenToDeck(e.clientX, e.clientY)
-    if (!startDeck || !pinId) return
+    if (!startDeck) return
     setPinDrag({
-      id: pinId,
+      id: existingPin?.id ?? null,
+      placed,
+      startClient: { x: e.clientX, y: e.clientY },
       startDeck,
       startPlace: { x: placed.x, y: placed.y },
       moved: false,
@@ -1507,6 +1546,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (!isInteractiveAuto) return
     e.preventDefault()
     e.stopPropagation()
+    if (deckToolArmed) return
     if (existingPin?.locked) {
       setItemContextMenu({ x: e.clientX, y: e.clientY, kind: 'locked', id: existingPin.id })
     } else {
@@ -1705,6 +1745,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       }
     }
     if (dragState && onMoveManual) {
+      if (!dragState.moved) {
+        if (Math.hypot(e.clientX - dragState.startMouse.x, e.clientY - dragState.startMouse.y) < DRAG_THRESHOLD_PX) return
+        setDragState((d) => (d ? { ...d, moved: true } : d))
+      }
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
       const startDeck = screenToDeck(dragState.startMouse.x, dragState.startMouse.y)
@@ -1927,15 +1971,30 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       onUpdateAnnotation(annotationDrag.id, { x: nx, y: ny })
     }
     if (pinDrag && onUpdatePinned) {
+      let pinId = pinDrag.id
+      if (!pinDrag.moved) {
+        if (Math.hypot(e.clientX - pinDrag.startClient.x, e.clientY - pinDrag.startClient.y) < DRAG_THRESHOLD_PX) return
+        // The first real movement is the user choosing this stack's place:
+        // only now does a purely auto-placed stack become a pin, and any
+        // pin being moved becomes «Закреплён».
+        if (!pinId) {
+          pinId = pinPlacedStack(pinDrag.placed) ?? null
+          if (!pinId) return
+        } else if (!pinnedPlacements.find((p) => p.id === pinId)?.locked) {
+          onTogglePinLock?.(pinId, true)
+        }
+        const id = pinId
+        setPinDrag((d) => (d ? { ...d, id, moved: true } : d))
+      }
+      if (!pinId) return
       const pos = screenToDeck(e.clientX, e.clientY)
       if (!pos) return
       const deltaX = pos.x - pinDrag.startDeck.x
       const deltaY = pos.y - pinDrag.startDeck.y
-      if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
-        setPinDrag((d) => (d ? { ...d, moved: true } : d))
-      }
-      const pin = pinnedPlacements.find((p) => p.id === pinDrag.id)
-      if (!pin) return
+      // A pin created on this very move isn't in the props yet — fall back
+      // to the stack it was made from (same id, position and size).
+      const pin: Pick<PinnedPlacement, 'id' | 'itemId' | 'x' | 'y' | 'width' | 'length' | 'rotated' | 'clearanceMargin'> =
+        pinnedPlacements.find((p) => p.id === pinId) ?? { ...pinDrag.placed, id: pinId }
       const nx = pinDrag.startPlace.x + deltaX
       const ny = pinDrag.startPlace.y + deltaY
       const target = onMergePinned
@@ -1969,7 +2028,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
         if (insideDeck && !collidesWithClearance(resolvedTarget, preciseOthers, gap)) {
           setDragPreviewPos({ x: resolved.x, y: resolved.y })
-          scheduleDragCommit(pinDrag.id, resolved.x, resolved.y, 'pin')
+          scheduleDragCommit(pinId, resolved.x, resolved.y, 'pin')
         }
       }
     }
@@ -1981,7 +2040,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // drag while a merge target was active, see handlePointerMove).
     if (mergeTargetId) {
       if (dragState && onMergeManual) onMergeManual(dragState.id, mergeTargetId)
-      else if (pinDrag && onMergePinned) onMergePinned(pinDrag.id, mergeTargetId)
+      else if (pinDrag?.id && onMergePinned) onMergePinned(pinDrag.id, mergeTargetId)
       pendingDrag.current = null
       // Round 30 (contract): a drag that resolves into a merge is NOT an
       // "existing placement settled at a new position" — the dragged
@@ -2100,6 +2159,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   const handleZonePointerDown = (e: React.PointerEvent, zone: LoadZone) => {
     if (!onUpdateLoadZone) return
+    if (anyToolArmed) return
     e.stopPropagation()
     setSelectedZoneId(zone.id)
     setZoneDrag({
@@ -2505,7 +2565,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             .join(' ')
 
           return (
-            <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
+            // Purely visual: clicks fall through to the deck background, so a
+            // click on open deck deselects and a drag there pans — the hatch
+            // used to swallow both.
+            <g pointerEvents="none" clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
               <path d={`${outerPath} ${holePath}`} fillRule="evenodd" fill="url(#free-hatch)" />
             </g>
           )
@@ -2676,6 +2739,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 onPointerDown={
                   interactive
                     ? (e) => {
+                        if (anyToolArmed) return
                         e.stopPropagation()
                         setSelectedRestrictionZoneId(z.id)
                         setRzDrag({
@@ -2743,6 +2807,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                       strokeWidth={1.5}
                       style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
                       onPointerDown={(e) => {
+                        if (anyToolArmed) return
                         e.stopPropagation()
                         setSelectedRestrictionZoneId(z.id)
                         setRzDrag({
@@ -3193,7 +3258,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               )
             : undefined
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
-          const isSelected = isManualSelected || isPinnedSelected
+          const isAutoSelected = !!isInteractiveAuto && !matchingPin && selectedAutoKeys.includes(autoPlacementKey(p))
+          const isSelected = isManualSelected || isPinnedSelected || isAutoSelected
           // Round 22: a composed placement's `composition` (see
           // placementComposition.ts's segmentsOf — degenerates to a single
           // nominal-itemId segment for an ordinary placement, so this is a
@@ -3399,6 +3465,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 onPointerDown={
                   interactive
                     ? (e) => {
+                        if (anyToolArmed) return
                         e.stopPropagation()
                         setSelectedLashingId(pt.id)
                         setLashingAnchorDrag({ id: pt.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: pt.x, y: pt.y } })
@@ -3482,6 +3549,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 onPointerDown={
                   interactive
                     ? (e) => {
+                        if (anyToolArmed) return
                         e.stopPropagation()
                         setSelectedAnnotationId(a.id)
                         setAnnotationDrag({ id: a.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: a.x, y: a.y } })
@@ -3534,6 +3602,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 onPointerDown={
                   interactive
                     ? (e) => {
+                        if (anyToolArmed) return
                         e.stopPropagation()
                         setSelectedSocketId(s.id)
                         setSocketDrag({ id: s.id, startMouse: { x: e.clientX, y: e.clientY }, startPos: { x: s.x, y: s.y } })
@@ -3570,12 +3639,34 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {/* Auto mode: rotate + delete + layer buttons on a selected pinned item (single selection) */}
+        {/* Auto mode: rotate + delete + layer buttons on the single selected
+            stack — a pin, or a stack the auto-packer placed, which the first
+            button that changes it pins (onAutoStackAction). */}
         {isInteractiveAuto &&
-          selectedPinIds.length === 1 &&
           (() => {
-            const pin = pinnedPlacements.find((p) => p.id === selectedPinIds[0])
+            const selectedPin =
+              selectedPinIds.length === 1 && selectedAutoKeys.length === 0
+                ? pinnedPlacements.find((p) => p.id === selectedPinIds[0])
+                : undefined
+            const selectedPlaced =
+              !selectedPin && selectedPinIds.length === 0 && selectedAutoKeys.length === 1
+                ? renderedItems.find(
+                    (p) =>
+                      autoPlacementKey(p) === selectedAutoKeys[0] &&
+                      !pinnedPlacements.some(
+                        (pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
+                      )
+                  )
+                : undefined
+            const pin = selectedPin ?? (selectedPlaced ? { ...selectedPlaced, id: '' } : undefined)
             if (!pin) return null
+            const act = (
+              action: { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' },
+              onPin: (id: string) => void
+            ) => {
+              if (selectedPin) onPin(selectedPin.id)
+              else if (selectedPlaced) onAutoStackAction?.(selectedPlaced, action)
+            }
             const { rcx, rcy, dcx, dcy, lcx, lcy } = controlAnchors(pin.x, pin.y, pin.width, pin.length)
             const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
             const maxPhys = layerInfo?.maxPhys ?? 1
@@ -3589,7 +3680,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onRotatePinned(pin.id)
+                      act({ kind: 'rotate' }, onRotatePinned)
                     }}
                   >
                     <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
@@ -3604,7 +3695,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     onClick={(e) => {
                       e.stopPropagation()
                       if (canInc) {
-                        onLayerChangePinned(pin.id, 1)
+                        act({ kind: 'layers', delta: 1 }, (id) => onLayerChangePinned(id, 1))
                       } else {
                         toast.warning(blockReason ?? `Невозможно добавить ярус`)
                       }
@@ -3623,7 +3714,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     onClick={(e) => {
                       e.stopPropagation()
                       if (pin.layers > 1) {
-                        onLayerChangePinned(pin.id, -1)
+                        act({ kind: 'layers', delta: -1 }, (id) => onLayerChangePinned(id, -1))
                       } else {
                         toast.info('Минимум 1 ярус. Для удаления используйте ✕')
                       }
@@ -3641,7 +3732,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
-                      onRemovePinned(pin.id)
+                      act({ kind: 'remove' }, onRemovePinned)
                     }}
                   >
                     <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
@@ -3854,25 +3945,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               type="button"
               className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
               onClick={() => {
-                let pinId = itemContextMenu.pinId
-                if (!pinId) {
-                  const placed = itemContextMenu.placed
-                  // onPinPlaced (pinFromPlaced in the store) already selects
-                  // the freshly-created pin as a side effect.
-                  pinId = onPinPlaced?.({
-                    itemId: placed.itemId,
-                    name: placed.name,
-                    x: placed.x,
-                    y: placed.y,
-                    width: placed.width,
-                    length: placed.length,
-                    layers: placed.layers,
-                    rotated: placed.rotated,
-                    color: placed.color,
-                    weight: placed.weight,
-                  })
-                }
-                if (pinId) onTogglePinLock?.(pinId, true)
+                // pinPlacedStack (pinFromPlaced in the store) creates the pin
+                // already locked and selects it; an existing layout pin is
+                // locked and selected the same way.
+                const pinId = itemContextMenu.pinId
+                if (pinId) {
+                  onTogglePinLock?.(pinId, true)
+                  onTogglePinSelection?.(pinId, false)
+                } else pinPlacedStack(itemContextMenu.placed)
                 setItemContextMenu(null)
               }}
             >
@@ -3883,11 +3963,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               type="button"
               className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
               onClick={() => {
-                onTogglePinLock?.(itemContextMenu.id, false)
+                // «Вернуть в авто»: the stack goes back to the auto-packer.
+                // Clearing only the lock left an invisible pin behind.
+                onUnpin?.(itemContextMenu.id)
                 setItemContextMenu(null)
               }}
             >
-              Открепить
+              Вернуть в авто
             </button>
           )}
         </div>
@@ -4277,11 +4359,9 @@ function PlacedRect({
   const strokeWidth = mergeTarget ? 4 : overLoad ? 3 : selected ? 3 : hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
-    : locked
-      ? 'not-allowed'
-      : onPointerDown
-        ? 'grab'
-        : 'pointer'
+    : onPointerDown
+      ? 'grab'
+      : 'pointer'
   // A stacked pipe pyramid's widened footprint (w/h already inflated to
   // the true base-row width — see the render loop above) should visually
   // read as several round pipes side by side, not one solid box that

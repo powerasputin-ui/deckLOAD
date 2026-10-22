@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useCalculator, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay } from './calculator'
+import { useCalculator, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, autoPlacementKey } from './calculator'
 import { packingResultFromManual } from '@/lib/packing'
 import { toast } from 'sonner'
 
@@ -1565,6 +1565,62 @@ describe('calculator store', () => {
 
     s.clearPinned(1)
     expect(useCalculator.getState().selectedPinIds).toEqual([trip0PinId])
+  })
+
+  // Phase 0, group D: selecting is separate from pinning.
+  describe('selection of auto-placed stacks', () => {
+    const key = (x: number) => autoPlacementKey({ itemId: 'a', x, y: 0 })
+
+    it('a plain press selects one auto-placed stack and drops any pin selection', () => {
+      useCalculator.setState({ selectedPinIds: ['p1'], selectedAutoKeys: [key(1), key(2)] })
+      useCalculator.getState().toggleAutoSelection(key(3), false)
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([key(3)])
+      expect(useCalculator.getState().selectedPinIds).toEqual([])
+    })
+
+    it('an additive press toggles one key in and out of the selection', () => {
+      useCalculator.setState({ selectedAutoKeys: [key(1)] })
+      useCalculator.getState().toggleAutoSelection(key(2), true)
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([key(1), key(2)])
+      useCalculator.getState().toggleAutoSelection(key(1), true)
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([key(2)])
+    })
+
+    it('a plain press on an already-selected pin keeps it selected', () => {
+      useCalculator.setState({ selectedPinIds: ['p1'], selectedAutoKeys: [key(1)] })
+      useCalculator.getState().togglePinSelection('p1', false)
+      expect(useCalculator.getState().selectedPinIds).toEqual(['p1'])
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([])
+    })
+
+    it('clearSelection clears pins and auto-placed stacks alike', () => {
+      useCalculator.setState({ selectedPinIds: ['p1'], selectedAutoKeys: [key(1)] })
+      useCalculator.getState().clearSelection()
+      expect(useCalculator.getState().selectedPinIds).toEqual([])
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([])
+    })
+
+    it('pinFromPlaced keeps the user\'s lock and hands the selection over to the new pin', () => {
+      useCalculator.setState({ selectedAutoKeys: [key(1)] })
+      const id = useCalculator.getState().pinFromPlaced(0, {
+        itemId: 'a', name: 'A', x: 1, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000', locked: true,
+      })
+      const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === id)
+      expect(pin?.locked).toBe(true)
+      expect(useCalculator.getState().selectedAutoKeys).toEqual([])
+    })
+
+    it('a pin made from a layout snapshot is not locked', () => {
+      const id = useCalculator.getState().pinFromPlaced(0, {
+        itemId: 'a', name: 'A', x: 1, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000',
+      })
+      const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === id)
+      expect(pin?.locked).toBeUndefined()
+    })
+
+    it('autoPlacementKey is stable across float noise below a millimetre', () => {
+      expect(autoPlacementKey({ itemId: 'a', x: 1.0000001, y: 2 })).toBe(autoPlacementKey({ itemId: 'a', x: 1, y: 2 }))
+    })
   })
 })
 

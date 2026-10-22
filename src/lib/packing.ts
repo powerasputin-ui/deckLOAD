@@ -805,6 +805,10 @@ export interface UnplacedItem {
   // Optional only so hand-built test fixtures stay valid; every producer in
   // this file sets it.
   kind?: 'shortfall' | 'pin' | 'manual'
+  // kind 'pin' only: the rejected pin, so the UI can tell a position the
+  // user chose (locked) from a layout snapshot (an applied variant), whose
+  // units the packer simply places elsewhere.
+  pinId?: string
 }
 
 // Round 29 (malformed-placement contract, corrected — see the R29 audit's
@@ -1645,6 +1649,7 @@ export function packDeck(
         length: pin.length,
         reason: 'Закреплённая позиция превышает доступное количество этого груза',
         kind: 'pin',
+        pinId: pin.id,
       })
       continue
     }
@@ -1662,6 +1667,7 @@ export function packDeck(
         length: pin.length,
         reason: 'Закреплённая позиция вне палубы',
         kind: 'pin',
+        pinId: pin.id,
       })
       continue
     }
@@ -1676,6 +1682,7 @@ export function packDeck(
         length: pin.length,
         reason: 'Закреплённая позиция попадает в зону ограничения',
         kind: 'pin',
+        pinId: pin.id,
       })
       continue
     }
@@ -1700,6 +1707,7 @@ export function packDeck(
         length: pin.length,
         reason: 'Закреплённая позиция пересекается с другим грузом',
         kind: 'pin',
+        pinId: pin.id,
       })
       continue
     }
@@ -1728,6 +1736,7 @@ export function packDeck(
         length: pin.length,
         reason: 'Закреплённая позиция нарушает сепарацию груза',
         kind: 'pin',
+        pinId: pin.id,
       })
       continue
     }

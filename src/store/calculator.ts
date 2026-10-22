@@ -183,6 +183,12 @@ interface CalculatorState {
   pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
   selectedPinIds: string[]
   selectedManualIds: string[]
+  // Auto mode: stacks the packer placed on its own have no record of their
+  // own until something pins them. Selecting one must not create that
+  // record (a click used to pin cargo for good), so they're selected by
+  // autoPlacementKey (item + position) instead. UI state only — never saved,
+  // never part of undo.
+  selectedAutoKeys: string[]
   activeStampId: string | null
   // A preset catalog item armed for click-to-place, before it exists as a
   // real CargoItem. Mutually exclusive with activeStampId — only one stamp
@@ -267,11 +273,14 @@ interface CalculatorState {
   removeManualPlacement: (id: string) => void
   clearManualPlacements: () => void
   // Pinned (interactive auto mode) — all keyed by trip index
-  pinFromPlaced: (tripIndex: number, placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number; stabilityOverride?: StabilityOverride }) => string
+  // `locked` marks a position the user chose (drag, «Закрепить», a stamp
+  // click, a layer/rotate edit): shown with a lock, kept by «Автораспределение».
+  pinFromPlaced: (tripIndex: number, placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number; stabilityOverride?: StabilityOverride; locked?: boolean }) => string
   updatePinned: (tripIndex: number, id: string, patch: Partial<PinnedPlacement>) => void
   removePinned: (tripIndex: number, id: string) => void
   clearPinned: (tripIndex?: number) => void
   togglePinSelection: (id: string, additive: boolean) => void
+  toggleAutoSelection: (key: string, additive: boolean) => void
   selectPins: (ids: string[]) => void
   clearSelection: () => void
   // Manual multi-selection
@@ -890,6 +899,7 @@ export const useCalculator = create<CalculatorState>()(
   manualPlacements: [],
   pinnedPlacementsByTrip: {},
   selectedPinIds: [],
+  selectedAutoKeys: [],
   selectedManualIds: [],
   activeStampId: null,
   pendingPresetStamp: null,
@@ -1518,6 +1528,7 @@ export const useCalculator = create<CalculatorState>()(
       // orphaned too — same fix as removeItem above.
       deck: pruneOrphanLashingPoints(s.deck, [], {}),
       selectedPinIds: [],
+      selectedAutoKeys: [],
       selectedManualIds: [],
     })),
   setSortStrategy: (st) => set({ sortStrategy: st }),
@@ -1550,6 +1561,7 @@ export const useCalculator = create<CalculatorState>()(
       pendingPresetStamp: null,
       activePresetCategory: null,
       selectedPinIds: [],
+      selectedAutoKeys: [],
       selectedManualIds: [],
     })),
   // Also clears placingLashingPoint/placingPowerSocket, not just the other
@@ -1650,10 +1662,12 @@ export const useCalculator = create<CalculatorState>()(
             // so this is a no-op today, but keeps "Закрепить" lossless in
             // general instead of relying on that staying true forever.
             stabilityOverride: placed.stabilityOverride,
+            ...(placed.locked ? { locked: true } : {}),
           },
         ],
       },
       selectedPinIds: [id],
+      selectedAutoKeys: [],
     }))
     return id
   },
@@ -1686,6 +1700,7 @@ export const useCalculator = create<CalculatorState>()(
         return {
           pinnedPlacementsByTrip: {},
           selectedPinIds: [],
+          selectedAutoKeys: [],
           deck: pruneOrphanLashingPoints(s.deck, s.manualPlacements, {}),
         }
       }
@@ -1708,10 +1723,23 @@ export const useCalculator = create<CalculatorState>()(
             : [...s.selectedPinIds, id],
         }
       }
-      return { selectedPinIds: s.selectedPinIds.includes(id) ? [] : [id] }
+      // A plain press selects. It used to toggle an already-selected item
+      // off, so pressing a selected stack to drag it deselected it.
+      return { selectedPinIds: [id], selectedAutoKeys: [] }
+    }),
+  toggleAutoSelection: (key, additive) =>
+    set((s) => {
+      if (additive) {
+        return {
+          selectedAutoKeys: s.selectedAutoKeys.includes(key)
+            ? s.selectedAutoKeys.filter((k) => k !== key)
+            : [...s.selectedAutoKeys, key],
+        }
+      }
+      return { selectedAutoKeys: [key], selectedPinIds: [] }
     }),
   selectPins: (ids) => set({ selectedPinIds: ids }),
-  clearSelection: () => set({ selectedPinIds: [] }),
+  clearSelection: () => set({ selectedPinIds: [], selectedAutoKeys: [] }),
 
   toggleManualSelection: (id, additive) =>
     set((s) => {
@@ -1722,7 +1750,7 @@ export const useCalculator = create<CalculatorState>()(
             : [...s.selectedManualIds, id],
         }
       }
-      return { selectedManualIds: s.selectedManualIds.includes(id) ? [] : [id] }
+      return { selectedManualIds: [id] }
     }),
   clearManualSelection: () => set({ selectedManualIds: [] }),
 
@@ -2113,3 +2141,10 @@ export function redoCalculator() {
 }
 
 export { UNIT_LABEL, PALETTE, convertLength }
+
+// Selection key of a stack the auto-packer placed on its own (see
+// selectedAutoKeys) — item plus position, the same identity pins are
+// matched to placed stacks by.
+export function autoPlacementKey(p: { itemId: string; x: number; y: number }): string {
+  return `${p.itemId}@${p.x.toFixed(3)},${p.y.toFixed(3)}`
+}

@@ -438,12 +438,14 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
       useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 5, maxDeckCargoT: 1 } }) // 1000kg cap
-      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2, height: 1, weight: 500 })
+      // Quantity 3, so the third unit the second "+" asks for exists and it's
+      // the weight cap — not the quantity — that stops it.
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 3, height: 1, weight: 500 })
     })
     const item = useCalculator.getState().items[0]
     act(() => {
-      // ONE placement only — no merge source, so "+" must pull a fresh
-      // unplaced unit and go through the capacity guard.
+      // ONE placement only — no other stack to take a unit from, so "+"
+      // pulls a fresh unplaced unit and goes through the capacity guard.
       useCalculator.getState().addManualPlacement({
         id: 'mA', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 500,
       })
@@ -3331,6 +3333,251 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       expect(placements.length).toBe(1) // merge actually happened
       expect(placements[0].layers).toBe(2)
       expect(toast.warning).not.toHaveBeenCalled()
+    })
+  })
+
+  // Phase 0, group D: selecting never changes saved data; a change the user
+  // makes (drag, layers, rotate, «Закрепить») pins the stack, locked.
+  describe('selection and pinning', () => {
+    const pins = () => Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    const deckSvg = () => document.querySelector('svg.w-full.h-auto')!
+    function setupAuto(extra: Partial<CargoItemLike>[] = []) {
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        useCalculator.getState().addItem({ name: 'BoxA', width: 2, length: 1, quantity: 1, height: 1 })
+        for (const it of extra) useCalculator.getState().addItem({ width: 2, length: 1, quantity: 1, height: 1, ...it })
+      })
+    }
+    type CargoItemLike = { name: string; width: number; length: number; quantity: number; height: number }
+
+    it('a press on an auto-placed stack selects it and pins nothing (L2)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(deckSvg(), { clientX: 100, clientY: 100 })
+      })
+      expect(pins()).toHaveLength(0)
+      expect(useCalculator.getState().selectedAutoKeys).toHaveLength(1)
+    })
+
+    it('a stack becomes a locked pin only once it is really dragged (L2, L7)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerMove(deckSvg(), { clientX: 103, clientY: 100 })
+      })
+      expect(pins()).toHaveLength(0)
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerMove(deckSvg(), { clientX: 100 + 49.6, clientY: 100 })
+        fireEvent.pointerUp(deckSvg(), { clientX: 100 + 49.6, clientY: 100 })
+      })
+      expect(pins()).toHaveLength(1)
+      expect(pins()[0].locked).toBe(true)
+    })
+
+    it('Shift+press adds an auto-placed stack to the selection without pinning (L4)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto([{ name: 'BoxB' }])
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(deckSvg(), { clientX: 100, clientY: 100 })
+        // No pointer capture on an additive press, so the release lands on the
+        // stack itself; a release on the bare deck would clear the selection.
+        fireEvent.pointerDown(placementGroupByLabel('BoxB'), { clientX: 200, clientY: 100, button: 0, shiftKey: true })
+        fireEvent.pointerUp(placementGroupByLabel('BoxB'), { clientX: 200, clientY: 100 })
+      })
+      expect(pins()).toHaveLength(0)
+      expect(useCalculator.getState().selectedAutoKeys).toHaveLength(2)
+    })
+
+    it('pressing a selected pin keeps it selected (L7)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      const item = useCalculator.getState().items[0]
+      let id = ''
+      act(() => {
+        id = useCalculator.getState().pinFromPlaced(0, {
+          itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, locked: true,
+        })
+      })
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(deckSvg(), { clientX: 100, clientY: 100 })
+      })
+      expect(useCalculator.getState().selectedPinIds).toEqual([id])
+    })
+
+    it('with a tool armed, a press on cargo belongs to the tool, not the cargo (L8)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      act(() => {
+        useCalculator.getState().setPlacingPowerSocket(true)
+      })
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerMove(deckSvg(), { clientX: 100 + 49.6, clientY: 100 })
+      })
+      expect(useCalculator.getState().selectedAutoKeys).toHaveLength(0)
+      expect(pins()).toHaveLength(0)
+    })
+
+    // A stamp can't place on top of a stack, and placing a unit then dragging
+    // it into position is the routine — so a stamp leaves cargo presses alone.
+    it('with a stamp armed, a press on cargo still selects it', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      act(() => {
+        useCalculator.getState().setActiveStamp(useCalculator.getState().items[0].id)
+      })
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
+      })
+      expect(useCalculator.getState().selectedAutoKeys).toHaveLength(1)
+      expect(pins()).toHaveLength(0)
+    })
+
+    it('«+» takes exactly one unit off the lowest other stack when every unit is already placed (L6)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 5, height: 1 })
+      })
+      const item = useCalculator.getState().items[0]
+      let a = ''
+      let b = ''
+      let c = ''
+      act(() => {
+        const pin = (x: number, layers: number) =>
+          useCalculator.getState().pinFromPlaced(0, {
+            itemId: item.id, name: item.name, x, y: 1, width: 2, length: 1, layers, rotated: false, color: item.color,
+          })
+        a = pin(1, 1)
+        b = pin(4, 3)
+        c = pin(7, 1)
+        useCalculator.setState({ selectedPinIds: [a] })
+      })
+      fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+      const byId = new Map(pins().map((p) => [p.id, p]))
+      expect(byId.get(a)?.layers).toBe(2)
+      expect(byId.get(a)?.locked).toBe(true)
+      expect(byId.get(b)?.layers).toBe(3)
+      expect(byId.has(c)).toBe(false)
+    })
+
+    it('right-click «Вернуть в авто» drops the pin and keeps the cargo quantity (L20)', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      const item = useCalculator.getState().items[0]
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, locked: true,
+        })
+      })
+      fireEvent.contextMenu(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
+      fireEvent.click(screen.getByRole('button', { name: 'Вернуть в авто' }))
+      expect(pins()).toHaveLength(0)
+      expect(useCalculator.getState().items[0].quantity).toBe(1)
+    })
+
+    it('↻ on a selected auto-placed stack pins it, locked, and rotates it', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(deckSvg(), { clientX: 100, clientY: 100 })
+      })
+      fireEvent.click(document.querySelector('svg circle[fill="#7c3aed"]')!)
+      expect(pins()).toHaveLength(1)
+      expect(pins()[0].locked).toBe(true)
+      expect(pins()[0].rotated).toBe(true)
+    })
+
+    // A click used to pin the stack, which is what made the sidebar's
+    // «Крепление груза» see it; a selected auto-placed stack must still be
+    // reachable there.
+    it('«Крепление груза» works on a selected auto-placed stack and pins it on the first change', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
+      })
+      fireEvent.click(screen.getByRole('button', { name: /^Крепление груза/ }))
+      expect(screen.getByText('Режим для «BoxA»')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Точки крепления' }))
+      expect(pins()).toHaveLength(0)
+      fireEvent.click(screen.getByRole('button', { name: 'Зона отступа' }))
+      expect(pins()).toHaveLength(1)
+      expect(pins()[0].locked).toBe(true)
+      expect(pins()[0].clearanceMargin).toEqual({ top: 1, right: 1, bottom: 1, left: 1 })
+      expect(useCalculator.getState().selectedPinIds).toEqual([pins()[0].id])
+    })
+
+    // An unlocked pin is the packer's own layout, invisible to the user, so
+    // a second «Автораспределение» used to warn about «Незакреплённые
+    // размещения» the user never placed.
+    it('a repeated «Автораспределение» in auto mode does not warn about the packer\'s own layout', () => {
+      render(<Home />)
+      const clock = vi.spyOn(Date, 'now')
+      try {
+        clock.mockReturnValue(1_000_000)
+        fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+        expect(pins().length).toBeGreaterThan(0)
+        expect(pins().every((p) => !p.locked)).toBe(true)
+        clock.mockReturnValue(1_002_000)
+        fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+        expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('будут переставлены'))
+      } finally {
+        clock.mockRestore()
+      }
+    })
+
+    it('in manual mode «Автораспределение» says how many hand placements get re-arranged', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      const item = useCalculator.getState().items[0]
+      const base = { itemId: item.id, name: item.name, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color }
+      act(() => {
+        useCalculator.setState({
+          mode: 'manual',
+          items: [{ ...item, quantity: 2 }],
+          manualPlacements: [{ ...base, id: 'm1', x: 1 }, { ...base, id: 'm2', x: 4 }],
+        })
+      })
+      fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+      expect(toast.warning).toHaveBeenCalledWith('Ручные размещения (2) будут переставлены заново')
+    })
+
+    it('only a position the user chose (locked pin) is red when the packer rejects it', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setupAuto()
+      const item = useCalculator.getState().items[0]
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, {
+          itemId: item.id, name: item.name, x: 20, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
+        })
+      })
+      expect(screen.queryByText(/Закреплённая позиция вне палубы/)).toBeNull()
+      act(() => {
+        const id = pins()[0].id
+        useCalculator.getState().updatePinned(0, id, { locked: true })
+      })
+      expect(screen.getByText(/Закреплённая позиция вне палубы/)).toBeTruthy()
     })
   })
 })

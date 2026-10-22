@@ -34,11 +34,11 @@ interface Deck3DViewProps {
   pinnedPlacements: PinnedPlacement[]
   onSelectManual?: (id: string, additive: boolean) => void
   onSelectPin?: (id: string, additive: boolean) => void
-  // Auto mode only: clicking a mesh that isn't pinned yet (just placed by the
-  // algorithm) pins it at its current position — the same "click to pin in
-  // place" action the 2D view already does via onPinPlaced — so any visible
-  // cargo becomes selectable/movable in 3D, not just already-pinned pieces.
-  onPinInPlace?: (p: PinData) => void
+  // Auto mode only: clicking a mesh the algorithm placed (no pin yet)
+  // selects it, same as in 2D. It used to pin it on the spot — including at
+  // the end of a camera orbit that started on it, since a 3D click has no
+  // movement threshold — after which auto mode stopped placing that cargo.
+  onSelectAuto?: (p: PinData, additive: boolean) => void
 }
 
 const SQRT3 = Math.sqrt(3)
@@ -54,9 +54,9 @@ const PIPE_CAP_COLOR = '#cbd5e1'
 // 3D snapshot of the current layout — camera rotate/zoom only, no editing.
 // Clicking a mesh still updates the shared selection store (so switching to
 // 2D shows it already selected there, ready for the arrow-key/Space
-// shortcuts or drag), and an auto-mode click on a not-yet-pinned item pins
-// it in place first (mirroring the 2D view's click-to-pin), but nothing in
-// 3D itself moves/rotates cargo or shows a selection highlight.
+// shortcuts or drag). Like in 2D, a click only selects — it never pins a
+// not-yet-pinned item. Nothing in 3D itself moves/rotates cargo or shows a
+// selection highlight.
 export default function Deck3DView({
   result,
   deckWidth,
@@ -67,7 +67,7 @@ export default function Deck3DView({
   pinnedPlacements,
   onSelectManual,
   onSelectPin,
-  onPinInPlace,
+  onSelectAuto,
 }: Deck3DViewProps) {
   // Fullscreen toggle — expands this specific container (not the whole
   // page) via the browser's real Fullscreen API, so OrbitControls/canvas
@@ -373,18 +373,16 @@ export default function Deck3DView({
   }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements])
 
   const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (!placementId) {
-      // Auto mode, not pinned yet — pin it where it already sits (mirrors
-      // the 2D view's click-to-pin behaviour) so it becomes selectable and
-      // movable instead of staying a dead click.
+      // Auto mode, not pinned yet — select it without pinning (see onSelectAuto).
       if (pinData) {
         e.stopPropagation()
-        onPinInPlace?.(pinData)
+        onSelectAuto?.(pinData, additive)
       }
       return
     }
     e.stopPropagation()
-    const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (mode === 'manual') onSelectManual?.(placementId, additive)
     else onSelectPin?.(placementId, additive)
   }

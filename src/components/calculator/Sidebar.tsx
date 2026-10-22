@@ -61,12 +61,13 @@ import {
   type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
+  type PlacedItem,
   type ClearanceMargin,
   type ZoneLoadCheck,
   type WireRopeType,
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
-import { segmentLashingInputs } from '@/lib/placementComposition'
+import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
@@ -102,6 +103,16 @@ interface SidebarProps {
   // Every load zone's live density (t/m²), whether or not it currently
   // exceeds its limit — see LoadZonesSection for why this matters.
   zoneLoads?: ZoneLoadCheck[]
+  // A purely auto-placed stack selected on the deck (no pin yet): «Крепление
+  // груза» shows it like a pin, and onPatchAutoStack pins it on the first change.
+  selectedAutoStack?: PlacedItem
+  onPatchAutoStack?: (placed: PlacedItem, patch: PlacementPatch) => void
+}
+
+type PlacementPatch = {
+  clearanceMargin?: ClearanceMargin
+  lashingWireType?: WireRopeType
+  lashingJustification?: string
 }
 
 // No real vessel's cargo deck comes anywhere close to this — the largest
@@ -123,6 +134,8 @@ export function Sidebar({
   onUndo,
   onRedo,
   zoneLoads,
+  selectedAutoStack,
+  onPatchAutoStack,
 }: SidebarProps) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -382,7 +395,7 @@ export function Sidebar({
         <SeparationRulesSection />
 
         {/* Lashing/securing points (visual markers) */}
-        <LashingPointsSection />
+        <LashingPointsSection autoStack={selectedAutoStack} onPatchAutoStack={onPatchAutoStack} />
 
         {/* Ship stability calculator (planning/indicative — see StabilityPanel's disclaimer) */}
         <VesselStabilitySection />
@@ -848,7 +861,13 @@ function SeparationRulesSection() {
   )
 }
 
-function LashingPointsSection() {
+function LashingPointsSection({
+  autoStack,
+  onPatchAutoStack,
+}: {
+  autoStack?: PlacedItem
+  onPatchAutoStack?: (placed: PlacedItem, patch: PlacementPatch) => void
+}) {
   const points = useCalculator((s) => s.deck.lashingPoints ?? EMPTY_POINTS)
   const items = useCalculator((s) => s.items)
   const removeLashingPoint = useCalculator((s) => s.removeLashingPoint)
@@ -885,26 +904,33 @@ function LashingPointsSection() {
       }
     }
   }
-  const selectedPlacement = selectedManual ?? selectedPin
+  const selectedPlacement:
+    | (ComposablePlacement & {
+        id?: string
+        name: string
+        clearanceMargin?: ClearanceMargin
+        lashingWireType?: WireRopeType
+        lashingJustification?: string
+      })
+    | undefined =
+    selectedManual ?? selectedPin ?? (autoStack && { itemId: autoStack.itemId, name: autoStack.name, layers: autoStack.layers })
   // Whether "zone" mode is active must NOT depend on the current value being
   // nonzero — while typing a value like "0,4", the field passes through an
   // intermediate 0, and if that briefly counted as "back to points mode" the
   // whole toggle (and the input itself) would flicker away mid-edit. Mode is
   // tracked by whether a margin is set AT ALL, not by its size.
   const selectedHasClearance = selectedPlacement?.clearanceMargin !== undefined
-  const updateSelectedPlacement = (patch: {
-    clearanceMargin?: ClearanceMargin
-    lashingWireType?: WireRopeType
-    lashingJustification?: string
-  }) => {
+  const updateSelectedPlacement = (patch: PlacementPatch) => {
     if (selectedManual) updateManualPlacement(selectedManual.id, patch)
     else if (selectedPin && selectedPinTrip !== undefined) updatePinned(selectedPinTrip, selectedPin.id, patch)
+    else if (autoStack) onPatchAutoStack?.(autoStack, patch)
   }
   const updateClearanceSide = (side: keyof ClearanceMargin, v: number) => {
     const current = selectedPlacement?.clearanceMargin ?? { top: 0, right: 0, bottom: 0, left: 0 }
     updateSelectedPlacement({ clearanceMargin: { ...current, [side]: Math.max(0, v) } })
   }
-  const selectedPointsCount = selectedPlacement
+  // An auto-placed stack has no id yet, so nothing is attached to it.
+  const selectedPointsCount = selectedPlacement?.id
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
     : 0
   const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
@@ -956,7 +982,8 @@ function LashingPointsSection() {
                 size="sm"
                 variant={!selectedHasClearance ? 'default' : 'outline'}
                 className="h-6 text-[10px] px-1"
-                onClick={() => updateSelectedPlacement({ clearanceMargin: undefined })}
+                // Already in this mode: nothing to change (and nothing to pin).
+                onClick={() => selectedHasClearance && updateSelectedPlacement({ clearanceMargin: undefined })}
               >
                 Точки крепления
               </Button>
@@ -965,7 +992,7 @@ function LashingPointsSection() {
                 variant={selectedHasClearance ? 'default' : 'outline'}
                 className="h-6 text-[10px] px-1"
                 onClick={() => {
-                  clearLashingPointsFor(selectedPlacement.id)
+                  if (selectedPlacement.id) clearLashingPointsFor(selectedPlacement.id)
                   updateSelectedPlacement({
                     clearanceMargin: selectedPlacement.clearanceMargin ?? { top: 1, right: 1, bottom: 1, left: 1 },
                   })
@@ -1019,7 +1046,7 @@ function LashingPointsSection() {
                 size="sm"
                 variant="outline"
                 className="h-6 text-[10px] w-full text-destructive hover:text-destructive"
-                onClick={() => clearLashingPointsFor(selectedPlacement.id)}
+                onClick={() => selectedPlacement.id && clearLashingPointsFor(selectedPlacement.id)}
               >
                 <Trash2 className="h-3 w-3 mr-1" />
                 Снять все точки ({selectedPointsCount}) с этого груза

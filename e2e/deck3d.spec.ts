@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('3D deck view', () => {
-  test('mounts without console errors, orbits without crashing, and clicking a mesh selects/pins it (visible back in 2D)', async ({ page }) => {
+  test('mounts without console errors, orbits without crashing, and clicking a mesh selects it (visible back in 2D)', async ({ page }) => {
     const pageErrors: string[] = []
     page.on('pageerror', (err) => pageErrors.push(String(err)))
 
@@ -33,7 +33,8 @@ test.describe('3D deck view', () => {
     }
 
     // Switch back to 2D — if any click above hit a mesh, that item is now
-    // selected/pinned and rendered with the selected stroke width (3).
+    // selected (a click never pins) and rendered with the selected stroke
+    // width (3).
     await page.getByRole('radio', { name: '2D' }).click()
     const selectedStroke = page.locator('svg rect[stroke-width="3"]')
     // Not every click is guaranteed to land on a mesh in a headless
