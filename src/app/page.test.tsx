@@ -5,6 +5,7 @@ import Home from './page'
 import { useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
+import { ThemeProvider } from '@/components/ThemeProvider'
 
 // The PDF itself needs a real canvas; tests check what the page hands over.
 vi.mock('@/lib/exportPdf', async (importOriginal) => ({
@@ -104,6 +105,25 @@ describe('Home (page.tsx)', () => {
     fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
     expect(screen.queryByText(/Создаёт новый расчёт с палубой/)).toBeNull()
     expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
+  })
+
+  // Stage 1 (m6): there was no dark theme.
+  it('the theme picked in «Настройки» applies to the page and is remembered in this browser', () => {
+    render(
+      <ThemeProvider>
+        <Home />
+      </ThemeProvider>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Тёмная' }))
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(localStorage.getItem('deckload-theme')).toBe('dark')
+    fireEvent.click(screen.getByRole('radio', { name: 'Светлая' }))
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('deckload-theme')).toBe('light')
+    fireEvent.click(screen.getByRole('radio', { name: 'Как в системе' }))
+    expect(localStorage.getItem('deckload-theme')).toBeNull()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
   // Phase 0, L11: a vessel whose sources disagree on deck strength offered

@@ -69,6 +69,8 @@ import {
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
 import { vesselTemplateById } from '@/lib/vesselTemplates'
+import { useTheme } from '@/components/ThemeProvider'
+import type { ThemePreference } from '@/lib/theme'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { NumberField } from '@/components/calculator/NumberField'
@@ -124,6 +126,13 @@ type PlacementPatch = {
 // becomes unplaceable, with no error explaining why — this clamp turns that
 // into a normal, explained validation instead.
 const MAX_DECK_DIMENSION_M = 1000
+
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: 'Светлая' },
+  { value: 'dark', label: 'Тёмная' },
+  { value: 'system', label: 'Как в системе' },
+]
+
 export function Sidebar({
   collapsed,
   onToggle,
@@ -139,6 +148,7 @@ export function Sidebar({
   selectedAutoStack,
   onPatchAutoStack,
 }: SidebarProps) {
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme()
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
   const switchTo = useProjects((s) => s.switchTo)
@@ -420,6 +430,30 @@ export function Sidebar({
                 Отображение
               </div>
               <div className="space-y-2 pl-1">
+                <div className="space-y-1">
+                  <span className="text-xs">Тема</span>
+                  {/* Stage 2 moves this to «Вид». */}
+                  <ToggleGroup
+                    type="single"
+                    value={themePreference}
+                    onValueChange={(v) => v && setThemePreference(v as ThemePreference)}
+                    aria-label="Тема"
+                    className="grid grid-cols-2 gap-1"
+                  >
+                    {THEME_OPTIONS.map((o) => (
+                      <ToggleGroupItem
+                        key={o.value}
+                        value={o.value}
+                        className={cn(
+                          'h-7 rounded-md border text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background',
+                          o.value === 'system' && 'col-span-2'
+                        )}
+                      >
+                        {o.label}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </div>
                 <Toggle label="Разрешить вращение" checked={globalRotation} onToggle={toggleGlobalRotation} />
                 <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
                 <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />

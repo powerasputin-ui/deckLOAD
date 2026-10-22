@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "sonner";
+import { ThemeProvider, ThemedToaster } from "@/components/ThemeProvider";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 // "cyrillic" matters here: the whole UI is Russian. Without it the Cyrillic
 // face isn't preloaded, so text first paints in the fallback font and then
@@ -41,6 +42,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning>
+      <head>
+        {/* Sets the theme class before the first paint (see THEME_INIT_SCRIPT). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body
         // `font-sans` is what actually applies Geist: globals.css maps
         // --font-sans to --font-geist-sans, but nothing used to put it on the
@@ -59,8 +64,10 @@ export default function RootLayout({
             warning on a first visit with storage unavailable, which was
             therefore never seen — and then muted every later one too, see
             hasWarnedAboutStorageFailure in projects.ts). */}
-        <Toaster position="bottom-right" richColors closeButton />
-        {children}
+        <ThemeProvider>
+          <ThemedToaster />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );
