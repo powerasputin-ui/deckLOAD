@@ -961,7 +961,11 @@ export const useCalculator = create<CalculatorState>()(
       // OTHER item's current (possibly just-updated) position — converges
       // to a fully collision-free layout instead, at the cost of moving
       // more items than a minimal fix strictly requires.
-      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; weight?: number; composition?: CompositionSegment[]; clearanceMargin?: ClearanceMargin }>(
+      // A quarantined placement (malformed, no composition to fall back on)
+      // isn't on the deck at all — packDeck and packingResultFromManual skip
+      // it — so it is neither moved nor in anyone's way here (L18).
+      const isQuarantined = (p: { malformed?: unknown; composition?: unknown }) => !!p.malformed && !p.composition
+      const reflow = <T extends { x: number; y: number; width: number; length: number; layers: number; itemId: string; weight?: number; composition?: CompositionSegment[]; clearanceMargin?: ClearanceMargin; malformed?: unknown }>(
         list: T[]
       ): T[] => {
         const current: T[] = list.map((item) => {
@@ -996,8 +1000,9 @@ export const useCalculator = create<CalculatorState>()(
           let changedThisPass = false
           for (let i = 0; i < current.length; i++) {
             const item = current[i]
+            if (isQuarantined(item)) continue
             const others = current
-              .filter((_, idx) => idx !== i)
+              .filter((p, idx) => idx !== i && !isQuarantined(p))
               .map((p) => withClearanceFootprint(p))
             const clamped = clampToDeck(item, nextDeck.width, nextDeck.length, nextDeck.boardOffset)
             const needsResolve = collidesWith(
@@ -1035,7 +1040,8 @@ export const useCalculator = create<CalculatorState>()(
 
         for (let i = 0; i < current.length; i++) {
           const item = current[i]
-          const others = current.filter((_, idx) => idx !== i).map((p) => withClearanceFootprint(p))
+          if (isQuarantined(item)) continue
+          const others = current.filter((p, idx) => idx !== i && !isQuarantined(p)).map((p) => withClearanceFootprint(p))
           if (collidesWith({ ...item, width: item.width, length: item.length }, others, nextDeck.gap)) {
             // The pass cap above is a safety bound, not a proof of
             // convergence — surface a genuinely irreconcilable layout
@@ -1062,15 +1068,17 @@ export const useCalculator = create<CalculatorState>()(
           minDistance: convertLength(r.minDistance, 'm', nextDeck.unit),
         }))
         const withCategory = (
-          list: { x: number; y: number; width: number; length: number; itemId: string }[]
-        ) => list.map((p) => ({ ...p, category: itemById.get(p.itemId)?.category }))
-        const allPlacements = [
-          ...withCategory(manualPlacements),
-          ...withCategory(Object.values(pinnedPlacementsByTrip).flat()),
-        ]
-        for (let i = 0; i < allPlacements.length && !separationViolated; i++) {
-          const rest = allPlacements.filter((_, idx) => idx !== i)
-          if (violatesSeparation(allPlacements[i], rest, rulesInUnit)) separationViolated = true
+          list: { x: number; y: number; width: number; length: number; itemId: string; malformed?: unknown; composition?: unknown }[]
+        ) => list.filter((p) => !isQuarantined(p)).map((p) => ({ ...p, category: itemById.get(p.itemId)?.category }))
+        // One deck at a time: the manual layout, and each trip's own pins.
+        // Comparing across trips (L17) warned about stacks that never share
+        // a deck.
+        const decks = [manualPlacements, ...Object.values(pinnedPlacementsByTrip)].map(withCategory)
+        for (const placements of decks) {
+          for (let i = 0; i < placements.length && !separationViolated; i++) {
+            const rest = placements.filter((_, idx) => idx !== i)
+            if (violatesSeparation(placements[i], rest, rulesInUnit)) separationViolated = true
+          }
         }
       }
 

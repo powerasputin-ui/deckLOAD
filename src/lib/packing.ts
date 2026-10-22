@@ -770,6 +770,10 @@ export interface PlacedItem {
   // which constituent contributed what, e.g. VCG, which is why stability.ts
   // reads `composition` directly instead of trusting this fallback).
   composition?: CompositionSegment[]
+  // Manual mode only: why this stack stands where it may not (see
+  // packingResultFromManual's checks). The cargo stays placed — manual mode
+  // never moves it — and the deck and the red strip say what's wrong.
+  conflict?: string
   // Round 29 corrective pass 4A red-team gate (G1). Pre-computed pyramid
   // spread margin via resolvePyramidShape's "ANY constituent is pipe" rule —
   // DELIBERATELY separate from `shape` above. `shape` (resolveUniformShape)
@@ -3554,6 +3558,64 @@ export function resolveSnappedDragPosition(
   return { x: clampedCurrent.x, y: clampedCurrent.y }
 }
 
+// Each test pairs the one a drag in manual mode applies (DeckVisualization:
+// exact polygons) with the one the packer applies (packDeck: staircase
+// approximations of the outline and of round or slanted zones), and a stack
+// is flagged only when both agree. So neither a stack a drag accepted nor
+// one the packer laid out (then taken into manual mode) is ever flagged:
+// the two methods differ by millimetres along sloped edges, and trusting
+// either alone flagged most auto layouts on such decks. Lashing anchors are
+// left out — the drag is stricter there, never the other way round.
+function markManualConflicts(
+  placed: PlacedItem[],
+  deckWidth: number,
+  deckLength: number,
+  outline: { x: number; y: number }[] | undefined,
+  checks: ManualStandingChecks
+): void {
+  const pad = toFinite(checks.boardOffset ?? 0, 0)
+  const gap = toFinite(checks.gap ?? 0, 0)
+  const halfGap = gap / 2
+  const eps = 1e-6
+  const usableOutline = outline && outline.length >= 3 ? erodePolygon(outline, pad) : undefined
+  const outlineSlabs = usableOutline ? deckOutlineExclusionRects(usableOutline, deckWidth, deckLength) : []
+  const zones = checks.restrictionZones ?? []
+  const zonesExact = restrictionZoneExclusions(zones)
+  const zoneSlabs = zones.flatMap((z) => polygonInsideRects(restrictionZonePolygon(z), deckWidth, deckLength))
+  // A rectangular deck: a drag keeps cargo within [pad, size - pad]; the
+  // packer's cells carry half the gap on each side, which (when the board
+  // offset is under half the gap) lets cargo reach a little further on the
+  // far side.
+  const farEdge = (size: number) => Math.max(size - pad, Math.max(0, pad - halfGap) + size - 2 * pad + halfGap)
+  const maxX = farEdge(deckWidth)
+  const maxY = farEdge(deckLength)
+  // The packer's own staircase leaks by about a centimetre around round
+  // zones; a stack it laid out there mustn't be flagged. Relative to the
+  // deck, so it holds in any unit (1 cm on a 20 m deck).
+  const tol = Math.max(deckWidth, deckLength) * 5e-4
+  for (const p of placed) {
+    const rect = { x: p.x + tol, y: p.y + tol, width: Math.max(0, p.width - 2 * tol), height: Math.max(0, p.length - 2 * tol) }
+    const outsideDeck = usableOutline
+      ? !rectInsidePolygon(p, usableOutline) && outlineSlabs.some((ex) => intersects(rect, ex))
+      : p.x < pad - eps || p.y < pad - eps || p.x + p.width > maxX + eps || p.y + p.length > maxY + eps
+    if (outsideDeck) p.conflict = 'Вне палубы'
+    else if (collidesWithClearance(p, zonesExact, gap) && zoneSlabs.some((ex) => intersects(rect, ex))) {
+      p.conflict = 'В зоне ограничения'
+    } else if (collidesWithClearance(p, placed.filter((o) => o !== p), gap)) {
+      p.conflict = 'Пересекается с другим грузом или его зоной отступа'
+    }
+  }
+}
+
+// What a stack standing in manual mode is checked against (L14) — the deck
+// can change under it (a new outline, a moved obstacle, a widened clearance
+// zone), and manual mode never moves cargo. Omitted = no checks.
+export interface ManualStandingChecks {
+  boardOffset?: number
+  gap?: number
+  restrictionZones?: RestrictionZone[]
+}
+
 export function packingResultFromManual(
   deckWidth: number,
   deckLength: number,
@@ -3561,7 +3623,8 @@ export function packingResultFromManual(
   totalRequested: number,
   items?: CargoItem[],
   clearance?: number,
-  outline?: { x: number; y: number }[]
+  outline?: { x: number; y: number }[],
+  checks?: ManualStandingChecks
 ): PackingResult {
   const dw = toFinite(deckWidth, 0)
   const dl = toFinite(deckLength, 0)
@@ -3675,6 +3738,7 @@ export function packingResultFromManual(
       composition: p.composition,
     }
   })
+  if (checks) markManualConflicts(placed, dw, dl, outline, checks)
 
   // Breakdown by itemId — Round 23: composition-aware attribution, same
   // fix and same reasoning as packDeck's breakdown builder above (see its

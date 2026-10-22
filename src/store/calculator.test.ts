@@ -1567,6 +1567,48 @@ describe('calculator store', () => {
     expect(useCalculator.getState().selectedPinIds).toEqual([trip0PinId])
   })
 
+  // Phase 0, L17: the separation check after a deck change put every trip's
+  // pins (and the manual placements) into one list, as if all of them stood
+  // on one deck — two stacks on different trips set off a false warning.
+  it('checks separation after a deck change only between stacks of the same trip', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 1, category: 'Взрывчатые' })
+    s.addItem({ name: 'B', width: 1, length: 1, quantity: 1, category: 'Окислители' })
+    const [a, b] = useCalculator.getState().items
+    useCalculator.getState().addSeparationRule({ categoryA: 'Взрывчатые', categoryB: 'Окислители', minDistance: 3 })
+    useCalculator.getState().pinFromPlaced(0, { itemId: a.id, name: 'A', x: 5, y: 3, width: 1, length: 1, layers: 1, rotated: false, color: '#000' })
+    useCalculator.getState().pinFromPlaced(1, { itemId: b.id, name: 'B', x: 6.5, y: 3, width: 1, length: 1, layers: 1, rotated: false, color: '#000' })
+    const warning = vi.spyOn(toast, 'warning')
+    useCalculator.getState().setDeck({ width: 21 })
+    expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('сепарации'))
+    // Still caught on one trip.
+    useCalculator.getState().pinFromPlaced(1, { itemId: a.id, name: 'A', x: 8, y: 3, width: 1, length: 1, layers: 1, rotated: false, color: '#000' })
+    useCalculator.getState().setDeck({ width: 22 })
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('сепарации'))
+    warning.mockRestore()
+  })
+
+  // Phase 0, L18: a quarantined placement (malformed, no composition) isn't on
+  // the deck, yet the reflow after a deck change treated it as an obstacle
+  // and pushed real cargo away from it.
+  it('a deck change reflows cargo around real stacks only, not quarantined ones', () => {
+    const s = useCalculator.getState()
+    s.addItem({ name: 'A', width: 1, length: 1, quantity: 2 })
+    const a = useCalculator.getState().items[0]
+    useCalculator.setState({
+      manualPlacements: [
+        { id: 'real', itemId: a.id, name: 'A', x: 5, y: 3, width: 1, length: 1, layers: 1, rotated: false, color: '#000' },
+        {
+          id: 'broken', itemId: a.id, name: 'A', x: 5, y: 3, width: 1, length: 1, layers: 1, rotated: false, color: '#000',
+          malformed: { invalidComposition: true, rawComposition: 'garbage' },
+        },
+      ],
+    })
+    useCalculator.getState().setDeck({ gap: 0.2 })
+    const real = useCalculator.getState().manualPlacements.find((m) => m.id === 'real')!
+    expect({ x: real.x, y: real.y }).toEqual({ x: 5, y: 3 })
+  })
+
   // Phase 0, L11: the deck-strength choice used to exist only as two buttons
   // in a 20-second toast.
   describe('chooseDeckStrength', () => {

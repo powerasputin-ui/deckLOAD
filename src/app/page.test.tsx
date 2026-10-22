@@ -3366,6 +3366,79 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
   })
 
+  // Phase 0, L14: in manual mode an obstacle moved onto standing cargo (or a
+  // new outline, or a widened clearance zone) left the stack where it may
+  // not stand, with nothing said.
+  it('manual cargo the deck changed under is hatched red and listed in the red strip', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.getState().addItem({ name: 'Ящик', width: 2, length: 1, quantity: 1, height: 1 })
+    })
+    const item = useCalculator.getState().items[0]
+    act(() => {
+      useCalculator.setState({
+        mode: 'manual',
+        manualPlacements: [{ id: 'm1', itemId: item.id, name: 'Ящик', x: 4, y: 4, width: 2, length: 1, layers: 1, rotated: false, color: item.color }],
+      })
+    })
+    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
+    expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
+    act(() => {
+      useCalculator.setState({
+        deck: {
+          ...useCalculator.getState().deck,
+          restrictionZones: [{ id: 'z', name: 'Кран', shapeType: 'rect', x: 3, y: 3, width: 3, length: 3 }],
+        },
+      })
+    })
+    expect(screen.getByText(/Требует перестановки \(1\)/)).toBeTruthy()
+    expect(screen.getByText('Ящик — В зоне ограничения')).toBeTruthy()
+    expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(1)
+    // Still on the deck: manual mode never moves cargo by itself.
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+  })
+
+  // The recheck must not cry wolf: what auto mode laid out, taken into
+  // manual mode as is, stands clean.
+  function switchToManual() {
+    fireEvent.click(screen.getByText('Ручной'))
+    const go = screen.queryByRole('button', { name: 'Перейти' })
+    if (go) fireEvent.click(go)
+    expect(useCalculator.getState().mode).toBe('manual')
+  }
+
+  it('the demo layout taken into manual mode raises no conflicts', () => {
+    render(<Home />)
+    switchToManual()
+    expect(useCalculator.getState().manualPlacements.length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
+    expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
+  })
+
+  it('stacked pipes on a cut-corner deck taken into manual mode raise no conflicts', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({
+        deck: {
+          ...useCalculator.getState().deck,
+          width: 20,
+          length: 8,
+          clearance: 3,
+          outline: [{ x: 0, y: 0 }, { x: 16, y: 0 }, { x: 20, y: 3 }, { x: 20, y: 8 }, { x: 0, y: 8 }],
+        },
+      })
+      useCalculator.getState().addItem({ name: 'Труба', width: 0.5, length: 6, height: 0.5, quantity: 30, shape: 'cylinder' })
+      useCalculator.getState().addItem({ name: 'Ящик', width: 1.5, length: 1, height: 1, quantity: 10 })
+    })
+    switchToManual()
+    expect(useCalculator.getState().manualPlacements.some((m) => m.name === 'Труба' && m.layers > 1)).toBe(true)
+    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
+    expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
+  })
+
   // Phase 0, group D: selecting never changes saved data; a change the user
   // makes (drag, layers, rotate, «Закрепить») pins the stack, locked.
   describe('selection and pinning', () => {

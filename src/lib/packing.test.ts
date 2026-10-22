@@ -56,6 +56,7 @@ import {
   type LoadZone,
   type SeparationRule,
   type LashingPoint,
+  type RestrictionZone,
 } from './packing'
 import { placementCategorySet, resolveUniformOutline, resolveUniformShape, segmentsOf } from './placementComposition'
 
@@ -849,6 +850,110 @@ describe('packingResultFromManual', () => {
     ])
     expect(res.unplaced).toHaveLength(1)
     expect(res.unplaced[0].reason).toContain('3')
+  })
+})
+
+// Phase 0, L14: manual mode never moves cargo, so a stack the deck changed
+// under — a new outline, a moved obstacle, a neighbour's widened clearance
+// zone — kept standing where it may not, with nothing said.
+describe('packingResultFromManual rechecks standing cargo', () => {
+  const box = { id: 'a', name: 'Ящик', width: 2, length: 1, height: 1, quantity: 3, color: '#0ea5e9', allowRotation: true }
+  const at = (id: string, x: number, y: number, extra: Partial<ManualPlacement> = {}): ManualPlacement => ({
+    id, itemId: 'a', name: 'Ящик', x, y, width: 2, length: 1, layers: 1, rotated: false, color: '#0ea5e9', ...extra,
+  })
+  const check = (placements: ManualPlacement[], opts: { outline?: { x: number; y: number }[]; zones?: RestrictionZone[]; boardOffset?: number } = {}) =>
+    packingResultFromManual(10, 10, placements, 3, [box], 0, opts.outline, {
+      boardOffset: opts.boardOffset ?? 0.2,
+      gap: 0,
+      restrictionZones: opts.zones ?? [],
+    })
+
+  it('says nothing about cargo that stands where it may', () => {
+    const r = check([at('m1', 1, 1), at('m2', 3, 1)])
+    expect(r.placed.map((p) => p.conflict)).toEqual([undefined, undefined])
+  })
+
+  it('flags a stack the deck no longer reaches, or the board offset now covers', () => {
+    const r = check([at('m1', 9, 1), at('m2', 0.1, 5)])
+    expect(r.placed.map((p) => p.conflict)).toEqual(['Вне палубы', 'Вне палубы'])
+  })
+
+  it('flags a stack a new deck outline leaves outside', () => {
+    // A cut corner: the triangle (6,0)-(10,0)-(10,4) is gone.
+    const outline = [{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 10, y: 4 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
+    const r = check([at('m1', 7.5, 0.5), at('m2', 1, 1)], { outline })
+    expect(r.placed.map((p) => p.conflict)).toEqual(['Вне палубы', undefined])
+  })
+
+  it('flags a stack an obstacle was moved onto', () => {
+    const zones: RestrictionZone[] = [{ id: 'z', name: 'Кран', shapeType: 'rect', x: 4, y: 4, width: 2, length: 2 }]
+    const r = check([at('m1', 4.5, 4.5), at('m2', 1, 1)], { zones })
+    expect(r.placed.map((p) => p.conflict)).toEqual(['В зоне ограничения', undefined])
+  })
+
+  it('flags both stacks once a clearance zone is widened over a neighbour', () => {
+    const r = check([at('m1', 1, 1, { clearanceMargin: { top: 0, right: 2, bottom: 0, left: 0 } }), at('m2', 4, 1)])
+    expect(r.placed.map((p) => p.conflict)).toEqual([
+      'Пересекается с другим грузом или его зоной отступа',
+      'Пересекается с другим грузом или его зоной отступа',
+    ])
+  })
+
+  it('lets stacks stand flush against each other', () => {
+    const r = check([at('m1', 1, 1), at('m2', 3, 1)])
+    expect(r.placed.every((p) => !p.conflict)).toBe(true)
+  })
+
+  it('still counts flagged cargo as placed: it stands there until the user moves it', () => {
+    const r = check([at('m1', 9, 1)])
+    expect(r.placedCount).toBe(1)
+  })
+
+  it('checks nothing for a caller that asks for no checks', () => {
+    const r = packingResultFromManual(10, 10, [at('m1', 9, 1)], 1, [box])
+    expect(r.placed[0].conflict).toBeUndefined()
+  })
+  // The drag checks exact polygons, the packer a staircase that differs by
+  // millimetres along sloped edges and round zones: a check trusting one of
+  // them flagged most auto layouts on such decks (953 stacks in this grid).
+  it('flags none of the packer\'s own layouts once taken into manual mode', () => {
+    const outlines = [
+      undefined,
+      [{ x: 0, y: 0 }, { x: 16, y: 0 }, { x: 20, y: 3 }, { x: 20, y: 8 }, { x: 0, y: 8 }],
+      [{ x: 0, y: 1.3 }, { x: 3.1, y: 0 }, { x: 17, y: 0 }, { x: 20, y: 2.7 }, { x: 20, y: 6.1 }, { x: 18.3, y: 8 }, { x: 2.2, y: 8 }, { x: 0, y: 5.5 }],
+    ]
+    const zoneSets: RestrictionZone[][] = [
+      [{ id: 't', name: 'T', shapeType: 'triangle', x: 8, y: 2, width: 3.3, length: 2.7 }],
+      [
+        { id: 'o', name: 'O', shapeType: 'oval', x: 5, y: 3, width: 2.6, length: 1.9 },
+        { id: 'd', name: 'D', shapeType: 'diamond', x: 12, y: 1, width: 2.2, length: 3.1 },
+      ],
+    ]
+    const cargo: CargoItem[][] = [
+      [
+        { id: 'c', name: 'Контейнер', width: 6.06, length: 2.44, height: 2.59, quantity: 6, color: '#000', allowRotation: true },
+        { id: 'p', name: 'Паллета', width: 1.2, length: 0.8, height: 0.14, quantity: 30, color: '#000', allowRotation: true },
+      ],
+      [
+        { id: 't', name: 'Труба', width: 0.5, length: 6, height: 0.5, quantity: 40, color: '#000', allowRotation: true, shape: 'cylinder' },
+        { id: 'b', name: 'Ящик', width: 0.9, length: 0.7, height: 1, quantity: 40, color: '#000', allowRotation: true },
+      ],
+    ]
+    const flagged: string[] = []
+    for (const outline of outlines)
+      for (const restrictionZones of zoneSets)
+        for (const items of cargo)
+          for (const gap of [0, 0.1])
+            for (const boardOffset of [0, 0.5]) {
+              const auto = packDeck(20, 8, items, { gap, boardOffset, clearance: 3, outline, restrictionZones })
+              const manual: ManualPlacement[] = auto.placed.map((p, i) => ({
+                id: `m${i}`, itemId: p.itemId, name: p.name, x: p.x, y: p.y, width: p.width, length: p.length,
+                layers: p.stackedCount, rotated: p.rotated, color: p.color,
+              }))
+              const r = packingResultFromManual(20, 8, manual, 0, items, 3, outline, { gap, boardOffset, restrictionZones })
+              for (const p of r.placed) if (p.conflict) flagged.push(`${p.name} @${p.x},${p.y}: ${p.conflict}`)
+            }
+    expect(flagged).toEqual([])
   })
 })
 

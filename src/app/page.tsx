@@ -663,7 +663,16 @@ export default function Home() {
   const trips: PackingResult[] = useMemo(() => {
     if (mode === 'manual') {
       const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
-      return [packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance, deck.outline)]
+      // Standing cargo is rechecked against the deck as it is now (L14): a
+      // new outline, a moved obstacle or a widened clearance zone used to
+      // leave a stack where it may not stand, with nothing said.
+      return [
+        packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance, deck.outline, {
+          boardOffset: deck.boardOffset,
+          gap: deck.gap,
+          restrictionZones: deck.restrictionZones,
+        }),
+      ]
     }
     const effectiveItems = globalRotation
       ? items
@@ -727,6 +736,9 @@ export default function Home() {
     (u) => u.kind === 'pin' && !!(pinnedPlacementsByTrip[clampedTripIndex] ?? []).find((p) => p.id === u.pinId)?.locked
   )
   const manualToDo = mode === 'manual' ? result.unplaced.filter((u) => u.kind === 'manual') : []
+  // Manual stacks the deck changed under (see packingResultFromManual).
+  const manualConflicts = mode === 'manual' ? result.placed.filter((p) => p.conflict) : []
+  const redStripCount = unfitAnywhere.length + rejectedPinsHere.length + manualConflicts.length
   // Units entering the next trip are the ones it (or a later trip) will
   // place plus the unfit ones, which pass through every trip.
   const nextTrip = mode === 'auto' ? trips[clampedTripIndex + 1] : undefined
@@ -2578,12 +2590,12 @@ export default function Home() {
           header) so it's visible the instant something doesn't fit, instead
           of requiring a scroll all the way down to the bottom of the
           Статистика card to discover it. */}
-      {unfitAnywhere.length + rejectedPinsHere.length > 0 && (
+      {redStripCount > 0 && (
         <div className="shrink-0 border-b bg-red-50 dark:bg-red-950/30 px-4 py-2">
           <div className="flex items-start gap-2 flex-wrap">
             <span className="flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-400 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5" />
-              Не поместилось ({unfitAnywhere.length + rejectedPinsHere.length}):
+              {mode === 'manual' ? 'Требует перестановки' : 'Не поместилось'} ({redStripCount}):
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {unfitAnywhere.map((u, i) => {
@@ -2607,6 +2619,16 @@ export default function Home() {
                   title={u.reason}
                 >
                   {u.name} — {u.reason}
+                </Badge>
+              ))}
+              {manualConflicts.map((p) => (
+                <Badge
+                  key={`conflict-${p.index}`}
+                  variant="destructive"
+                  className="text-[10px] font-normal"
+                  title={p.conflict}
+                >
+                  {p.name} — {p.conflict}
                 </Badge>
               ))}
             </div>

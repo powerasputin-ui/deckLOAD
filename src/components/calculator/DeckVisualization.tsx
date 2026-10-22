@@ -2409,6 +2409,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <rect width="8" height="8" fill="transparent" />
             <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(16,185,129,0.28)" strokeWidth="3" />
           </pattern>
+          <pattern id="conflict-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(220,38,38,0.8)" strokeWidth="2.5" />
+          </pattern>
           {deckOutline && deckOutline.length >= 3 && (
             <clipPath id="deck-outline-clip">
               <polygon points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')} />
@@ -3368,6 +3371,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               mixedLoad={isMixedLoad}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              conflict={mode === 'manual' ? p.conflict : undefined}
               contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
               onContentsHover={(text, cx, cy) => setContentsTooltip(text ? { text, x: cx, y: cy } : null)}
               mergeTarget={isMergeTarget}
@@ -4290,6 +4294,7 @@ function PlacedRect({
   mixedLoad,
   overLoad,
   overLoadTitle,
+  conflict,
   contentsTitle,
   onContentsHover,
   mergeTarget,
@@ -4339,6 +4344,9 @@ function PlacedRect({
   mixedLoad?: boolean
   overLoad?: boolean
   overLoadTitle?: string
+  // Manual mode: why this stack stands where it may not (PlacedItem.conflict)
+  // — red hatching over it, the reason on hover.
+  conflict?: string
   contentsTitle?: string
   onContentsHover?: (text: string | null, clientX: number, clientY: number) => void
   // Drag-to-stack: this placement is the potential landing spot for the item
@@ -4349,14 +4357,14 @@ function PlacedRect({
 }) {
   const strokeColor = mergeTarget
     ? '#16a34a'
-    : overLoad
+    : overLoad || conflict
       ? '#dc2626'
       : selected
         ? '#7c3aed'
         : hovered
           ? '#94a3b8'
           : 'rgba(15,23,42,0.55)'
-  const strokeWidth = mergeTarget ? 4 : overLoad ? 3 : selected ? 3 : hovered ? 2 : 1
+  const strokeWidth = mergeTarget ? 4 : overLoad || conflict ? 3 : selected ? 3 : hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -4444,7 +4452,19 @@ function PlacedRect({
         pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
         nestTiers={item.nest?.tierCounts.length}
       />
-      {overLoadTitle && <title>{overLoadTitle}</title>}
+      {(overLoadTitle || conflict) && <title>{[conflict, overLoadTitle].filter(Boolean).join(' · ')}</title>}
+      {conflict && (
+        <rect
+          data-conflict="true"
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          rx={2}
+          fill="url(#conflict-hatch)"
+          className="pointer-events-none"
+        />
+      )}
       {overLoad && w >= 14 && h >= 14 && (
         <g className="pointer-events-none">
           <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />
