@@ -46,7 +46,7 @@ interface StabilityPanelProps {
 // a planning aid, not the vessel's own approved loading instrument.
 function Disclaimer() {
   return (
-    <div className="rounded-md border border-amber-300 bg-amber-50/60 dark:bg-amber-950/20 p-2 text-[11px] text-amber-800 dark:text-amber-300 flex gap-1.5">
+    <div className="rounded-md border border-amber-300 bg-amber-50/60 dark:bg-amber-950/20 p-2 text-xs text-amber-800 dark:text-amber-300 flex gap-1.5">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
       <span>
         <b>Не заменяет судовой прибор загрузки.</b> Ознакомительный/плановый расчёт, не одобрен классификационным
@@ -62,7 +62,7 @@ function Disclaimer() {
 // no free-surface data was entered, so GM_fluid == GM_solid (uncorrected).
 function NoFreeSurfaceDataWarning() {
   return (
-    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-xs text-red-800 dark:text-red-300 flex gap-1.5">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
       <span>
         <b>Свободная поверхность в танках не введена.</b> Показанная GM может быть выше реальной. Добавьте
@@ -81,11 +81,11 @@ function OutOfRangeWarning({ hydrostatics, kn, displacementT }: { hydrostatics: 
   const tables = hydrostatics && kn ? 'таблиц гидростатики и KN' : hydrostatics ? 'таблицы гидростатики' : 'таблицы KN'
   return (
     <div role="alert" className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2.5 text-red-800 dark:text-red-300 space-y-1">
-      <div className="flex items-center gap-1.5 text-lg font-semibold leading-tight">
+      <div className="flex items-center gap-1.5 text-xl font-semibold leading-tight">
         <AlertTriangle className="h-5 w-5 shrink-0" />
         {hydrostatics ? 'Числа ниже — только оценка' : 'Критерии ниже — только оценка'}
       </div>
-      <p className="text-[11px]">
+      <p className="text-xs">
         Водоизмещение {fmtNumber(displacementT)} т вне {tables}. Взято ближайшее табличное значение, а не расчёт для
         этой загрузки, поэтому {hydrostatics ? 'GM, крен, дифферент и критерии' : 'кривая GZ и критерии'} не подтверждены.
       </p>
@@ -95,12 +95,12 @@ function OutOfRangeWarning({ hydrostatics, kn, displacementT }: { hydrostatics: 
 
 // Next to a number computed from a clamped table value (see OutOfRangeWarning).
 function EstimateTag() {
-  return <span className="rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">оценка</span>
+  return <span className="rounded bg-muted px-1 text-xs font-medium text-muted-foreground">оценка</span>
 }
 
 function MissingWeightWarning({ count }: { count: number }) {
   return (
-    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5">
+    <div className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-xs text-red-800 dark:text-red-300 flex gap-1.5">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
       <span>
         <b>Груз без указанного веса не учтён в расчёте остойчивости (ед.: {count}).</b> Укажите вес в списке грузов,
@@ -201,13 +201,13 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
             >
               {fmtNumber(stability.GM_fluid)} м
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               KM {fmtNumber(stability.KM)} м − KG {fmtNumber(stability.KG)} м − FSC {fmtNumber(stability.freeSurfaceCorrectionM)} м ·
               {minGM !== undefined
                 ? ` допустимый минимум ${minGM} м (формуляр судна)`
                 : ` мин. ориентир ${G_METACENTRIC_MIN_SAFE} м (общий)`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
+            <div className="text-xs text-muted-foreground mt-0.5">
               GM без поправки (GM_solid): {fmtNumber(stability.GM_solid)} м
             </div>
           </div>
@@ -226,7 +226,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
             >
               {fmtNumber(stability.listDeg)}° {listSideLabel}
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               {stability.listReliable
                 ? 'малоугловая формула'
                 : 'угол > 10° — малоугловая формула недостоверна, нужна кривая GZ'}
@@ -244,7 +244,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
               {stability.trimDirection === 'even' && ' (ровно)'}
             </div>
             {stability.trimM === null && (
-              <div className="text-[10px] text-muted-foreground">Добавьте LCB и MTC в точку гидростатики, чтобы включить расчёт</div>
+              <div className="text-xs text-muted-foreground">Добавьте LCB и MTC в точку гидростатики, чтобы включить расчёт</div>
             )}
           </div>
         </div>
@@ -255,17 +255,17 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
               Критерии IMO IS Code 2008, Часть A
               {criteriaEstimated && <EstimateTag />}
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Ветровой критерий (§2.3) для офшорных судов индивидуален и здесь не считается — см. формуляр остойчивости судна.
             </p>
             {downfloodingAngleDeg === undefined && (
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Угол заливания не указан — площади считаются до стандартных 30°/40°, что может завышать результат для судов с
                 меньшим реальным углом заливания.
               </p>
             )}
             <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-[11px]">
+              <table className="w-full text-xs">
                 <tbody>
                   {criteria.map((c) => (
                     <tr key={c.id} className="border-t first:border-t-0">
@@ -291,19 +291,19 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
               </table>
             </div>
             {gz.maxGZ <= 0 ? (
-              <div className="text-[10px] font-medium text-red-600">
+              <div className="text-xs font-medium text-red-600">
                 Плечо остойчивости GZ не положительно ни на одном табличном угле крена — судно неостойчиво уже на
                 нулевом крене (угол заката остойчивости 0°).
               </div>
             ) : (
-              <div className="text-[10px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 Макс. GZ {fmtNumber(gz.maxGZ)} м при {fmtNumber(gz.angleOfMaxGZ)}°
                 {gz.angleOfVanishingStability !== null && ` · угол заката остойчивости ${fmtNumber(gz.angleOfVanishingStability)}°`}
               </div>
             )}
           </div>
         ) : (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Доступна только начальная GM/крен. Добавьте кросс-кривые KN из информации об остойчивости судна для полной
             кривой GZ и проверки критериев IMO IS Code Part A.
           </p>

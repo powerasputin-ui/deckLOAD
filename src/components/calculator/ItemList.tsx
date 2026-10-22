@@ -316,7 +316,7 @@ function ItemRow({
             )}
             <Badge
               variant={overPlaced || nonePlaced ? 'destructive' : allPlaced ? 'default' : 'secondary'}
-              className="ml-auto shrink-0 text-[10px]"
+              className="ml-auto shrink-0 text-xs"
               title={overPlaced ? 'Размещено больше, чем указано в количестве — уменьшите количество расставленных единиц или увеличьте количество груза' : undefined}
             >
               {overPlaced ? '⚠ ' : ''}
@@ -392,7 +392,7 @@ function ItemRow({
           </div>
 
           <div className="mt-2 space-y-0.5">
-            <Label className="text-[10px] text-muted-foreground leading-none">Категория</Label>
+            <Label className="text-xs text-muted-foreground leading-none">Категория</Label>
             <Input
               list={categoryListId}
               value={item.category ?? ''}
@@ -472,7 +472,7 @@ function ItemRow({
                     placeholder="Например: запчасти для буровой, партия №..."
                     className="min-h-[80px] text-xs"
                   />
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Показывается при наведении на груз на палубе (можно отключить в «Настройки»)
                   </p>
                 </PopoverContent>
@@ -492,7 +492,7 @@ function ItemRow({
                 </PopoverTrigger>
                 <PopoverContent className="w-64 p-2.5 space-y-1.5" align="end">
                   <Label className="text-xs font-medium">Остойчивость — override центра тяжести</Label>
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Пусто = авто (VCG — половина высоты стопки; TCG/LCG — геометрический центр груза). Заполните, только
                     если реальный ЦТ этого груза смещён (напр. несимметрично загруженный контейнер).
                   </p>
@@ -517,7 +517,7 @@ function ItemRow({
                   {hasStabilityOverride && (
                     <button
                       onClick={() => onSetStabilityOverride(undefined)}
-                      className="text-[10px] text-muted-foreground hover:text-destructive underline"
+                      className="text-xs text-muted-foreground hover:text-destructive underline"
                     >
                       Сбросить override
                     </button>
@@ -558,7 +558,7 @@ function NumField({
   const min = allowZero ? 0 : integer ? 1 : 0.1
   return (
     <div className="space-y-0.5">
-      <Label htmlFor={id} className="text-[10px] text-muted-foreground leading-none">
+      <Label htmlFor={id} className="text-xs text-muted-foreground leading-none">
         {label}
         {unit ? ` (${UNIT_LABEL[unit]})` : ''}
       </Label>
@@ -597,7 +597,7 @@ function StabilityOverrideField({
   const id = useId()
   return (
     <div className="space-y-0.5">
-      <Label htmlFor={id} className="text-[10px] text-muted-foreground leading-none">
+      <Label htmlFor={id} className="text-xs text-muted-foreground leading-none">
         {label} ({UNIT_LABEL[unit]})
       </Label>
       <NumberField

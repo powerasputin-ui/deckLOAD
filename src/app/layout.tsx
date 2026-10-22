@@ -1,20 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider, ThemedToaster } from "@/components/ThemeProvider";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
-// "cyrillic" matters here: the whole UI is Russian. Without it the Cyrillic
-// face isn't preloaded, so text first paints in the fallback font and then
-// visibly swaps to Geist.
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Spec 9.3. "cyrillic" matters here: the whole UI is Russian. Without it the
+// Cyrillic face isn't preloaded, so text first paints in the fallback font
+// and then visibly swaps. Three weights only: 400, 500, 600.
+const plexSans = IBM_Plex_Sans({
+  variable: "--font-plex-sans",
   subsets: ["latin", "cyrillic"],
+  weight: ["400", "500", "600"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// Dimension lines on the deck and numeric table cells.
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
   subsets: ["latin", "cyrillic"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
@@ -47,10 +50,10 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body
-        // `font-sans` is what actually applies Geist: globals.css maps
-        // --font-sans to --font-geist-sans, but nothing used to put it on the
-        // page, so the whole app rendered in the OS default font instead.
-        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground`}
+        // `font-sans` is what actually applies the font: globals.css maps
+        // --font-sans to --font-plex-sans, but nothing would put it on the
+        // page otherwise.
+        className={`${plexSans.variable} ${plexMono.variable} font-sans antialiased bg-background text-foreground`}
       >
         {/* top-center used to sit directly over the header's undo/redo
             buttons — a toast from the action that made undo available was

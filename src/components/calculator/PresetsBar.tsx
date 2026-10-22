@@ -131,7 +131,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
       </button>
       {open && (
         <div className="space-y-1.5">
-          <p className="text-[10px] text-muted-foreground leading-tight">
+          <p className="text-xs text-muted-foreground leading-tight">
             Выберите категорию, затем тип груза — он вооружится для клика по палубе.
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -176,7 +176,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             >
               Зоны ограничений
               {restrictionZones.length > 0 && (
-                <Badge variant="secondary" className="ml-1 text-[10px]">{restrictionZones.length}</Badge>
+                <Badge variant="secondary" className="ml-1 text-xs">{restrictionZones.length}</Badge>
               )}
             </Button>
             <Button
@@ -190,7 +190,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             >
               Заметки
               {annotations.length > 0 && (
-                <Badge variant="secondary" className="ml-1 text-[10px]">{annotations.length}</Badge>
+                <Badge variant="secondary" className="ml-1 text-xs">{annotations.length}</Badge>
               )}
             </Button>
           </div>
@@ -252,7 +252,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                     </span>
                     <span className="min-w-0">
                       <span className="block text-xs font-medium truncate">Нарисовать</span>
-                      <span className="block text-[10px] text-muted-foreground">свой контур по точкам</span>
+                      <span className="block text-xs text-muted-foreground">свой контур по точкам</span>
                     </span>
                   </button>
                   <button
@@ -269,10 +269,10 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                     </span>
                     <span className="min-w-0">
                       <span className="block text-xs font-medium truncate">Розетка</span>
-                      <span className="block text-[10px] text-muted-foreground">по контуру палубы</span>
+                      <span className="block text-xs text-muted-foreground">по контуру палубы</span>
                     </span>
                     {sockets.length > 0 && (
-                      <Badge variant="secondary" className="shrink-0 text-[10px]">{sockets.length}</Badge>
+                      <Badge variant="secondary" className="shrink-0 text-xs">{sockets.length}</Badge>
                     )}
                   </button>
                   {sockets.length > 0 && (
@@ -311,7 +311,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
           {activePresetCategory === RESTRICTION_ZONE_CATEGORY_KEY && (
             <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
               <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
-                <span className="px-0.5 text-[10px] text-muted-foreground">Фигура:</span>
+                <span className="px-0.5 text-xs text-muted-foreground">Фигура:</span>
                 {RESTRICTION_ZONE_SHAPES.map(({ shapeType, label, Icon }) => (
                   <button
                     key={shapeType}
@@ -343,7 +343,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 </span>
                 <span className="min-w-0">
                   <span className="block text-xs font-medium truncate">Нарисовать</span>
-                  <span className="block text-[10px] text-muted-foreground">произвольная область по точкам</span>
+                  <span className="block text-xs text-muted-foreground">произвольная область по точкам</span>
                 </span>
               </button>
               {restrictionZones.length > 0 && (
@@ -368,13 +368,13 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
           {activePresetCategory === ANNOTATIONS_CATEGORY_KEY && (
             <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
               <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
-                <span className="px-0.5 text-[10px] text-muted-foreground">Метка:</span>
+                <span className="px-0.5 text-xs text-muted-foreground">Метка:</span>
                 {ANNOTATION_STAMPS.map(({ kind, label }) => (
                   <button
                     key={kind}
                     onClick={() => setPlacingAnnotation(placingAnnotation?.kind === kind ? null : { kind, withLeader: false })}
                     className={cn(
-                      'h-6 px-2 flex items-center justify-center rounded-md border text-[10px]',
+                      'h-6 px-2 flex items-center justify-center rounded-md border text-xs',
                       placingAnnotation?.kind === kind
                         ? 'border-slate-400 bg-slate-100 text-slate-700 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:text-slate-200 dark:ring-slate-600'
                         : 'border-border hover:bg-accent'
@@ -398,14 +398,14 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
                 </span>
                 <span className="min-w-0">
                   <span className="block text-xs font-medium truncate">Заметка</span>
-                  <span className="block text-[10px] text-muted-foreground">свободный текст</span>
+                  <span className="block text-xs text-muted-foreground">свободный текст</span>
                 </span>
               </button>
               <button
                 onClick={toggleWithLeader}
                 title="Со сноской — клик 1: точка, на которую указывает (можно на груз); клик 2: где встанет текст"
                 className={cn(
-                  'h-7 px-2 flex items-center gap-1 rounded-md border text-[10px] shrink-0 self-center',
+                  'h-7 px-2 flex items-center gap-1 rounded-md border text-xs shrink-0 self-center',
                   withLeader
                     ? 'border-sky-400 bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300'
                     : 'border-border hover:bg-accent text-muted-foreground'
@@ -431,7 +431,7 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             </div>
           )}
           {placingAnnotation && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               {placingAnnotation.withLeader
                 ? 'Клик 1 — точка, на которую указывает сноска (можно на груз). Клик 2 — где встанет текст.'
                 : placingAnnotation.kind === 'note'
@@ -440,36 +440,36 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
             </p>
           )}
           {pendingPresetStamp && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               «{pendingPresetStamp.name}» готов — кликните по палубе, чтобы разместить.
             </p>
           )}
           {drawingCustomShape && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               Кликайте по палубе, чтобы поставить точки контура (минимум 3), затем кликните рядом с первой точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
             </p>
           )}
           {placingPowerSocket && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               Кликните у края палубы — розетка встанет на ближайшую точку контура. Только визуальная метка,
               груз можно ставить рядом.
             </p>
           )}
           {drawingRestrictionShape && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               Потяните на палубе, чтобы задать размер зоны. Груз нельзя будет поставить/перетащить туда — ни
               вручную, ни автоматически.
             </p>
           )}
           {drawingRestrictionZoneFreeform && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               Кликайте по палубе, чтобы поставить точки контура зоны (минимум 3), затем кликните рядом с первой
               точкой, чтобы замкнуть. Backspace — убрать последнюю точку, Esc — отменить.
             </p>
           )}
           {pendingCustomShape && (
             <div className="max-w-xs space-y-1.5 rounded-lg border p-2">
-              <p className="text-[10px] text-muted-foreground leading-tight">
+              <p className="text-xs text-muted-foreground leading-tight">
                 Контур готов — задайте имя, затем разместите.
               </p>
               <Input
@@ -552,12 +552,12 @@ function PresetTemplateChip({
       />
       <div className="min-w-0">
         <div className="text-xs font-medium truncate">{template.name}</div>
-        <div className="text-[10px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           {fmtNumber(template.width ?? 0)}×{fmtNumber(template.length ?? 0)} {unitLabel}
         </div>
-        {hint && <div className="text-[9px] italic text-muted-foreground/80">{hint}</div>}
+        {hint && <div className="text-xs italic text-muted-foreground/80">{hint}</div>}
       </div>
-      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
+      {active && <Badge variant="default" className="shrink-0 text-xs">активен</Badge>}
     </button>
   )
 }
@@ -600,13 +600,13 @@ function AnnotationChip({
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
         placeholder="Текст"
-        className="h-5 w-24 rounded border bg-background px-1 text-[10px]"
+        className="h-5 w-24 rounded border bg-background px-1 text-xs"
       />
       {hasLeader && (
         <button
           onClick={onRemoveLeader}
           title="Убрать сноску (текст останется)"
-          className="text-[9px] text-muted-foreground hover:text-foreground underline shrink-0"
+          className="text-xs text-muted-foreground hover:text-foreground underline shrink-0"
         >
           без линии
         </button>
@@ -684,7 +684,7 @@ function ZoneChip({
             onChange={(e) => setWidthText(e.target.value)}
             onBlur={commitWidth}
             onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-            className="h-5 w-10 rounded border bg-background px-1 text-[10px]"
+            className="h-5 w-10 rounded border bg-background px-1 text-xs"
             title={`Ширина, ${unitLabel}`}
           />
           <span className="text-muted-foreground">×</span>
@@ -695,13 +695,13 @@ function ZoneChip({
             onChange={(e) => setLengthText(e.target.value)}
             onBlur={commitLength}
             onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-            className="h-5 w-10 rounded border bg-background px-1 text-[10px]"
+            className="h-5 w-10 rounded border bg-background px-1 text-xs"
             title={`Длина, ${unitLabel}`}
           />
-          <span className="text-[10px] text-muted-foreground">{unitLabel}</span>
+          <span className="text-xs text-muted-foreground">{unitLabel}</span>
         </>
       ) : (
-        <span className="text-[10px] text-muted-foreground">своя форма</span>
+        <span className="text-xs text-muted-foreground">своя форма</span>
       )}
       <button
         onClick={onRemove}
@@ -803,7 +803,7 @@ function PipeNestBuilder() {
   return (
     <div className="flex w-full flex-wrap items-end gap-2 rounded-lg border p-2">
       <div className="flex flex-col gap-0.5">
-        <label className="text-[10px] text-muted-foreground">Тип трубы</label>
+        <label className="text-xs text-muted-foreground">Тип трубы</label>
         <select
           value={pipeIndex}
           onChange={(e) => setPipeIndex(Number(e.target.value))}
@@ -815,7 +815,7 @@ function PipeNestBuilder() {
         </select>
       </div>
       <div className="flex flex-col gap-0.5">
-        <label className="text-[10px] text-muted-foreground">Ширина палубы, {UNIT_LABEL[unit]}</label>
+        <label className="text-xs text-muted-foreground">Ширина палубы, {UNIT_LABEL[unit]}</label>
         <input
           type="text"
           inputMode="decimal"
@@ -825,7 +825,7 @@ function PipeNestBuilder() {
         />
       </div>
       <div className="flex flex-col gap-0.5">
-        <label className="text-[10px] text-muted-foreground">Труб (пусто = 2 яруса)</label>
+        <label className="text-xs text-muted-foreground">Труб (пусто = 2 яруса)</label>
         <input
           type="text"
           inputMode="numeric"
@@ -836,7 +836,7 @@ function PipeNestBuilder() {
         />
       </div>
       <div className="flex flex-col gap-0.5">
-        <label className="text-[10px] text-muted-foreground">Вода в трубах, т (если есть)</label>
+        <label className="text-xs text-muted-foreground">Вода в трубах, т (если есть)</label>
         <input
           type="text"
           inputMode="decimal"
@@ -850,7 +850,7 @@ function PipeNestBuilder() {
         Добавить штабель
       </Button>
       {nest && (
-        <div className="basis-full text-[10px] text-muted-foreground">
+        <div className="basis-full text-xs text-muted-foreground">
           {nest.pipesPerRow} труб/ряд × {nest.tierCounts.length} яр. = {nest.pipeCount} шт ·
           {' '}высота {fmtNumber(nest.heightM)} м
           {pipeWeightKg !== undefined && <> · вес труб {fmtNumber((nest.pipeCount * pipeWeightKg) / 1000)} т</>}

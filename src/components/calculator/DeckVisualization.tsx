@@ -3983,7 +3983,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           className="absolute left-2 bottom-2 z-10 flex flex-col gap-1.5 rounded-lg border bg-card/95 p-2 shadow-sm backdrop-blur-sm w-64"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             Перетащите фото, чтобы переместить · тяните за угол, чтобы масштабировать
           </div>
           {!bgCalibrateMode ? (
@@ -3999,14 +3999,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             </Button>
           ) : (
             <>
-              <div className="text-[10px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 {bgCalibratePoints.length < 2
                   ? `Отметьте на фото две точки известного расстояния (${bgCalibratePoints.length}/2)`
                   : 'Введите реальное расстояние между точками'}
               </div>
               {bgCalibratePoints.length === 2 && (
                 <div className="space-y-0.5">
-                  <label className="text-[9px] text-muted-foreground leading-none block">
+                  <label className="text-xs text-muted-foreground leading-none block">
                     Реальное расстояние ({UNIT_LABEL[unit]})
                   </label>
                   <input
@@ -4060,7 +4060,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   key={preset}
                   type="button"
                   className={cn(
-                    'rounded-md border px-1.5 py-0.5 text-[10px]',
+                    'rounded-md border px-1.5 py-0.5 text-xs',
                     active ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : 'hover:bg-accent'
                   )}
                   onClick={() => {

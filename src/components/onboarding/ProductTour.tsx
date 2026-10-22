@@ -146,7 +146,7 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
         className="rounded-lg border bg-card text-card-foreground shadow-xl p-4 space-y-3"
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Шаг {index + 1} из {steps.length}
           </div>
           <button

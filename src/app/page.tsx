@@ -2477,7 +2477,7 @@ export default function Home() {
               >
                 DeckLoad
               </button>
-              <div className="text-[11px] text-muted-foreground hidden sm:block">
+              <div className="text-xs text-muted-foreground hidden sm:block">
                 Загрузка палубы
               </div>
             </div>
@@ -2502,7 +2502,7 @@ export default function Home() {
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-72 p-1.5" align="end">
-                <p className="px-1.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <p className="px-1.5 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Библиотека судов
                 </p>
                 {VESSEL_TEMPLATES.map((tpl) => (
@@ -2517,7 +2517,7 @@ export default function Home() {
                     <span className="block">{tpl.label}</span>
                   </button>
                 ))}
-                <p className="px-1.5 pt-1 text-[10px] text-muted-foreground">
+                <p className="px-1.5 pt-1 text-xs text-muted-foreground">
                   Создаёт новый расчёт с палубой и данными судна; груз остаётся пустым.
                 </p>
               </PopoverContent>
@@ -2600,7 +2600,7 @@ export default function Home() {
                   <Badge
                     key={`unfit-${u.itemId}-${i}`}
                     variant="destructive"
-                    className="text-[10px] font-normal"
+                    className="text-xs font-normal"
                     title={`${where}: ${u.reason}`}
                   >
                     {u.name} — {where}: {u.reason}
@@ -2611,7 +2611,7 @@ export default function Home() {
                 <Badge
                   key={`pin-${u.itemId}-${i}`}
                   variant="destructive"
-                  className="text-[10px] font-normal"
+                  className="text-xs font-normal"
                   title={u.reason}
                 >
                   {u.name} — {u.reason}
@@ -2621,7 +2621,7 @@ export default function Home() {
                 <Badge
                   key={`conflict-${p.index}`}
                   variant="destructive"
-                  className="text-[10px] font-normal"
+                  className="text-xs font-normal"
                   title={p.conflict}
                 >
                   {p.name} — {p.conflict}
@@ -2639,7 +2639,7 @@ export default function Home() {
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {manualToDo.map((u, i) => (
-                <Badge key={`todo-${u.itemId}-${i}`} variant="outline" className="text-[10px] font-normal">
+                <Badge key={`todo-${u.itemId}-${i}`} variant="outline" className="text-xs font-normal">
                   {u.name} — {u.reason.replace(/^Не размещено вручную \((.*)\)$/, '$1')}
                 </Badge>
               ))}
@@ -2679,7 +2679,7 @@ export default function Home() {
                         <Ship className="h-4 w-4 text-primary" />
                         Схема палубы
                         {mode === 'manual' && (
-                          <Badge variant="secondary" className="text-[10px]">ручной режим</Badge>
+                          <Badge variant="secondary" className="text-xs">ручной режим</Badge>
                         )}
                       </CardTitle>
                       <CardDescription className="mt-0.5">
@@ -3125,12 +3125,13 @@ function LegendDot({
           }}
         />
       ) : icon ? (
-        <span className="grid h-3 w-3 place-items-center text-[10px] font-bold text-primary">
+        <span aria-hidden className="grid h-4 w-4 place-items-center text-xs font-bold text-primary">
           {icon}
         </span>
       ) : badge ? (
         <span
-          className="grid h-3.5 w-4 place-items-center rounded-sm text-[8px]"
+          aria-hidden
+          className="grid h-4 w-4 place-items-center rounded-sm text-xs"
           style={{ backgroundColor: badgeColor }}
         >
           {badge}

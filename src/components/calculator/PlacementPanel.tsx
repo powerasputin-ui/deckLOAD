@@ -161,13 +161,13 @@ export function PlacementPanel({
                 >
                   <span className="text-xs font-medium truncate">{v.label}</span>
                   <span className="flex items-center gap-1.5 shrink-0">
-                    <Badge variant="secondary" className="text-[10px]">{v.utilizationPct}%</Badge>
-                    <span className="text-[10px] text-muted-foreground">{v.placedCount} ед.</span>
+                    <Badge variant="secondary" className="text-xs">{v.utilizationPct}%</Badge>
+                    <span className="text-xs text-muted-foreground">{v.placedCount} ед.</span>
                   </span>
                 </button>
               ))}
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Клик по варианту — применить. Кнопка «Автораспределение» — новый набор.
             </p>
           </div>
@@ -195,11 +195,11 @@ export function PlacementPanel({
             <RotateCw className="h-3.5 w-3.5 mr-1.5" />
             Ориентация нового груза: {stampRotated ? '90°' : '0°'}
           </Button>
-          <p className="text-[10px] text-muted-foreground leading-tight">
+          <p className="text-xs text-muted-foreground leading-tight">
             Влияет на следующий клик. Размещённые грузы поворачиваются иконкой ↻ на палубе.
           </p>
           {pendingPresetStamp && (
-            <p className="text-[10px] text-muted-foreground leading-tight">
+            <p className="text-xs text-muted-foreground leading-tight">
               «{pendingPresetStamp.name}» из пресетов готов — кликните по палубе, чтобы разместить.
             </p>
           )}
@@ -259,7 +259,7 @@ export function PlacementPanel({
         )}
 
         {/* Tips */}
-        <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground space-y-0.5">
+        <div className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground space-y-0.5">
           {isAuto ? (
             <>
               <div>• Выберите груз выше и кликните по палубе — закрепит его в этой точке</div>
@@ -314,17 +314,17 @@ function StampRow({
       />
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium truncate">{item.name}</div>
-        <div className="text-[10px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           {rotated
             ? `${fmtNumber(item.length)}×${fmtNumber(item.width)} ↻`
             : `${fmtNumber(item.width)}×${fmtNumber(item.length)}`}
         </div>
-        <div className={cn('text-[10px]', overPlaced > 0 ? 'text-red-600 dark:text-red-400 font-medium' : remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
+        <div className={cn('text-xs', overPlaced > 0 ? 'text-red-600 dark:text-red-400 font-medium' : remaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
           Всего: {total} · Не распределено: {remaining}
           {overPlaced > 0 && <> · ⚠ Превышено: {overPlaced}</>}
         </div>
       </div>
-      {active && <Badge variant="default" className="shrink-0 text-[10px]">активен</Badge>}
+      {active && <Badge variant="default" className="shrink-0 text-xs">активен</Badge>}
     </button>
   )
 }

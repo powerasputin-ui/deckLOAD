@@ -339,7 +339,7 @@ export function Sidebar({
                       className="flex-1 min-w-0 text-left"
                     >
                       <div className="text-xs font-medium truncate">{p.name}</div>
-                      <div className="text-[10px] text-muted-foreground">
+                      <div className="text-xs text-muted-foreground">
                         {p.items.length} гр. · {fmtNumber(p.deck.width)}×{fmtNumber(p.deck.length)} {UNIT_LABEL[p.deck.unit]}
                       </div>
                     </button>
@@ -572,7 +572,7 @@ function Section({
           {title}
         </span>
         {badge !== undefined && (
-          <Badge variant="secondary" className="ml-auto text-[10px] h-4 px-1.5">
+          <Badge variant="secondary" className="ml-auto text-xs h-4 px-1.5">
             {badge}
           </Badge>
         )}
@@ -621,7 +621,7 @@ function DeckSettings() {
       <div className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <label htmlFor={`${uid}-width`} className="text-[10px] text-muted-foreground">Ширина</label>
+            <label htmlFor={`${uid}-width`} className="text-xs text-muted-foreground">Ширина</label>
             <NumberField
               id={`${uid}-width`}
               min={0.1}
@@ -636,7 +636,7 @@ function DeckSettings() {
             />
           </div>
           <div className="space-y-1">
-            <label htmlFor={`${uid}-length`} className="text-[10px] text-muted-foreground">Длина</label>
+            <label htmlFor={`${uid}-length`} className="text-xs text-muted-foreground">Длина</label>
             <NumberField
               id={`${uid}-length`}
               min={0.1}
@@ -652,7 +652,7 @@ function DeckSettings() {
           </div>
         </div>
         <div className="space-y-1">
-          <label htmlFor={`${uid}-gap`} className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-gap`} className="text-xs text-muted-foreground flex items-center gap-1">
             <Layers className="h-3 w-3" /> Отступ между грузами
           </label>
           <div className="flex items-center gap-1.5">
@@ -664,11 +664,11 @@ function DeckSettings() {
               onCommit={(v) => setDeck({ gap: v })}
               className="h-8 text-xs flex-1"
             />
-            <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
+            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
         </div>
         <div className="space-y-1">
-          <label htmlFor={`${uid}-offset`} className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-offset`} className="text-xs text-muted-foreground flex items-center gap-1">
             <Anchor className="h-3 w-3" /> Отступ от борта
           </label>
           <div className="flex items-center gap-1.5">
@@ -680,11 +680,11 @@ function DeckSettings() {
               onCommit={(v) => setDeck({ boardOffset: v })}
               className="h-8 text-xs flex-1"
             />
-            <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
+            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
         </div>
         <div className="space-y-1">
-          <label htmlFor={`${uid}-clearance`} className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <label htmlFor={`${uid}-clearance`} className="text-xs text-muted-foreground flex items-center gap-1">
             <Layers className="h-3 w-3" /> Предельная высота штабеля
           </label>
           <div className="flex items-center gap-1.5">
@@ -696,16 +696,16 @@ function DeckSettings() {
               onCommit={(v) => setDeck({ clearance: v })}
               className="h-8 text-xs flex-1"
             />
-            <span className="text-[10px] text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
+            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             0 — палуба высоту не ограничивает: ярусов столько, сколько указано
             в «Ярусов» у груза, а если там 0 — один. Больше 0 — штабель не выше
             этой высоты и не больше «Ярусов»
           </p>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-muted-foreground">Единицы</label>
+          <label className="text-xs text-muted-foreground">Единицы</label>
           <ToggleGroup
             type="single"
             value={deck.unit}
@@ -718,7 +718,7 @@ function DeckSettings() {
           </ToggleGroup>
         </div>
         <div className="space-y-1">
-          <label className="text-[10px] text-muted-foreground">Стратегия упаковки</label>
+          <label className="text-xs text-muted-foreground">Стратегия упаковки</label>
           <Select value={sortStrategy} onValueChange={(v) => setSortStrategy(v as SortStrategy)}>
             <SelectTrigger className="h-8 text-xs">
               <SelectValue />
@@ -793,20 +793,20 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
             )}
           >
             {strengthPending ? (
-              <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 Лимит прочности палубы не выбран
               </div>
             ) : (
-              <div className="text-[11px] font-medium">
+              <div className="text-xs font-medium">
                 Прочность палубы: {fmtNumber(strengthChoice ?? 0)} т/м²
               </div>
             )}
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               «{vessel.label}»: источники расходятся ({strength.sources}). Выбор задаёт зону нагрузки на всю палубу.
             </p>
             {strengthZoneMissing && (
-              <p className="text-[10px] text-amber-800 dark:text-amber-300">
+              <p className="text-xs text-amber-800 dark:text-amber-300">
                 Зоны на всю палубу нет, лимит не проверяется. Нажмите выбранное значение, чтобы вернуть её.
               </p>
             )}
@@ -817,7 +817,7 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
                   size="sm"
                   variant={strengthChoice === v ? 'default' : 'outline'}
                   aria-pressed={strengthChoice === v}
-                  className="h-7 flex-1 text-[11px]"
+                  className="h-7 flex-1 text-xs"
                   onClick={() => chooseDeckStrength(v)}
                 >
                   {fmtNumber(v)} т/м²
@@ -826,7 +826,7 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
             </div>
           </div>
         )}
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
         </p>
         {zones.map((z) => {
@@ -857,13 +857,13 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Держит до {fmtNumber(capacityT)} т суммарно ({fmtNumber(z.maxLoadPerArea)} т/м² × {fmtNumber(areaM2)} м²)
               </p>
               {load && (
                 <p
                   className={cn(
-                    'text-[10px] tabular-nums',
+                    'text-xs tabular-nums',
                     load.exceeded ? 'font-medium text-destructive' : 'text-muted-foreground'
                   )}
                 >
@@ -898,7 +898,7 @@ function SeparationRulesSection() {
   return (
     <Section icon={<ShieldAlert className="h-4 w-4" />} title="Сепарация груза" badge={rules.length} defaultOpen={false} tourId="separation">
       <div className="space-y-2">
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Минимальное расстояние (в метрах) между грузами двух категорий. Нарушение блокирует размещение.
         </p>
         {rules.map((r) => (
@@ -945,7 +945,7 @@ function SeparationRulesSection() {
               onCommit={setMinDistance}
               className="h-7 text-xs flex-1"
             />
-            <span className="text-[10px] text-muted-foreground">м</span>
+            <span className="text-xs text-muted-foreground">м</span>
           </div>
           <Button
             size="sm"
@@ -1070,7 +1070,7 @@ function LashingPointsSection({
   return (
     <Section icon={<MapPin className="h-4 w-4" />} title="Крепление груза" badge={points.length} defaultOpen={false} tourId="lashing">
       <div className="space-y-3">
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Клик по грузу, затем по палубе — привязывает линию крепления с расчётом усилия по IMO CSS Code
           (упрощённый метод). Мягкая проверка — груз не блокируется. Точка без привязки — просто метка на схеме.
         </p>
@@ -1080,14 +1080,14 @@ function LashingPointsSection({
             switching one off clears the other. */}
         {selectedPlacement && (
           <div className="rounded-md border p-2 space-y-1.5">
-            <div className="text-[10px] font-medium text-muted-foreground truncate">
+            <div className="text-xs font-medium text-muted-foreground truncate">
               Режим для «{selectedPlacement.name}»
             </div>
             <div className="grid grid-cols-2 gap-1">
               <Button
                 size="sm"
                 variant={!selectedHasClearance ? 'default' : 'outline'}
-                className="h-6 text-[10px] px-1"
+                className="h-6 text-xs px-1"
                 // Already in this mode: nothing to change (and nothing to pin).
                 onClick={() => selectedHasClearance && updateSelectedPlacement({ clearanceMargin: undefined })}
               >
@@ -1096,7 +1096,7 @@ function LashingPointsSection({
               <Button
                 size="sm"
                 variant={selectedHasClearance ? 'default' : 'outline'}
-                className="h-6 text-[10px] px-1"
+                className="h-6 text-xs px-1"
                 onClick={() => {
                   if (selectedPlacement.id) clearLashingPointsFor(selectedPlacement.id)
                   updateSelectedPlacement({
@@ -1151,7 +1151,7 @@ function LashingPointsSection({
               <Button
                 size="sm"
                 variant="outline"
-                className="h-6 text-[10px] w-full text-destructive hover:text-destructive"
+                className="h-6 text-xs w-full text-destructive hover:text-destructive"
                 onClick={() => selectedPlacement.id && clearLashingPointsFor(selectedPlacement.id)}
               >
                 <Trash2 className="h-3 w-3 mr-1" />
@@ -1177,7 +1177,7 @@ function LashingPointsSection({
             return (
               <div
                 key={`${seg.itemId}-${idx}`}
-                className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-[11px] text-red-800 dark:text-red-300 flex gap-1.5"
+                className="rounded-md border border-red-300 bg-red-50/60 dark:bg-red-950/20 p-2 text-xs text-red-800 dark:text-red-300 flex gap-1.5"
               >
                 <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 <span>
@@ -1194,7 +1194,7 @@ function LashingPointsSection({
           }
           if (seg.assessment.status === 'insufficient-data') {
             return (
-              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-[11px] text-muted-foreground">
+              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-xs text-muted-foreground">
                 {segLabel && <b>{segLabel}</b>}
                 Недостаточно данных для оценки: {seg.assessment.missingInputs?.join(', ')}.
               </div>
@@ -1202,7 +1202,7 @@ function LashingPointsSection({
           }
           if (seg.assessment.status === 'calculated') {
             return (
-              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-[10px] font-medium text-muted-foreground">
+              <div key={`${seg.itemId}-${idx}`} className="rounded-md border p-2 text-xs font-medium text-muted-foreground">
                 {segLabel && <div className="mb-0.5">{segLabel}</div>}
                 {seg.assessment.methodology === 'metal-rd' && (
                   <>РД 31.11.21.23-96 (п. 2.2.3): требуется найтовов — {seg.assessment.requiredCount}</>
@@ -1232,23 +1232,23 @@ function LashingPointsSection({
               value={selectedWireType}
               onValueChange={(v) => updateSelectedPlacement({ lashingWireType: v as WireRopeType })}
             >
-              <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-6 w-full text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {Object.entries(WIRE_ROPE_SPECS).map(([key, w]) => (
                   <SelectItem key={key} value={key}>{w.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               Прикреплено точек к этому грузу: {selectedPointsCount}
             </div>
             {selectedPointsCount < selectedRequiredCountTotal && (
               <div className="space-y-1">
-                <div className="text-[10px] text-destructive">
+                <div className="text-xs text-destructive">
                   Меньше расчётного числа — укажите обоснование (идёт в PDF)
                 </div>
                 <textarea
-                  className="w-full rounded border bg-transparent text-[11px] p-1.5 min-h-[44px] resize-y"
+                  className="w-full rounded border bg-transparent text-xs p-1.5 min-h-[44px] resize-y"
                   placeholder="Например: груз на деревянной клети между бортовыми стенками, доп. крепление сверх клети не требуется по проекту"
                   value={selectedPlacement.lashingJustification ?? ''}
                   onChange={(e) => updateSelectedPlacement({ lashingJustification: e.target.value })}
@@ -1287,7 +1287,7 @@ function LashingPointsSection({
                       })
                     }}
                   >
-                    <SelectTrigger className="h-6 w-full text-[11px]"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-6 w-full text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {Object.entries(LASHING_DEVICES).map(([key, d]) => (
                         <SelectItem key={key} value={key}>{d.label}</SelectItem>
@@ -1325,7 +1325,7 @@ function LashingPointsSection({
           </Button>
         )}
         {points.length > 0 && (
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Закреплено грузов: {new Set(points.filter((p) => p.placementId).map((p) => p.placementId)).size} ·
             {' '}точек с расчётом: {attachedCount}
           </p>
@@ -1418,12 +1418,12 @@ function VesselStabilitySection() {
   return (
     <Section icon={<Ship className="h-4 w-4" />} title="Остойчивость судна" defaultOpen={false}>
       <div className="space-y-2">
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Ознакомительный/плановый расчёт — не заменяет одобренный классом судовой прибор загрузки. Данные: <b>{statusLabel}</b>.
         </p>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Судно</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Судно</p>
           <Input
             placeholder="Название судна"
             value={particulars.name ?? ''}
@@ -1440,7 +1440,7 @@ function VesselStabilitySection() {
               onChange={(v) => setVesselParticulars({ downfloodingAngleDeg: v > 0 ? v : undefined })}
             />
           </div>
-          <p className="text-[9px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Угол заливания опционален (0 = не задан, используются стандартные 30°/40°) — задайте, если он меньше, для честной площади под GZ (IS Code 2008, п. 2.2.1).
           </p>
           <div className="grid grid-cols-2 gap-1">
@@ -1450,7 +1450,7 @@ function VesselStabilitySection() {
             <MiniNumField label="Лёгкий TCG" value={particulars.lightshipTCG} unit="м" onChange={(v) => setVesselParticulars({ lightshipTCG: v })} />
           </div>
           <div className="space-y-0.5">
-            <label className="text-[9px] text-muted-foreground leading-none block">Точка отсчёта LCG/LCF/LCB</label>
+            <label className="text-xs text-muted-foreground leading-none block">Точка отсчёта LCG/LCF/LCB</label>
             <Select
               value={particulars.longitudinalOrigin}
               onValueChange={(v) => setVesselParticulars({ longitudinalOrigin: v as VesselParticulars['longitudinalOrigin'] })}
@@ -1461,22 +1461,22 @@ function VesselStabilitySection() {
                 <SelectItem value="aft-perpendicular">От кормового перпендикуляра</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-[9px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Это относится ТОЛЬКО к подписи в этом разделе — Лёгкий LCG, LCG переменных грузов и «Центр палубы
               от миделя / от КП» ниже должны быть заданы на одной и той же оси, иначе судно и груз молча окажутся
               на разных шкалах.
             </p>
             {lcgPlausibilityWarning && (
-              <p className="text-[9px] text-amber-600 dark:text-amber-500">⚠ {lcgPlausibilityWarning}</p>
+              <p className="text-xs text-amber-600 dark:text-amber-500">⚠ {lcgPlausibilityWarning}</p>
             )}
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Переменные грузы (танки/балласт/топливо/вода)
           </p>
-          <p className="text-[9px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Без этого GM показывается без поправки на свободную поверхность — реальная остойчивость может быть ниже.
           </p>
           {variableWeights.map((w) => (
@@ -1485,7 +1485,7 @@ function VesselStabilitySection() {
                 <Input
                   value={w.name}
                   onChange={(e) => updateVariableWeight(w.id, { name: e.target.value })}
-                  className="h-6 text-[11px] flex-1"
+                  className="h-6 text-xs flex-1"
                   placeholder="Название (напр. Балласт форпик)"
                 />
                 <button
@@ -1527,7 +1527,7 @@ function VesselStabilitySection() {
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Система координат палубы</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Система координат палубы</p>
           <div className="grid grid-cols-3 gap-1">
             <MiniNumField
               label="Центр палубы от ДП"
@@ -1553,11 +1553,11 @@ function VesselStabilitySection() {
             />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground">Нос палубы: {forwardIsPositiveY ? '+Y' : '−Y'}</span>
+            <span className="text-xs text-muted-foreground">Нос палубы: {forwardIsPositiveY ? '+Y' : '−Y'}</span>
             <Button
               size="sm"
               variant="outline"
-              className="h-6 text-[10px] px-2"
+              className="h-6 text-xs px-2"
               onClick={() => setDeckForwardIsPositiveY(!forwardIsPositiveY)}
             >
               Сменить
@@ -1566,7 +1566,7 @@ function VesselStabilitySection() {
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Гидростатика (по водоизмещению)</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Гидростатика (по водоизмещению)</p>
           {points.map((pt, i) => (
             <div key={i} className="rounded-md border p-1.5 space-y-1">
               <div className="grid grid-cols-3 gap-1">
@@ -1593,15 +1593,15 @@ function VesselStabilitySection() {
           <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addHydrostaticPoint()}>
             <Plus className="h-3.5 w-3.5 mr-1" /> Добавить точку гидростатики
           </Button>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             LCB/MTC опциональны — без них расчёт дифферента недоступен (только GM и крен).
           </p>
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Кросс-кривые KN (для полной кривой GZ)</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Кросс-кривые KN (для полной кривой GZ)</p>
           {knCurves ? (
-            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{knCurves.headingAngles.length} углов × {knCurves.points.length} точек водоизмещения</span>
               <button
                 onClick={() => setKNCrossCurves(undefined)}
@@ -1613,7 +1613,7 @@ function VesselStabilitySection() {
             </div>
           ) : (
             <>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Вставьте из формуляра остойчивости: первая строка — углы крена через запятую, далее по строке на
                 каждое водоизмещение (водоизмещение, KN...). Пример:
                 <br />0,10,20,30,40
@@ -1623,10 +1623,10 @@ function VesselStabilitySection() {
                 value={knText}
                 onChange={(e) => setKnText(e.target.value)}
                 rows={3}
-                className="w-full rounded-md border p-1.5 text-[10px] font-mono"
+                className="w-full rounded-md border p-1.5 text-xs font-mono"
                 placeholder={'0,10,20,30,40\n2000000,0,1.2,2.3,3.1,3.6'}
               />
-              {knError && <p className="text-[10px] text-destructive">{knError}</p>}
+              {knError && <p className="text-xs text-destructive">{knError}</p>}
               <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={parseKnText}>
                 Применить кривые KN
               </Button>
@@ -1668,7 +1668,7 @@ function MiniNumField({
 
   return (
     <div className="space-y-0.5">
-      <label className="text-[9px] text-muted-foreground leading-none block">
+      <label className="text-xs text-muted-foreground leading-none block">
         {label}{unit ? ` (${unit})` : ''}
       </label>
       <Input
@@ -1682,7 +1682,7 @@ function MiniNumField({
           if (!isNaN(v) && raw.trim() !== '') onChange(v)
         }}
         onBlur={() => setText(String(value))}
-        className="h-6 text-[11px] px-1"
+        className="h-6 text-xs px-1"
       />
     </div>
   )

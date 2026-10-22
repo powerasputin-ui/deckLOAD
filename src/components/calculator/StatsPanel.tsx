@@ -169,7 +169,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
             <div className="text-xl font-bold tabular-nums mt-1">
               {placedCount}
             </div>
-            <div className="text-[10px] text-muted-foreground">ед. груза</div>
+            <div className="text-xs text-muted-foreground">ед. груза</div>
           </div>
           <div className="rounded-lg border bg-blue-50/50 dark:bg-blue-950/20 p-3">
             <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400">
@@ -179,7 +179,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
             <div className="text-xl font-bold tabular-nums mt-1">
               {breakdown.length}
             </div>
-            <div className="text-[10px] text-muted-foreground">на палубе</div>
+            <div className="text-xs text-muted-foreground">на палубе</div>
           </div>
           <div className="rounded-lg border bg-red-50/50 dark:bg-red-950/20 p-3">
             <div className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
@@ -189,8 +189,8 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
             <div className="text-xl font-bold tabular-nums mt-1">
               {unplacedCount}
             </div>
-            <div className="text-[10px] text-muted-foreground">ед. груза</div>
-            {unplaced?.note && <div className="text-[10px] text-muted-foreground mt-0.5">{unplaced.note}</div>}
+            <div className="text-xs text-muted-foreground">ед. груза</div>
+            {unplaced?.note && <div className="text-xs text-muted-foreground mt-0.5">{unplaced.note}</div>}
           </div>
         </div>
 
@@ -203,7 +203,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
               </span>
               <span className="font-semibold">лимит не выбран</span>
             </div>
-            <div className="mt-0.5 text-[10px] text-muted-foreground">Выберите в разделе «Зоны нагрузки» слева</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">Выберите в разделе «Зоны нагрузки» слева</div>
           </div>
         )}
 
