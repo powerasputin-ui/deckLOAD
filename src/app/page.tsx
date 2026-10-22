@@ -16,6 +16,7 @@ import {
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
 import { pluralRu } from '@/lib/utils'
+import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -849,6 +850,9 @@ export default function Home() {
     () => new Map(items.map((it) => [it.id, it.category])),
     [items]
   )
+  // Each cargo's number — its place in the list — on the deck, in 3D, in the
+  // tables and in the PDF; its tone follows from it (spec 6.2, 9.2).
+  const cargoNumberByItemId = useMemo(() => cargoNumbers(items), [items])
 
   const activeStamp = useMemo(() => {
     if (pendingPresetStamp) {
@@ -916,7 +920,7 @@ export default function Home() {
     const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
     const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
     try {
-      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip })
+      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, cargoNumberByItemId })
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')
@@ -2731,6 +2735,7 @@ export default function Home() {
                   {viewMode === '3d' ? (
                     <Deck3DView
                       result={result}
+                      cargoNumberByItemId={cargoNumberByItemId}
                       deckWidth={result.deckWidth}
                       deckLength={result.deckLength}
                       deckOutline={deck.outline}
@@ -2912,6 +2917,7 @@ export default function Home() {
                     loadZones={deck.loadZones}
                     lashingPoints={deck.lashingPoints}
                     categoryByItemId={categoryByItemId}
+                    cargoNumberByItemId={cargoNumberByItemId}
                     separationRules={separationRulesInUnit}
                     placingLashingPoint={placingLashingPoint}
                     onPlaceLashingPoint={(x, y, corner) => {
@@ -3014,6 +3020,7 @@ export default function Home() {
                 maxDeckCargoT={deck.maxDeckCargoT}
                 tenFootContainerCapacity={deck.tenFootContainerCapacity}
                 deckStrengthPending={deckStrengthPending}
+                cargoNumberByItemId={cargoNumberByItemId}
                 unplaced={
                   mode === 'auto'
                     ? {

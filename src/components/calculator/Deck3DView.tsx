@@ -6,6 +6,7 @@ import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Edges } from '@react-three/drei'
 import { Maximize, Minimize } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cargoToneForNumber } from '@/lib/cargoPalette'
 import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 import { pipeNestTierOffsets } from '@/lib/pipeNest'
 
@@ -39,6 +40,9 @@ interface Deck3DViewProps {
   // the end of a camera orbit that started on it, since a 3D click has no
   // movement threshold — after which auto mode stopped placing that cargo.
   onSelectAuto?: (p: PinData, additive: boolean) => void
+  // Cargo id → number in the list; the tone follows from it, same as in 2D
+  // and the PDF (spec 9.2).
+  cargoNumberByItemId?: Map<string, number>
 }
 
 const SQRT3 = Math.sqrt(3)
@@ -68,6 +72,7 @@ export default function Deck3DView({
   onSelectManual,
   onSelectPin,
   onSelectAuto,
+  cargoNumberByItemId,
 }: Deck3DViewProps) {
   // Fullscreen toggle — expands this specific container (not the whole
   // page) via the browser's real Fullscreen API, so OrbitControls/canvas
@@ -153,6 +158,8 @@ export default function Deck3DView({
     for (const p of result.placed) {
       const thisIdx = pIdx++
       const placementId = placementIdFor(p)
+      const cargoNumber = cargoNumberByItemId?.get(p.itemId)
+      const tone = cargoNumber ? cargoToneForNumber(cargoNumber) : p.color
       // Only relevant in auto mode for a not-yet-pinned (algorithm-placed)
       // item — gives handleClick enough to pin it in place on first click.
       const pinData: PinData | undefined =
@@ -199,14 +206,14 @@ export default function Deck3DView({
             x: cx - p.width / 2,
             z: cz - p.length / 2,
             y: layer * tierPitch0,
-            color: p.color,
+            color: tone,
           })
         }
         continue
       }
 
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: p.color })
+        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: tone })
         continue
       }
 
@@ -242,7 +249,7 @@ export default function Deck3DView({
             x: cx,
             z: cz,
             y: layer * tierPitch + p.height / 2,
-            color: p.color,
+            color: tone,
           })
         }
         continue
@@ -276,7 +283,7 @@ export default function Deck3DView({
               x: cx + (acrossIsX ? across : 0),
               y: tierY,
               z: cz + (acrossIsX ? 0 : across),
-              color: p.color,
+              color: tone,
             })
           }
         })
@@ -295,7 +302,7 @@ export default function Deck3DView({
             x: cx,
             z: cz,
             y: layer * tierPitch + p.height / 2,
-            color: p.color,
+            color: tone,
           })
         }
         continue
@@ -332,7 +339,7 @@ export default function Deck3DView({
             x: cx,
             z: cz,
             y: layer * tierPitch + p.height / 2,
-            color: p.color,
+            color: tone,
           })
         }
         continue
@@ -364,13 +371,13 @@ export default function Deck3DView({
             x: cx + (acrossIsX ? across : 0),
             z: cz + (acrossIsX ? 0 : across),
             y: rowY,
-            color: p.color,
+            color: tone,
           })
         }
       }
     }
     return out
-  }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements])
+  }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements, cargoNumberByItemId])
 
   const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
     const additive = e.shiftKey || e.ctrlKey || e.metaKey

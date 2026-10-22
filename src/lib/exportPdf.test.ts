@@ -5,7 +5,7 @@
 // combination for its own live verdict blocks; this file is the "PDF" half
 // of the mutation gate the review asked for.
 import { describe, it, expect } from 'vitest'
-import { buildLashingRequirementRows, lashingPlacementsForPlan, pdfSectionTitles } from './exportPdf'
+import { buildLashingRequirementRows, cargoTableRows, lashingPlacementsForPlan, pdfSectionTitles } from './exportPdf'
 import type { PackingResult, PinnedPlacement, PlacedItem } from './packing'
 import type { LashingCatalogItem } from './placementComposition'
 
@@ -160,5 +160,23 @@ describe('pdfSectionTitles', () => {
       cargo: 'Учёт по грузам — рейс 2 из 3',
       lashing: 'Крепление груза — вся операция, 3 рейса',
     })
+  })
+})
+
+// Stage 1 (spec 6.2): the cargo's number in the PDF's «Учёт по грузам».
+describe('cargoTableRows', () => {
+  const row = (itemId: string, name: string) => ({
+    itemId, name, color: '#000', requested: 2, placed: 2, footprints: 1, layers: 2, area: 3, weight: 1000, unitWeight: 500,
+  })
+
+  it('leads with the cargo number and lists cargo in list order', () => {
+    const rows = cargoTableRows([row('b', 'Ящик'), row('a', 'Труба')], new Map([['a', 1], ['b', 2]]))
+    expect(rows.map((r) => r.slice(0, 2))).toEqual([['1', 'Труба'], ['2', 'Ящик']])
+    expect(rows[0].slice(2)).toEqual(['×2', '1', '2/2', '3', '1000'])
+  })
+
+  it('a cargo missing from the list gets a dash and goes last', () => {
+    const rows = cargoTableRows([row('x', 'Старое'), row('a', 'Труба')], new Map([['a', 1]]))
+    expect(rows.map((r) => r[0])).toEqual(['1', '—'])
   })
 })

@@ -1,5 +1,7 @@
 'use client'
 
+import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
+import { sortByCargoNumber } from '@/lib/cargoPalette'
 import { TrendingUp, LayoutGrid, Square, Weight, CheckCircle2, AlertTriangle, Package, Layers } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -33,9 +35,11 @@ interface StatsPanelProps {
   // A library vessel's deck-strength limit isn't picked yet, so no zone
   // check runs at all.
   deckStrengthPending?: boolean
+  // Cargo id → number in the list: the «№» column, in list order.
+  cargoNumberByItemId?: Map<string, number>
 }
 
-export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity, unplaced, deckStrengthPending }: StatsPanelProps) {
+export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT, tenFootContainerCapacity, unplaced, deckStrengthPending, cargoNumberByItemId }: StatsPanelProps) {
   const {
     totalArea,
     usedArea,
@@ -291,6 +295,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
+                    <th className="pl-2 py-1.5 font-medium">№</th>
                     <th className="px-2 py-1.5 font-medium">Груз</th>
                     <th
                       className="px-1.5 py-1.5 font-medium text-right"
@@ -305,18 +310,16 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
                   </tr>
                 </thead>
                 <tbody>
-                  {breakdown.map((b) => {
+                  {sortByCargoNumber(breakdown, cargoNumberByItemId ?? new Map()).map((b) => {
                     const partial = b.placed < b.requested
+                    const number = cargoNumberByItemId?.get(b.itemId)
                     return (
                       <tr key={b.itemId} className="border-t">
+                        <td className="pl-2 py-1.5">
+                          {number !== undefined ? <CargoNumberTile number={number} className="h-5 min-w-5 px-1 text-xs" /> : '—'}
+                        </td>
                         <td className="px-2 py-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className="h-2.5 w-2.5 rounded-sm shrink-0 border border-black/10"
-                              style={{ backgroundColor: b.color }}
-                            />
-                            <span className="break-words">{b.name}</span>
-                          </div>
+                          <span className="break-words">{b.name}</span>
                         </td>
                         <td className="px-1.5 py-1.5 text-right tabular-nums">
                           {b.layers > 1 ? `×${b.layers}` : '1'}

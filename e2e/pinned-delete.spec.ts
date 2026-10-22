@@ -19,7 +19,7 @@ test.describe('Deleting a pinned cargo item', () => {
     const [beforePlaced, beforeTotal] = (before?.match(/(\d+)\/(\d+)/) ?? []).slice(1).map(Number)
 
     // Pin the first placed item by clicking its colored rect in the SVG.
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     // A selected item's own rect gets the purple #7c3aed stroke (see
     // FootprintShape's strokeColor) — that's the selection signal now that
     // the sidebar's "Выбрано N груз(ов)" summary block was removed.

@@ -10,7 +10,7 @@ function headerBadge(page: Page) {
 // «Автораспределение» leaves it alone — hand it back to the packer first so
 // all of the item's units can be stacked together.
 async function returnStampedPipeToAuto(page: Page) {
-  const pipe = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])').first()
+  const pipe = page.locator('svg g[data-cargo-name^="Обсадная труба"]').first()
   const itemMenu = page.locator('div.fixed.z-50.w-40')
   await expect(async () => {
     await pipe.click({ button: 'right', force: true })
@@ -56,7 +56,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // sharing the same fill (see DeckVisualization's per-row pipe render) —
     // count placements via the g[data-cargo-placement] wrapper, not raw
     // rects, so one 8-pipe pyramid isn't miscounted as several placements.
-    const pipePlacements = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])')
+    const pipePlacements = page.locator('svg g[data-cargo-name^="Обсадная труба"]')
     await expect(pipePlacements).toHaveCount(1)
 
     // Duplicate it — the copy starts with the same quantity (8) and,
@@ -143,12 +143,13 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
 
     // The duplicate needs its own click-placement (manual mode never
     // auto-places a freshly duplicated item onto the deck).
-    await page.getByRole('button', { name: /^Контейнер 20ft \(копия\) 6\.06×2/ }).click()
+    await page.getByRole('button', { name: /^\d+\s*Контейнер 20ft \(копия\) 6\.06×2/ }).click()
     await background.click({ position: { x: 260, y: 60 }, force: true })
 
     await page.keyboard.press('Escape')
 
-    const boxRects = page.locator('svg rect[fill="#0ea5e9"]')
+    // The original is cargo 1 and the copy cargo 2, so each has its own tone.
+    const boxRects = page.locator('svg g[data-cargo-name^="Контейнер 20ft"]')
     await expect(boxRects).toHaveCount(2)
     await boxRects.nth(0).scrollIntoViewIfNeeded()
 
@@ -186,7 +187,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
-    const pipePlacements = page.locator('svg g[data-cargo-placement="true"]:has(rect[fill="#57534e"])')
+    const pipePlacements = page.locator('svg g[data-cargo-name^="Обсадная труба"]')
     await expect(pipePlacements).toHaveCount(1)
 
     await originalCard.getByTitle('Дублировать').click()

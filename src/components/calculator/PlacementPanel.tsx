@@ -10,6 +10,7 @@ import {
   Layers,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -230,6 +231,7 @@ export function PlacementPanel({
                     <StampRow
                       key={it.id}
                       item={it}
+                      number={items.indexOf(it) + 1}
                       active={active}
                       rotated={active && stampRotated}
                       total={it.quantity}
@@ -283,6 +285,7 @@ export function PlacementPanel({
 
 function StampRow({
   item,
+  number,
   active,
   rotated,
   total,
@@ -291,6 +294,8 @@ function StampRow({
   onSelect,
 }: {
   item: CargoItem
+  // The cargo's number in the list (its tone follows from it).
+  number: number
   active: boolean
   rotated?: boolean
   total: number
@@ -308,10 +313,7 @@ function StampRow({
           : 'border-border hover:bg-accent'
       )}
     >
-      <span
-        className="h-7 w-7 shrink-0 rounded-md border border-black/10"
-        style={{ backgroundColor: item.color }}
-      />
+      <CargoNumberTile number={number} className="h-7 w-7 text-xs" />
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium truncate">{item.name}</div>
         <div className="text-xs text-muted-foreground">

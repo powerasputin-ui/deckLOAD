@@ -5,6 +5,7 @@ import { assessLashingRequirement, WIRE_ROPE_SPECS, type WireRopeType } from './
 import type { DeckConfig, Unit } from '@/store/calculator'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber, pluralRu } from './utils'
+import { sortByCargoNumber } from './cargoPalette'
 import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
 
 // App palette (mirrors the colors already used on-screen: slate-900 ink,
@@ -204,6 +205,23 @@ export function lashingPlacementsForPlan(
   )
 }
 
+// The «Учёт по грузам» rows: the cargo's number first (the same number as on
+// the deck and in the list), in list order.
+export function cargoTableRows(
+  breakdown: PackingResult['breakdown'],
+  cargoNumberByItemId: Map<string, number>
+): string[][] {
+  return sortByCargoNumber(breakdown, cargoNumberByItemId).map((b) => [
+    String(cargoNumberByItemId.get(b.itemId) ?? '—'),
+    b.name,
+    b.layers > 1 ? `×${b.layers}` : '1',
+    String(b.footprints),
+    `${b.placed}/${b.requested}`,
+    fmtNumber(b.area),
+    b.weight > 0 ? fmtNumber(b.weight) : '—',
+  ])
+}
+
 // Which trip the deck image and the cargo table show, and what the lashing
 // table covers — said in the section titles when there is more than one
 // trip (L16: the cargo table showed one trip with no word of which).
@@ -235,6 +253,8 @@ interface ExportDeckPlanToPdfOptions {
   dangerousGoodsNames?: string[]
   // The trip `result` and the deck image belong to, when there are several.
   trip?: { index: number; count: number }
+  // Cargo id → number in the list, for the «№» column.
+  cargoNumberByItemId?: Map<string, number>
 }
 
 export async function exportDeckPlanToPdf({
@@ -246,6 +266,7 @@ export async function exportDeckPlanToPdf({
   lashingRequirements,
   dangerousGoodsNames,
   trip,
+  cargoNumberByItemId = new Map(),
 }: ExportDeckPlanToPdfOptions): Promise<void> {
   const titles = pdfSectionTitles(trip)
   const { dataUrl: img, width: imgWidthPx, height: imgHeightPx } = await rasterizeSvg(svgEl)
@@ -333,15 +354,8 @@ export async function exportDeckPlanToPdf({
   autoTable(pdf, {
     startY: y,
     margin: { left: margin, right: margin, bottom: 36 },
-    head: [['Груз', 'Ярусы', 'Размещено', 'Всего ед.', 'Площадь', 'Вес']],
-    body: result.breakdown.map((b) => [
-      b.name,
-      b.layers > 1 ? `×${b.layers}` : '1',
-      String(b.footprints),
-      `${b.placed}/${b.requested}`,
-      fmtNumber(b.area),
-      b.weight > 0 ? fmtNumber(b.weight) : '—',
-    ]),
+    head: [['№', 'Груз', 'Ярусы', 'Размещено', 'Всего ед.', 'Площадь', 'Вес']],
+    body: cargoTableRows(result.breakdown, cargoNumberByItemId),
     theme: 'grid',
     styles: {
       font: FONT_FAMILY,
@@ -360,12 +374,13 @@ export async function exportDeckPlanToPdf({
     },
     alternateRowStyles: { fillColor: CARD_BG },
     columnStyles: {
-      0: { halign: 'left' },
-      1: { halign: 'right' },
+      0: { halign: 'right', cellWidth: 28 },
+      1: { halign: 'left' },
       2: { halign: 'right' },
-      3: { halign: 'right', fontStyle: 'bold' },
-      4: { halign: 'right' },
+      3: { halign: 'right' },
+      4: { halign: 'right', fontStyle: 'bold' },
       5: { halign: 'right' },
+      6: { halign: 'right' },
     },
   })
 

@@ -35,7 +35,7 @@ test.describe('Multi-trip voyages', () => {
     const trip1Before = await trip1Button.textContent()
 
     await page.getByRole('button', { name: /Рейс 2/ }).click()
-    const placedRect = page.locator('svg rect[fill="#10b981"]').first() // Паллета EUR's color
+    const placedRect = page.locator('svg rect[fill="#FDDB7C"]').first() // Паллета EUR is cargo 2: tone 2
     // A selected item's own rect gets the purple #7c3aed stroke (see
     // FootprintShape's strokeColor) — that's the selection signal now that
     // the sidebar's "Выбрано N груз(ов)" summary block was removed.

@@ -48,6 +48,7 @@ import {
 } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
+import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
@@ -138,6 +139,9 @@ interface DeckVisualizationProps {
   loadZones?: LoadZone[]
   lashingPoints?: LashingPoint[]
   categoryByItemId?: Map<string, string | undefined>
+  // Cargo id → number (its place in the cargo list): drawn on the stack and
+  // picks its tone (spec 9.2). Cargo missing from it keeps its saved colour.
+  cargoNumberByItemId?: Map<string, number>
   separationRules?: SeparationRule[]
   placingLashingPoint?: boolean
   onPlaceLashingPoint?: (
@@ -251,6 +255,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   loadZones,
   lashingPoints,
   categoryByItemId,
+  cargoNumberByItemId,
   separationRules,
   placingLashingPoint,
   onPlaceLashingPoint,
@@ -763,6 +768,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   }, [manualPlacements, pinnedPlacements, separationRules, categoryByItemId])
 
   const isInteractiveAuto = mode === 'auto' && onPinPlaced && onUpdatePinned
+  const toneFor = (itemId: string, savedColor: string) => {
+    const n = cargoNumberByItemId?.get(itemId)
+    return n ? cargoToneForNumber(n) : savedColor
+  }
   // With a click-to-act tool armed, a press belongs to the tool alone — it
   // used to also select (and in auto mode pin) the cargo or deck object under
   // the cursor, and start dragging it. A stamp is the one exception for cargo
@@ -3354,6 +3363,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <PlacedRect
               key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
               item={p}
+              tone={toneFor(p.itemId, p.color)}
+              cargoNumber={cargoNumberByItemId?.get(p.itemId)}
               x={drawSx}
               y={drawSy}
               w={itemPw}
@@ -3859,9 +3870,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               y={stampSy}
               w={screenSpanW(stampDims.w, stampDims.l)}
               h={screenSpanH(stampDims.w, stampDims.l)}
-              fill={activeStamp.color}
-              fillOpacity={0.35}
-              stroke={activeStamp.color}
+              fill={toneFor(activeStamp.id, activeStamp.color)}
+              fillOpacity={0.5}
+              stroke={CARGO_INK}
               strokeWidth={1.5}
               strokeDasharray="4 2"
               outline={activeStamp.outline}
@@ -4277,6 +4288,8 @@ function FootprintShape({
 
 function PlacedRect({
   item,
+  tone,
+  cargoNumber,
   x,
   y,
   w,
@@ -4303,6 +4316,9 @@ function PlacedRect({
   deckTransposed,
 }: {
   item: PlacedItem
+  // Fill of this cargo (cargoToneForNumber) and its number in the list.
+  tone: string
+  cargoNumber?: number
   x: number
   y: number
   w: number
@@ -4363,7 +4379,7 @@ function PlacedRect({
         ? '#7c3aed'
         : hovered
           ? '#94a3b8'
-          : 'rgba(15,23,42,0.55)'
+          : CARGO_INK
   const strokeWidth = mergeTarget ? 4 : overLoad || conflict ? 3 : selected ? 3 : hovered ? 2 : 1
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
@@ -4405,6 +4421,8 @@ function PlacedRect({
       // This marks exactly one element per placement, regardless of how
       // many segments its shape draws inside.
       data-cargo-placement="true"
+      data-cargo-number={cargoNumber}
+      data-cargo-name={item.name}
       onMouseEnter={(e) => {
         onHover(item.itemId)
         if (contentsTitle) onContentsHover?.(contentsTitle, e.clientX, e.clientY)
@@ -4428,9 +4446,9 @@ function PlacedRect({
           stock, and a thin pipe's real w/h is often sub-pixel anyway. */}
       {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <g className="pointer-events-none" opacity={0.5}>
-          <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
+          <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={tone} strokeWidth={1.5} />
           {item.stackedCount > 2 && (
-            <rect x={x - 6} y={y - 6} width={w} height={h} rx={2} fill="none" stroke={item.color} strokeWidth={1.5} />
+            <rect x={x - 6} y={y - 6} width={w} height={h} rx={2} fill="none" stroke={tone} strokeWidth={1.5} />
           )}
         </g>
       )}
@@ -4440,8 +4458,8 @@ function PlacedRect({
         y={y}
         w={w}
         h={h}
-        fill={item.color}
-        fillOpacity={hovered || selected ? 0.95 : 0.78}
+        fill={tone}
+        fillOpacity={1}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
         strokeDasharray={mergeTarget ? '6 3' : locked ? '4 2' : undefined}
@@ -4479,7 +4497,7 @@ function PlacedRect({
       )}
       {category && showLabels && w > 30 && h > 30 && (
         <g className="pointer-events-none">
-          <text x={x + 4} y={y + h - 5} fontSize={8} fill="rgba(255,255,255,0.85)" className="select-none">
+          <text x={x + 4} y={y + h - 5} fontSize={8} fill={CARGO_INK} fillOpacity={0.8} className="select-none">
             {category}
           </text>
         </g>
@@ -4504,10 +4522,10 @@ function PlacedRect({
         const dispLength = spread ? item.length + spread.onLength * 2 : item.length
         return (
           <>
-            <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill="#fff" className="select-none pointer-events-none">
+            <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill={CARGO_INK} className="select-none pointer-events-none">
               {clip(item.name, w)}
             </text>
-            <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill="rgba(255,255,255,0.92)" className="select-none pointer-events-none">
+            <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill={CARGO_INK} fillOpacity={0.8} className="select-none pointer-events-none">
               {fmt(dispWidth)}×{fmt(dispLength)}
               {item.rotated ? ' ↻' : ''}
             </text>

@@ -29,7 +29,7 @@ test.describe('Auto-mode selection and pinning', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(placedRect).toHaveAttribute('stroke-width', '1')
 
     await expect(async () => {
@@ -107,7 +107,7 @@ test.describe('Auto-mode selection and pinning', () => {
     const before = await headerBadge(page).textContent()
     const [, beforeTotal] = (before?.match(/(\d+)\/(\d+)/) ?? []).slice(1).map(Number)
 
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
       await expect(page.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
@@ -129,7 +129,7 @@ test.describe('Auto-mode selection and pinning', () => {
   test('right-clicking an item never also opens the deck-background menu (regression)', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
 
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
@@ -143,7 +143,7 @@ test.describe('Auto-mode selection and pinning', () => {
   test('dragging an auto-placed stack pins it where it was dropped, locked', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(placedRect).toBeVisible()
     const box = await placedRect.boundingBox()
     if (!box) throw new Error('no bounding box')
@@ -166,7 +166,7 @@ test.describe('Manual-mode selection (consistent with auto mode)', () => {
     await page.getByText('Ручной').first().click()
     await expect(page.getByText('ручной режим', { exact: true })).toBeVisible()
 
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {
       await placedRect.click({ force: true })
       await expect(placedRect).toHaveAttribute('stroke', '#7c3aed', { timeout: 1000 })

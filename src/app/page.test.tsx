@@ -6,6 +6,7 @@ import { useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
+import { cargoToneForNumber } from '@/lib/cargoPalette'
 
 // The PDF itself needs a real canvas; tests check what the page hands over.
 vi.mock('@/lib/exportPdf', async (importOriginal) => ({
@@ -124,6 +125,37 @@ describe('Home (page.tsx)', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Как в системе' }))
     expect(localStorage.getItem('deckload-theme')).toBeNull()
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  // Stage 1 (spec 6.2, 9.2): a cargo's number is its place in the list. Its
+  // stacks, its card and its row in «Учёт по грузам» carry it, and the tone
+  // follows the number rather than the colour saved with the cargo.
+  it('cargo numbers follow the list and pick the tone on the deck, the card and the table', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Труба', width: 2, length: 1, quantity: 1, height: 1, color: '#ff0000' })
+      useCalculator.getState().addItem({ name: 'Ящик', width: 1, length: 1, quantity: 1, height: 1, color: '#00ff00' })
+    })
+    const stack = (name: string) => document.querySelector(`svg g[data-cargo-name="${name}"]`)!
+    expect(stack('Ящик').getAttribute('data-cargo-number')).toBe('2')
+    expect(stack('Ящик').querySelector(`rect[fill="${cargoToneForNumber(2)}"]`)).toBeTruthy()
+    expect(document.querySelector('svg rect[fill="#00ff00"]')).toBeNull()
+    expect(screen.getAllByTitle('Груз № 2').length).toBeGreaterThan(0)
+
+    const table = screen.getByText('Учёт по грузам').parentElement!.parentElement!.querySelector('table')!
+    const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')]
+    expect(rows.map((r) => [r.cells[0].textContent, r.cells[1].textContent])).toEqual([
+      ['1', 'Труба'],
+      ['2', 'Ящик'],
+    ])
+
+    // Removing cargo 1 renumbers the rest, and the tone moves with it.
+    act(() => {
+      useCalculator.getState().removeItem(useCalculator.getState().items[0].id)
+    })
+    expect(stack('Ящик').getAttribute('data-cargo-number')).toBe('1')
+    expect(stack('Ящик').querySelector(`rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
   })
 
   // Phase 0, L11: a vessel whose sources disagree on deck strength offered
@@ -1199,11 +1231,12 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeNull()
-    // Existing rendering is untouched: base fill is still the item's own
-    // color, category label still shows the single real category. Scoped
+    // Existing rendering is untouched: base fill is still the cargo's own
+    // tone (by its number, spec 9.2), category label still shows the single
+    // real category. Scoped
     // to `svg text` — "Обычный" also appears elsewhere on the page (e.g.
     // the category datalist), so a page-wide text query would be ambiguous.
-    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+    expect(document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
     expect(svgTextContents()).toContain('Обычный')
   })
 
@@ -1234,7 +1267,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(texts).toContain('Обычный')
     expect(texts).not.toContain('Смешанный груз')
     // Base nominal rendering (color) is untouched.
-    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+    expect(document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
   })
 
   // R29 corrective pass: category for a composed placement must be
@@ -1403,9 +1436,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    // Base fill stays the nominal color — no product decision was made to
-    // split/change item.color itself, only to ADD the marker.
-    expect(document.querySelector('svg rect[fill="#ff0000"]')).toBeTruthy()
+    // Base fill stays the nominal cargo's tone (cargo 1 here, by its number
+    // in the list) — the composition only ADDS the marker.
+    expect(document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
   })
 
   // Geometry corrective pass — the un-clamped marker position
@@ -1442,7 +1475,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const box = document.querySelector('svg rect[fill="#ff0000"]')
+    const box = document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)
     const marker = document.querySelector('svg circle[fill="#475569"]')
     expect(box).toBeTruthy()
     expect(marker).toBeTruthy()
@@ -1486,7 +1519,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const box = document.querySelector('svg rect[fill="#ff0000"]')
+    const box = document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)
     const marker = document.querySelector('svg circle[fill="#475569"]')
     expect(box).toBeTruthy()
     expect(marker).toBeTruthy()

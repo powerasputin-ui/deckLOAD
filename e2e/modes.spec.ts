@@ -41,7 +41,7 @@ test.describe('Auto / manual modes', () => {
   test('auto redistribute keeps a LOCKED placement fixed in place', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
       await expect(page.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
@@ -64,7 +64,7 @@ test.describe('Auto / manual modes', () => {
   test('auto redistribute keeps a clearance-zoned placement fixed in place', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     // A selected item's own rect gets the purple #7c3aed stroke (see
     // FootprintShape's strokeColor) — that's the selection signal now that
     // the sidebar's "Выбрано N груз(ов)" summary block was removed.
@@ -100,7 +100,7 @@ test.describe('Auto / manual modes', () => {
       await expect(page.getByRole('button', { name: 'Фиксация' }).first()).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // Pin the first placed item by clicking its colored rect
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     // A selected item's own rect gets the purple #7c3aed stroke (see
     // FootprintShape's strokeColor) — that's the selection signal now that
     // the sidebar's "Выбрано N груз(ов)" summary block was removed.

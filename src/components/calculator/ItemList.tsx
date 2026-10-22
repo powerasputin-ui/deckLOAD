@@ -38,6 +38,7 @@ import {
   type Unit,
 } from '@/store/calculator'
 import { NumberField } from '@/components/calculator/NumberField'
+import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import type { CargoItem, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { cn, fmtNumber } from '@/lib/utils'
@@ -179,10 +180,11 @@ export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHov
             onViewportScroll={(e) => setShowBackToTop(e.currentTarget.scrollTop > 150)}
           >
             <div className="space-y-2.5">
-              {items.map((item) => (
+              {items.map((item, index) => (
                 <ItemRow
                   key={item.id}
                   item={item}
+                  number={index + 1}
                   unit={unit}
                   placed={placedCount.get(item.id) ?? 0}
                   globalRotation={globalRotation}
@@ -218,6 +220,8 @@ export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHov
 
 interface ItemRowProps {
   item: CargoItem
+  // Place in the list: the number drawn on this cargo's stacks (spec 6.2).
+  number: number
   unit: Unit
   placed: number
   globalRotation: boolean
@@ -234,6 +238,7 @@ interface ItemRowProps {
 
 function ItemRow({
   item,
+  number,
   unit,
   placed,
   globalRotation,
@@ -289,10 +294,7 @@ function ItemRow({
           className="mt-1.5 h-3.5 w-3.5 shrink-0 accent-primary"
           title="Выбрать для групповых действий"
         />
-        <span
-          className="mt-0.5 h-8 w-8 shrink-0 rounded-md border border-black/10"
-          style={{ backgroundColor: item.color }}
-        />
+        <CargoNumberTile number={number} className="mt-0.5 h-8 w-8 text-sm" />
 
         <div className="@container flex-1 min-w-0">
           <div className="flex items-center gap-2">

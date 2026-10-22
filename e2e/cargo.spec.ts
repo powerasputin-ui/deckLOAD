@@ -70,7 +70,7 @@ test.describe('Cargo management', () => {
     await background.click({ position: { x: bgBox.width * 0.25, y: bgBox.height * 0.4 }, force: true })
     await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
 
-    const box = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const box = page.locator('svg rect[fill="#B0E0F8"]').first()
     const startBox = await box.boundingBox()
     if (!startBox) throw new Error('placed box not found')
     const startCenterX = startBox.x + startBox.width / 2

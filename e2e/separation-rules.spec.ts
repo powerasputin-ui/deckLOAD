@@ -52,7 +52,7 @@ test.describe('Category separation rules', () => {
     // rect to find a spot just past its edge: close enough to violate the
     // ≥3m separation rule, but not overlapping (which would silently no-op
     // on the plain-collision check before separation is even considered).
-    const placedRect = page.locator('svg rect[fill="#0ea5e9"]').first()
+    const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     const rectBox = await placedRect.boundingBox()
     if (!rectBox) throw new Error('placed item 1 rect not found')
     const nearX = rectBox.x - freshBg.x + rectBox.width + 20
