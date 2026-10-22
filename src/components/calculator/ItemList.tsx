@@ -294,7 +294,7 @@ function ItemRow({
           style={{ backgroundColor: item.color }}
         />
 
-        <div className="flex-1 min-w-0">
+        <div className="@container flex-1 min-w-0">
           <div className="flex items-center gap-2">
             {editName ? (
               <Input
@@ -324,7 +324,10 @@ function ItemRow({
             </Badge>
           </div>
 
-          <div className="grid grid-cols-6 gap-1.5 mt-2">
+          {/* Six fields in one row only where each gets ~60 px: in the narrow
+              right column at 1280–1440 px they were 34 px, too small for
+              «6,06» or «2200». A stopgap until the cargo table (stage 3). */}
+          <div className="grid grid-cols-3 @sm:grid-cols-6 gap-1.5 mt-2">
             <NumField
               label="Шир."
               value={item.width}
