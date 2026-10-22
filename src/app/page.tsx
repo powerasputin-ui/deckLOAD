@@ -92,7 +92,7 @@ import { Sidebar } from '@/components/calculator/Sidebar'
 import { PresetsBar } from '@/components/calculator/PresetsBar'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
-import { exportDeckPlanToPdf, buildLashingRequirementRows } from '@/lib/exportPdf'
+import { exportDeckPlanToPdf, buildLashingRequirementRows, lashingPlacementsForPlan } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
@@ -905,24 +905,18 @@ export default function Home() {
     }
     const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
     const points = deck.lashingPoints ?? []
-    // Mode-scoped, not "everything in state" — switching mode never clears
-    // or migrates either array (see setMode's own comment), so pinned data
-    // left over from a prior AUTO session stays in pinnedPlacementsByTrip
-    // even while the user has since moved to MANUAL and abandoned it. Used
-    // to combine both regardless of mode, which billed lashing-gear
-    // requirements for cargo that isn't part of the plan currently being
-    // exported. In AUTO, all trips are still included — a multi-trip
-    // shipment's lashing gear is bought once for the whole operation, not
-    // separately per trip.
-    const allPlacements: (ManualPlacement | PinnedPlacement)[] =
-      mode === 'manual' ? manualPlacements : Object.values(pinnedPlacementsByTrip).flat()
+    // Mode-scoped: pins left over from an earlier auto session are not part
+    // of a manual plan. In auto mode every stack placed in any trip counts,
+    // pinned or not (see lashingPlacementsForPlan).
+    const allPlacements = lashingPlacementsForPlan(mode, manualPlacements, shownTrips, pinnedPlacementsByTrip)
     // Round 19: composition-aware, per-segment row expansion — see
     // buildLashingRequirementRows's own doc comment (exportPdf.ts) for the
     // full contract. Pulled out as its own pure function specifically so it
     // can be unit-tested without jsPDF/canvas.
     const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
+    const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
     try {
-      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames })
+      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip })
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')
@@ -1354,11 +1348,9 @@ export default function Home() {
   // (alongside its existing pointer-drag, as a keyboard alternative). The 3D
   // view stays camera-only (rotate/zoom), no keyboard-driven editing there.
   // Skipped while focus is inside a text input (same guard as the other two
-  // keydown listeners above). The listener stays attached whenever nothing
-  // is selected too — it still needs to swallow Space (via preventDefault)
-  // so it doesn't fall through to whatever toolbar button currently has DOM
-  // focus (Space on a focused <button> re-clicks it natively) rather than
-  // silently doing nothing. Arrow keys are only swallowed while something is
+  // keydown listeners above), and for Space on a focused button or control,
+  // which the browser presses. Space anywhere else is swallowed even with
+  // nothing selected, so the page doesn't scroll. Arrow keys are only swallowed while something is
   // selected (round 31 — with nothing to nudge they used to kill keyboard
   // scrolling), and nothing inside a dialog/popover/menu is touched. Which
   // item is selected is read fresh on every keypress rather than once when
@@ -1392,6 +1384,11 @@ export default function Home() {
       if (target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
 
       const isSpace = e.key === ' ' || e.code === 'Space'
+      // A focused button or other control takes Space itself: the browser
+      // presses it. Swallowing Space here made every toolbar button dead to
+      // the keyboard (L9). A click on the deck moves focus off the toolbar,
+      // so Space still rotates the selection after working on the deck.
+      if (isSpace && target?.closest('button, a[href], [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], summary')) return
       let dx = 0
       let dy = 0
       if (e.key === 'ArrowLeft') dx = -1
@@ -1411,8 +1408,7 @@ export default function Home() {
       const selectedId = mode === 'manual' ? selectedManualIds[0] : selectedPinIds[0]
       // An arrow key only means "nudge" when there is something to nudge —
       // with no selection it must keep scrolling the page like any other
-      // arrow press. Space is still swallowed regardless (see the comment
-      // above: it would otherwise re-click whichever toolbar button has focus).
+      // arrow press. Space is swallowed regardless (see the comment above).
       if (!selectedId && !isSpace) return
       e.preventDefault()
       if (!selectedId) return

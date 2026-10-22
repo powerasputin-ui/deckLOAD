@@ -1,10 +1,10 @@
 import jsPDF from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import type { PackingResult } from './packing'
+import type { ManualPlacement, PackingResult, PinnedPlacement } from './packing'
 import { assessLashingRequirement, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
 import type { DeckConfig, Unit } from '@/store/calculator'
 import { UNIT_LABEL } from '@/store/calculator'
-import { fmtNumber } from './utils'
+import { fmtNumber, pluralRu } from './utils'
 import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
 
 // App palette (mirrors the colors already used on-screen: slate-900 ink,
@@ -171,6 +171,56 @@ export function buildLashingRequirementRows(
   return { rows, dangerousGoodsNames }
 }
 
+type LashingPlacement = ComposablePlacement & {
+  id: string
+  name: string
+  lashingWireType?: WireRopeType
+  lashingJustification?: string
+}
+
+// The stacks the lashing table covers: everything placed in the plan (L16).
+// In auto mode the table used to take only pinned stacks, so cargo the packer
+// placed by itself fell out of it. Every trip counts — lashing gear is
+// bought once for the whole operation — and a pinned stack keeps its pin's
+// id (for its attached lashing points), wire and justification. A
+// quarantined placement isn't on the deck and isn't counted.
+export function lashingPlacementsForPlan(
+  mode: 'auto' | 'manual',
+  manualPlacements: ManualPlacement[],
+  trips: PackingResult[],
+  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+): LashingPlacement[] {
+  if (mode === 'manual') return manualPlacements.filter((m) => !(m.malformed && !m.composition))
+  return trips.flatMap((trip, tripIndex) =>
+    trip.placed.map((p, i): LashingPlacement => {
+      const pin = (pinnedPlacementsByTrip[tripIndex] ?? []).find(
+        (pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
+      )
+      const placed = { itemId: p.itemId, name: p.name, layers: p.stackedCount, composition: p.composition }
+      return pin
+        ? { ...placed, id: pin.id, lashingWireType: pin.lashingWireType, lashingJustification: pin.lashingJustification }
+        : { ...placed, id: `trip-${tripIndex}-${i}` }
+    })
+  )
+}
+
+// Which trip the deck image and the cargo table show, and what the lashing
+// table covers — said in the section titles when there is more than one
+// trip (L16: the cargo table showed one trip with no word of which).
+export function pdfSectionTitles(trip?: { index: number; count: number }): {
+  scheme: string
+  cargo: string
+  lashing: string
+} {
+  if (!trip || trip.count <= 1) return { scheme: 'Схема палубы', cargo: 'Учёт по грузам', lashing: 'Крепление груза' }
+  const which = `рейс ${trip.index + 1} из ${trip.count}`
+  return {
+    scheme: `Схема палубы — ${which}`,
+    cargo: `Учёт по грузам — ${which}`,
+    lashing: `Крепление груза — вся операция, ${trip.count} ${pluralRu(trip.count, 'рейс', 'рейса', 'рейсов')}`,
+  }
+}
+
 interface ExportDeckPlanToPdfOptions {
   svgEl: SVGSVGElement
   deck: DeckConfig
@@ -183,6 +233,8 @@ interface ExportDeckPlanToPdfOptions {
   // these) — listed by name in the PDF instead of getting a fabricated
   // number, so the report doesn't silently drop them either.
   dangerousGoodsNames?: string[]
+  // The trip `result` and the deck image belong to, when there are several.
+  trip?: { index: number; count: number }
 }
 
 export async function exportDeckPlanToPdf({
@@ -193,7 +245,9 @@ export async function exportDeckPlanToPdf({
   projectName,
   lashingRequirements,
   dangerousGoodsNames,
+  trip,
 }: ExportDeckPlanToPdfOptions): Promise<void> {
+  const titles = pdfSectionTitles(trip)
   const { dataUrl: img, width: imgWidthPx, height: imgHeightPx } = await rasterizeSvg(svgEl)
   const unitLabel = UNIT_LABEL[unit]
   const utilPct = Math.round(result.utilization * 100)
@@ -254,7 +308,7 @@ export async function exportDeckPlanToPdf({
   pdf.setFont(FONT_FAMILY, 'bold')
   pdf.setFontSize(10)
   pdf.setTextColor(...INK)
-  pdf.text('Схема палубы', margin, y)
+  pdf.text(titles.scheme, margin, y)
   y += 10
 
   const maxImgWidth = contentWidth
@@ -273,7 +327,7 @@ export async function exportDeckPlanToPdf({
   pdf.setFont(FONT_FAMILY, 'bold')
   pdf.setFontSize(10)
   pdf.setTextColor(...INK)
-  pdf.text('Учёт по грузам', margin, y)
+  pdf.text(titles.cargo, margin, y)
   y += 8
 
   autoTable(pdf, {
@@ -326,7 +380,7 @@ export async function exportDeckPlanToPdf({
     pdf.setFont(FONT_FAMILY, 'bold')
     pdf.setFontSize(10)
     pdf.setTextColor(...INK)
-    pdf.text('Крепление груза', margin, y)
+    pdf.text(titles.lashing, margin, y)
     y += 8
 
     if (hasLashingRows && lashingRequirements) {

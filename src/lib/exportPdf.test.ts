@@ -5,7 +5,8 @@
 // combination for its own live verdict blocks; this file is the "PDF" half
 // of the mutation gate the review asked for.
 import { describe, it, expect } from 'vitest'
-import { buildLashingRequirementRows } from './exportPdf'
+import { buildLashingRequirementRows, lashingPlacementsForPlan, pdfSectionTitles } from './exportPdf'
+import type { PackingResult, PinnedPlacement, PlacedItem } from './packing'
 import type { LashingCatalogItem } from './placementComposition'
 
 const METAL: LashingCatalogItem = { id: 'A', name: 'Труба', category: 'Металлопродукция', weight: 500 }
@@ -106,5 +107,58 @@ describe('buildLashingRequirementRows', () => {
     expect(rows.some((r) => r.name === 'Труба')).toBe(true)
     expect(rows.some((r) => r.name === 'Смешанный — Ящик')).toBe(true)
     expect(dangerousGoodsNames).toEqual(['Смешанный — Реагент'])
+  })
+})
+
+// Phase 0, L16: in auto mode the lashing table took only pinned stacks, so
+// cargo the packer placed by itself fell out of it; the cargo table showed
+// one trip without saying which.
+describe('lashingPlacementsForPlan', () => {
+  const stack = (itemId: string, x: number, stackedCount: number): PlacedItem => ({
+    itemId, name: itemId === 'A' ? 'Труба' : 'Ящик', x, y: 1, width: 1, length: 1, height: 1,
+    layers: stackedCount, stackedCount, rotated: false, color: '#000', index: 0,
+  })
+  const trip = (placed: PlacedItem[]): PackingResult => ({
+    placed, unplaced: [], quarantined: [], breakdown: [], requestedCount: 0, placedCount: 0,
+    totalArea: 100, usedArea: 0, freeArea: 100, utilization: 0, totalWeight: 0, maxStackHeight: 0, deckWidth: 10, deckLength: 10,
+  })
+  const pin: PinnedPlacement = {
+    id: 'pin-1', itemId: 'A', name: 'Труба', x: 1, y: 1, width: 1, length: 1, layers: 2, rotated: false, color: '#000',
+    lashingWireType: 'wire_19_5_g1zhn_1670', lashingJustification: 'Принайтовлено к соседнему',
+  }
+
+  it('auto mode takes every placed stack of every trip, pinned or not', () => {
+    const list = lashingPlacementsForPlan('auto', [], [trip([stack('A', 1, 2), stack('B', 3, 1)]), trip([stack('A', 1, 3)])], { 0: [pin] })
+    expect(list).toHaveLength(3)
+    expect(list[0]).toMatchObject({ id: 'pin-1', layers: 2, lashingJustification: 'Принайтовлено к соседнему' })
+    expect(new Set(list.map((p) => p.id)).size).toBe(3)
+  })
+
+  it('a stack the packer placed by itself gets its lashing row', () => {
+    const { rows } = buildLashingRequirementRows(lashingPlacementsForPlan('auto', [], [trip([stack('A', 1, 2)])], {}), catalog, [])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].name).toBe('Труба')
+  })
+
+  it('manual mode takes the hand-placed stacks, except a quarantined one', () => {
+    const manual = [
+      { id: 'm1', itemId: 'A', name: 'Труба', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000' },
+      { id: 'm2', itemId: 'A', name: 'Труба', x: 3, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000', malformed: { invalidComposition: true as const } },
+    ]
+    expect(lashingPlacementsForPlan('manual', manual, [], { 0: [pin] }).map((p) => p.id)).toEqual(['m1'])
+  })
+})
+
+describe('pdfSectionTitles', () => {
+  it('one trip: the plain titles', () => {
+    expect(pdfSectionTitles()).toEqual({ scheme: 'Схема палубы', cargo: 'Учёт по грузам', lashing: 'Крепление груза' })
+  })
+
+  it('several trips: which trip the plan shows, and that the lashing covers the whole operation', () => {
+    expect(pdfSectionTitles({ index: 1, count: 3 })).toEqual({
+      scheme: 'Схема палубы — рейс 2 из 3',
+      cargo: 'Учёт по грузам — рейс 2 из 3',
+      lashing: 'Крепление груза — вся операция, 3 рейса',
+    })
   })
 })

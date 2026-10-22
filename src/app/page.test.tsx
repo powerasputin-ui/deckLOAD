@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import Home from './page'
 import { useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
+import { exportDeckPlanToPdf } from '@/lib/exportPdf'
+
+// The PDF itself needs a real canvas; tests check what the page hands over.
+vi.mock('@/lib/exportPdf', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/exportPdf')>()),
+  exportDeckPlanToPdf: vi.fn(async () => {}),
+}))
 
 // page.tsx's orchestration logic (handleRemovePinned, handleModeChange,
 // handleRotatePinned/Manual, autosave, hover-throttle) has no dedicated
@@ -3023,12 +3030,34 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().manualPlacements[0].x).toBeGreaterThan(4)
   })
 
-  it('Round 31: Space still does not re-click a focused toolbar button (existing design), but works inside a dialog', () => {
+  // Phase 0, L9: Space on a focused toolbar button used to be swallowed, so
+  // no button could be pressed from the keyboard. It now goes to the button;
+  // Space anywhere else still rotates the selected cargo.
+  it('Space presses a focused button and still rotates the selection from anywhere else', () => {
     render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 1 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'm1', itemId: itemA.id, name: 'A', x: 4, y: 3, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+      })
+      useCalculator.setState({ selectedManualIds: ['m1'] })
+    })
     const toolbarButton = screen.getByRole('button', { name: 'Очистить' })
-    expect(fireEvent.keyDown(toolbarButton, { key: ' ', code: 'Space' })).toBe(false)
+    expect(fireEvent.keyDown(toolbarButton, { key: ' ', code: 'Space' })).toBe(true)
+    expect(useCalculator.getState().manualPlacements[0].rotated).toBe(false)
 
-    fireEvent.click(toolbarButton)
+    expect(fireEvent.keyDown(document.body, { key: ' ', code: 'Space' })).toBe(false)
+    expect(useCalculator.getState().manualPlacements[0].rotated).toBe(true)
+  })
+
+  it('Round 31: Space works on the buttons inside a dialog', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
     const cancel = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Отмена' })
     expect(fireEvent.keyDown(cancel, { key: ' ', code: 'Space' })).toBe(true)
   })
@@ -3364,6 +3393,27 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       expect(placements[0].layers).toBe(2)
       expect(toast.warning).not.toHaveBeenCalled()
     })
+  })
+
+  // Phase 0, L16: in auto mode the PDF's lashing table took only pinned
+  // stacks — cargo the packer placed by itself fell out of it — and the
+  // cargo table showed one trip without saying which.
+  it('the PDF lashing table covers every trip\'s auto-placed cargo, and the trip is named', async () => {
+    vi.mocked(exportDeckPlanToPdf).mockClear()
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 4, length: 4, clearance: 0 } })
+      useCalculator.getState().addItem({ name: 'Труба', width: 1, length: 1, height: 1, quantity: 30, category: 'Металлопродукция', weight: 500 })
+    })
+    expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
+    await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
+    const args = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0]
+    // 30 single-tier stacks over several trips, one lashing row each.
+    expect(args.lashingRequirements).toHaveLength(30)
+    expect(args.trip).toEqual({ index: 0, count: expect.any(Number) })
+    expect(args.trip!.count).toBeGreaterThan(1)
   })
 
   // Phase 0, L14: in manual mode an obstacle moved onto standing cargo (or a
