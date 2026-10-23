@@ -8,7 +8,7 @@
 // machine simple and predictable). See src/app/page.tsx for the step list,
 // the localStorage "seen" flag, and how this is wired to both the
 // automatic first-run trigger and the manual "show again" entry point.
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { X } from 'lucide-react'
 
@@ -49,6 +49,13 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
   }
 
   const step = active ? steps[index] : undefined
+  const titleId = useId()
+  // Each step takes the keyboard focus to its «Далее» / «Готово», so Enter
+  // goes on and Tab stays with the card instead of the page under the dim.
+  const nextRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (step) nextRef.current?.focus()
+  }, [step])
 
   useEffect(() => {
     if (!step) return
@@ -152,6 +159,9 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
       )}
 
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         style={cardStyle}
         className="rounded-lg border bg-card text-card-foreground shadow-xl p-4 space-y-3"
       >
@@ -169,7 +179,9 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
           </button>
         </div>
         <div className="space-y-1">
-          <div className="text-sm font-semibold">{step.title}</div>
+          <div id={titleId} className="text-sm font-semibold">
+            {step.title}
+          </div>
           <p className="text-xs text-muted-foreground leading-relaxed">{step.body}</p>
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
@@ -182,7 +194,7 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
                 Назад
               </Button>
             )}
-            <Button size="sm" className="h-8 text-xs" onClick={goNext}>
+            <Button ref={nextRef} size="sm" className="h-8 text-xs" onClick={goNext}>
               {isLast ? 'Готово' : 'Далее'}
             </Button>
           </div>

@@ -40,6 +40,7 @@ export default defineConfig({
           localStorage: [
             { name: 'deckload-intro-seen', value: '1' },
             { name: 'deckload-tour-seen', value: '1' },
+            { name: 'deckload-ui-update-hint-seen', value: '1' },
           ],
         },
       ],

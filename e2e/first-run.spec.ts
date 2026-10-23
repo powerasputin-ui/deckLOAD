@@ -56,6 +56,9 @@ test.describe('First-run gate', () => {
       await expect(sectionBar(page)).toBeVisible()
       await expect(page.getByRole('button', { name: 'Пропустить', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Пропустить тур' })).toHaveCount(0)
+      // Whoever has been through the new tour isn't told the interface changed.
+      await page.waitForTimeout(1000)
+      await expect(page.getByText('Интерфейс обновлён')).toHaveCount(0)
     })
   })
 })

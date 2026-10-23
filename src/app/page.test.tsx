@@ -118,6 +118,31 @@ describe('Home (page.tsx)', () => {
     expect(screen.queryByRole('button', { name: 'Пропустить тур' })).toBeNull()
   })
 
+  // Stage 2: those who knew the interface before (they've seen the old tour,
+  // so the new one doesn't start by itself) are told once where things are
+  // now. A first visit gets the tour instead.
+  it('tells a returning visitor once that the interface changed, and not a first-time one', () => {
+    const storage = stubLocalStorage()
+    storage['deckload-tour-seen'] = '1'
+    const { unmount } = render(<Home />)
+    expect(toast.info).toHaveBeenCalledWith('Интерфейс обновлён', expect.objectContaining({ description: 'Где что теперь — в «?» → «Пройти тур».' }))
+    expect(storage['deckload-ui-update-hint-seen']).toBe('1')
+    unmount()
+
+    vi.mocked(toast.info).mockClear()
+    render(<Home />)
+    expect(toast.info).not.toHaveBeenCalledWith('Интерфейс обновлён', expect.anything())
+  })
+
+  it('does not tell a first-time visitor that the interface changed: the tour shows it', () => {
+    const storage = stubLocalStorage()
+    render(<Home />)
+    expect(screen.getByRole('dialog', { name: 'Судно' })).toBeTruthy()
+    expect(toast.info).not.toHaveBeenCalledWith('Интерфейс обновлён', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Пропустить тур' }))
+    expect(storage['deckload-ui-update-hint-seen']).toBe('1')
+  })
+
   // Phase 0, m1/m2/m5: labels showed the raw unit code («Шир. (m)», «20×8 m»)
   // while the rest of the app says «м»; the clearance field was called
   // «Высота над палубой (зазор)»; the project file buttons said «Скачать JSON»

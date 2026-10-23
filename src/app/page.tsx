@@ -104,6 +104,11 @@ const INTRO_SEEN_KEY = 'deckload-intro-seen'
 // the video, and vice versa.
 const TOUR_SEEN_KEY = 'deckload-tour-seen'
 
+// The one-time note for those who knew the interface before stage 2: they've
+// seen the old tour, so the new one doesn't start on its own (spec 13, stage
+// 2). Whoever has been through the new tour doesn't need it.
+const UI_UPDATE_HINT_SEEN_KEY = 'deckload-ui-update-hint-seen'
+
 // Touching window.localStorage at all throws (SecurityError) when the browser
 // blocks site data for this page — and the intro/tour flags are read during
 // render, so an unguarded read used to replace the whole app with an error
@@ -153,6 +158,9 @@ function writePanelSetting(key: string, value: string): void {
 
 const getTourSeenSnapshot = () => readSeenFlag(TOUR_SEEN_KEY)
 const getTourSeenServerSnapshot = () => false
+const getUiUpdateHintSeenSnapshot = () => readSeenFlag(UI_UPDATE_HINT_SEEN_KEY)
+// The server can't know: say "seen", so nothing is shown before hydration.
+const getUiUpdateHintSeenServerSnapshot = () => true
 
 // The five-step tour (spec 10.2). Each `selector` targets a `data-tour`
 // attribute on the real element in the frame — the tour never needs its own
@@ -174,7 +182,7 @@ const TOUR_STEPS: TourStep[] = [
     id: 'deck',
     selector: '[data-tour="deck-view"]',
     title: 'Палуба',
-    body: 'Грузы расставляются сами. Перетащите штабель, чтобы закрепить его, или выделите и правьте.',
+    body: 'Грузы расставляются сами. Перетащите штабель, чтобы закрепить его, или выделите и правьте справа.',
   },
   {
     id: 'status',
@@ -261,9 +269,22 @@ export default function Home() {
   }
   const handleCloseTour = () => {
     writeSeenFlag(TOUR_SEEN_KEY)
+    writeSeenFlag(UI_UPDATE_HINT_SEEN_KEY)
     setTourActive(false)
   }
   const handleShowTour = () => setTourActive(true)
+  const uiUpdateHintSeen = useSyncExternalStore(noopSubscribe, getUiUpdateHintSeenSnapshot, getUiUpdateHintSeenServerSnapshot)
+  useEffect(() => {
+    if (!clientReady || !entered || !tourSeen || uiUpdateHintSeen) return
+    writeSeenFlag(UI_UPDATE_HINT_SEEN_KEY)
+    toast.info('Интерфейс обновлён', {
+      // One toast even if this runs twice (React's dev double effects).
+      id: 'ui-update-hint',
+      description: 'Где что теперь — в «?» → «Пройти тур».',
+      duration: 15000,
+      action: { label: 'Пройти тур', onClick: () => setTourActive(true) },
+    })
+  }, [clientReady, entered, tourSeen, uiUpdateHintSeen])
   const deckSvgRef = useRef<SVGSVGElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useCalculator.temporal, (s) => s.futureStates.length > 0)
