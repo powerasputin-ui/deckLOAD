@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, unitsCount, stackMenu } from './helpers'
+import { clearCalculation, unitsCount, stackMenu, stackOf } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -28,11 +28,12 @@ test.describe('Auto-mode selection and pinning', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
+    const placedStack = stackOf(placedRect)
     await expect(placedRect).toHaveAttribute('stroke-width', '1')
 
     await expect(async () => {
       await placedRect.click({ force: true })
-      await expect(placedRect).toHaveAttribute('stroke', '#7c3aed', { timeout: 1000 })
+      await expect(placedStack).toHaveAttribute('data-selected', 'true', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
     await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
     expect(await storedPins(page)).toHaveLength(0)
@@ -41,10 +42,10 @@ test.describe('Auto-mode selection and pinning', () => {
     // selection off.
     await placedRect.click({ force: true })
     await page.mouse.move(0, 0)
-    await expect(placedRect).toHaveAttribute('stroke', '#7c3aed')
+    await expect(placedStack).toHaveAttribute('data-selected', 'true')
 
     await page.locator('svg [data-deck-background="true"]').first().click({ force: true })
-    await expect(placedRect).not.toHaveAttribute('stroke', '#7c3aed')
+    await expect(placedStack).not.toHaveAttribute('data-selected', 'true')
   })
 
   test('a locked stack still drags and stays locked; «Вернуть в авто» and «Закрепить» switch it', async ({ page }) => {
@@ -159,24 +160,27 @@ test.describe('Auto-mode selection and pinning', () => {
 })
 
 test.describe('Manual-mode selection (consistent with auto mode)', () => {
-  test('a click selects with the same bold stroke used in auto mode, and background click clears it', async ({ page }) => {
+  test('a click selects with the same outline used in auto mode, and background click clears it', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await page.getByText('Ручной').first().click()
     await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
 
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
+    const placedStack = stackOf(placedRect)
     await expect(async () => {
       await placedRect.click({ force: true })
-      await expect(placedRect).toHaveAttribute('stroke', '#7c3aed', { timeout: 1000 })
+      await expect(placedStack).toHaveAttribute('data-selected', 'true', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    await expect(placedRect).toHaveAttribute('stroke-width', '3')
+    // A dark line of its own and the accent band outside it (spec 6.3).
+    await expect(placedRect).toHaveAttribute('stroke-width', '2')
+    await expect(placedStack.locator('[data-selection-halo]')).toHaveCount(1)
 
     // Background click clears manual selection too (regression: this used
     // to be asymmetric — auto mode cleared on background click, manual
     // mode silently didn't).
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ force: true })
-    await expect(placedRect).not.toHaveAttribute('stroke', '#7c3aed')
+    await expect(placedStack).not.toHaveAttribute('data-selected', 'true')
   })
 })

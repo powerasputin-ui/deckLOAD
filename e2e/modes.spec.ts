@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { statusLine, openSection, stackMenu, stackTools } from './helpers'
+import { statusLine, openSection, stackMenu, stackTools, selectedStacks } from './helpers'
 
 // The status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -68,10 +68,9 @@ test.describe('Auto / manual modes', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
-    // A selected item's own rect gets the purple #7c3aed stroke (see
-    // FootprintShape's strokeColor) — that's the selection signal now that
-    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
-    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
+    // The selected stack (outlined with the accent band) — the selection
+    // signal since the sidebar's "Выбрано N груз(ов)" block was removed.
+    const selectedStroke = selectedStacks(page)
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
@@ -107,10 +106,9 @@ test.describe('Auto / manual modes', () => {
     }).toPass({ timeout: 10000 })
     // Pin the first placed item by clicking its colored rect
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
-    // A selected item's own rect gets the purple #7c3aed stroke (see
-    // FootprintShape's strokeColor) — that's the selection signal now that
-    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
-    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
+    // The selected stack (outlined with the accent band) — the selection
+    // signal since the sidebar's "Выбрано N груз(ов)" block was removed.
+    const selectedStroke = selectedStacks(page)
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.

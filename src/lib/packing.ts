@@ -679,6 +679,27 @@ function edgeDistance(
   return Math.hypot(dx, dy)
 }
 
+// The two nearest points of two rects — the ends of the gap edgeDistance
+// measures. Where the rects overlap along an axis, both points sit in the
+// middle of the overlap.
+export function edgeClosestPoints(
+  a: { x: number; y: number; width: number; length: number },
+  b: { x: number; y: number; width: number; length: number }
+): [{ x: number; y: number }, { x: number; y: number }] {
+  const along = (a0: number, a1: number, b0: number, b1: number): [number, number] => {
+    if (a1 < b0) return [a1, b0]
+    if (b1 < a0) return [a0, b1]
+    const mid = (Math.max(a0, b0) + Math.min(a1, b1)) / 2
+    return [mid, mid]
+  }
+  const [ax, bx] = along(a.x, a.x + a.width, b.x, b.x + b.width)
+  const [ay, by] = along(a.y, a.y + a.length, b.y, b.y + b.length)
+  return [
+    { x: ax, y: ay },
+    { x: bx, y: by },
+  ]
+}
+
 // Checks whether placing `candidate` too close to any already-`placed` item
 // would violate a configured separation rule between their categories.
 export function violatesSeparation(

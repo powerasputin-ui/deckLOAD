@@ -6,7 +6,8 @@ import { useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
-import { cargoToneForNumber } from '@/lib/cargoPalette'
+import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
+import { SELECTION_HALO_WIDTH } from '@/components/calculator/deckMarks'
 import { THEME_TOKENS } from '@/lib/theme'
 
 // The PDF itself needs a real canvas; tests check what the page hands over.
@@ -202,6 +203,71 @@ describe('Home (page.tsx)', () => {
       'Линейка',
       'Фото палубы',
     ])
+  })
+
+  // Stage 2 (spec 6.3): the selected stack is outlined twice — its own dark
+  // line and an accent band outside it. The PDF prints the plan, not what is
+  // selected on screen.
+  it('outlines the selected stack with a dark line and an accent band, and leaves the selection out of the PDF', async () => {
+    vi.mocked(exportDeckPlanToPdf).mockClear()
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 1 })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'a', itemId: itemA.id, name: 'A', x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+      })
+      useCalculator.setState({ selectedManualIds: ['a'] })
+    })
+    const screenSvg = document.querySelector('svg.w-full.h-auto')!
+    const halo = screenSvg.querySelector('[data-selection-halo] rect')!
+    expect(halo.getAttribute('stroke')).toBe(THEME_TOKENS.light.accent)
+    expect(halo.getAttribute('stroke-width')).toBe(String(SELECTION_HALO_WIDTH))
+    const ownLine = screenSvg.querySelector('[data-selection-halo]')!.nextElementSibling!
+    expect(ownLine.getAttribute('stroke')).toBe(CARGO_INK)
+    expect(ownLine.getAttribute('stroke-width')).toBe('2')
+
+    fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
+    await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
+    const printed = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].svgEl
+    expect(printed.querySelector('[data-selection-halo]')).toBeNull()
+    expect(screenSvg.querySelector('[data-selection-halo]')).toBeTruthy()
+  })
+
+  // Spec 6.3: stacks closer than a separation rule allows are joined by a
+  // dashed line saying how far apart they are of how far they must be.
+  it('joins stacks that break a separation rule with a dashed line and the distance', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.getState().addItem({ name: 'Газ', width: 1, length: 1, height: 1, quantity: 1, category: 'Опасный груз' })
+      useCalculator.getState().addItem({ name: 'Еда', width: 1, length: 1, height: 1, quantity: 1, category: 'Провизия' })
+      useCalculator.getState().addSeparationRule({ categoryA: 'Опасный груз', categoryB: 'Провизия', minDistance: 3 })
+    })
+    const gas = useCalculator.getState().items.find((it) => it.name === 'Газ')!
+    const food = useCalculator.getState().items.find((it) => it.name === 'Еда')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'gas', itemId: gas.id, name: 'Газ', x: 1, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: gas.color,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'food', itemId: food.id, name: 'Еда', x: 3.5, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: food.color,
+      })
+    })
+    const separation = document.querySelector('svg.w-full.h-auto [data-separation]')!
+    expect(separation.textContent).toBe('1.5 м из 3 м')
+    expect(separation.querySelector('line')!.getAttribute('stroke-dasharray')).toBeTruthy()
+
+    act(() => {
+      useCalculator.getState().updateManualPlacement('food', { x: 6 })
+    })
+    expect(document.querySelector('svg.w-full.h-auto [data-separation]')).toBeNull()
   })
 
   // Stage 1 (spec 6.1, 9.5): the deck reads as a drawing — the sides of the
@@ -1222,7 +1288,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Превышена высота штабеля'))
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Выше предельной высоты'))
   })
 
   // Same guard, manual-mode path (findMergeSourceManual).
@@ -1906,10 +1972,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    // Selection still drives the existing violet stroke — untouched by
-    // the marker addition (marker is a separate <g>, doesn't touch stroke
-    // props on the underlying shape).
-    expect(document.querySelector('svg [stroke="#7c3aed"]')).toBeTruthy()
+    // Selection still draws its outline (spec 6.3: an inner dark line and an
+    // outer accent band) — untouched by the marker, a separate <g>.
+    expect(document.querySelector(`svg [data-selection-halo] [stroke="${THEME_TOKENS.light.accent}"]`)).toBeTruthy()
   })
 
   // Round 23 — composition-aware quantity attribution in ItemList,
@@ -2909,7 +2974,84 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     dragMergeR24('DRAG', 5, 5)
 
     expect(useCalculator.getState().manualPlacements).toHaveLength(2)
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Превышена высота штабеля'))
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('Выше предельной высоты'))
+  })
+
+  // Spec 6.7: while a stack is dragged onto another, the target says what the
+  // drop would do — the merged layers and height of the limit — or, in red,
+  // why it can't be done, in the words the drop itself uses.
+  function mergePreviewWhileOver(fromLabel: string, dxDeck: number, dyDeck: number) {
+    const svg = document.querySelector('svg.w-full.h-auto')!
+    const scale = deckScaleR24()
+    let seen: { kind: string | null; text: string | null; targetStroked: boolean } | null = null
+    withIdentitySvgTransform(() => {
+      fireEvent.pointerDown(placementGroupByLabel(fromLabel), { clientX: 100, clientY: 100, button: 0 })
+      fireEvent.pointerMove(svg, { clientX: 100 + dxDeck * scale, clientY: 100 + dyDeck * scale })
+      const preview = document.querySelector('svg [data-merge-preview]')
+      seen = {
+        kind: preview?.getAttribute('data-merge-preview') ?? null,
+        text: preview?.textContent ?? null,
+        targetStroked: !!placementGroupByLabel('TARGET').querySelector('[stroke="#dc2626"]'),
+      }
+      fireEvent.pointerUp(svg, { clientX: 100 + dxDeck * scale, clientY: 100 + dyDeck * scale })
+    })
+    return seen!
+  }
+
+  it('a stack dragged onto another names the merge next to the target, before the drop', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 4, length: 1, layers: 1, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemA.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 2, rotated: false, color: itemA.color, weight: 100,
+      })
+    })
+
+    const seen = mergePreviewWhileOver('DRAG', 5, 5)
+    expect(seen.kind).toBe('ok')
+    expect(seen.text).toBe('Объединить: 3 яр., 1.5 м из 25 м')
+    expect(seen.targetStroked).toBe(false)
+    // The drop did what the label said, and the label is gone.
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+    expect(document.querySelector('svg [data-merge-preview]')).toBeNull()
+  })
+
+  it('a merge that can\'t be done shows the target red with the reason, and the drop changes nothing', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    setupPipeDeck()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 2.5 } })
+      useCalculator.getState().addItem({ name: 'A', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 100, category: 'X' })
+      useCalculator.getState().addItem({ name: 'B', shape: 'cylinder', width: 4, length: 1, height: 0.5, quantity: 5, weight: 200, category: 'X' })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'drag', itemId: itemA.id, name: 'DRAG', x: 1, y: 1, width: 4, length: 1, layers: 3, rotated: false, color: itemA.color, weight: 100,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'target', itemId: itemB.id, name: 'TARGET', x: 6, y: 6, width: 4, length: 1, layers: 3, rotated: false, color: itemB.color, weight: 200,
+      })
+    })
+
+    const seen = mergePreviewWhileOver('DRAG', 5, 5)
+    expect(seen.kind).toBe('blocked')
+    expect(seen.text).toBe('Выше предельной высоты: 3 м из 2.5 м')
+    expect(seen.targetStroked).toBe(true)
+    expect(useCalculator.getState().manualPlacements).toHaveLength(2)
+    expect(toast.warning).toHaveBeenCalledWith('Выше предельной высоты: 3 м из 2.5 м')
   })
 
   // Round 31: the one standalone cross-item merge shape Round 24's tests never

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Locator } from '@playwright/test'
-import { sectionBar, stackMenu } from './helpers'
+import { sectionBar, stackMenu, selectedStacks } from './helpers'
 
 // Playwright's .fill() does not reliably commit on this project's shadcn
 // number inputs (confirmed: value silently reverts, no console error) —
@@ -37,10 +37,9 @@ test.describe('Multi-trip voyages', () => {
 
     await page.getByRole('tab', { name: /Рейс 2/ }).click()
     const placedRect = page.locator('svg rect[fill="#FDDB7C"]').first() // Паллета EUR is cargo 2: tone 2
-    // A selected item's own rect gets the purple #7c3aed stroke (see
-    // FootprintShape's strokeColor) — that's the selection signal now that
-    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
-    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
+    // The selected stack (outlined with the accent band) — the selection
+    // signal since the sidebar's "Выбрано N груз(ов)" block was removed.
+    const selectedStroke = selectedStacks(page)
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.

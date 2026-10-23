@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  edgeClosestPoints,
   packDeck,
   packDeckVariants,
   packMultiTrip,
@@ -3387,5 +3388,31 @@ describe('computeGridStep', () => {
     expect(computeGridStep(65.6, 26.2, 'ft')).toBe(5)
     expect(computeGridStep(161.1, 55.4, 'ft')).toBe(20)
     expect(computeGridStep(16.4, 9.8, 'ft')).toBe(2)
+  })
+})
+
+// The ends of the gap a separation line is drawn across (spec 6.3).
+describe('edgeClosestPoints', () => {
+  const box = (x: number, y: number, width = 1, length = 1) => ({ x, y, width, length })
+
+  it('spans the gap between stacks side by side, in the middle of where they face each other', () => {
+    expect(edgeClosestPoints(box(1, 1), box(3.5, 1.5))).toEqual([
+      { x: 2, y: 1.75 },
+      { x: 3.5, y: 1.75 },
+    ])
+  })
+
+  it('runs corner to corner between stacks apart on both axes', () => {
+    expect(edgeClosestPoints(box(0, 0), box(3, 5))).toEqual([
+      { x: 1, y: 1 },
+      { x: 3, y: 5 },
+    ])
+  })
+
+  it('works whichever stack comes first', () => {
+    expect(edgeClosestPoints(box(3.5, 1.5), box(1, 1))).toEqual([
+      { x: 3.5, y: 1.75 },
+      { x: 2, y: 1.75 },
+    ])
   })
 })

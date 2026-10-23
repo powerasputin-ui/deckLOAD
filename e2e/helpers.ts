@@ -59,3 +59,13 @@ export function stackTools(page: Page): Locator {
 export function inspector(page: Page): Locator {
   return page.getByRole('complementary', { name: 'Инспектор' })
 }
+
+// The stacks drawn selected (spec 6.3: a dark line and an accent band).
+export function selectedStacks(page: Page): Locator {
+  return page.locator('svg g[data-cargo-placement][data-selected]')
+}
+
+// The stack a rect of the deck drawing belongs to.
+export function stackOf(rect: Locator): Locator {
+  return rect.locator('xpath=ancestor::*[@data-cargo-placement][1]')
+}

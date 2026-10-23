@@ -55,9 +55,10 @@ import {
   type CompositionSegment,
   type CargoItem,
   stackHeightBudget,
+  separationViolations,
   type PlacedItem,
 } from '@/lib/packing'
-import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget, placementCategorySet } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -452,6 +453,9 @@ export default function Home() {
     null | { to: 'auto' } | { to: 'manual'; strandedUnits: number }
   >(null)
   const [activeTripIndex, setActiveTripIndex] = useState(0)
+  // A stack is being dragged on the deck: the inspector steps aside until the
+  // drop, so it doesn't cover where the stack may go.
+  const [stackDragging, setStackDragging] = useState(false)
   const loadedProjectId = useRef<string | null>(null)
   // Baseline for the load-zone overload toast below — reset whenever the
   // project's cargo/deck gets wholesale-replaced (loaded, "new calculation",
@@ -713,6 +717,16 @@ export default function Home() {
   const shownTrips = hasEmptyTrailingTrip ? trips.slice(0, -1) : trips
   const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, shownTrips.length - 1))
   const result = shownTrips[clampedTripIndex] ?? shownTrips[0]
+  // Stacks of the open trip closer than a separation rule allows — the
+  // check «Проверки» counts — drawn as a dashed line with «1.2 м из 3 м».
+  const separationPairs = useMemo(
+    () =>
+      separationViolations(
+        result.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, categories: placementCategorySet(pl, items) })),
+        separationRulesInUnit
+      ),
+    [result.placed, items, separationRulesInUnit]
+  )
   // Each trip's `unplaced` mixes units carried on to the next trip — what
   // trips are for, not a problem — with positions the packer rejected on
   // THIS trip. The red strip used to show all of it as «Не поместилось», so
@@ -1439,7 +1453,7 @@ export default function Home() {
     const height = stackHeight(segs, items)
     if (!exceedsHeightBudget(height, budget)) return { ok: true }
     const unitLabel = UNIT_LABEL[deck.unit]
-    return { ok: false, reason: `Превышена высота штабеля: ${roundForDisplay(height)} ${unitLabel} при допустимых ${roundForDisplay(budget)} ${unitLabel}` }
+    return { ok: false, reason: `Выше предельной высоты: ${roundForDisplay(height)} ${unitLabel} из ${roundForDisplay(budget)} ${unitLabel}` }
   }
 
   // Check whether a layer change is allowed for a placement.
@@ -2077,6 +2091,30 @@ export default function Home() {
     })
     removeManualPlacement(dragged.id)
     toast.success(`Объединено: ${plan.layers} яр. груза «${target.name}»`)
+  }
+
+  // What a drag-to-merge would give, named next to its target while the
+  // drag is on it (spec 6.7): «Объединить: 16 яр., 4 м из 6 м», or why it
+  // can't be done — the same check, in the same words, as the drop itself.
+  const previewMerge = (draggedId: string, targetId: string): { ok: boolean; text: string } | null => {
+    const placements: (ManualPlacement | PinnedPlacement)[] = mode === 'manual' ? manualPlacements : pinnedPlacements
+    const dragged = placements.find((p) => p.id === draggedId)
+    const target = placements.find((p) => p.id === targetId)
+    if (!dragged || !target) return null
+    const plan = planMerge(target, dragged)
+    if (!plan.ok) return { ok: false, text: plan.reason }
+    const segs = plan.composition ?? [{ itemId: plan.itemId, layers: plan.layers }]
+    const constituents = [...new Set(segs.map((seg) => seg.itemId))]
+      .map((id) => items.find((it) => it.id === id))
+      .filter((it): it is CargoItem => !!it)
+    const height = stackHeight(segs, items)
+    const budget = stackHeightBudget(constituents, deck.clearance, deck.unit)
+    const unitLabel = UNIT_LABEL[deck.unit]
+    const heightText =
+      height > 0
+        ? `, ${roundForDisplay(height)} ${unitLabel}${Number.isFinite(budget) ? ` из ${roundForDisplay(budget)} ${unitLabel}` : ''}`
+        : ''
+    return { ok: true, text: `Объединить: ${plan.layers} яр.${heightText}` }
   }
 
   // Switch mode while preserving placements:
@@ -2882,6 +2920,7 @@ export default function Home() {
                   onSelectManual={toggleManualSelection}
                   onSelectPin={togglePinSelection}
                   onSelectAuto={(p, additive) => toggleAutoSelection(autoPlacementKey(p), additive)}
+                  selection={{ pinIds: selectedPinIds, manualIds: selectedManualIds, autoKeys: selectedAutoKeys }}
                 />
               ) : (
               <DeckVisualization
@@ -3023,6 +3062,8 @@ export default function Home() {
                 onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                 onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}
                 onMergeManual={handleMergeManual}
+                previewMerge={previewMerge}
+                onDragChange={setStackDragging}
                 manualPlacements={manualPlacements}
                 pinnedPlacements={pinnedPlacements}
                 selectedPinIds={selectedPinIds}
@@ -3043,6 +3084,7 @@ export default function Home() {
                 categoryByItemId={categoryByItemId}
                 cargoNumberByItemId={cargoNumberByItemId}
                 separationRules={separationRulesInUnit}
+                separationPairs={separationPairs}
                 placingLashingPoint={placingLashingPoint}
                 onPlaceLashingPoint={(x, y, corner) => {
                   const count = (deck.lashingPoints?.length ?? 0) + 1
@@ -3111,7 +3153,7 @@ export default function Home() {
           </div>
           {/* Over the right of the deck while stacks are selected (spec 5.4),
               after it in the tab order. */}
-          {(inspected || inspectedSelection) && (
+          {(inspected || inspectedSelection) && !stackDragging && (
             <Inspector
               stack={inspected?.stack}
               actions={inspectedActions}

@@ -13,6 +13,7 @@ import {
   OverloadBadge,
   PowerSocketGlyph,
   RotatedMark,
+  SELECTION_HALO_WIDTH,
   lashingPointColor,
   stackOutline,
 } from '@/components/calculator/deckMarks'
@@ -45,7 +46,16 @@ const BOX = { x: 6, y: 5, w: 34, h: 19 }
 // pieces the deck draws them with (deckMarks.tsx).
 const STACK_ENTRIES: Entry[] = [
   { key: 'stack', label: 'Штабель груза. Цвет — по номеру груза в списке', Sample: () => <Stack {...BOX} /> },
-  { key: 'selected', label: 'Выделен', Sample: () => <Stack {...BOX} selected /> },
+  {
+    key: 'selected',
+    label: 'Выделен',
+    Sample: ({ palette }) => (
+      <>
+        <rect x={BOX.x} y={BOX.y} width={BOX.w} height={BOX.h} rx={2} fill="none" stroke={palette.accent} strokeWidth={SELECTION_HALO_WIDTH} />
+        <Stack {...BOX} selected />
+      </>
+    ),
+  },
   {
     key: 'locked',
     label: 'Закреплён: авторасстановка его не двигает',
@@ -112,6 +122,17 @@ const STACK_ENTRIES: Entry[] = [
     ),
   },
   {
+    key: 'separation',
+    label: 'Стоят ближе, чем требует сепарация: «1.2 м из 3 м»',
+    Sample: ({ palette }) => (
+      <>
+        <Stack x={3} y={8} w={12} h={12} />
+        <Stack x={29} y={8} w={12} h={12} />
+        <line x1={15} y1={14} x2={29} y2={14} stroke={palette.danger} strokeWidth={2} strokeDasharray="4 3" />
+      </>
+    ),
+  },
+  {
     key: 'merge',
     label: 'Сюда можно объединить перетаскиваемый штабель',
     Sample: () => {
@@ -123,6 +144,11 @@ const STACK_ENTRIES: Entry[] = [
         </>
       )
     },
+  },
+  {
+    key: 'merge-blocked',
+    label: 'Объединить нельзя: причина — рядом с этим штабелем',
+    Sample: () => <Stack x={2} y={2} w={40} h={24} mergeTarget mergeBlocked />,
   },
   {
     key: 'clearance',

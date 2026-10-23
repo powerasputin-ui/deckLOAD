@@ -38,6 +38,8 @@ import {
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
+  type SeparationViolation,
+  edgeClosestPoints,
   type LashingPoint,
   type PowerSocket,
   type DeckAnnotation,
@@ -53,6 +55,7 @@ import {
 } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
+import { DRAG_THRESHOLD_PX } from '@/lib/stackSelection'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import {
   ConflictHatch,
@@ -65,6 +68,7 @@ import {
   OverloadBadge,
   PowerSocketGlyph,
   RotatedMark,
+  SELECTION_HALO_WIDTH,
   lashingPointColor,
   stackOutline,
 } from './deckMarks'
@@ -130,6 +134,12 @@ interface DeckVisualizationProps {
   // "Дублировать" copy); the handler verifies the latter case is truly
   // physically identical (shape/height too) before committing.
   onMergeManual?: (draggedId: string, targetId: string) => void
+  // What dropping the dragged stack on the target would give, for the label
+  // next to the target (spec 6.7) — page.tsx checks merges.
+  previewMerge?: (draggedId: string, targetId: string) => { ok: boolean; text: string } | null
+  // A stack is being dragged (moved past the threshold): the page hides the
+  // inspector meanwhile, so it doesn't cover where the stack may be dropped.
+  onDragChange?: (dragging: boolean) => void
   manualPlacements: ManualPlacement[]
   // Interactive auto mode
   pinnedPlacements: PinnedPlacement[]
@@ -162,6 +172,9 @@ interface DeckVisualizationProps {
   // picks its tone (spec 9.2). Cargo missing from it keeps its saved colour.
   cargoNumberByItemId?: Map<string, number>
   separationRules?: SeparationRule[]
+  // Pairs of stacks (indices into result.placed) closer than a separation
+  // rule allows: a dashed line between them with the distance (spec 6.3).
+  separationPairs?: readonly SeparationViolation[]
   placingLashingPoint?: boolean
   onPlaceLashingPoint?: (
     x: number,
@@ -215,9 +228,6 @@ interface DeckVisualizationProps {
   onSetDrawingRestrictionZoneFreeform?: (v: boolean) => void
 }
 
-// A press moves cargo only once the pointer has travelled this far (CSS px):
-// a click that wobbles a pixel or two is still a click, not a drag.
-const DRAG_THRESHOLD_PX = 4
 
 // The fixed frame the deck is drawn in (viewBox units); zoom and pan look
 // into it.
@@ -259,6 +269,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onMoveManual,
   onUpdateManualClearance,
   onMergeManual,
+  previewMerge,
+  onDragChange,
   manualPlacements,
   pinnedPlacements,
   selectedPinIds,
@@ -279,6 +291,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   categoryByItemId,
   cargoNumberByItemId,
   separationRules,
+  separationPairs,
   placingLashingPoint,
   onPlaceLashingPoint,
   onUpdateLashingPoint,
@@ -643,6 +656,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // While dragging a placement over another same-item placement, this holds
   // the id of the potential merge target (see handlePointerMove).
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null)
+  // The merge a drag would make, named next to its target: asked once per
+  // target, not on every move.
+  const [mergePreview, setMergePreview] = useState<{ targetId: string; ok: boolean; text: string } | null>(null)
+  const armMergeTarget = (draggedId: string, target: string | null) => {
+    setMergeTargetId(target)
+    if (!target) {
+      if (mergePreview) setMergePreview(null)
+      return
+    }
+    if (mergePreview?.targetId === target) return
+    const preview = previewMerge?.(draggedId, target)
+    setMergePreview(preview ? { targetId: target, ...preview } : null)
+  }
   const [dragState, setDragState] = useState<{
     id: string
     startMouse: { x: number; y: number }
@@ -659,6 +685,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     startPlace: { x: number; y: number }
     moved: boolean
   } | null>(null)
+  const stackDragging = !!(dragState?.moved || pinDrag?.moved)
+  useEffect(() => {
+    onDragChange?.(stackDragging)
+  }, [stackDragging, onDragChange])
   // Purely visual, updated on every pointermove (unthrottled) so the
   // dragged box tracks the cursor smoothly — the store commit below stays
   // throttled (it triggers a full auto-packer recompute), but nothing
@@ -1834,7 +1864,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         const target = onMergeManual
           ? findMergeTarget(mp.itemId, mp.id, nx, ny, mp.width, mp.length, manualPlacements)
           : null
-        setMergeTargetId(target)
+        armMergeTarget(mp.id, target)
         if (!target) {
           // Source "others" from renderedItems (not raw manualPlacements) so
           // outline data is available for the precise post-check below —
@@ -2072,7 +2102,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const target = onMergePinned
         ? findMergeTarget(pin.itemId, pin.id, nx, ny, pin.width, pin.length, pinnedPlacements)
         : null
-      setMergeTargetId(target)
+      armMergeTarget(pin.id, target)
       if (!target) {
         // Prevent overlap with OTHER pinned items (auto-packed items reflow).
         // Sourced from renderedItems (not raw pinnedPlacements) so outline
@@ -2124,6 +2154,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       // discarded, never checked.
       lastResolvedDrag.current = null
       setMergeTargetId(null)
+      setMergePreview(null)
       setDragState(null)
       setPinDrag(null)
       setDragPreviewPos(null)
@@ -2218,6 +2249,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setClearanceDrag(null)
     setPanDrag(null)
     setMergeTargetId(null)
+    setMergePreview(null)
     setLashingAnchorDrag(null)
     setSocketDrag(null)
     setAnnotationDrag(null)
@@ -3491,7 +3523,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               scale={scale}
               deckTransposed={rotated}
               hovered={isHover}
-              selected={isSelected}
+              // The PDF prints the plan, not what is selected on screen.
+              selected={isSelected && !printMode}
+              selectionColor={palette.accent}
               showLabels={showLabels}
               fmt={fmt}
               onHover={onHover}
@@ -3505,6 +3539,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
               onContentsHover={(text, cx, cy) => setContentsTooltip(text ? { text, x: cx, y: cy } : null)}
               mergeTarget={isMergeTarget}
+              mergeBlocked={isMergeTarget && mergePreview?.targetId === placementId && !mergePreview.ok}
               dimmed={isBeingDragged && !!mergeTargetId}
               onPointerDown={
                 mode === 'manual' && p.manualId
@@ -3773,6 +3808,72 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             </g>
           )
         })}
+
+        {/* Stacks closer than a separation rule allows (spec 6.3): a dashed
+            line across the gap and how far apart they are of how far they
+            must be. */}
+        {separationPairs?.map((v) => {
+          const a = result.placed[v.a]
+          const b = result.placed[v.b]
+          if (!a || !b) return null
+          const [pa, pb] = edgeClosestPoints(a, b)
+          const sa = deckToScreen(pa.x, pa.y)
+          const sb = deckToScreen(pb.x, pb.y)
+          const text = `${shortNumber(v.distance)} ${UNIT_LABEL[unit]} из ${shortNumber(v.minDistance)} ${UNIT_LABEL[unit]}`
+          const fontSize = 11 * labelPx
+          const pillH = fontSize + 8 * labelPx
+          const pillW = text.length * fontSize * 0.56 + 12 * labelPx
+          const clear = 4 * labelPx
+          // In the middle of the gap when it fits there; otherwise beside the
+          // two stacks, so the label covers neither them nor the dashes.
+          const rectOf = (p: PlacedItem) => {
+            const o = deckToScreen(p.x, p.y)
+            return { left: o.sx, top: o.sy, right: o.sx + screenSpanW(p.width, p.length), bottom: o.sy + screenSpanH(p.width, p.length) }
+          }
+          const ra = rectOf(a)
+          const rb = rectOf(b)
+          const horizontal = Math.abs(sa.sy - sb.sy) < 0.5 && Math.abs(sa.sx - sb.sx) >= 0.5
+          const vertical = Math.abs(sa.sx - sb.sx) < 0.5 && Math.abs(sa.sy - sb.sy) >= 0.5
+          let mx = (sa.sx + sb.sx) / 2
+          let my = (sa.sy + sb.sy) / 2
+          if (horizontal && Math.abs(sb.sx - sa.sx) < pillW + 2 * clear) my = Math.min(ra.top, rb.top) - pillH / 2 - clear
+          if (vertical && Math.abs(sb.sy - sa.sy) < pillH + 2 * clear) mx = Math.max(ra.right, rb.right) + pillW / 2 + clear
+          return (
+            <g key={`sep-${v.a}-${v.b}`} data-separation={`${v.a}-${v.b}`} className="pointer-events-none">
+              <line x1={sa.sx} y1={sa.sy} x2={sb.sx} y2={sb.sy} stroke={palette.danger} strokeWidth={2 * labelPx} strokeDasharray={`${5 * labelPx} ${4 * labelPx}`} />
+              <rect x={mx - pillW / 2} y={my - pillH / 2} width={pillW} height={pillH} rx={4 * labelPx} fill={palette.surface} stroke={palette.danger} strokeWidth={1.25 * labelPx} />
+              <text x={mx} y={my + fontSize * 0.35} textAnchor="middle" fontSize={fontSize} fontWeight={600} fill={palette.danger} className="select-none">
+                {text}
+              </text>
+            </g>
+          )
+        })}
+
+        {/* What dropping the dragged stack here would do (spec 6.7): above
+            the target, or under it when the deck's top edge is too close. */}
+        {mergeTargetId && mergePreview?.targetId === mergeTargetId && (() => {
+          const placements: { id: string; x: number; y: number; width: number; length: number }[] =
+            mode === 'manual' ? manualPlacements : pinnedPlacements
+          const target = placements.find((p) => p.id === mergeTargetId)
+          if (!target) return null
+          const { sx, sy } = deckToScreen(target.x, target.y)
+          const tw = screenSpanW(target.width, target.length)
+          const th = screenSpanH(target.width, target.length)
+          const fontSize = 12 * labelPx
+          const pillH = fontSize + 10 * labelPx
+          const pillW = mergePreview.text.length * fontSize * 0.56 + 16 * labelPx
+          const gapPx = 8 * labelPx
+          const top = sy - pillH - gapPx >= offY ? sy - pillH - gapPx : sy + th + gapPx
+          const color = mergePreview.ok ? palette.ok : palette.danger
+          return (
+            <g data-merge-preview={mergePreview.ok ? 'ok' : 'blocked'} className="pointer-events-none">
+              <rect x={sx + tw / 2 - pillW / 2} y={top} width={pillW} height={pillH} rx={4 * labelPx} fill={palette.surface} stroke={color} strokeWidth={1.5 * labelPx} />
+              <text x={sx + tw / 2} y={top + pillH / 2 + fontSize * 0.35} textAnchor="middle" fontSize={fontSize} fontWeight={600} fill={color} className="select-none">
+                {mergePreview.text}
+              </text>
+            </g>
+          )
+        })()}
 
         {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
         {activeStamp && stampDims && hoverPos && !dragState && (() => {
@@ -4199,6 +4300,7 @@ function PlacedRect({
   onItemContextMenu,
   locked,
   selected,
+  selectionColor,
   category,
   mixedLoad,
   overLoad,
@@ -4207,6 +4309,7 @@ function PlacedRect({
   contentsTitle,
   onContentsHover,
   mergeTarget,
+  mergeBlocked,
   dimmed,
   scale,
   deckTransposed,
@@ -4246,6 +4349,8 @@ function PlacedRect({
   // between them (this is the actual fix for "auto and manual show
   // selection completely differently").
   selected?: boolean
+  // The accent of the theme: the selection's outer band (SelectionHalo).
+  selectionColor?: string
   category?: string
   // Round 22: true when this placement's `composition` has more than one
   // constituent segment (see segmentsOf) — drives a small "mixed load"
@@ -4265,9 +4370,11 @@ function PlacedRect({
   // currently being dragged (mergeTarget), or is itself being dragged toward
   // one (dimmed) — see findMergeTarget/handlePointerMove.
   mergeTarget?: boolean
+  // The merge onto this target can't be done (its reason is shown by it).
+  mergeBlocked?: boolean
   dimmed?: boolean
 }) {
-  const outline = stackOutline({ mergeTarget, problem: overLoad || !!conflict, selected, hovered, locked })
+  const outline = stackOutline({ mergeTarget, mergeBlocked, problem: overLoad || !!conflict, selected, hovered, locked })
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -4308,6 +4415,7 @@ function PlacedRect({
       // This marks exactly one element per placement, regardless of how
       // many segments its shape draws inside.
       data-cargo-placement="true"
+      data-selected={selected ? 'true' : undefined}
       data-cargo-number={cargoNumber}
       data-cargo-name={item.name}
       onMouseEnter={(e) => {
@@ -4334,6 +4442,26 @@ function PlacedRect({
       {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
         <LayerGhosts x={x} y={y} w={w} h={h} count={item.stackedCount} tone={tone} />
       )}
+      {selected && selectionColor && (
+        <g className="pointer-events-none" data-selection-halo="true">
+          <FootprintShape
+            shape={item.shape}
+            x={x}
+            y={y}
+            w={w}
+            h={h}
+            fill="none"
+            fillOpacity={0}
+            stroke={selectionColor}
+            strokeWidth={SELECTION_HALO_WIDTH}
+            outline={item.outline}
+            rotated={item.rotated}
+            scale={scale}
+            pipeRowCount={pipeSpread?.rowCount ?? nestSpread?.pipesPerRow}
+            pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
+          />
+        </g>
+      )}
       <FootprintShape
         shape={item.shape}
         x={x}
@@ -4355,7 +4483,7 @@ function PlacedRect({
       {(overLoadTitle || conflict) && <title>{[conflict, overLoadTitle].filter(Boolean).join(' · ')}</title>}
       {conflict && <ConflictHatch x={x} y={y} w={w} h={h} patternId="conflict-hatch" />}
       {overLoad && w >= 14 && h >= 14 && <OverloadBadge x={x} y={y} />}
-      {mergeTarget && <MergeTargetBadge x={x} y={y} w={w} h={h} />}
+      {mergeTarget && !mergeBlocked && <MergeTargetBadge x={x} y={y} w={w} h={h} />}
       {category && showLabels && w > 30 && h > 30 && (
         <g className="pointer-events-none">
           <text x={x + 4} y={y + h - 5} fontSize={8} fill={CARGO_INK} fillOpacity={0.8} className="select-none">

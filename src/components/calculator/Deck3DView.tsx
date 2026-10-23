@@ -6,7 +6,11 @@ import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Edges } from '@react-three/drei'
 import { Maximize, Minimize } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useTheme } from '@/components/ThemeProvider'
 import { cargoToneForNumber } from '@/lib/cargoPalette'
+import { DRAG_THRESHOLD_PX, isStackSelected, type StackSelection } from '@/lib/stackSelection'
+import { THEME_TOKENS } from '@/lib/theme'
+import { autoPlacementKey } from '@/store/calculator'
 import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 import { pipeNestTierOffsets } from '@/lib/pipeNest'
 
@@ -43,6 +47,8 @@ interface Deck3DViewProps {
   // Cargo id → number in the list; the tone follows from it, same as in 2D
   // and the PDF (spec 9.2).
   cargoNumberByItemId?: Map<string, number>
+  // The stacks selected (shared with 2D), outlined in the accent here too.
+  selection?: StackSelection
 }
 
 const SQRT3 = Math.sqrt(3)
@@ -56,11 +62,10 @@ const SQRT3 = Math.sqrt(3)
 const PIPE_CAP_COLOR = '#cbd5e1'
 
 // 3D snapshot of the current layout — camera rotate/zoom only, no editing.
-// Clicking a mesh still updates the shared selection store (so switching to
-// 2D shows it already selected there, ready for the arrow-key/Space
-// shortcuts or drag). Like in 2D, a click only selects — it never pins a
-// not-yet-pinned item. Nothing in 3D itself moves/rotates cargo or shows a
-// selection highlight.
+// Clicking a mesh updates the shared selection (the inspector opens, and 2D
+// shows it selected too); the selected stacks are outlined in the accent
+// (spec 6.3). Like in 2D, a click only selects — it never pins a
+// not-yet-pinned item. Nothing in 3D itself moves or rotates cargo.
 export default function Deck3DView({
   result,
   deckWidth,
@@ -73,7 +78,13 @@ export default function Deck3DView({
   onSelectPin,
   onSelectAuto,
   cargoNumberByItemId,
+  selection,
 }: Deck3DViewProps) {
+  const { resolved: theme } = useTheme()
+  const accent = THEME_TOKENS[theme].accent
+  const isSelected = (b: { placementId?: string; pinData?: PinData }) =>
+    !!selection &&
+    isStackSelected({ placementId: b.placementId, autoKey: b.pinData ? autoPlacementKey(b.pinData) : undefined }, mode, selection)
   // Fullscreen toggle — expands this specific container (not the whole
   // page) via the browser's real Fullscreen API, so OrbitControls/canvas
   // interactions keep working unchanged and Escape/the browser's own exit
@@ -380,6 +391,8 @@ export default function Deck3DView({
   }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements, cargoNumberByItemId])
 
   const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
+    // The end of a camera turn that started on a stack, not a choice of it.
+    if (e.delta > DRAG_THRESHOLD_PX) return
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
     if (!placementId) {
       // Auto mode, not pinned yet — select it without pinning (see onSelectAuto).
@@ -462,11 +475,12 @@ export default function Deck3DView({
         )}
 
         {boxes.map((b) => {
-          // No visual selection highlight in 3D — clicking still updates the
-          // shared selection state (so 2D reflects it after switching back),
-          // but nothing here tints or outlines the mesh; cargo always shows
-          // its own true color. 3D stays camera-only for editing (move/
-          // rotate happen in 2D, via drag or the arrow-key/Space shortcuts).
+          // A selected stack: accent edges and a light accent glow over its
+          // own tone. 3D stays camera-only for editing (move/rotate happen in
+          // 2D, via drag or the keys).
+          const selected = isSelected(b)
+          const edgeColor = selected ? accent : '#0f172a'
+          const glow = selected ? { emissive: accent, emissiveIntensity: 0.35 } : {}
           if (b.customOutline) {
             // Extrude the real (possibly concave) silhouette. The shape is
             // built in local XY with Y negated, then rotated -90° about X —
@@ -483,8 +497,8 @@ export default function Deck3DView({
                 onClick={handleClick(b.placementId, b.pinData)}
               >
                 <extrudeGeometry args={[shape, { depth: b.depth ?? 0.3, bevelEnabled: false }]} />
-                <meshStandardMaterial color={b.color} />
-                <Edges color="#0f172a" />
+                <meshStandardMaterial color={b.color} {...glow} />
+                <Edges color={edgeColor} />
               </mesh>
             )
           }
@@ -492,8 +506,8 @@ export default function Deck3DView({
             return (
               <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId, b.pinData)}>
                 <boxGeometry args={[b.w!, b.h!, b.d!]} />
-                <meshStandardMaterial color={b.color} />
-                <Edges color="#0f172a" />
+                <meshStandardMaterial color={b.color} {...glow} />
+                <Edges color={edgeColor} />
               </mesh>
             )
           }
@@ -509,18 +523,18 @@ export default function Deck3DView({
                 onClick={handleClick(b.placementId, b.pinData)}
               >
                 <cylinderGeometry args={[b.radius, b.radius, b.cylLen, b.radialSegments]} />
-                <meshStandardMaterial color={b.color} />
-                <Edges color="#0f172a" />
+                <meshStandardMaterial color={b.color} {...glow} />
+                <Edges color={edgeColor} />
               </mesh>
             )
           }
           return (
             <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={b.rot} onClick={handleClick(b.placementId, b.pinData)}>
               <cylinderGeometry args={[b.radius, b.radius, b.cylLen, 24]} />
-              <meshStandardMaterial attach="material-0" color={b.color} />
+              <meshStandardMaterial attach="material-0" color={b.color} {...glow} />
               <meshStandardMaterial attach="material-1" color={PIPE_CAP_COLOR} />
               <meshStandardMaterial attach="material-2" color={PIPE_CAP_COLOR} />
-              <Edges color="#0f172a" />
+              <Edges color={edgeColor} />
             </mesh>
           )
         })}

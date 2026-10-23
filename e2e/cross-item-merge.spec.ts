@@ -272,7 +272,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // — the same 16 pipes of ONE item were already refused.
     const pipePlacements = await mergePartOfDuplicateOntoOriginal(page, '2')
 
-    await expect(page.getByText('Превышена высота штабеля: 4 м при допустимых 2 м')).toBeVisible()
+    await expect(page.getByText('Выше предельной высоты: 4 м из 2 м')).toBeVisible()
     await expect(pipePlacements).toHaveCount(3)
     await expect(headerBadge(page)).toHaveText(/^17\/17 ед\./)
   })

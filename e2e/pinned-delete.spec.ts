@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { unitsCount, stackMenu, inspector } from './helpers'
+import { unitsCount, stackMenu, inspector, selectedStacks } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -19,10 +19,9 @@ test.describe('Deleting a pinned cargo item', () => {
 
     // Pin the first placed item by clicking its colored rect in the SVG.
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
-    // A selected item's own rect gets the purple #7c3aed stroke (see
-    // FootprintShape's strokeColor) — that's the selection signal now that
-    // the sidebar's "Выбрано N груз(ов)" summary block was removed.
-    const selectedStroke = page.locator('svg rect[stroke="#7c3aed"]')
+    // The selected stack (outlined with the accent band) — the selection
+    // signal since the sidebar's "Выбрано N груз(ов)" block was removed.
+    const selectedStroke = selectedStacks(page)
     await expect(async () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.

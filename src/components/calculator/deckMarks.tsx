@@ -5,7 +5,6 @@ import { CARGO_INK } from '@/lib/cargoPalette'
 import type { ThemeTokens } from '@/lib/theme'
 
 export const MARK_COLORS = {
-  selected: '#7c3aed',
   problem: '#dc2626',
   mergeTarget: '#16a34a',
   hovered: '#94a3b8',
@@ -18,11 +17,13 @@ export const MARK_COLORS = {
   socket: '#f59e0b',
 } as const
 
-// A stack's outline: merge target, a problem (an overloaded zone or a manual
-// stack where it may not stand), selected, under the pointer, or plain. A
-// locked stack is dashed.
+// A stack's outline: the target of a merge being dragged (red when the merge
+// can't be done), a problem (an overloaded zone or a manual stack where it
+// may not stand), selected, under the pointer, or plain. A locked stack is
+// dashed. A selected stack also gets the halo (SELECTION_HALO_WIDTH).
 export function stackOutline(s: {
   mergeTarget?: boolean
+  mergeBlocked?: boolean
   problem?: boolean
   selected?: boolean
   hovered?: boolean
@@ -30,18 +31,24 @@ export function stackOutline(s: {
 }): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
   return {
     stroke: s.mergeTarget
-      ? MARK_COLORS.mergeTarget
+      ? s.mergeBlocked
+        ? MARK_COLORS.problem
+        : MARK_COLORS.mergeTarget
       : s.problem
         ? MARK_COLORS.problem
-        : s.selected
-          ? MARK_COLORS.selected
-          : s.hovered
-            ? MARK_COLORS.hovered
-            : CARGO_INK,
-    strokeWidth: s.mergeTarget ? 4 : s.problem ? 3 : s.selected ? 3 : s.hovered ? 2 : 1,
+        : s.hovered && !s.selected
+          ? MARK_COLORS.hovered
+          : CARGO_INK,
+    strokeWidth: s.mergeTarget ? 4 : s.problem ? 3 : s.selected || s.hovered ? 2 : 1,
     strokeDasharray: s.mergeTarget ? '6 3' : s.locked ? '4 2' : undefined,
   }
 }
+
+// The selection (spec 6.3): an inner dark line of 2 px — the stack's own
+// outline — and an outer accent band of 3 px. The band is the stack's shape
+// drawn underneath with a stroke this wide: centred on the edge, it reaches
+// 4 px out, 3 px past the inner line; the stack's fill covers its inner half.
+export const SELECTION_HALO_WIDTH = 8
 
 interface Box {
   x: number

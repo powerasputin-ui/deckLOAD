@@ -33,8 +33,9 @@ test.describe('Custom hand-drawn cargo outline', () => {
     await page.getByRole('button', { name: 'Разместить' }).click()
 
     // A real extruded/traced outline renders as an SVG <polygon>, not the
-    // plain <rect> every box-shaped placement falls back to.
-    await expect(page.locator('svg polygon')).toHaveCount(1)
+    // plain <rect> every box-shaped placement falls back to. (The stack is
+    // selected once placed; its selection band is a polygon of its own.)
+    await expect(page.locator('svg g[data-cargo-placement] > polygon')).toHaveCount(1)
     await expect(page.getByText('E2E L-shape').first()).toBeVisible()
   })
 })
