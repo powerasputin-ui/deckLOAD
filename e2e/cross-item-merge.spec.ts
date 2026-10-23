@@ -226,13 +226,19 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await expect(headerBadge(page)).toHaveText(/^17\/17 ед\./)
 
     // The two 8-stacks are the ones labelled "×8" (the lone unit has no
-    // count label). Nudge both so they become pins — only pins merge in
+    // count). Their full label is data-stack-text: the deck writes «×N»
+    // only where it fits. Nudge both so they become pins — only pins merge in
     // auto mode (see the first test) — then drag the duplicate's onto the
     // original's.
     await pipePlacements.nth(0).scrollIntoViewIfNeeded()
     const eightStacks = async () => {
-      const labels = await pipePlacements.allTextContents()
-      return labels.map((t, i) => [t, i] as const).filter(([t]) => /×8$/.test(t)).map(([t, i]) => ({ copy: t.includes('(копия)'), i }))
+      const stacks = await pipePlacements.evaluateAll((els) =>
+        els.map((e) => ({ label: e.getAttribute('data-stack-text') ?? '', name: e.getAttribute('data-cargo-name') ?? '' }))
+      )
+      return stacks
+        .map((s, i) => ({ ...s, i }))
+        .filter((s) => /×8$/.test(s.label))
+        .map((s) => ({ copy: s.name.includes('(копия)'), i: s.i }))
     }
     // A dragged stack stays selected, and its inspector covers the right of
     // the deck — Esc closes it before the next stack is taken.

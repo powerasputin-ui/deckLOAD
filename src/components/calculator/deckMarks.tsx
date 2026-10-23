@@ -125,6 +125,37 @@ export function MergeTargetBadge({ x, y, w, h }: Box) {
   )
 }
 
+// A stack's label (spec 6.2): its cargo number — «3», «3 ×4», «3+4 ×16» —
+// in dark ink over the cargo's light tone, centred on (cx, cy). Where it
+// spills over its stack, a halo of the deck's surface keeps it legible.
+export function StackNumber({
+  cx,
+  cy,
+  text,
+  fontSize,
+  halo,
+  ...rest
+}: { cx: number; cy: number; text: string; fontSize: number; halo?: string } & Omit<
+  React.SVGProps<SVGTextElement>,
+  'x' | 'y' | 'fontSize' | 'children'
+>) {
+  return (
+    <text
+      x={cx}
+      y={cy + fontSize * 0.35}
+      textAnchor="middle"
+      fontSize={fontSize}
+      fontWeight={600}
+      fill={CARGO_INK}
+      className="select-none pointer-events-none"
+      style={halo ? { paintOrder: 'stroke', stroke: halo, strokeWidth: fontSize * 0.3, strokeLinejoin: 'round' } : undefined}
+      {...rest}
+    >
+      {text}
+    </text>
+  )
+}
+
 // A stack the user locked («Закреплён»).
 export function LockBadge({ x, y, w, h }: Box) {
   return (
@@ -137,21 +168,8 @@ export function LockBadge({ x, y, w, h }: Box) {
   )
 }
 
-// The real total unit count of a stack, the same badge for every shape.
-export function LayersBadge({ x, y, w, count }: { x: number; y: number; w: number; count: number }) {
-  return (
-    <g className="pointer-events-none">
-      <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
-      <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-        ×{count}
-      </text>
-    </g>
-  )
-}
-
-// A stack holding more than one cargo: a small split circle just left of the
-// ×N badge. Its centre is kept inside the stack, so at the smallest sizes it
-// overlaps the badge rather than floating outside the stack.
+// A stack holding more than one cargo: a small split circle near its top
+// right corner, its centre kept inside the stack at any size.
 export function MixedLoadMarker({ x, y, w }: { x: number; y: number; w: number }) {
   const mr = 6
   const mcx = Math.min(Math.max(x + w - 30, x + mr), x + w - mr)

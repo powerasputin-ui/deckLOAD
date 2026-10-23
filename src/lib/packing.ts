@@ -670,7 +670,7 @@ export interface SeparationRule {
 }
 
 // Edge-to-edge distance between two axis-aligned rects (0 if overlapping/touching).
-function edgeDistance(
+export function edgeDistance(
   a: { x: number; y: number; width: number; length: number },
   b: { x: number; y: number; width: number; length: number }
 ): number {

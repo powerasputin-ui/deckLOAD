@@ -6,7 +6,6 @@ import {
   ConflictHatch,
   HatchPatterns,
   LayerGhosts,
-  LayersBadge,
   LockBadge,
   MergeTargetBadge,
   MixedLoadMarker,
@@ -14,6 +13,7 @@ import {
   PowerSocketGlyph,
   RotatedMark,
   SELECTION_HALO_WIDTH,
+  StackNumber,
   lashingPointColor,
   stackOutline,
 } from '@/components/calculator/deckMarks'
@@ -45,7 +45,16 @@ const BOX = { x: 6, y: 5, w: 34, h: 19 }
 // What the deck draws on stacks (spec 6.3) and on the deck itself, in the
 // pieces the deck draws them with (deckMarks.tsx).
 const STACK_ENTRIES: Entry[] = [
-  { key: 'stack', label: 'Штабель груза. Цвет — по номеру груза в списке', Sample: () => <Stack {...BOX} /> },
+  {
+    key: 'stack',
+    label: 'Штабель груза: номер груза в списке, цвет — по номеру',
+    Sample: () => (
+      <>
+        <Stack {...BOX} />
+        <StackNumber cx={BOX.x + BOX.w / 2} cy={BOX.y + BOX.h / 2} text="1" fontSize={11} />
+      </>
+    ),
+  },
   {
     key: 'selected',
     label: 'Выделен',
@@ -75,7 +84,7 @@ const STACK_ENTRIES: Entry[] = [
         <>
           <LayerGhosts {...b} count={3} tone={cargoToneForNumber(1)} />
           <Stack {...b} />
-          <LayersBadge x={b.x} y={b.y} w={b.w} count={3} />
+          <StackNumber cx={b.x + b.w / 2} cy={b.y + b.h / 2} text="1 ×3" fontSize={11} />
         </>
       )
     },
@@ -92,12 +101,12 @@ const STACK_ENTRIES: Entry[] = [
   },
   {
     key: 'mixed',
-    label: 'Смешанный штабель: в нём несколько грузов',
+    label: 'Смешанный штабель: номера всех его грузов через «+»',
     Sample: () => (
       <>
         <Stack {...BOX} />
-        <MixedLoadMarker x={BOX.x} y={BOX.y} w={BOX.w} />
-        <LayersBadge x={BOX.x} y={BOX.y} w={BOX.w} count={4} />
+        <MixedLoadMarker x={BOX.x + 12} y={BOX.y} w={BOX.w - 12} />
+        <StackNumber cx={BOX.x + BOX.w / 2 - 4} cy={BOX.y + BOX.h / 2 + 2} text="1+2" fontSize={11} />
       </>
     ),
   },

@@ -25,6 +25,8 @@ export interface InspectedStack {
   number?: number
   // «6.06 × 2.44 × 2.59 м», the cargo's own width × length × height.
   size: string
+  // The cargo's category, «Смешанный груз» for a stack of different ones.
+  category?: string
   unitWeight?: string
   stackWeight: string
   layers: number
@@ -152,6 +154,12 @@ function StackDetails({
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 border-b px-4 py-3 text-sm">
           <dt className="text-ink-2">Ш × Д × В</dt>
           <dd className="tabular-nums">{stack.size}</dd>
+          {stack.category && (
+            <>
+              <dt className="text-ink-2">Категория</dt>
+              <dd>{stack.category}</dd>
+            </>
+          )}
           {stack.unitWeight && (
             <>
               <dt className="text-ink-2">Вес единицы</dt>

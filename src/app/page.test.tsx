@@ -46,6 +46,16 @@ function svgTextContents(): string[] {
   return Array.from(document.querySelectorAll('svg text')).map((el) => el.textContent ?? '')
 }
 
+// The category the inspector shows for a pinned stack. Stage 1 (spec 6.2)
+// writes only numbers and names on stacks; the category moved here.
+function inspectorCategoryOfPin(pinId: string): string | null {
+  act(() => {
+    useCalculator.setState({ selectedPinIds: [pinId], selectedAutoKeys: [] })
+  })
+  const inspector = screen.getByRole('complementary', { name: 'Инспектор' })
+  return within(inspector).queryByText('Категория')?.nextElementSibling?.textContent ?? null
+}
+
 // The frame's sections (spec 5.3): the left panel shows one at a time.
 function openSection(title: 'Судно' | 'Грузы' | 'Размещение' | 'Проверки' | 'Отчёт') {
   const nav = screen.getByRole('navigation', { name: 'Разделы' })
@@ -228,6 +238,53 @@ describe('Home (page.tsx)', () => {
       'Линейка',
       'Фото палубы',
     ])
+  })
+
+  // Stage 1 (spec 6.2): a stack is labelled with its cargo number — «×N» for
+  // its units — and the name only where it fits whole; «Названия грузов»
+  // turns the names off, never the numbers.
+  it('labels stacks with their cargo numbers, and the names toggle leaves the numbers', () => {
+    render(<Home />)
+    const deckSvg = () => document.querySelector('svg.w-full.h-auto')!
+    const stacks = () => Array.from(deckSvg().querySelectorAll('g[data-cargo-placement]'))
+    expect(stacks().length).toBeGreaterThan(0)
+    const numbersOf = (g: Element) => g.getAttribute('data-stack-text')!.split(' ')[0]
+    const { items } = useCalculator.getState()
+    for (const g of stacks()) {
+      const name = g.getAttribute('data-cargo-name')!
+      expect(numbersOf(g)).toBe(String(items.findIndex((it) => it.name === name) + 1))
+      expect(g.querySelector('[data-stack-label="own"]')?.textContent).toMatch(/^\d+( ×\d+)?$/)
+    }
+    const named = () => Array.from(deckSvg().querySelectorAll('g[data-cargo-placement] text')).filter((t) => items.some((it) => it.name === t.textContent))
+    expect(named().length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Названия грузов' }))
+    expect(named()).toHaveLength(0)
+    expect(stacks().every((g) => g.querySelector('[data-stack-label="own"]'))).toBe(true)
+  })
+
+  it('shows the number of a stack too small for it when the stack is selected', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 40, length: 100 } })
+      useCalculator.getState().addItem({ name: 'Болт', width: 0.1, length: 0.1, height: 0.1, quantity: 3 })
+    })
+    const bolt = useCalculator.getState().items.find((it) => it.name === 'Болт')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'b', itemId: bolt.id, name: 'Болт', x: 20, y: 50, width: 0.1, length: 0.1, layers: 3, rotated: false, color: bolt.color,
+      })
+    })
+    const label = () => document.querySelector('svg.w-full.h-auto [data-stack-label="over"]')
+    expect(document.querySelector('svg.w-full.h-auto [data-stack-label="own"]')).toBeNull()
+    expect(label()).toBeNull()
+    act(() => {
+      useCalculator.setState({ selectedManualIds: ['b'] })
+    })
+    expect(label()?.textContent).toBe('1 ×3')
   })
 
   // Stage 2 (spec 6.3): the selected stack is outlined twice — its own dark
@@ -1634,7 +1691,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // `categoryByItemId.get(p.itemId)` (nominal itemId), silently hiding
   // any non-nominal constituent's own category. `#475569` is the mixed-
   // load marker's own unique fill (DeckVisualization.tsx) — not used
-  // anywhere else in the file, so it's a safe, specific selector.
+  // anywhere else in the file, so it's a safe, specific selector. Since
+  // stage 1 (spec 6.2) the stack's category is shown by its inspector
+  // (placementCategoryLabel), with the same rules.
   it('DeckVisualization: uncomposed placement never renders the mixed-load marker (regression)', () => {
     render(<Home />)
     clearDemoCargo()
@@ -1642,20 +1701,18 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000', category: 'Обычный' })
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    let pinId = ''
     act(() => {
-      useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 3, rotated: false, color: itemA.color,
       })
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeNull()
-    // Existing rendering is untouched: base fill is still the cargo's own
-    // tone (by its number, spec 9.2), category label still shows the single
-    // real category. Scoped
-    // to `svg text` — "Обычный" also appears elsewhere on the page (e.g.
-    // the category datalist), so a page-wide text query would be ambiguous.
+    // The base fill is still the cargo's own tone (by its number, spec
+    // 9.2), and the single real category is the stack's category.
     expect(document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
-    expect(svgTextContents()).toContain('Обычный')
+    expect(inspectorCategoryOfPin(pinId)).toBe('Обычный')
   })
 
   it('DeckVisualization: composed [A2,B3] with the SAME category shows the mixed-load marker but keeps the single category label (K#R22-same-category)', () => {
@@ -1667,8 +1724,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    let pinId = ''
     act(() => {
-      const pinId = useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
       })
       useCalculator.getState().updatePinned(0, pinId, {
@@ -1678,12 +1736,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    // Both constituents share "Обычный" -> no "Смешанный груз" label, the
-    // single real category still shows (not replaced just because the
-    // placement happens to be composed).
-    const texts = svgTextContents()
-    expect(texts).toContain('Обычный')
-    expect(texts).not.toContain('Смешанный груз')
+    // Both constituents share "Обычный" -> not "Смешанный груз": the single
+    // real category still shows (not replaced just because the placement
+    // happens to be composed).
+    expect(inspectorCategoryOfPin(pinId)).toBe('Обычный')
     // Base nominal rendering (color) is untouched.
     expect(document.querySelector(`svg rect[fill="${cargoToneForNumber(1)}"]`)).toBeTruthy()
   })
@@ -1708,8 +1764,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    let pinId = ''
     act(() => {
-      const pinId = useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: 'P', x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
       })
       useCalculator.getState().updatePinned(0, pinId, {
@@ -1719,9 +1776,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const texts = svgTextContents()
-    expect(texts).toContain('Опасный груз') // NOT blank/missing despite the broken nominal id
-    expect(texts).not.toContain('Смешанный груз')
+    // NOT blank/missing despite the broken nominal id.
+    expect(inspectorCategoryOfPin(pinId)).toBe('Опасный груз')
   })
 
   it('DeckVisualization: composed [A2,B3] with DIFFERENT categories shows "Смешанный груз" instead of the nominal-only category (K#R22-mixed-category)', () => {
@@ -1738,8 +1794,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
+    let pinId = ''
     act(() => {
-      const pinId = useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
       })
       useCalculator.getState().updatePinned(0, pinId, {
@@ -1749,11 +1806,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    const texts = svgTextContents()
-    expect(texts).toContain('Смешанный груз')
-    // The old nominal-only category text no longer appears BY ITSELF as
-    // the placement's label (it would have silently hidden B's category).
-    expect(texts).not.toContain('Обычный')
+    // Not the nominal-only category, which would silently hide B's.
+    expect(inspectorCategoryOfPin(pinId)).toBe('Смешанный груз')
   })
 
   // Corrective pass (post-review): A has a real category, B has NONE set.
@@ -1777,8 +1831,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     const itemB = useCalculator.getState().items.find((it) => it.name === 'B')!
     expect(itemB.category).toBeUndefined()
+    let pinId = ''
     act(() => {
-      const pinId = useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
       })
       useCalculator.getState().updatePinned(0, pinId, {
@@ -1790,9 +1845,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // Still composed -> mixed-load marker present (that part is unrelated
     // to category logic — driven purely by segment count).
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    const texts = svgTextContents()
-    expect(texts).toContain('Металл')
-    expect(texts).not.toContain('Смешанный груз')
+    expect(inspectorCategoryOfPin(pinId)).toBe('Металл')
   })
 
   // Corrective pass: [A2,A3] — two NON-ADJACENT segments of the SAME
@@ -1814,8 +1867,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, color: '#ff0000', category: 'Металл' })
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    let pinId = ''
     act(() => {
-      const pinId = useCalculator.getState().pinFromPlaced(0, {
+      pinId = useCalculator.getState().pinFromPlaced(0, {
         itemId: itemA.id, name: itemA.name, x: 1, y: 1, width: 2, length: 1, layers: 5, rotated: false, color: itemA.color,
       })
       useCalculator.getState().updatePinned(0, pinId, {
@@ -1826,12 +1880,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     // Marker present (segment count > 1) despite only one real item type.
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    const texts = svgTextContents()
-    expect(texts).toContain('Металл')
-    expect(texts).not.toContain('Смешанный груз')
-    // ×N still reads the true total unit count (5), unaffected by how
-    // many composition segments make it up.
-    expect(texts).toContain('×5')
+    // ×N still reads the true total unit count (5), unaffected by how many
+    // composition segments make it up — and one cargo number, not «1+1».
+    expect(document.querySelector('svg g[data-cargo-placement]')?.getAttribute('data-stack-text')).toBe('1 ×5')
+    expect(inspectorCategoryOfPin(pinId)).toBe('Металл')
   })
 
   it('DeckVisualization: composed placement with different constituent COLORS still renders the nominal base fill unchanged, marker present (K#R22-colors)', () => {
@@ -2901,9 +2953,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     return Number(deckRect.getAttribute('width')) / useCalculator.getState().deck.width
   }
 
+  // By the placement's own name (data-cargo-name): the deck writes a name
+  // only where it fits whole (spec 6.2).
   function placementGroupByLabel(label: string): Element {
-    const groups = Array.from(document.querySelectorAll('g[data-cargo-placement="true"]'))
-    const match = groups.find((g) => Array.from(g.querySelectorAll('text')).some((t) => t.textContent === label))
+    const match = document.querySelector(`g[data-cargo-placement="true"][data-cargo-name="${label}"]`)
     if (!match) throw new Error(`Round 24 test: placement group not found for label "${label}"`)
     return match
   }

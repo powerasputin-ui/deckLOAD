@@ -58,7 +58,7 @@ import {
   separationViolations,
   type PlacedItem,
 } from '@/lib/packing'
-import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget, placementCategorySet } from '@/lib/placementComposition'
+import { placementLayersOfItem, placementPush, placementPop, placementTotalLayers, placementTotalWeightKg, segmentsOf, placementConcatComposition, stackHeight, exceedsHeightBudget, placementCategorySet, placementCategoryLabel } from '@/lib/placementComposition'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -2611,6 +2611,7 @@ export default function Home() {
       size: item
         ? `${fmtNumber(item.width)} × ${fmtNumber(item.length)} × ${fmtNumber(item.height)} ${unit}`
         : `${fmtNumber(source.width)} × ${fmtNumber(source.length)} ${unit}`,
+      category: placementCategoryLabel(record ?? source, items),
       unitWeight: !record?.composition && item?.weight ? `${fmtNumber(item.weight)} кг` : undefined,
       stackWeight: `${fmtTonnes(record ? placementTotalWeightKg(record, items) : (source.weight ?? 0) * layers)} т`,
       layers,

@@ -493,6 +493,16 @@ export function placementCategorySet(p: ComposablePlacement, items: LashingCatal
   return set
 }
 
+// The category a stack is shown with (its inspector, spec 6.5): the one real
+// category of its cargo, «Смешанный груз» when it holds two or more different
+// ones, nothing when none has one. Cargo without a category takes no part, as
+// in the separation check; a composed stack is judged by its composition only.
+export function placementCategoryLabel(p: ComposablePlacement, items: LashingCatalogItem[]): string | undefined {
+  const categories = placementCategorySet(p, items)
+  if (categories.size > 1) return 'Смешанный груз'
+  return categories.size === 1 ? [...categories][0] : undefined
+}
+
 // The minimal catalog shape outline resolution needs.
 export interface GeometryCatalogItem {
   id: string

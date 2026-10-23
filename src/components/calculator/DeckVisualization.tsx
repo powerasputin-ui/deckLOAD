@@ -56,12 +56,12 @@ import {
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { DRAG_THRESHOLD_PX } from '@/lib/stackSelection'
+import { NAME_FONT_SIZE, layoutStackLabels, measureTextWidth, type StackLabelPlan } from '@/lib/labelLayout'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import {
   ConflictHatch,
   HatchPatterns,
   LayerGhosts,
-  LayersBadge,
   LockBadge,
   MergeTargetBadge,
   MixedLoadMarker,
@@ -69,6 +69,7 @@ import {
   PowerSocketGlyph,
   RotatedMark,
   SELECTION_HALO_WIDTH,
+  StackNumber,
   lashingPointColor,
   stackOutline,
 } from './deckMarks'
@@ -2348,6 +2349,39 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         )
       : new Map<string, ReturnType<typeof checkZoneLoads>[number]>()
 
+  // Stack labels (spec 6.2), laid out together: a number that fits none of a
+  // group of neighbouring stacks of the same cargo is written once over the
+  // group. In screen pixels, from where the stacks stand (not mid-drag).
+  const stackKeyOf = (p: (typeof renderedItems)[number], idx: number) => (mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`)
+  const { plans: labelPlans, groups: labelGroups } = layoutStackLabels(
+    renderedItems.flatMap((p, idx) => {
+      const numbers = segmentsOf(p)
+        .map((seg) => cargoNumberByItemId?.get(seg.itemId))
+        .filter((n): n is number => n !== undefined)
+      if (numbers.length === 0) return []
+      const spread = pipePyramidSpreadMargin(p, p.stackedCount)
+      const deckRect = { x: p.x - spread.onWidth, y: p.y - spread.onLength, width: p.width + spread.onWidth * 2, length: p.length + spread.onLength * 2 }
+      const { sx, sy } = deckToScreen(deckRect.x, deckRect.y)
+      return [
+        {
+          key: stackKeyOf(p, idx),
+          numbers,
+          layers: p.stackedCount,
+          name: new Set(numbers).size === 1 ? p.name : undefined,
+          rect: {
+            x: sx / labelPx,
+            y: sy / labelPx,
+            w: screenSpanW(deckRect.width, deckRect.length) / labelPx,
+            h: screenSpanH(deckRect.width, deckRect.length) / labelPx,
+          },
+          deck: deckRect,
+        },
+      ]
+    }),
+    gap,
+    measureTextWidth
+  )
+
   const backgroundCursor = panDrag
     ? 'grabbing'
     : zoom > 1
@@ -3423,64 +3457,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const isPinnedSelected = !!matchingPin && selectedPinIds.includes(matchingPin.id)
           const isAutoSelected = !!isInteractiveAuto && !matchingPin && selectedAutoKeys.includes(autoPlacementKey(p))
           const isSelected = isManualSelected || isPinnedSelected || isAutoSelected
-          // Round 22: a composed placement's `composition` (see
-          // placementComposition.ts's segmentsOf — degenerates to a single
-          // nominal-itemId segment for an ordinary placement, so this is a
-          // no-op for every existing uncomposed placement) physically
-          // contains more than one constituent CargoItem. Neither of these
-          // was visible on the deck before this round — a composed
-          // placement rendered indistinguishably from an ordinary one of
-          // its nominal item, and the corner label showed only the
-          // nominal itemId's own category even when a non-nominal
-          // constituent had a completely different one (e.g. dangerous
-          // goods hidden inside an otherwise-ordinary-looking stack).
-          const segments = segmentsOf(p)
-          const isMixedLoad = segments.length > 1
-          // `.filter(Boolean)` here deliberately drops constituents with NO
-          // category set — this is not an oversight, it mirrors the
-          // existing project-wide contract for an absent `category`
-          // (CargoItem.category is optional free text): `violatesSeparation`
-          // (packing.ts) explicitly skips any candidate/placed item with no
-          // category (`if (!candidate.category) return false`, `if
-          // (!other.category) continue`), and `lashingMethodologyFor`
-          // (packing.ts) routes an undefined category into the same
-          // 'general' bucket as most other named categories. Nowhere else
-          // in this codebase does "no category" behave as its own distinct
-          // category that can conflict with a real one — so e.g.
-          // composition [A(category="Металл"), B(no category)] intentionally
-          // still shows "Металл" alone (the one REAL category among the
-          // constituents), not "Смешанный груз": B simply doesn't
-          // participate in category comparisons, same as it wouldn't
-          // trigger a separation-rule violation either. Only two or more
-          // DIFFERENT real categories counts as mixed.
-          const constituentCategories = new Set(
-            segments.map((seg) => categoryByItemId?.get(seg.itemId)).filter((c): c is string => !!c)
-          )
-          // More than one DISTINCT category among the constituents -> show
-          // a compact "mixed" label instead of just the nominal item's own
-          // category, which would silently hide the others. Deliberately
-          // NOT a joined list of every category (e.g. "Обычный, Опасный
-          // груз, ...") — on a small SVG label that reads as either
-          // overflow-clipped noise or, worse, an authoritative-looking but
-          // truncated safety label; a short constant string stays legible
-          // at any placement size and never implies a longer list than it
-          // shows.
-          //
-          // Round 29 corrective pass: when `composition` is present, this
-          // must NEVER fall back to `categoryByItemId?.get(p.itemId)` — the
-          // nominal itemId isn't guaranteed valid (Tier-1: composition
-          // supersedes it for every physical purpose, including this one).
-          // The `size <= 1` branches below only ever read what
-          // `constituentCategories` already computed FROM composition
-          // itself; `p.itemId` is consulted only for a genuinely uncomposed
-          // placement, where it's the placement's own sole identity anyway.
-          const category = p.composition
-            ? constituentCategories.size > 1
-              ? 'Смешанный груз'
-              : constituentCategories.size === 1
-                ? [...constituentCategories][0]
-                : undefined
-            : categoryByItemId?.get(p.itemId)
+          // Round 22: a composed stack holds more than one cargo — the
+          // mixed-load marker says so (its numbers, «3+4 ×16», too).
+          const isMixedLoad = segmentsOf(p).length > 1
           const overlappingOverloadedZones =
             overloadedZonesById.size > 0
               ? zoneIdsOverlapping({ x: p.x, y: p.y, width: p.width, length: p.length }, loadZones)
@@ -3512,7 +3491,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const { sx: drawSx, sy: drawSy } = deckToScreen(drawX, drawY)
           return (
             <PlacedRect
-              key={mode === 'manual' ? `m-${p.manualId}` : `p-${idx}`}
+              key={stackKeyOf(p, idx)}
+              stackKey={stackKeyOf(p, idx)}
+              label={labelPlans.get(stackKeyOf(p, idx))}
+              labelPx={labelPx}
               item={p}
               tone={toneFor(p.itemId, p.color)}
               cargoNumber={cargoNumberByItemId?.get(p.itemId)}
@@ -3527,11 +3509,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               selected={isSelected && !printMode}
               selectionColor={palette.accent}
               showLabels={showLabels}
-              fmt={fmt}
               onHover={onHover}
               manualMode={mode === 'manual'}
               locked={!!matchingPin?.locked}
-              category={category}
               mixedLoad={isMixedLoad}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
@@ -3556,6 +3536,49 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
               }
             />
+          )
+        })}
+
+        {/* Numbers written once over a group of stacks they fit none of, and
+            a number that fits nowhere — shown on its selected stack, or on
+            its stacks while the pointer is over its cargo (spec 6.2). */}
+        {labelGroups.map((g) => (
+          <g key={`label-${g.keys.join('-')}`} data-stack-label="group" data-stack-keys={g.keys.join(' ')}>
+            <StackNumber
+              cx={g.cx * labelPx}
+              cy={g.cy * labelPx}
+              text={g.text}
+              fontSize={g.fontSize * labelPx}
+              halo={cargoToneForNumber(Number(g.text.split('+')[0]))}
+            />
+          </g>
+        ))}
+        {renderedItems.map((p, idx) => {
+          const key = stackKeyOf(p, idx)
+          const plan = labelPlans.get(key)
+          if (!plan || plan.kind === 'own') return null
+          const selectedHere =
+            (mode === 'manual' && !!p.manualId && (selectedManualIds?.includes(p.manualId) ?? false)) ||
+            (isInteractiveAuto &&
+              (selectedPinIds.some((id) => pinnedPlacements.some((pin) => pin.id === id && pin.itemId === p.itemId && Math.abs(pin.x - p.x) < 0.01 && Math.abs(pin.y - p.y) < 0.01)) ||
+                selectedAutoKeys.includes(autoPlacementKey(p))))
+          const hoveredHere = plan.kind === 'none' && hoveredItemId === p.itemId
+          if ((!selectedHere && !hoveredHere) || printMode) return null
+          const spread = pipePyramidSpreadMargin(p, p.stackedCount)
+          const visWidth = p.width + spread.onWidth * 2
+          const visLength = p.length + spread.onLength * 2
+          const { sx, sy } = deckToScreen(p.x - spread.onWidth, p.y - spread.onLength)
+          const fontSize = 12 * labelPx
+          return (
+            <g key={`label-over-${key}`} data-stack-label="over" data-stack-keys={key}>
+              <StackNumber
+                cx={sx + screenSpanW(visWidth, visLength) / 2}
+                cy={sy + screenSpanH(visWidth, visLength) / 2}
+                text={plan.full}
+                fontSize={fontSize}
+                halo={palette.surface}
+              />
+            </g>
           )
         })}
 
@@ -4284,6 +4307,9 @@ function FootprintShape({
 }
 
 function PlacedRect({
+  stackKey,
+  label,
+  labelPx,
   item,
   tone,
   cargoNumber,
@@ -4293,7 +4319,6 @@ function PlacedRect({
   h,
   hovered,
   showLabels,
-  fmt,
   onHover,
   manualMode,
   onPointerDown,
@@ -4301,7 +4326,6 @@ function PlacedRect({
   locked,
   selected,
   selectionColor,
-  category,
   mixedLoad,
   overLoad,
   overLoadTitle,
@@ -4314,6 +4338,11 @@ function PlacedRect({
   scale,
   deckTransposed,
 }: {
+  stackKey: string
+  // Where its label goes (labelLayout.ts): written here when it fits.
+  label?: StackLabelPlan
+  // ViewBox units per screen pixel: label sizes are in screen pixels.
+  labelPx: number
   item: PlacedItem
   // Fill of this cargo (cargoToneForNumber) and its number in the list.
   tone: string
@@ -4332,8 +4361,8 @@ function PlacedRect({
   // side.
   deckTransposed?: boolean
   hovered: boolean
+  // «Вид» → «Названия грузов»: the name under the number, where it fits.
   showLabels: boolean
-  fmt: (v: number) => string
   onHover: (id: string | null) => void
   manualMode: boolean
   onPointerDown?: (e: React.PointerEvent) => void
@@ -4351,7 +4380,6 @@ function PlacedRect({
   selected?: boolean
   // The accent of the theme: the selection's outer band (SelectionHalo).
   selectionColor?: string
-  category?: string
   // Round 22: true when this placement's `composition` has more than one
   // constituent segment (see segmentsOf) — drives a small "mixed load"
   // marker (below) distinct from the existing ×N stacked-count badge,
@@ -4415,6 +4443,8 @@ function PlacedRect({
       // This marks exactly one element per placement, regardless of how
       // many segments its shape draws inside.
       data-cargo-placement="true"
+      data-stack-key={stackKey}
+      data-stack-text={label?.full}
       data-selected={selected ? 'true' : undefined}
       data-cargo-number={cargoNumber}
       data-cargo-name={item.name}
@@ -4484,53 +4514,38 @@ function PlacedRect({
       {conflict && <ConflictHatch x={x} y={y} w={w} h={h} patternId="conflict-hatch" />}
       {overLoad && w >= 14 && h >= 14 && <OverloadBadge x={x} y={y} />}
       {mergeTarget && !mergeBlocked && <MergeTargetBadge x={x} y={y} w={w} h={h} />}
-      {category && showLabels && w > 30 && h > 30 && (
-        <g className="pointer-events-none">
-          <text x={x + 4} y={y + h - 5} fontSize={8} fill={CARGO_INK} fillOpacity={0.8} className="select-none">
-            {category}
-          </text>
-        </g>
-      )}
       {locked && <LockBadge x={x} y={y} w={w} h={h} />}
-      {showLabels && w > 30 && h > 18 && (() => {
-        // A stacked pipe pyramid's true occupied footprint is WIDER than a
-        // single pipe's own cross-section the moment more than one layer is
-        // placed (see pipePyramidSpreadMargin — the same widening already
-        // reserved in the packing engine so pyramids don't overlap their
-        // neighbours). The rect drawn on screen is only ever a single pipe's
-        // width, so the dimension label must add the same spread back in —
-        // otherwise it silently understates how much deck space the stack
-        // actually occupies.
-        const spread = item.shape === 'cylinder' && item.stackedCount > 1 ? pipePyramidSpreadMargin(item, item.stackedCount) : null
-        const dispWidth = spread ? item.width + spread.onWidth * 2 : item.width
-        const dispLength = spread ? item.length + spread.onLength * 2 : item.length
+      {label?.kind === 'own' && label.text && (() => {
+        // The number, and the name under it when it fits whole (spec 6.2).
+        const fontSize = label.fontSize * labelPx
+        const nameSize = NAME_FONT_SIZE * labelPx
+        const name = showLabels ? label.name : undefined
+        const cx = x + w / 2
+        const cy = y + h / 2
+        // A halo of the cargo's tone keeps it legible over the outlines of a
+        // pipe pile.
+        if (!name) return <StackNumber cx={cx} cy={cy} text={label.text} fontSize={fontSize} halo={tone} data-stack-label="own" />
+        const gapPx = 2 * labelPx
+        const top = cy - (fontSize + gapPx + nameSize) / 2
         return (
           <>
-            <text x={x + 4} y={y + 13} fontSize={Math.min(12, w / 8)} fontWeight={600} fill={CARGO_INK} className="select-none pointer-events-none">
-              {clip(item.name, w)}
-            </text>
-            <text x={x + 4} y={y + 27} fontSize={Math.min(10, w / 10)} fill={CARGO_INK} fillOpacity={0.8} className="select-none pointer-events-none">
-              {fmt(dispWidth)}×{fmt(dispLength)}
-              {item.rotated ? ' ↻' : ''}
+            <StackNumber cx={cx} cy={top + fontSize / 2} text={label.text} fontSize={fontSize} halo={tone} data-stack-label="own" />
+            <text
+              x={cx}
+              y={top + fontSize + gapPx + nameSize * 0.85}
+              textAnchor="middle"
+              fontSize={nameSize}
+              fill={CARGO_INK}
+              className="select-none pointer-events-none"
+            >
+              {name}
             </text>
           </>
         )
       })()}
-      {/* Stacked-count badge — the real total unit count (not the pyramid's
-          base-row count), same badge for every shape including pipes. A
-          per-row circle glyph used to draw here for cylinders, but reading
-          "4 circles" for a 10-unit pyramid (4-wide base, 3 rows) was
-          confusing — this always shows the true number actually stacked. */}
-      {item.stackedCount > 1 && w >= 16 && h >= 16 && <LayersBadge x={x} y={y} w={w} count={item.stackedCount} />}
-      {/* Mixed-load marker (Round 22): the ×N badge counts the units but
-          doesn't say they belong to more than one cargo. */}
+      {/* Mixed-load marker (Round 22): a stack of more than one cargo. */}
       {mixedLoad && w >= 16 && h >= 16 && <MixedLoadMarker x={x} y={y} w={w} />}
-      {item.rotated && item.stackedCount <= 1 && w >= 16 && h >= 16 && <RotatedMark x={x} y={y} w={w} />}
+      {item.rotated && w >= 16 && h >= 16 && <RotatedMark x={x} y={y} w={w} />}
     </g>
   )
-}
-
-function clip(s: string, w: number): string {
-  const max = Math.max(4, Math.floor(w / 7))
-  return s.length > max ? s.slice(0, max - 1) + '…' : s
 }
