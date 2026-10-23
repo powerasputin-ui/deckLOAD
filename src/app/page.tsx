@@ -2959,11 +2959,12 @@ export default function Home() {
               {carryReasons.length > 0 && ` — ${carryReasons.map((u) => `${u.name}: ${u.reason}`).join('; ')}`}
             </p>
           )}
-          {/* The deck sits in the middle of the area while it fits, and scrolls
-              from the top when it doesn't (auto margins, not justify-center). */}
+          {/* The 2D deck takes the whole area (spec 5.4). The 3D view sits in
+              its middle while it fits, and scrolls from the top when it
+              doesn't (auto margins, not justify-center). */}
           <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
-            <div className="my-auto w-full">
+            <div className={viewMode === '3d' ? 'my-auto w-full' : 'min-h-0 w-full flex-1'}>
               {viewMode === '3d' ? (
                 <Deck3DView
                   result={result}

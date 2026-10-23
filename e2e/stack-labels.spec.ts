@@ -9,7 +9,7 @@ test.use({ viewport: { width: 1440, height: 900 } })
 
 async function stacksWithoutNumber(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const deck = document.querySelector('svg.w-full.h-auto')!
+    const deck = document.querySelector('svg[data-deck-plan]')!
     const grouped = new Set(
       [...deck.querySelectorAll('[data-stack-label="group"]')].flatMap((g) => (g.getAttribute('data-stack-keys') ?? '').split(' '))
     )

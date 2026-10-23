@@ -247,7 +247,7 @@ describe('Home (page.tsx)', () => {
   // turns the names off, never the numbers.
   it('labels stacks with their cargo numbers, and the names toggle leaves the numbers', () => {
     render(<Home />)
-    const deckSvg = () => document.querySelector('svg.w-full.h-auto')!
+    const deckSvg = () => document.querySelector('svg[data-deck-plan]')!
     const stacks = () => Array.from(deckSvg().querySelectorAll('g[data-cargo-placement]'))
     expect(stacks().length).toBeGreaterThan(0)
     const numbersOf = (g: Element) => g.getAttribute('data-stack-text')!.split(' ')[0]
@@ -280,8 +280,8 @@ describe('Home (page.tsx)', () => {
         id: 'b', itemId: bolt.id, name: 'Болт', x: 20, y: 50, width: 0.1, length: 0.1, layers: 3, rotated: false, color: bolt.color,
       })
     })
-    const label = () => document.querySelector('svg.w-full.h-auto [data-stack-label="over"]')
-    expect(document.querySelector('svg.w-full.h-auto [data-stack-label="own"]')).toBeNull()
+    const label = () => document.querySelector('svg[data-deck-plan] [data-stack-label="over"]')
+    expect(document.querySelector('svg[data-deck-plan] [data-stack-label="own"]')).toBeNull()
     expect(label()).toBeNull()
     act(() => {
       useCalculator.setState({ selectedManualIds: ['b'] })
@@ -307,7 +307,7 @@ describe('Home (page.tsx)', () => {
       })
       useCalculator.setState({ selectedManualIds: ['a'] })
     })
-    const screenSvg = document.querySelector('svg.w-full.h-auto')!
+    const screenSvg = document.querySelector('svg[data-deck-plan]')!
     const halo = screenSvg.querySelector('[data-selection-halo] rect')!
     expect(halo.getAttribute('stroke')).toBe(THEME_TOKENS.light.accent)
     expect(halo.getAttribute('stroke-width')).toBe(String(SELECTION_HALO_WIDTH))
@@ -344,14 +344,14 @@ describe('Home (page.tsx)', () => {
         id: 'food', itemId: food.id, name: 'Еда', x: 3.5, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: food.color,
       })
     })
-    const separation = document.querySelector('svg.w-full.h-auto [data-separation]')!
+    const separation = document.querySelector('svg[data-deck-plan] [data-separation]')!
     expect(separation.textContent).toBe('1.5 м из 3 м')
     expect(separation.querySelector('line')!.getAttribute('stroke-dasharray')).toBeTruthy()
 
     act(() => {
       useCalculator.getState().updateManualPlacement('food', { x: 6 })
     })
-    expect(document.querySelector('svg.w-full.h-auto [data-separation]')).toBeNull()
+    expect(document.querySelector('svg[data-deck-plan] [data-separation]')).toBeNull()
   })
 
   // Stage 1 (spec 6.3): a stack whose lashing falls short wears an amber
@@ -374,7 +374,7 @@ describe('Home (page.tsx)', () => {
         legacyUnknownComposition: true,
       })
     })
-    const stack = (id: string) => document.querySelector(`svg.w-full.h-auto g[data-stack-key="m-${id}"]`)!
+    const stack = (id: string) => document.querySelector(`svg[data-deck-plan] g[data-stack-key="m-${id}"]`)!
     expect(stack('a').querySelector('[data-mark="lashing-short"]')).toBeNull()
     expect(stack('b').querySelector('[data-mark="unknown-makeup"]')).toBeTruthy()
     expect(stack('a').querySelector('[data-mark="unknown-makeup"]')).toBeNull()
@@ -404,9 +404,9 @@ describe('Home (page.tsx)', () => {
         id: 'a', itemId: block.id, name: 'Блок', x: 1, y: 1, width: 2, length: 2, layers: 1, rotated: false, color: block.color, weight: 8000,
       })
     })
-    const zone = () => document.querySelector('svg.w-full.h-auto [data-load-zone]')!
-    const zoneLabel = () => document.querySelector('svg.w-full.h-auto [data-load-zone-label]')!
-    const stack = () => document.querySelector('svg.w-full.h-auto g[data-stack-key="m-a"]')!
+    const zone = () => document.querySelector('svg[data-deck-plan] [data-load-zone]')!
+    const zoneLabel = () => document.querySelector('svg[data-deck-plan] [data-load-zone-label]')!
+    const stack = () => document.querySelector('svg[data-deck-plan] g[data-stack-key="m-a"]')!
     // 8 t over 16 m² is 0.5 t/m², under 1.
     expect(zone().getAttribute('data-load-zone')).toBe('ok')
     expect(zoneLabel().textContent).toBe('1 т/м²')
@@ -522,7 +522,7 @@ describe('Home (page.tsx)', () => {
       const bowFill = (svg: Element) => svg.querySelector('[data-hull-side="bow"]')!.getAttribute('fill')
       fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
       fireEvent.click(screen.getByRole('radio', { name: 'Тёмная' }))
-      const screenSvg = document.querySelector('svg.w-full.h-auto')!
+      const screenSvg = document.querySelector('svg[data-deck-plan]')!
       expect(deckFill(screenSvg)).toBe(THEME_TOKENS.dark.deck)
       expect(bowFill(screenSvg)).toBe(THEME_TOKENS.dark.ink)
 
@@ -533,7 +533,7 @@ describe('Home (page.tsx)', () => {
       expect(deckFill(printed)).toBe(THEME_TOKENS.light.deck)
       expect(bowFill(printed)).toBe(THEME_TOKENS.light.ink)
       // The screen stays dark.
-      expect(deckFill(document.querySelector('svg.w-full.h-auto')!)).toBe(THEME_TOKENS.dark.deck)
+      expect(deckFill(document.querySelector('svg[data-deck-plan]')!)).toBe(THEME_TOKENS.dark.deck)
     })
   })
 
@@ -2303,7 +2303,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const before = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length
     withIdentitySvgTransform(() => {
-      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+      fireEvent.click(document.querySelector('svg[data-deck-plan]')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
     })
     expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length).toBe(before)
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
@@ -2323,7 +2323,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.getState().setActiveStamp(pipe.id)
     })
     withIdentitySvgTransform(() => {
-      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+      fireEvent.click(document.querySelector('svg[data-deck-plan]')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
     })
     const placed = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
     expect(placed).toHaveLength(1)
@@ -2359,7 +2359,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const before = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length
     withIdentitySvgTransform(() => {
-      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+      fireEvent.click(document.querySelector('svg[data-deck-plan]')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
     })
     expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat().length).toBe(before + 1)
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
@@ -2391,7 +2391,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     const before = useCalculator.getState().manualPlacements.length
     withIdentitySvgTransform(() => {
-      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+      fireEvent.click(document.querySelector('svg[data-deck-plan]')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
     })
     expect(useCalculator.getState().manualPlacements.length).toBe(before + 1)
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
@@ -3065,7 +3065,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   }
 
   function dragMergeR24(fromLabel: string, dxDeck: number, dyDeck: number) {
-    const svg = document.querySelector('svg.w-full.h-auto')!
+    const svg = document.querySelector('svg[data-deck-plan]')!
     const g = placementGroupByLabel(fromLabel)
     const downX = 100
     const downY = 100
@@ -3162,7 +3162,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // drop would do — the merged layers and height of the limit — or, in red,
   // why it can't be done, in the words the drop itself uses.
   function mergePreviewWhileOver(fromLabel: string, dxDeck: number, dyDeck: number) {
-    const svg = document.querySelector('svg.w-full.h-auto')!
+    const svg = document.querySelector('svg[data-deck-plan]')!
     const scale = deckScaleR24()
     let seen: { kind: string | null; text: string | null; targetStroked: boolean } | null = null
     withIdentitySvgTransform(() => {
@@ -4235,7 +4235,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // makes (drag, layers, rotate, «Закрепить») pins the stack, locked.
   describe('selection and pinning', () => {
     const pins = () => Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
-    const deckSvg = () => document.querySelector('svg.w-full.h-auto')!
+    const deckSvg = () => document.querySelector('svg[data-deck-plan]')!
     function setupAuto(extra: Partial<CargoItemLike>[] = []) {
       act(() => {
         useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
@@ -4494,7 +4494,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     function press(label: string) {
       withIdentitySvgTransform(() => {
         fireEvent.pointerDown(placementGroupByLabel(label), { clientX: 100, clientY: 100, button: 0 })
-        fireEvent.pointerUp(document.querySelector('svg.w-full.h-auto')!, { clientX: 100, clientY: 100 })
+        fireEvent.pointerUp(document.querySelector('svg[data-deck-plan]')!, { clientX: 100, clientY: 100 })
       })
     }
     function pinBox(name: string, x: number, extra: Partial<{ layers: number; locked: boolean }> = {}) {
@@ -4654,9 +4654,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       expect(shifted()).toBe('')
       act(() => useCalculator.setState({ selectedPinIds: [right] }))
       expect(shifted()).toMatch(/^translateX\(-\d+(\.\d+)?px\)$/)
-      const viewBox = document.querySelector('svg.w-full.h-auto')!.getAttribute('viewBox')
+      const viewBox = document.querySelector('svg[data-deck-plan]')!.getAttribute('viewBox')
       act(() => useCalculator.setState({ selectedPinIds: [] }))
-      expect(document.querySelector('svg.w-full.h-auto')!.getAttribute('viewBox')).toBe(viewBox)
+      expect(document.querySelector('svg[data-deck-plan]')!.getAttribute('viewBox')).toBe(viewBox)
     })
 
     it('lists what is wrong with the stack and leads to «Проверки»', () => {

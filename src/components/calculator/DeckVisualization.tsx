@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/ThemeProvider'
 import { THEME_TOKENS } from '@/lib/theme'
 import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from '@/lib/deckDrawing'
-import { DeckDrawingFrame, DRAWING_MARGIN_PX } from './DeckDrawingFrame'
+import { DeckDrawingFrame, DRAWING_MARGINS_PX } from './DeckDrawingFrame'
 import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler, Move, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -235,8 +235,8 @@ interface DeckVisualizationProps {
 }
 
 
-// The fixed frame the deck is drawn in (viewBox units); zoom and pan look
-// into it.
+// The frame the deck is drawn in for the PDF, and wherever nothing is laid
+// out (tests). On screen the frame is the SVG's own box (see `frame`).
 const CANVAS_W = 900
 const CANVAS_H = 560
 
@@ -329,23 +329,52 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const { resolved: screenTheme } = useTheme()
   const palette = THEME_TOKENS[printMode ? 'light' : screenTheme]
   const svgRef = useRef<SVGSVGElement>(null)
-  // Screen pixels per viewBox unit at zoom 1 (the SVG keeps the 900×560
-  // frame's proportions and letterboxes it). The drawing's labels are sized
-  // in screen pixels (spec 9.5: 12 px) whatever the window; 1 until the SVG
-  // is laid out (tests) and for print.
-  // The SVG's size on screen also places the mini-panel over a stack.
+  // The SVG's size on screen: the canvas frame, and it places the mini-panel
+  // over a stack.
   const [svgBox, setSvgBox] = useState<{ width: number; height: number } | null>(null)
+  // The box the deck was last fitted to (spec 5.4). Opening or closing a
+  // panel resizes the canvas but keeps the scale; the deck is fitted again
+  // by «Вписать», when its size changes and when the window's does.
+  const [fitBox, setFitBox] = useState<{ w: number; h: number } | null>(null)
   useEffect(() => {
     const svg = svgRef.current
     if (!svg || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => {
+    const measure = () => {
       const box = svg.getBoundingClientRect()
-      if (box.width > 0 && box.height > 0) setSvgBox({ width: box.width, height: box.height })
+      return box.width > 0 && box.height > 0 ? box : null
+    }
+    const observer = new ResizeObserver(() => {
+      const box = measure()
+      if (!box) return
+      setSvgBox({ width: box.width, height: box.height })
+      setFitBox((fit) => fit ?? { w: box.width, h: box.height })
     })
     observer.observe(svg)
-    return () => observer.disconnect()
+    const onWindowResize = () => {
+      const box = measure()
+      if (box) setFitBox({ w: box.width, h: box.height })
+    }
+    window.addEventListener('resize', onWindowResize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', onWindowResize)
+    }
   }, [])
-  const measuredScreenPx = svgBox ? Math.min(svgBox.width / CANVAS_W, svgBox.height / CANVAS_H) : 1
+  // A new deck size is fitted to the canvas as it is now.
+  const [fittedDeck, setFittedDeck] = useState({ width: deckWidth, length: deckLength })
+  if (fittedDeck.width !== deckWidth || fittedDeck.length !== deckLength) {
+    setFittedDeck({ width: deckWidth, length: deckLength })
+    setFitBox(svgBox ? { w: svgBox.width, h: svgBox.height } : null)
+  }
+  // The canvas: on screen the SVG's own box, a viewBox unit to a screen pixel
+  // at zoom 1, so the deck takes the whole area whatever its proportions
+  // (spec 5.4, 12.5). The PDF and the tests draw the fixed frame.
+  const frame = !printMode && svgBox ? { w: svgBox.width, h: svgBox.height } : { w: CANVAS_W, h: CANVAS_H }
+  const frameW = frame.w
+  const frameH = frame.h
+  // Screen pixels per viewBox unit at zoom 1. The drawing's labels are sized
+  // in screen pixels (spec 9.5: 12 px) whatever the window.
+  const measuredScreenPx = svgBox ? Math.min(svgBox.width / frame.w, svgBox.height / frame.h) : 1
   const screenPx = printMode ? 1 : measuredScreenPx
   const setSvgRef = useCallback(
     (node: SVGSVGElement | null) => {
@@ -355,7 +384,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     },
     [forwardedRef]
   )
-  // Zoom/pan: viewBox stays at CANVAS_W×CANVAS_H (deck-unit conversion below is
+  // Zoom/pan: viewBox stays at the canvas frame (deck-unit conversion below is
   // unaffected), but we can show a smaller/shifted window into it. Since
   // screenToDeck reads getScreenCTM() (which already reflects the current
   // viewBox), all existing click/drag placement math keeps working unchanged.
@@ -925,37 +954,48 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // stability.ts's TCG/LCG — never change; only the on-screen picture does.
   const rotated = deckDrawnTransposed(deckWidth, deckLength)
   // Room around the deck for the drawing's labels (DeckDrawingFrame), in
-  // viewBox units for this window's scale.
-  const pad = Math.min(80, Math.max(32, Math.ceil(DRAWING_MARGIN_PX / screenPx)))
+  // viewBox units for this window's scale: two rows on the left, the top and
+  // the bottom, one on the right.
+  const padFor = (marginPx: number) => Math.min(80, Math.max(16, Math.ceil(marginPx / screenPx)))
+  const pads = {
+    top: padFor(DRAWING_MARGINS_PX.top),
+    right: padFor(DRAWING_MARGINS_PX.right),
+    bottom: padFor(DRAWING_MARGINS_PX.bottom),
+    left: padFor(DRAWING_MARGINS_PX.left),
+  }
   const rDeckWidth = rotated ? deckLength : deckWidth
   const rDeckHeight = rotated ? deckWidth : deckLength
-  const scale = Math.min(
-    (CANVAS_W - pad * 2) / Math.max(rDeckWidth, 1),
-    (CANVAS_H - pad * 2) / Math.max(rDeckHeight, 1)
-  )
+  const fitScale = (box: { w: number; h: number }) =>
+    Math.min(
+      (box.w - pads.left - pads.right) / Math.max(rDeckWidth, 1),
+      (box.h - pads.top - pads.bottom) / Math.max(rDeckHeight, 1)
+    )
+  // As fitted, and never larger than the canvas can show.
+  const scale = printMode || !fitBox ? fitScale(frame) : Math.min(fitScale(fitBox), fitScale(frame))
   const w = rDeckWidth * scale
   const h = rDeckHeight * scale
-  const offX = (CANVAS_W - w) / 2
-  const offY = (CANVAS_H - h) / 2
-  // Deck-unit equivalent of the `pad` screen-px margin already reserved
-  // around the deck rectangle in the fixed CANVAS_W×CANVAS_H canvas — the natural
-  // "how far outside the hull is still visible" distance, reused as the
-  // standard clearance for annotation placement (see handleAnnotationClick).
-  const annotationEdgeMarginDeckUnits = pad / scale
+  // Centred in the room the labels leave.
+  const offX = pads.left + (frame.w - pads.left - pads.right - w) / 2
+  const offY = pads.top + (frame.h - pads.top - pads.bottom - h) / 2
+  // Deck-unit equivalent of the screen-px margin reserved around the deck
+  // rectangle in the canvas — the natural "how far outside the hull is
+  // still visible" distance, reused as the standard clearance for
+  // annotation placement (see handleAnnotationClick).
+  const annotationEdgeMarginDeckUnits = pads.left / scale
 
   const gridStep = computeGridStep(deckWidth, deckLength, unit)
 
-  // Zoom/pan window into the fixed CANVAS_W×CANVAS_H user-space coordinate system.
+  // Zoom/pan window into the canvas's user-space coordinate system.
   const MIN_ZOOM = 1
   const MAX_ZOOM = 4
-  const viewBoxW = CANVAS_W / zoom
-  const viewBoxH = CANVAS_H / zoom
+  const viewBoxW = frameW / zoom
+  const viewBoxH = frameH / zoom
   const clampPan = useCallback(
     (p: { x: number; y: number }, vbW: number, vbH: number) => ({
-      x: Math.min(Math.max(p.x, 0), Math.max(0, CANVAS_W - vbW)),
-      y: Math.min(Math.max(p.y, 0), Math.max(0, CANVAS_H - vbH)),
+      x: Math.min(Math.max(p.x, 0), Math.max(0, frameW - vbW)),
+      y: Math.min(Math.max(p.y, 0), Math.max(0, frameH - vbH)),
     }),
-    []
+    [frameW, frameH]
   )
 
   // Convert a screen point to the current viewBox's user-space coordinates
@@ -976,20 +1016,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   )
 
   // Zooms so that the given point, expressed in the same user-space units as
-  // pan.x/pan.y (0..CANVAS_W / 0..CANVAS_H), stays visually fixed under itself.
+  // pan.x/pan.y (0..frame.w / 0..frame.h), stays visually fixed under itself.
   const zoomAtPoint = useCallback(
     (anchor: { x: number; y: number }, nextZoom: number) => {
       const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom))
       setZoom((prevZoom) => {
-        const nextW = CANVAS_W / clamped
-        const nextH = CANVAS_H / clamped
-        const fracX = (anchor.x - pan.x) / (CANVAS_W / prevZoom)
-        const fracY = (anchor.y - pan.y) / (CANVAS_H / prevZoom)
+        const nextW = frameW / clamped
+        const nextH = frameH / clamped
+        const fracX = (anchor.x - pan.x) / (frameW / prevZoom)
+        const fracY = (anchor.y - pan.y) / (frameH / prevZoom)
         setPan(clampPan({ x: anchor.x - fracX * nextW, y: anchor.y - fracY * nextH }, nextW, nextH))
         return clamped
       })
     },
-    [clampPan, pan]
+    [clampPan, pan, frameW, frameH]
   )
 
   const zoomAtScreenPoint = useCallback(
@@ -1011,9 +1051,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     [zoomAtPoint, pan, viewBoxW, viewBoxH]
   )
 
+  // «Вписать»: the whole deck, fitted to the canvas as it is now.
+  const fitsCanvas = !svgBox || (fitBox?.w === svgBox.width && fitBox?.h === svgBox.height)
   const resetZoom = () => {
     setZoom(1)
     setPan({ x: 0, y: 0 })
+    if (svgBox) setFitBox({ w: svgBox.width, h: svgBox.height })
   }
 
   // zoomAtScreenPoint reads the latest zoom via a ref so the wheel listener
@@ -1150,8 +1193,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     const k = measuredScreenPx * zoom
     const { sx, sy } = deckToScreen(anchor.x, anchor.y)
     return {
-      left: (box.width - CANVAS_W * measuredScreenPx) / 2 + (sx - pan.x) * k,
-      top: (box.height - CANVAS_H * measuredScreenPx) / 2 + (sy - pan.y) * k,
+      left: (box.width - frame.w * measuredScreenPx) / 2 + (sx - pan.x) * k,
+      top: (box.height - frame.h * measuredScreenPx) / 2 + (sy - pan.y) * k,
       width: screenSpanW(anchor.width, anchor.length) * k,
       height: screenSpanH(anchor.width, anchor.length) * k,
     }
@@ -2432,7 +2475,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           className="h-7 w-7 pointer-events-auto"
           aria-label="Вписать"
           title="Вписать палубу целиком"
-          disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+          disabled={zoom === 1 && pan.x === 0 && pan.y === 0 && fitsCanvas}
           onClick={resetZoom}
         >
           <Maximize className="h-4 w-4" />
@@ -2528,7 +2571,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   )
 
   return (
-    <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
+    <div className="relative h-full w-full overflow-hidden" onMouseLeave={handleManualLeave}>
       {/* The canvas tools sit in the row above the deck when the page gives
           them a place there (spec 6.10) — floating over the deck's corner
           they covered the outline editor's corner handle once the deck
@@ -2544,16 +2587,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </div>
         )}
       <div
-        className="relative transition-transform duration-150 motion-reduce:transition-none"
+        className="relative h-full transition-transform duration-150 motion-reduce:transition-none"
         style={viewShift > 0 ? { transform: `translateX(${-viewShift}px)` } : undefined}
       >
       <svg
         ref={setSvgRef}
+        data-deck-plan="true"
         viewBox={printMode ? `0 0 ${CANVAS_W} ${CANVAS_H}` : `${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
-        className="w-full h-auto font-sans"
+        // The whole area the page gives the deck (spec 5.4).
+        className="block h-full w-full font-sans"
         // For the PDF, which draws this SVG without the page's fonts.
         fontFamily="'IBM Plex Sans', Arial, sans-serif"
-        style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
+        style={{ cursor: backgroundCursor, touchAction: 'none' }}
         onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform || rulerMode || bgCalibrateMode ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}

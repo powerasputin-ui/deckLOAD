@@ -14,6 +14,8 @@ const GAP = 6
 const FONT = 12
 const ROW = 16
 export const DRAWING_MARGIN_PX = GAP + ROW + FONT + 4
+// Each edge's share: the right edge carries the side's name alone.
+export const DRAWING_MARGINS_PX = { top: DRAWING_MARGIN_PX, right: GAP + FONT + 4, bottom: DRAWING_MARGIN_PX, left: DRAWING_MARGIN_PX }
 
 // Distance from the deck edge to the middle of row 1 or 2, in screen px.
 const rowCenter = (row: 1 | 2) => GAP + (row - 1) * ROW + FONT / 2
