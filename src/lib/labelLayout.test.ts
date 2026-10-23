@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { estimateTextWidth, layoutStackLabels, stackLabelText, type LabelStack } from './labelLayout'
+import { estimateTextWidth, layoutStackLabels, ownLabelSize, stackLabelText, type LabelStack } from './labelLayout'
 
 const stack = (
   key: string,
@@ -69,5 +69,20 @@ describe('layoutStackLabels', () => {
       0.1
     )
     expect(groups).toEqual([])
+  })
+})
+
+describe('ownLabelSize', () => {
+  it('is the frame of the number, and of the name under it when that is shown', () => {
+    const plan = { kind: 'own', full: '1 ×2', text: '1 ×2', fontSize: 20, name: 'Контейнер 20ft' } as const
+    const numberW = estimateTextWidth('1 ×2', 20) + 4
+    expect(ownLabelSize(plan, false)).toEqual({ w: numberW, h: 22 })
+    // 20 + 2, a 2 px gap, 12 + 2 for the name.
+    expect(ownLabelSize(plan, true)).toEqual({ w: Math.max(numberW, estimateTextWidth('Контейнер 20ft', 12) + 4), h: 38 })
+  })
+
+  it('is nothing for a label written elsewhere', () => {
+    expect(ownLabelSize({ kind: 'group', full: '4 ×3' }, true)).toEqual({ w: 0, h: 0 })
+    expect(ownLabelSize(undefined, true)).toEqual({ w: 0, h: 0 })
   })
 })

@@ -35,7 +35,7 @@ test.describe('Auto-mode selection and pinning', () => {
       await placedRect.click({ force: true })
       await expect(placedStack).toHaveAttribute('data-selected', 'true', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
     expect(await storedPins(page)).toHaveLength(0)
 
     // A press on the selected stack starts a drag; it used to toggle the
@@ -62,7 +62,7 @@ test.describe('Auto-mode selection and pinning', () => {
     const stack = page.locator('svg g[data-cargo-placement="true"]')
     await expect(stack).toHaveCount(1)
     // A stamp puts the cargo exactly where the user clicked: locked.
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
 
     const before = (await storedPins(page))[0]
     const box = await stack.boundingBox()
@@ -71,7 +71,7 @@ test.describe('Auto-mode selection and pinning', () => {
     await page.mouse.down()
     await page.mouse.move(box.x + box.width / 2 + 150, box.y + box.height / 2 + 40, { steps: 8 })
     await page.mouse.up()
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
     const moved = await storedPins(page)
     expect(moved).toHaveLength(1)
     expect(moved[0].locked).toBe(true)
@@ -85,7 +85,7 @@ test.describe('Auto-mode selection and pinning', () => {
       await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     await itemMenu.getByRole('button', { name: 'Вернуть в авто' }).click()
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
     expect(await storedPins(page)).toHaveLength(0)
     // Back with the packer, still on the deck.
     await expect(stack).toHaveCount(1)
@@ -95,7 +95,7 @@ test.describe('Auto-mode selection and pinning', () => {
       await expect(itemMenu.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     await itemMenu.getByRole('button', { name: 'Закрепить' }).click()
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
     const relocked = await storedPins(page)
     expect(relocked).toHaveLength(1)
     expect(relocked[0].locked).toBe(true)

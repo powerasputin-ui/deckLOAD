@@ -113,6 +113,23 @@ function numberSize(text: string, w: number, h: number, measure: Measure): numbe
 
 type Measure = (text: string, fontSize: number, fontWeight: number) => number
 
+// The frame, in screen px, that a stack's own label takes in its middle —
+// the number and, under it, the name when it is shown — so the marks in the
+// stack's corners can keep clear of it. 0 × 0 when the label is elsewhere.
+export function ownLabelSize(
+  plan: StackLabelPlan | undefined,
+  withName: boolean,
+  measure: Measure = (text, fontSize) => estimateTextWidth(text, fontSize)
+): { w: number; h: number } {
+  if (plan?.kind !== 'own' || !plan.text) return { w: 0, h: 0 }
+  const numberW = measure(plan.text, plan.fontSize, NUMBER_WEIGHT) + PAD_X
+  if (!withName || !plan.name) return { w: numberW, h: plan.fontSize + PAD_Y }
+  return {
+    w: Math.max(numberW, measure(plan.name, NAME_FONT_SIZE, NAME_WEIGHT) + PAD_X),
+    h: plan.fontSize + PAD_Y + LINE_GAP + NAME_FONT_SIZE + PAD_Y,
+  }
+}
+
 export function layoutStackLabels(
   stacks: readonly LabelStack[],
   // The deck's gap between cargo, in deck units.

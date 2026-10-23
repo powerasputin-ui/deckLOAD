@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ClipboardCheck, Lock, Minus, Plus, RotateCw, Trash2, Unlock, X } from 'lucide-react'
+import { ClipboardCheck, createLucideIcon, Lock, Minus, Plus, RotateCw, Trash2, Unlock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -31,6 +31,8 @@ export interface InspectedStack {
   stackWeight: string
   layers: number
   maxLayers: number
+  // A cargo in it doesn't allow rotation (spec 6.3).
+  rotate: { ok: boolean; reason?: string }
   addLayer: { ok: boolean; reason?: string }
   removeLayer: { ok: boolean; reason?: string }
   // A stack holding more than one cargo.
@@ -68,6 +70,14 @@ export interface InspectedSelection {
 }
 
 export const INSPECTOR_WIDTH_PX = 320
+
+// «Нельзя повернуть» (spec 6.3). lucide has no crossed-out rotation arrow:
+// RotateCw with the slash of its «…Off» icons.
+export const RotateCwOff = createLucideIcon('rotate-cw-off', [
+  ['path', { d: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', key: 'arc' }],
+  ['path', { d: 'M21 3v5h-5', key: 'head' }],
+  ['path', { d: 'm2 2 20 20', key: 'slash' }],
+])
 
 const STATE_TEXT: Record<InspectedStack['state'], string> = {
   locked: 'Закреплён: авторасстановка его не двигает',
@@ -219,8 +229,15 @@ function StackDetails({
         )}
 
         <section className="grid grid-cols-2 gap-2 border-b px-4 py-3" aria-label="Действия">
-          <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={actions.rotate}>
-            <RotateCw className="mr-1.5 h-4 w-4" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="pointer-coarse:h-11"
+            disabled={!stack.rotate.ok}
+            aria-describedby={stack.rotate.ok ? undefined : 'inspector-rotate-reason'}
+            onClick={actions.rotate}
+          >
+            {stack.rotate.ok ? <RotateCw className="mr-1.5 h-4 w-4" /> : <RotateCwOff className="mr-1.5 h-4 w-4" />}
             Повернуть
           </Button>
           {auto && stack.state === 'locked' && actions.unpin && (
@@ -244,6 +261,12 @@ function StackDetails({
             <Trash2 className="mr-1.5 h-4 w-4" />
             {auto ? `Удалить (−${stack.units} ед.)` : 'Убрать с палубы'}
           </Button>
+          {!stack.rotate.ok && stack.rotate.reason && (
+            <p id="inspector-rotate-reason" className="col-span-2 flex items-start gap-1.5 text-xs text-ink-2">
+              <RotateCwOff className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {stack.rotate.reason}
+            </p>
+          )}
         </section>
 
         {stack.problems.length > 0 && (

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { MENU_CLOSES_AT_ONCE, MenuItem } from './menu'
-import type { InspectedStack, StackActions } from './Inspector'
+import { RotateCwOff, type InspectedStack, type StackActions } from './Inspector'
 
 const ICON_BUTTON = 'h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11'
 
@@ -26,11 +26,20 @@ export function MiniPanel({ stack, actions }: { stack: InspectedStack; actions: 
       aria-label="Действия со штабелем"
       className="flex items-center gap-0.5 rounded-lg border bg-surface p-0.5 shadow-md"
     >
-      <Button variant="ghost" size="icon" className={ICON_BUTTON} aria-label="Повернуть" title="Повернуть (Пробел)" onClick={actions.rotate}>
-        <RotateCw className="h-4 w-4" />
-      </Button>
-      <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-line" />
       {/* A disabled button gets no hover, so its reason sits on the wrapper. */}
+      <span title={stack.rotate.ok ? 'Повернуть (Пробел)' : stack.rotate.reason}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={ICON_BUTTON}
+          aria-label="Повернуть"
+          disabled={!stack.rotate.ok}
+          onClick={actions.rotate}
+        >
+          {stack.rotate.ok ? <RotateCw className="h-4 w-4" /> : <RotateCwOff className="h-4 w-4" />}
+        </Button>
+      </span>
+      <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-line" />
       <span title={stack.removeLayer.ok ? 'Убрать ярус' : stack.removeLayer.reason}>
         <Button
           variant="ghost"
@@ -93,7 +102,7 @@ export function StackMenuItems({ stack, actions }: { stack: InspectedStack; acti
   const auto = stack.kind !== 'manual'
   return (
     <>
-      <MenuItem icon={<RotateCw />} onSelect={actions.rotate}>
+      <MenuItem icon={stack.rotate.ok ? <RotateCw /> : <RotateCwOff />} disabled={!stack.rotate.ok} onSelect={actions.rotate}>
         Повернуть
       </MenuItem>
       {auto && stack.state === 'locked' && actions.unpin && (

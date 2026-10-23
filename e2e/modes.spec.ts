@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { statusLine, openSection, stackMenu, stackTools, selectedStacks } from './helpers'
+import { statusLine, openSection, stackMenu, stackTools, selectedStacks, inspector } from './helpers'
 
 // The status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -49,7 +49,7 @@ test.describe('Auto / manual modes', () => {
       await expect(stackMenu(page).getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click()
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
 
     const before = await placedRect.getAttribute('x')
     await openSection(page, 'Размещение')
@@ -61,7 +61,7 @@ test.describe('Auto / manual modes', () => {
     expect(after).toBe(before)
     // Still locked after the reshuffle — redistribute must carry the flag
     // through onto the newly-built pin, not just leave the position alone.
-    await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
   })
 
   test('auto redistribute keeps a clearance-zoned placement fixed in place', async ({ page }) => {
@@ -116,8 +116,8 @@ test.describe('Auto / manual modes', () => {
       await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    // Rotate the selected pin from its mini-panel.
-    await stackTools(page).getByRole('button', { name: 'Повернуть' }).click()
-    await expect(page.getByText(/не разрешает поворот/)).toBeVisible()
+    // Its «Повернуть» is off, and the inspector says why (spec 6.3).
+    await expect(stackTools(page).getByRole('button', { name: 'Повернуть' })).toBeDisabled()
+    await expect(inspector(page).getByText(/не разрешает поворот/)).toBeVisible()
   })
 })

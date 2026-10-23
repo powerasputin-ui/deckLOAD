@@ -83,7 +83,7 @@ import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts } from '@/lib/checks'
-import { gatherPlanFacts, stackProblems } from '@/lib/planFacts'
+import { gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
 import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, type DeckShipFrame } from '@/lib/stability'
@@ -794,6 +794,16 @@ export default function Home() {
       : []
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
+  // Stacks whose lashing falls short — the amber chain on the deck (6.3).
+  const lashingShortIds = useMemo(
+    () =>
+      new Set(
+        (mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []))
+          .filter((r) => lashingVerdict(r, deck, items) === 'short')
+          .map((r) => r.id)
+      ),
+    [mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items]
+  )
   // A library vessel whose sources disagree on deck strength, with no limit
   // picked yet (the choice sits in the sidebar's «Зоны нагрузки»).
   const deckStrengthPending =
@@ -1066,6 +1076,46 @@ export default function Home() {
     // that vanished after 20 seconds, leaving no limit and no reminder.
   }
 
+  // Why a stack can't be turned whatever room it has: a cargo in it doesn't
+  // allow rotation. The inspector and the mini-panel show it on a disabled
+  // «Повернуть» (spec 6.3); Space says it in a toast.
+  //
+  // rotationLocked (set by a cross-item merge whose dragged item didn't
+  // allow rotation) wins even if the placement's own itemId's CargoItem
+  // currently allows it — the merge may have folded in units that don't.
+  //
+  // Round 29 corrective pass: `rotationLocked` alone is NOT proven
+  // authoritative for every composed placement — it's correctly
+  // maintained by every LIVE creation path (merge/`+`/`-`/removeItem),
+  // but hydration only type-checks it (`typeof pin.rotationLocked ===
+  // 'boolean'`), never re-derives it from the loaded `composition` +
+  // current catalog `allowRotation`. An imported/hand-edited project can
+  // carry a composed placement whose `rotationLocked` is stale or absent
+  // even though a real constituent disallows rotation — trusting
+  // `rotationLocked` alone there would wrongly ALLOW rotating cargo that
+  // shouldn't move. For a composed placement, checked live from
+  // `composition` + the current catalog (most-restrictive-wins across
+  // every constituent, the same check planComposedMerge itself uses) —
+  // `rotationLocked` is OR'd in on top, never replaced, so a lock already
+  // set by a live merge can only stay at least as restrictive, never
+  // become more permissive. An uncomposed placement keeps the exact
+  // original single-item check (self.itemId is its own sole identity).
+  const rotationBlockReason = (self: {
+    itemId: string
+    name: string
+    rotationLocked?: boolean
+    composition?: CompositionSegment[]
+  }): string | undefined => {
+    const fixed = self.composition
+      ?.map((seg) => items.find((it) => it.id === seg.itemId))
+      .find((it) => it?.allowRotation === false)
+    if (fixed) return `Груз «${fixed.name}» в штабеле не разрешает поворот`
+    if (!self.composition && !items.find((it) => it.id === self.itemId)?.allowRotation)
+      return `Груз «${self.name}» не разрешает поворот`
+    if (self.rotationLocked) return 'Штабель объединён с грузом, который не разрешает поворот'
+    return undefined
+  }
+
   // Shared by handleRotatePinned/handleRotateManual below — these two were
   // ~50 lines of near-identical logic each (build `others`, call
   // rotatePlacementAnywhere, re-check rectInsidePolygon, build
@@ -1080,31 +1130,11 @@ export default function Home() {
     excludeFromResultPlaced: (p: (typeof result.placed)[number]) => boolean,
     commit: (patch: { x: number; y: number; width: number; length: number; rotated: boolean }) => void
   ): void => {
-    // rotationLocked (set by a cross-item merge whose dragged item didn't
-    // allow rotation) wins even if the placement's own itemId's CargoItem
-    // currently allows it — the merge may have folded in units that don't.
-    //
-    // Round 29 corrective pass: `rotationLocked` alone is NOT proven
-    // authoritative for every composed placement — it's correctly
-    // maintained by every LIVE creation path (merge/`+`/`-`/removeItem),
-    // but hydration only type-checks it (`typeof pin.rotationLocked ===
-    // 'boolean'`), never re-derives it from the loaded `composition` +
-    // current catalog `allowRotation`. An imported/hand-edited project can
-    // carry a composed placement whose `rotationLocked` is stale or absent
-    // even though a real constituent disallows rotation — trusting
-    // `rotationLocked` alone there would wrongly ALLOW rotating cargo that
-    // shouldn't move. For a composed placement, checked live from
-    // `composition` + the current catalog (most-restrictive-wins across
-    // every constituent, the same check planComposedMerge itself uses) —
-    // `rotationLocked` is OR'd in on top, never replaced, so a lock already
-    // set by a live merge can only stay at least as restrictive, never
-    // become more permissive. An uncomposed placement keeps the exact
-    // original single-item check (self.itemId is its own sole identity).
-    const composedNonRotatable = self.composition
-      ? segmentsOf(self as { itemId: string; layers: number; composition?: CompositionSegment[] }).some(
-          (seg) => items.find((it) => it.id === seg.itemId)?.allowRotation === false
-        )
-      : false
+    const blocked = rotationBlockReason(self)
+    if (blocked) {
+      toast.warning(blocked)
+      return
+    }
     // Geometry (outline/shape/height, used below for the post-rotation
     // collision check) still needs SOME catalog item — falls back to the
     // first composition segment's own item when the nominal `itemId`
@@ -1116,10 +1146,6 @@ export default function Home() {
     const item =
       items.find((it) => it.id === self.itemId) ??
       (self.composition ? items.find((it) => it.id === self.composition![0].itemId) : undefined)
-    if (self.rotationLocked || composedNonRotatable || (!self.composition && !item?.allowRotation)) {
-      toast.warning(`Груз «${self.name}» не разрешает поворот`)
-      return
-    }
     if (!item) {
       // No catalog item at all could be resolved (composed placement whose
       // EVERY constituent is unknown — malformed.invalidComposition would
@@ -1368,6 +1394,12 @@ export default function Home() {
   const actOnAutoStack = (placed: PlacedItem, action: PinAction) => {
     pendingPinActionRef.current = { id: pinAutoStack(placed), action }
   }
+  // A stack that can't turn isn't pinned just to be told so.
+  const rotateAutoStack = (placed: PlacedItem) => {
+    const blocked = rotationBlockReason(placed)
+    if (blocked) toast.warning(blocked)
+    else actOnAutoStack(placed, { kind: 'rotate' })
+  }
   // A plain field patch (clearance zone, wire type…) needs no placement
   // lookups, so it lands on the new pin straight away.
   const patchAutoStack = (placed: PlacedItem, patch: Partial<PinnedPlacement>) => {
@@ -1431,7 +1463,8 @@ export default function Home() {
       // it, so it's pinned first and the change follows (actOnAutoStack).
       if (selectedAutoStack) {
         e.preventDefault()
-        actOnAutoStack(selectedAutoStack, isSpace ? { kind: 'rotate' } : { kind: 'nudge', dx, dy })
+        if (isSpace) rotateAutoStack(selectedAutoStack)
+        else actOnAutoStack(selectedAutoStack, { kind: 'nudge', dx, dy })
         return
       }
 
@@ -2604,6 +2637,7 @@ export default function Home() {
     const addBlocked = ownLayers + 1 > add.maxPhys
     const addReason = item && !(item.height > 0) ? 'У груза не задана высота' : add.reason
     const unit = UNIT_LABEL[deck.unit]
+    const rotateBlocked = rotationBlockReason(record ?? source)
     const stack: InspectedStack = {
       kind,
       name: source.name,
@@ -2616,6 +2650,7 @@ export default function Home() {
       stackWeight: `${fmtTonnes(record ? placementTotalWeightKg(record, items) : (source.weight ?? 0) * layers)} т`,
       layers,
       maxLayers: add.maxPhys,
+      rotate: rotateBlocked ? { ok: false, reason: rotateBlocked } : { ok: true },
       addLayer: addBlocked ? { ok: false, reason: addReason } : { ok: true },
       removeLayer:
         layers > 1
@@ -2658,7 +2693,7 @@ export default function Home() {
           }
         : selectedAutoStack
           ? {
-              rotate: () => actOnAutoStack(selectedAutoStack, { kind: 'rotate' }),
+              rotate: () => rotateAutoStack(selectedAutoStack),
               addLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: 1 }),
               removeLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: -1 }),
               pin: () => {
@@ -3107,6 +3142,7 @@ export default function Home() {
                 cargoNumberByItemId={cargoNumberByItemId}
                 separationRules={separationRulesInUnit}
                 separationPairs={separationPairs}
+                lashingShortIds={lashingShortIds}
                 placingLashingPoint={placingLashingPoint}
                 onPlaceLashingPoint={(x, y, corner) => {
                   const count = (deck.lashingPoints?.length ?? 0) + 1

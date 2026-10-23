@@ -33,7 +33,7 @@ async function returnStampedPipeToAuto(page: Page) {
     await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
   }).toPass({ timeout: 10000 })
   await itemMenu.getByRole('button', { name: 'Вернуть в авто' }).click()
-  await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(0)
+  await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
 }
 
 test.describe('Merging two different (e.g. duplicated) cargo items', () => {

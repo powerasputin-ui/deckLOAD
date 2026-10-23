@@ -56,13 +56,14 @@ import {
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { DRAG_THRESHOLD_PX } from '@/lib/stackSelection'
-import { NAME_FONT_SIZE, layoutStackLabels, measureTextWidth, type StackLabelPlan } from '@/lib/labelLayout'
+import { NAME_FONT_SIZE, layoutStackLabels, measureTextWidth, ownLabelSize, type StackLabelPlan } from '@/lib/labelLayout'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import {
   ConflictHatch,
   HatchPatterns,
   LayerGhosts,
   LockBadge,
+  LashingShortBadge,
   MergeTargetBadge,
   MixedLoadMarker,
   OverloadBadge,
@@ -70,6 +71,8 @@ import {
   RotatedMark,
   SELECTION_HALO_WIDTH,
   StackNumber,
+  UnknownMakeupBadge,
+  cornerMarksFit,
   lashingPointColor,
   stackOutline,
 } from './deckMarks'
@@ -176,6 +179,8 @@ interface DeckVisualizationProps {
   // Pairs of stacks (indices into result.placed) closer than a separation
   // rule allows: a dashed line between them with the distance (spec 6.3).
   separationPairs?: readonly SeparationViolation[]
+  // Pins or manual stacks whose lashing falls short: an amber chain (6.3).
+  lashingShortIds?: ReadonlySet<string>
   placingLashingPoint?: boolean
   onPlaceLashingPoint?: (
     x: number,
@@ -293,6 +298,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   cargoNumberByItemId,
   separationRules,
   separationPairs,
+  lashingShortIds,
   placingLashingPoint,
   onPlaceLashingPoint,
   onUpdateLashingPoint,
@@ -2570,7 +2576,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               strokeWidth={0.75}
             />
           </pattern>
-          <HatchPatterns palette={palette} ids={{ free: 'free-hatch', obstacle: 'obstacle-hatch', conflict: 'conflict-hatch' }} />
+          <HatchPatterns palette={palette} ids={{ free: 'free-hatch', obstacle: 'obstacle-hatch', conflict: 'conflict-hatch', overload: 'overload-hatch' }} />
           {deckOutline && deckOutline.length >= 3 && (
             <clipPath id="deck-outline-clip">
               <polygon points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')} />
@@ -2761,6 +2767,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
           const isSelected = selectedZoneId === z.id
           const interactive = !!onUpdateLoadZone
+          // Carrying more than its limit (spec 6.3): hatched red — the stacks
+          // on it get «!». Its label is drawn over the stacks, further down.
+          const overloaded = !!overloadedZonesById.get(z.id)?.exceeded
           const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
             { key: 'nw', cx: zx, cy: zy },
             { key: 'ne', cx: zx + zw, cy: zy },
@@ -2768,32 +2777,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             { key: 'se', cx: zx + zw, cy: zy + zh },
           ]
           return (
-            <g key={`zone-${z.id}`}>
+            <g key={`zone-${z.id}`} data-load-zone={overloaded ? 'overloaded' : 'ok'}>
               <rect
                 x={zx}
                 y={zy}
                 width={zw}
                 height={zh}
-                fill={palette.ink2}
-                fillOpacity={0.04}
-                stroke={isSelected ? palette.accent : palette.ink2}
-                strokeWidth={isSelected ? 2 : 1.25}
+                fill={overloaded ? 'url(#overload-hatch)' : palette.ink2}
+                fillOpacity={overloaded ? 1 : 0.04}
+                stroke={isSelected ? palette.accent : overloaded ? palette.danger : palette.ink2}
+                strokeWidth={isSelected || overloaded ? 2 : 1.25}
                 strokeDasharray="6 3"
                 style={{ cursor: interactive ? 'move' : 'default' }}
                 onPointerDown={interactive ? (e) => handleZonePointerDown(e, z) : undefined}
               />
-              {zw > 48 * labelPx && zh > 18 * labelPx && (
-                <text
-                  x={zx + 4 * labelPx}
-                  y={zy + 14 * labelPx}
-                  fontSize={12 * labelPx}
-                  fontWeight={600}
-                  fill={palette.ink2}
-                  className="select-none pointer-events-none"
-                >
-                  {z.maxLoadPerArea} т/м²
-                </text>
-              )}
               {interactive && isSelected &&
                 corners.map((c) => (
                   <circle
@@ -3515,6 +3512,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               mixedLoad={isMixedLoad}
               overLoad={!!overLoad}
               overLoadTitle={overLoad ? `Зона перегружена: ${overLoad.densityTPerM2.toFixed(2)} т/м² > лимит ${overLoad.limitTPerM2} т/м²` : undefined}
+              lashingShort={!!placementId && (lashingShortIds?.has(placementId) ?? false)}
+              unknownMakeup={
+                !!(mode === 'manual' ? manualPlacements.find((m) => m.id === p.manualId) : matchingPin)?.legacyUnknownComposition
+              }
               conflict={mode === 'manual' ? p.conflict : undefined}
               contentsTitle={showCargoContents && p.contents ? p.contents : undefined}
               onContentsHover={(text, cx, cy) => setContentsTooltip(text ? { text, x: cx, y: cy } : null)}
@@ -3538,6 +3539,35 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             />
           )
         })}
+
+        {/* A load zone's limit — and its load, when over it — over the stacks,
+            on a halo of the deck: a stack in the zone's corner used to cut
+            it. Written only where it fits the zone whole. */}
+        <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
+          {loadZones?.map((z) => {
+            const overload = overloadedZonesById.get(z.id)
+            const text = `${overload?.exceeded ? `${shortNumber(overload.densityTPerM2)} из ` : ''}${shortNumber(z.maxLoadPerArea)} т/м²`
+            const zw = screenSpanW(z.width, z.length)
+            const zh = screenSpanH(z.width, z.length)
+            if (measureTextWidth(text, 12, 600) + 8 > zw / labelPx || zh <= 18 * labelPx) return null
+            const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
+            return (
+              <text
+                key={`zone-label-${z.id}`}
+                data-load-zone-label={z.id}
+                x={zx + 4 * labelPx}
+                y={zy + 14 * labelPx}
+                fontSize={12 * labelPx}
+                fontWeight={600}
+                fill={overload?.exceeded ? palette.danger : palette.ink2}
+                style={{ paintOrder: 'stroke', stroke: palette.deck, strokeWidth: 3 * labelPx, strokeLinejoin: 'round' }}
+                className="select-none pointer-events-none"
+              >
+                {text}
+              </text>
+            )
+          })}
+        </g>
 
         {/* Numbers written once over a group of stacks they fit none of, and
             a number that fits nowhere — shown on its selected stack, or on
@@ -4329,6 +4359,8 @@ function PlacedRect({
   mixedLoad,
   overLoad,
   overLoadTitle,
+  lashingShort,
+  unknownMakeup,
   conflict,
   contentsTitle,
   onContentsHover,
@@ -4389,6 +4421,10 @@ function PlacedRect({
   mixedLoad?: boolean
   overLoad?: boolean
   overLoadTitle?: string
+  // Its lashing falls short (planFacts' lashingVerdict): the amber chain.
+  lashingShort?: boolean
+  // An old file merged it without keeping its make-up: «?».
+  unknownMakeup?: boolean
   // Manual mode: why this stack stands where it may not (PlacedItem.conflict)
   // — red hatching over it, the reason on hover.
   conflict?: string
@@ -4403,6 +4439,10 @@ function PlacedRect({
   dimmed?: boolean
 }) {
   const outline = stackOutline({ mergeTarget, mergeBlocked, problem: overLoad || !!conflict, selected, hovered, locked })
+  // The corner marks, in screen px like the label, and only where they
+  // leave the number clear.
+  const labelSize = ownLabelSize(label, showLabels, measureTextWidth)
+  const marksFit = cornerMarksFit(w / labelPx, h / labelPx, labelSize.w, labelSize.h)
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -4512,9 +4552,13 @@ function PlacedRect({
       />
       {(overLoadTitle || conflict) && <title>{[conflict, overLoadTitle].filter(Boolean).join(' · ')}</title>}
       {conflict && <ConflictHatch x={x} y={y} w={w} h={h} patternId="conflict-hatch" />}
-      {overLoad && w >= 14 && h >= 14 && <OverloadBadge x={x} y={y} />}
+      {overLoad && marksFit.overload && <OverloadBadge x={x} y={y} px={labelPx} />}
       {mergeTarget && !mergeBlocked && <MergeTargetBadge x={x} y={y} w={w} h={h} />}
-      {locked && <LockBadge x={x} y={y} w={w} h={h} />}
+      {locked && marksFit.badge && <LockBadge x={x} y={y} w={w} h={h} px={labelPx} />}
+      {lashingShort && marksFit.badge && <LashingShortBadge x={x} y={y} h={h} px={labelPx} />}
+      {unknownMakeup && (lashingShort ? marksFit.secondBadge : marksFit.badge) && (
+        <UnknownMakeupBadge x={x} y={y} h={h} offset={lashingShort ? 16 : 0} px={labelPx} />
+      )}
       {label?.kind === 'own' && label.text && (() => {
         // The number, and the name under it when it fits whole (spec 6.2).
         const fontSize = label.fontSize * labelPx
@@ -4544,8 +4588,8 @@ function PlacedRect({
         )
       })()}
       {/* Mixed-load marker (Round 22): a stack of more than one cargo. */}
-      {mixedLoad && w >= 16 && h >= 16 && <MixedLoadMarker x={x} y={y} w={w} />}
-      {item.rotated && w >= 16 && h >= 16 && <RotatedMark x={x} y={y} w={w} />}
+      {mixedLoad && marksFit.mixed && <MixedLoadMarker x={x} y={y} w={w} px={labelPx} />}
+      {item.rotated && marksFit.rotated && <RotatedMark x={x} y={y} w={w} px={labelPx} />}
     </g>
   )
 }

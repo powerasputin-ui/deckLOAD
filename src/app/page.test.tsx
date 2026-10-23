@@ -39,9 +39,9 @@ function clearDemoCargo() {
 }
 
 // Text content of every SVG <text> node on the deck — scoped this way
-// because plain labels like a category name ("Обычный") or the lock badge
-// glyph ("🔒") also appear elsewhere on the page (datalist options, other
-// UI chrome), making a page-wide screen.getByText ambiguous.
+// because plain labels like a category name ("Обычный") also appear
+// elsewhere on the page (datalist options, other UI chrome), making a
+// page-wide screen.getByText ambiguous.
 function svgTextContents(): string[] {
   return Array.from(document.querySelectorAll('svg text')).map((el) => el.textContent ?? '')
 }
@@ -219,7 +219,9 @@ describe('Home (page.tsx)', () => {
     expect(within(deck).getByText('Розетка')).toBeTruthy()
     // The samples are the deck's own marks: the lock badge, the ×N badge.
     const sample = (key: string) => document.querySelector(`[data-legend-entry="${key}"] svg`)!
-    expect(sample('locked').textContent).toContain('🔒')
+    expect(sample('locked').querySelector('[data-mark="lock"]')).toBeTruthy()
+    expect(sample('lashing-short-stack').querySelector('[data-mark="lashing-short"]')).toBeTruthy()
+    expect(sample('unknown-makeup').querySelector('[data-mark="unknown-makeup"]')).toBeTruthy()
     expect(sample('layers').textContent).toContain('×3')
     expect(screen.queryByRole('switch', { name: 'Сетка' })).toBeNull()
 
@@ -350,6 +352,105 @@ describe('Home (page.tsx)', () => {
       useCalculator.getState().updateManualPlacement('food', { x: 6 })
     })
     expect(document.querySelector('svg.w-full.h-auto [data-separation]')).toBeNull()
+  })
+
+  // Stage 1 (spec 6.3): a stack whose lashing falls short wears an amber
+  // chain; one an old file merged without keeping its make-up, «?».
+  it('marks a stack whose lashing falls short with a chain, and one of unknown make-up with «?»', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.getState().addItem({ name: 'Блок', width: 2, length: 2, height: 1, quantity: 2, weight: 20000 })
+    })
+    const block = useCalculator.getState().items.find((it) => it.name === 'Блок')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'a', itemId: block.id, name: 'Блок', x: 1, y: 1, width: 2, length: 2, layers: 1, rotated: false, color: block.color,
+      })
+      useCalculator.getState().addManualPlacement({
+        id: 'b', itemId: block.id, name: 'Блок', x: 6, y: 6, width: 2, length: 2, layers: 1, rotated: false, color: block.color,
+        legacyUnknownComposition: true,
+      })
+    })
+    const stack = (id: string) => document.querySelector(`svg.w-full.h-auto g[data-stack-key="m-${id}"]`)!
+    expect(stack('a').querySelector('[data-mark="lashing-short"]')).toBeNull()
+    expect(stack('b').querySelector('[data-mark="unknown-makeup"]')).toBeTruthy()
+    expect(stack('a').querySelector('[data-mark="unknown-makeup"]')).toBeNull()
+
+    // One 100 kg lashing can't hold 20 t.
+    act(() => {
+      useCalculator.getState().addLashingPoint({ x: 0.5, y: 0.5, placementId: 'a', cornerX: 1, cornerY: 1, mslKg: 100, verticalAngleDeg: 45 })
+    })
+    expect(stack('a').querySelector('[data-mark="lashing-short"]')).toBeTruthy()
+    expect(stack('b').querySelector('[data-mark="lashing-short"]')).toBeNull()
+  })
+
+  // Spec 6.3: a load zone carrying more than its limit is hatched red and
+  // says how much it carries; the stacks on it get «!» and a red outline.
+  it('hatches a load zone over its limit, writes its load, and marks the stacks on it', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.getState().addItem({ name: 'Блок', width: 2, length: 2, height: 1, quantity: 1, weight: 8000 })
+      useCalculator.getState().addLoadZone({ x: 0, y: 0, width: 4, length: 4, maxLoadPerArea: 1 })
+    })
+    const block = useCalculator.getState().items.find((it) => it.name === 'Блок')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({
+        id: 'a', itemId: block.id, name: 'Блок', x: 1, y: 1, width: 2, length: 2, layers: 1, rotated: false, color: block.color, weight: 8000,
+      })
+    })
+    const zone = () => document.querySelector('svg.w-full.h-auto [data-load-zone]')!
+    const zoneLabel = () => document.querySelector('svg.w-full.h-auto [data-load-zone-label]')!
+    const stack = () => document.querySelector('svg.w-full.h-auto g[data-stack-key="m-a"]')!
+    // 8 t over 16 m² is 0.5 t/m², under 1.
+    expect(zone().getAttribute('data-load-zone')).toBe('ok')
+    expect(zoneLabel().textContent).toBe('1 т/м²')
+    expect(stack().querySelector('[data-mark="overload"]')).toBeNull()
+
+    act(() => {
+      useCalculator.getState().updateLoadZone(useCalculator.getState().deck.loadZones![0].id, { maxLoadPerArea: 0.25 })
+    })
+    expect(zone().getAttribute('data-load-zone')).toBe('overloaded')
+    expect(zoneLabel().textContent).toBe('0.5 из 0.25 т/м²')
+    // Over the stacks, so a stack in the zone's corner doesn't cut it.
+    expect(zoneLabel().compareDocumentPosition(stack()) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+    expect(zone().querySelector('rect')!.getAttribute('fill')).toBe('url(#overload-hatch)')
+    expect(stack().querySelector('[data-mark="overload"]')).toBeTruthy()
+  })
+
+  // Spec 6.3: a merged stack holding a cargo that mustn't turn says so in
+  // the inspector, on a disabled «Повернуть» with a crossed-out arrow.
+  it('says in the inspector why a merged stack can\'t turn', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 5, allowRotation: true })
+      useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 5, allowRotation: true })
+    })
+    const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+    act(() => {
+      const pinId = useCalculator.getState().pinFromPlaced(0, {
+        itemId: itemA.id, name: 'A', x: 1, y: 1, width: 2, length: 1, layers: 2, rotated: false, color: itemA.color,
+      })
+      useCalculator.getState().updatePinned(0, pinId, { rotationLocked: true })
+      useCalculator.setState({ selectedPinIds: [pinId] })
+    })
+    const panel = within(screen.getByRole('complementary', { name: 'Инспектор' }))
+    expect(inspectorButton('Повернуть')).toHaveProperty('disabled', true)
+    expect(inspectorButton('Повернуть').getAttribute('aria-describedby')).toBe('inspector-rotate-reason')
+    expect(panel.getByText('Штабель объединён с грузом, который не разрешает поворот')).toBeTruthy()
+
+    act(() => {
+      const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
+      useCalculator.getState().updatePinned(0, pin.id, { rotationLocked: false })
+    })
+    expect(inspectorButton('Повернуть')).toHaveProperty('disabled', false)
+    expect(panel.queryByText(/не разрешает поворот/)).toBeNull()
   })
 
   // Stage 1 (spec 6.1, 9.5): the deck reads as a drawing — the sides of the
@@ -2024,7 +2125,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(document.querySelector('svg circle[fill="#475569"]')).toBeTruthy()
-    expect(svgTextContents()).toContain('🔒')
+    expect(document.querySelector('svg [data-mark="lock"]')).toBeTruthy()
   })
 
   it('DeckVisualization: mixed-load marker coexists with selection highlight without changing the selection stroke (interaction regression)', () => {
@@ -2335,11 +2436,13 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = stackButton('Повернуть')
-    expect(rotateCircle).toBeTruthy()
-    fireEvent.click(rotateCircle!)
+    // «Повернуть» is off, with the reason (spec 6.3); Space says it.
+    expect(stackButton('Повернуть')).toHaveProperty('disabled', true)
+    expect(inspectorButton('Повернуть')).toHaveProperty('disabled', true)
+    expect(within(screen.getByRole('complementary', { name: 'Инспектор' })).getByText('Груз «Box» не разрешает поворот')).toBeTruthy()
+    fireEvent.keyDown(document.body, { key: ' ', code: 'Space' })
 
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
+    expect(toast.warning).toHaveBeenCalledWith('Груз «Box» не разрешает поворот')
     const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
     expect(pin.rotated).toBe(false)
     expect(pin.width).toBe(2)
@@ -2369,9 +2472,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = stackButton('Повернуть')
-    expect(rotateCircle).toBeTruthy()
-    fireEvent.click(rotateCircle!)
+    expect(stackButton('Повернуть')).toHaveProperty('disabled', true)
+    fireEvent.keyDown(document.body, { key: ' ', code: 'Space' })
 
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
     const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]
@@ -2409,9 +2511,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = stackButton('Повернуть')
-    expect(rotateCircle).toBeTruthy()
-    fireEvent.click(rotateCircle!)
+    // The reason names the cargo in the stack that can't turn.
+    expect(stackButton('Повернуть')).toHaveProperty('disabled', true)
+    expect(within(screen.getByRole('complementary', { name: 'Инспектор' })).getByText('Груз «B» в штабеле не разрешает поворот')).toBeTruthy()
+    fireEvent.keyDown(document.body, { key: ' ', code: 'Space' })
 
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
     const pin = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()[0]

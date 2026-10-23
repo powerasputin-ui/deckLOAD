@@ -8,7 +8,9 @@ export const MARK_COLORS = {
   problem: '#dc2626',
   mergeTarget: '#16a34a',
   hovered: '#94a3b8',
-  lockBadge: 'rgba(124,58,237,0.9)',
+  // Badges in a stack's corners (spec 6.3), white glyphs on these.
+  badge: CARGO_INK,
+  lashingShortBadge: '#B45309',
   // A lashing point attached to a stack whose forces balance, one whose
   // forces don't, and one not attached to a stack.
   lashingOk: '#16a34a',
@@ -39,7 +41,7 @@ export function stackOutline(s: {
         : s.hovered && !s.selected
           ? MARK_COLORS.hovered
           : CARGO_INK,
-    strokeWidth: s.mergeTarget ? 4 : s.problem ? 3 : s.selected || s.hovered ? 2 : 1,
+    strokeWidth: s.mergeTarget ? 4 : s.problem || s.selected || s.hovered ? 2 : 1,
     strokeDasharray: s.mergeTarget ? '6 3' : s.locked ? '4 2' : undefined,
   }
 }
@@ -58,14 +60,15 @@ interface Box {
 }
 
 // The hatches: free space (a light --ok hatch, spec 9.5), obstacles (a
-// --danger hatch) and a manual stack standing where it may not. Line opacity
-// × line coverage gives the spec's ~0.15 and 0.12 overall tint.
+// --danger hatch), a manual stack standing where it may not, and a load zone
+// carrying more than its limit. Line opacity × line coverage gives the
+// spec's ~0.15 and 0.12 overall tint.
 export function HatchPatterns({
   palette,
   ids,
 }: {
   palette: ThemeTokens
-  ids: { free: string; obstacle: string; conflict: string }
+  ids: { free: string; obstacle: string; conflict: string; overload: string }
 }) {
   return (
     <>
@@ -79,6 +82,11 @@ export function HatchPatterns({
       </pattern>
       <pattern id={ids.conflict} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
         <line x1="0" y1="0" x2="0" y2="6" stroke={palette.danger} strokeOpacity={0.85} strokeWidth="2.5" />
+      </pattern>
+      {/* An overloaded load zone: the other way from obstacles. */}
+      <pattern id={ids.overload} width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+        <rect width="7" height="7" fill="transparent" />
+        <line x1="0" y1="0" x2="0" y2="7" stroke={palette.danger} strokeOpacity={0.3} strokeWidth="2" />
       </pattern>
     </>
   )
@@ -101,15 +109,29 @@ export function ConflictHatch({ x, y, w, h, patternId }: Box & { patternId: stri
   return <rect data-conflict="true" x={x} y={y} width={w} height={h} rx={2} fill={`url(#${patternId})`} className="pointer-events-none" />
 }
 
-// A stack over an overloaded load zone.
-export function OverloadBadge({ x, y }: { x: number; y: number }) {
+// The marks in a stack's corners (spec 6.3) are sized in screen pixels, like
+// its label: `px` is drawing units per screen pixel (DeckVisualization's
+// labelPx; 1 in the legend). Each is drawn in its own box from (0, 0) and
+// moved into place. They keep 2 px from the stack's edges.
+const INSET = 2
+
+function CornerMark({ mark, x, y, px, children }: { mark: string; x: number; y: number; px: number; children: React.ReactNode }) {
   return (
-    <g className="pointer-events-none">
-      <circle cx={x + 8} cy={y + 8} r={7} fill={MARK_COLORS.problem} stroke="#fff" strokeWidth={1.2} />
-      <text x={x + 8} y={y + 11} fontSize={10} fontWeight={800} textAnchor="middle" fill="#fff" className="select-none">
-        !
-      </text>
+    <g data-mark={mark} className="pointer-events-none" transform={`translate(${x} ${y}) scale(${px})`}>
+      {children}
     </g>
+  )
+}
+
+// A stack over an overloaded load zone: «!» in a red triangle, top left.
+export const OVERLOAD_MARK = { w: 16, h: 14 }
+export function OverloadBadge({ x, y, px = 1 }: { x: number; y: number; px?: number }) {
+  return (
+    <CornerMark mark="overload" x={x + INSET * px} y={y + INSET * px} px={px}>
+      <polygon points="8,0 16,14 0,14" fill={MARK_COLORS.problem} stroke="#fff" strokeWidth={1} strokeLinejoin="round" />
+      <rect x={7.25} y={4.5} width={1.5} height={5} rx={0.5} fill="#fff" />
+      <circle cx={8} cy={11.4} r={0.95} fill="#fff" />
+    </CornerMark>
   )
 }
 
@@ -156,40 +178,100 @@ export function StackNumber({
   )
 }
 
-// A stack the user locked («Закреплён»).
-export function LockBadge({ x, y, w, h }: Box) {
+// A badge in a stack's corner (spec 6.3): 14 × 14 px, a white glyph on it.
+export const BADGE = 14
+
+// A stack the user fixed in place («Закреплён»): a padlock, bottom right.
+export function LockBadge({ x, y, w, h, px = 1 }: Box & { px?: number }) {
   return (
-    <g className="pointer-events-none">
-      <rect x={x + w - 16} y={y + h - 14} width={14} height={11} rx={2} fill={MARK_COLORS.lockBadge} />
-      <text x={x + w - 9} y={y + h - 4.5} fontSize={9} textAnchor="middle" fill="#fff" className="select-none">
-        🔒
+    <CornerMark mark="lock" x={x + w - (BADGE + INSET) * px} y={y + h - (BADGE + INSET) * px} px={px}>
+      <rect width={BADGE} height={BADGE} rx={3} fill={MARK_COLORS.badge} />
+      <path d="M 4.6 6.6 V 5.2 a 2.4 2.4 0 0 1 4.8 0 V 6.6" fill="none" stroke="#fff" strokeWidth={1.4} />
+      <rect x={3.4} y={6.4} width={7.2} height={5} rx={1} fill="#fff" />
+    </CornerMark>
+  )
+}
+
+// A stack whose lashing falls short (spec 6.3): an amber chain, bottom left.
+export function LashingShortBadge({ x, y, h, px = 1 }: { x: number; y: number; h: number; px?: number }) {
+  return (
+    <CornerMark mark="lashing-short" x={x + INSET * px} y={y + h - (BADGE + INSET) * px} px={px}>
+      <rect width={BADGE} height={BADGE} rx={3} fill={MARK_COLORS.lashingShortBadge} />
+      <g transform="rotate(-45 7 7)" fill="none" stroke="#fff" strokeWidth={1.4}>
+        <rect x={1.8} y={5.2} width={6} height={3.6} rx={1.8} />
+        <rect x={6.2} y={5.2} width={6} height={3.6} rx={1.8} />
+      </g>
+    </CornerMark>
+  )
+}
+
+// A stack an old file merged without keeping what it is made of (spec 6.3):
+// «?», bottom left — or next to the chain when that is there too (`offset`,
+// screen px).
+export function UnknownMakeupBadge({ x, y, h, offset = 0, px = 1 }: { x: number; y: number; h: number; offset?: number; px?: number }) {
+  return (
+    <CornerMark mark="unknown-makeup" x={x + (INSET + offset) * px} y={y + h - (BADGE + INSET) * px} px={px}>
+      <rect width={BADGE} height={BADGE} rx={3} fill={MARK_COLORS.badge} />
+      <text x={BADGE / 2} y={10.6} fontSize={11} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
+        ?
       </text>
-    </g>
+    </CornerMark>
   )
 }
 
 // A stack holding more than one cargo: a small split circle near its top
 // right corner, its centre kept inside the stack at any size.
-export function MixedLoadMarker({ x, y, w }: { x: number; y: number; w: number }) {
-  const mr = 6
-  const mcx = Math.min(Math.max(x + w - 30, x + mr), x + w - mr)
-  const mcy = y + 9
+export function MixedLoadMarker({ x, y, w, px = 1 }: { x: number; y: number; w: number; px?: number }) {
+  const mr = 6 * px
+  const mcx = Math.min(Math.max(x + w - 30 * px, x + mr), x + w - mr)
+  const mcy = y + 9 * px
   return (
     <g className="pointer-events-none">
       <title>Смешанный груз: несколько видов физически в одном месте</title>
-      <circle cx={mcx} cy={mcy} r={mr} fill="#475569" stroke="#fff" strokeWidth={1} />
+      <circle cx={mcx} cy={mcy} r={mr} fill="#475569" stroke="#fff" strokeWidth={px} />
       <path d={`M ${mcx} ${mcy - mr} A ${mr} ${mr} 0 0 1 ${mcx} ${mcy + mr} L ${mcx} ${mcy - mr} Z`} fill="#cbd5e1" />
     </g>
   )
 }
 
-// A single unit turned by 90°.
-export function RotatedMark({ x, y, w }: { x: number; y: number; w: number }) {
+// A single unit turned by 90°: «↻» in the top right corner, in the ink of
+// the stack's number — white was lost on the light tones.
+export function RotatedMark({ x, y, w, px = 1 }: { x: number; y: number; w: number; px?: number }) {
   return (
-    <text x={x + w - 6} y={y + 12} fontSize={10} textAnchor="end" fill="rgba(255,255,255,0.9)" className="select-none pointer-events-none">
+    <text
+      data-mark="rotated"
+      x={x + w - 6 * px}
+      y={y + 12 * px}
+      fontSize={10 * px}
+      textAnchor="end"
+      fill={CARGO_INK}
+      fillOpacity={0.75}
+      className="select-none pointer-events-none"
+    >
       ↻
     </text>
   )
+}
+
+// Where the corner marks go on a stack `w` × `h` screen px whose label
+// takes `labelW` × `labelH` px in its middle (0 × 0 without one): a mark is
+// drawn only where it leaves the number clear (spec 6.2 — the number comes
+// first). The stack's outline still shows a lock (dashed) and a problem
+// (red); «Проверки» and the inspector list everything.
+export function cornerMarksFit(w: number, h: number, labelW: number, labelH: number) {
+  // Clear of the label sideways when its inner edge is `edge` px from the
+  // stack's side, or above or below it when `edge` px from the top or bottom.
+  const clear = (sideways: number, upright: number) =>
+    labelW === 0 || (w - labelW) / 2 >= sideways || (h - labelH) / 2 >= upright
+  const holds = (mw: number, mh: number) => w >= mw + 2 * INSET && h >= mh + 2 * INSET
+  return {
+    overload: holds(OVERLOAD_MARK.w, OVERLOAD_MARK.h) && clear(OVERLOAD_MARK.w + INSET, OVERLOAD_MARK.h + INSET),
+    badge: holds(BADGE, BADGE) && clear(BADGE + INSET, BADGE + INSET),
+    // A second badge beside the first one in the bottom left corner.
+    secondBadge: holds(2 * BADGE + INSET, BADGE) && clear(2 * BADGE + 2 * INSET, BADGE + INSET),
+    mixed: holds(12, 12) && clear(36, 15),
+    rotated: holds(12, 12) && clear(17, 14),
+  }
 }
 
 // A lashing point's fill: attached to a stack whose forces balance or don't,

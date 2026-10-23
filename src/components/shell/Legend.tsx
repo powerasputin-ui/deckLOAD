@@ -5,6 +5,7 @@ import { useTheme } from '@/components/ThemeProvider'
 import {
   ConflictHatch,
   HatchPatterns,
+  LashingShortBadge,
   LayerGhosts,
   LockBadge,
   MergeTargetBadge,
@@ -14,6 +15,7 @@ import {
   RotatedMark,
   SELECTION_HALO_WIDTH,
   StackNumber,
+  UnknownMakeupBadge,
   lashingPointColor,
   stackOutline,
 } from '@/components/calculator/deckMarks'
@@ -25,7 +27,7 @@ const H = 28
 
 interface SampleProps {
   palette: ThemeTokens
-  hatch: { free: string; obstacle: string; conflict: string }
+  hatch: { free: string; obstacle: string; conflict: string; overload: string }
 }
 
 interface Entry {
@@ -121,6 +123,26 @@ const STACK_ENTRIES: Entry[] = [
     ),
   },
   {
+    key: 'lashing-short-stack',
+    label: 'Не хватает крепления',
+    Sample: () => (
+      <>
+        <Stack {...BOX} />
+        <LashingShortBadge x={BOX.x} y={BOX.y} h={BOX.h} />
+      </>
+    ),
+  },
+  {
+    key: 'unknown-makeup',
+    label: 'Состав неизвестен: штабель объединили в старой версии',
+    Sample: () => (
+      <>
+        <Stack {...BOX} />
+        <UnknownMakeupBadge x={BOX.x} y={BOX.y} h={BOX.h} />
+      </>
+    ),
+  },
+  {
     key: 'conflict',
     label: 'Стоит там, где нельзя (ручной режим). Причина — при наведении',
     Sample: ({ hatch }) => (
@@ -207,6 +229,27 @@ const DECK_ENTRIES: Entry[] = [
     ),
   },
   {
+    key: 'load-zone-overloaded',
+    label: 'Зона нагрузки перегружена: «7.2 из 5 т/м²»',
+    Sample: ({ palette, hatch }) => (
+      <>
+        <rect
+          x={3}
+          y={3}
+          width={W - 6}
+          height={H - 6}
+          fill={`url(#${hatch.overload})`}
+          stroke={palette.danger}
+          strokeWidth={2}
+          strokeDasharray="6 3"
+        />
+        <text x={7} y={17} fontSize={9} fontWeight={600} fill={palette.danger}>
+          7.2 из 5
+        </text>
+      </>
+    ),
+  },
+  {
     key: 'lashing-ok',
     label: 'Точка крепления: крепление удерживает штабель',
     Sample: () => <LashingSample ok />,
@@ -248,7 +291,7 @@ export function Legend() {
   const palette = THEME_TOKENS[resolved]
   // Pattern ids must be unique in the page and valid in url(#…).
   const base = `legend-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const hatch = { free: `${base}-free`, obstacle: `${base}-obstacle`, conflict: `${base}-conflict` }
+  const hatch = { free: `${base}-free`, obstacle: `${base}-obstacle`, conflict: `${base}-conflict`, overload: `${base}-overload` }
   return (
     <div className="space-y-3" data-legend>
       {/* The hatches the samples point at, defined once. */}
