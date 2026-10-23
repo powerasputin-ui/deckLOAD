@@ -459,8 +459,11 @@ function ItemRow({
                       disabled={!globalRotation}
                       className={cn(
                         'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors',
+                        // The accent's darker shade (lighter in the dark
+                        // theme): the accent itself is 4.48:1 on its own
+                        // tint, under AA.
                         rotationEnabled
-                          ? 'border-primary/40 bg-primary/10 text-primary'
+                          ? 'border-primary/40 bg-primary/10 text-primary-hover'
                           : 'border-border text-muted-foreground',
                         !globalRotation && 'opacity-50 cursor-not-allowed'
                       )}
@@ -489,7 +492,7 @@ function ItemRow({
                     title="Содержимое груза"
                     className={cn(
                       'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors hover:bg-accent',
-                      item.contents ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'
+                      item.contents ? 'border-primary/40 bg-primary/10 text-primary-hover' : 'border-border text-muted-foreground'
                     )}
                   >
                     <FileText className="h-3.5 w-3.5" />
@@ -515,7 +518,7 @@ function ItemRow({
                     title="Остойчивость (override ЦТ)"
                     className={cn(
                       'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors hover:bg-accent',
-                      hasStabilityOverride ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'
+                      hasStabilityOverride ? 'border-primary/40 bg-primary/10 text-primary-hover' : 'border-border text-muted-foreground'
                     )}
                   >
                     <Ship className="h-3.5 w-3.5" />

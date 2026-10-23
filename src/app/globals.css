@@ -196,3 +196,25 @@
 .section-content [data-slot='card-content'] {
   padding-inline: 16px;
 }
+
+/* Toasts in the app's colours and font (spec 9.1, 9.3). sonner's own amber
+   is 2.7:1 on its background, under AA. The tokens switch with the theme.
+   sonner adds its stylesheet after this one, hence the :root. */
+:root [data-sonner-toaster][data-sonner-theme] {
+  font-family: inherit;
+  --normal-bg: var(--surface);
+  --normal-border: var(--line);
+  --normal-text: var(--ink);
+  --success-bg: var(--ok-bg);
+  --success-border: color-mix(in srgb, var(--ok) 30%, var(--ok-bg));
+  --success-text: var(--ok);
+  --info-bg: var(--surface);
+  --info-border: var(--line);
+  --info-text: var(--ink);
+  --warning-bg: var(--warn-bg);
+  --warning-border: color-mix(in srgb, var(--warn) 30%, var(--warn-bg));
+  --warning-text: var(--warn);
+  --error-bg: var(--danger-bg);
+  --error-border: color-mix(in srgb, var(--danger) 30%, var(--danger-bg));
+  --error-text: var(--danger);
+}
