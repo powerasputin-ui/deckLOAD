@@ -45,3 +45,17 @@ export async function clearCalculation(page: Page) {
   await page.getByRole('alertdialog').getByRole('button', { name: 'Очистить' }).click()
   await expect(page.getByRole('alertdialog')).toBeHidden()
 }
+
+// The right-click menu of a stack, the mini-panel over the selected stack and
+// the inspector over the right of the deck (spec 6.5, 6.6).
+export function stackMenu(page: Page): Locator {
+  return page.getByRole('menu', { name: 'Действия со штабелем' })
+}
+
+export function stackTools(page: Page): Locator {
+  return page.getByRole('toolbar', { name: 'Действия со штабелем' })
+}
+
+export function inspector(page: Page): Locator {
+  return page.getByRole('complementary', { name: 'Инспектор' })
+}

@@ -51,6 +51,16 @@ function openSection(title: 'Судно' | 'Грузы' | 'Размещение'
   fireEvent.click(within(nav).getByRole('button', { name: new RegExp(`^${title}`) }))
 }
 
+// A button of the mini-panel over the selected stack (spec 6.6).
+function stackButton(name: string): HTMLElement {
+  return within(screen.getByRole('toolbar', { name: 'Действия со штабелем' })).getByRole('button', { name })
+}
+
+// A button of the inspector, over the right of the deck (spec 6.5).
+function inspectorButton(name: string | RegExp): HTMLElement {
+  return within(screen.getByRole('complementary', { name: 'Инспектор' })).getByRole('button', { name })
+}
+
 // An item of the calculation's menu, top left.
 function projectMenuItem(name: string) {
   fireEvent.click(screen.getByRole('button', { name: /^Меню расчёта/ }))
@@ -579,7 +589,7 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    const xCircle = inspectorButton(/^Удалить/)
     expect(xCircle).toBeTruthy()
     fireEvent.click(xCircle!)
 
@@ -616,7 +626,7 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    const xCircle = inspectorButton(/^Удалить/)
     expect(xCircle).toBeTruthy()
     fireEvent.click(xCircle!)
 
@@ -651,7 +661,7 @@ describe('Home (page.tsx)', () => {
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const xCircle = document.querySelector('svg circle[fill="#ef4444"]')
+    const xCircle = inspectorButton(/^Удалить/)
     expect(xCircle).toBeTruthy()
     fireEvent.click(xCircle!)
 
@@ -684,11 +694,11 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     act(() => {
       useCalculator.setState({ selectedPinIds: [pinAId] })
     })
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
     act(() => {
       useCalculator.setState({ selectedPinIds: [pinBId] })
     })
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
 
     // The old bug: both freed units landed in the auto-packer's shared
     // "remaining quantity" pool, which stacks same-item leftovers up to their
@@ -725,7 +735,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // pins) - the old behavior only pulled from *unplaced* quantity, so "+"
     // would be blocked here with "all N units already placed" even though a
     // second container of the same item is sitting right there on the deck.
-    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    const plusCircle = stackButton('Добавить ярус')
     expect(plusCircle).toBeTruthy()
     fireEvent.click(plusCircle!)
 
@@ -752,7 +762,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedManualIds: ['m1'] })
     })
 
-    const minusCircle = document.querySelector('svg circle[fill="#f59e0b"]')
+    const minusCircle = stackButton('Убрать ярус')
     expect(minusCircle).toBeTruthy()
     fireEvent.click(minusCircle!)
 
@@ -783,7 +793,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedManualIds: ['mA'] })
     })
 
-    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    const plusCircle = stackButton('Добавить ярус')
     expect(plusCircle).toBeTruthy()
     fireEvent.click(plusCircle!)
 
@@ -821,13 +831,13 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     // 500 (placed) + 500 (new) = 1000 kg = exactly the 1t cap -> allowed.
-    const plusCircle = document.querySelector('svg circle[fill="#0ea5e9"]')
+    const plusCircle = stackButton('Добавить ярус')
     fireEvent.click(plusCircle!)
     expect(useCalculator.getState().manualPlacements.find((m) => m.id === 'mA')?.layers).toBe(2)
     expect(toast.error).not.toHaveBeenCalled()
 
     // A third unit would push to 1500kg > 1000kg -> blocked, layers unchanged.
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
     expect(useCalculator.getState().manualPlacements.find((m) => m.id === 'mA')?.layers).toBe(2)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('лимит груза'))
   })
@@ -854,7 +864,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     // 500 + 500 = 1000kg exactly at the cap -> allowed.
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)?.layers).toBe(2)
     expect(toast.error).not.toHaveBeenCalled()
 
@@ -864,7 +874,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     act(() => {
       useCalculator.getState().updateItem(item.id, { quantity: 3 })
     })
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)?.layers).toBe(2)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('лимит груза'))
   })
@@ -899,7 +909,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     // Trip 1: 500 + 500 = 1000kg exactly at ITS OWN cap -> allowed, despite
     // trip 0 already sitting at its own (separate) 1000kg cap.
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
     expect(useCalculator.getState().pinnedPlacementsByTrip[1].find((p) => p.id === trip1PinId)?.layers).toBe(2)
     expect(useCalculator.getState().pinnedPlacementsByTrip[0][0].layers).toBe(2) // trip 0 completely untouched
     expect(toast.error).not.toHaveBeenCalled()
@@ -947,7 +957,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // "+" pushes ONE MORE unit of the placement's own NOMINAL itemId (A) —
     // the top segment is B, so it does NOT coalesce; a new trailing A
     // segment is appended instead.
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
     let pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([
       { itemId: itemA.id, layers: 2 },
@@ -961,7 +971,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // "-" pops the PHYSICALLY topmost segment (the A,1 just pushed), not
     // the placement's nominal itemId in the abstract — reverses the "+"
     // exactly, back to the original two-segment composition.
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
     pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
     expect(pin.layers).toBe(5)
@@ -1006,7 +1016,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     // Top segment is B (layers: 1) — popping removes it ENTIRELY, freeing a
     // B unit, not an A unit, even though the placement's nominal itemId is A.
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
 
     const placements = useCalculator.getState().manualPlacements
     const composed = placements.find((p) => p.id === 'mComp')!
@@ -1088,7 +1098,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // generous quantity and no competing auto-placed instance, that merge
     // would have gone through cleanly under the old code, making this
     // assertion fail without the guard.
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const pins = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
     // The composed placement must still exist, completely untouched — not
@@ -1139,7 +1149,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }, { itemId: itemA.id, layers: 1 }])
@@ -1173,7 +1183,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
@@ -1203,7 +1213,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedManualIds: ['mPlain'] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const placements = useCalculator.getState().manualPlacements
     const composed = placements.find((p) => p.id === 'mComposed')
@@ -1240,7 +1250,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 2 }])
@@ -1278,7 +1288,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     // Step 1: top is C (layers: 1) -> removed entirely, freeing C1.
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
     let comp = useCalculator.getState().manualPlacements.find((p) => p.id === 'mComp')!
     expect(comp.composition).toEqual([{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 2 }])
     let freedIds = useCalculator.getState().manualPlacements.filter((p) => p.id !== 'mComp').map((p) => p.itemId)
@@ -1286,7 +1296,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
     // Step 2: new top is B (layers: 2) -> decremented to 1, freeing B1 —
     // NOT C again, and NOT A (the nominal itemId).
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
     comp = useCalculator.getState().manualPlacements.find((p) => p.id === 'mComp')!
     expect(comp.composition).toEqual([{ itemId: itemA.id, layers: 1 }, { itemId: itemB.id, layers: 1 }])
     freedIds = useCalculator.getState().manualPlacements.filter((p) => p.id !== 'mComp').map((p) => p.itemId).sort()
@@ -1306,6 +1316,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
+      // Height allows more tiers, so «+» is offered and only the quantity
+      // stops it (the button is inactive when the height does).
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, clearance: 25 } })
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 2, weight: 100 }) // exactly matches composition's own A count
       useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
     })
@@ -1323,7 +1336,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 3 }])
@@ -1366,7 +1379,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedManualIds: ['target'] })
     })
 
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const target = useCalculator.getState().manualPlacements.find((m) => m.id === 'target')!
     expect(target.layers).toBe(3) // succeeded
@@ -1411,7 +1424,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // Nominal A's own catalog weight is 50 -> 1100+50=1150 > 1140 -> must
     // block. (An average-weight calc, ~366.7, or the stale `pin.weight`
     // of 5, would each give a DIFFERENT allow/block answer than this.)
-    fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+    fireEvent.click(stackButton('Добавить ярус')!)
 
     const pin = useCalculator.getState().pinnedPlacementsByTrip[0].find((p) => p.id === pinId)!
     expect(pin.composition).toEqual([{ itemId: itemA.id, layers: 2 }, { itemId: itemB.id, layers: 1 }])
@@ -1467,7 +1480,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     // The real "-" click -> handleLayerChangePinned's composed branch,
     // exactly the production path (not a direct store call).
-    fireEvent.click(document.querySelector('svg circle[fill="#f59e0b"]')!)
+    fireEvent.click(stackButton('Убрать ярус')!)
 
     // Trip 2's composed pin popped correctly.
     const trip2 = useCalculator.getState().pinnedPlacementsByTrip[1]
@@ -2124,7 +2137,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    const rotateCircle = stackButton('Повернуть')
     expect(rotateCircle).toBeTruthy()
     fireEvent.click(rotateCircle!)
 
@@ -2158,7 +2171,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    const rotateCircle = stackButton('Повернуть')
     expect(rotateCircle).toBeTruthy()
     fireEvent.click(rotateCircle!)
 
@@ -2198,7 +2211,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    const rotateCircle = stackButton('Повернуть')
     expect(rotateCircle).toBeTruthy()
     fireEvent.click(rotateCircle!)
 
@@ -2232,7 +2245,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    const rotateCircle = document.querySelector('svg circle[fill="#7c3aed"]')
+    const rotateCircle = stackButton('Повернуть')
     fireEvent.click(rotateCircle!)
 
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('не разрешает поворот'))
@@ -3969,7 +3982,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         c = pin(7, 1)
         useCalculator.setState({ selectedPinIds: [a] })
       })
-      fireEvent.click(document.querySelector('svg circle[fill="#0ea5e9"]')!)
+      fireEvent.click(stackButton('Добавить ярус')!)
       const byId = new Map(pins().map((p) => [p.id, p]))
       expect(byId.get(a)?.layers).toBe(2)
       expect(byId.get(a)?.locked).toBe(true)
@@ -3988,7 +4001,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         })
       })
       fireEvent.contextMenu(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
-      fireEvent.click(screen.getByRole('button', { name: 'Вернуть в авто' }))
+      fireEvent.click(within(screen.getByRole('menu', { name: 'Действия со штабелем' })).getByRole('button', { name: 'Вернуть в авто' }))
       expect(pins()).toHaveLength(0)
       expect(useCalculator.getState().items[0].quantity).toBe(1)
     })
@@ -4001,7 +4014,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
         fireEvent.pointerUp(deckSvg(), { clientX: 100, clientY: 100 })
       })
-      fireEvent.click(document.querySelector('svg circle[fill="#7c3aed"]')!)
+      fireEvent.click(stackButton('Повернуть')!)
       expect(pins()).toHaveLength(1)
       expect(pins()[0].locked).toBe(true)
       expect(pins()[0].rotated).toBe(true)
@@ -4082,6 +4095,211 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         useCalculator.getState().updatePinned(0, id, { locked: true })
       })
       expect(screen.getByText(/Закреплённая позиция вне палубы/)).toBeTruthy()
+    })
+  })
+
+  // Stage 2, group C (spec 6.4–6.6): the inspector over the right of the
+  // deck and the mini-panel over the selected stack carry every action on a
+  // stack; the right-click menu repeats them. None is reachable only there.
+  describe('the inspector and the mini-panel', () => {
+    const pins = () => Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    const inspector = () => screen.queryByRole('complementary', { name: 'Инспектор' })
+    const quantityOf = (name: string) => useCalculator.getState().items.find((it) => it.name === name)!.quantity
+    function setup(names: string[] = ['BoxA'], quantity = 1) {
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        for (const name of names) useCalculator.getState().addItem({ name, width: 2, length: 1, quantity, height: 1, weight: 1500 })
+      })
+    }
+    // A click on a stack, as a user selects it.
+    function press(label: string) {
+      withIdentitySvgTransform(() => {
+        fireEvent.pointerDown(placementGroupByLabel(label), { clientX: 100, clientY: 100, button: 0 })
+        fireEvent.pointerUp(document.querySelector('svg.w-full.h-auto')!, { clientX: 100, clientY: 100 })
+      })
+    }
+    function pinBox(name: string, x: number, extra: Partial<{ layers: number; locked: boolean }> = {}) {
+      const item = useCalculator.getState().items.find((it) => it.name === name)!
+      let id = ''
+      act(() => {
+        id = useCalculator.getState().pinFromPlaced(0, {
+          itemId: item.id, name: item.name, x, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 1500, ...extra,
+        })
+      })
+      return id
+    }
+
+    it('shows the selected stack and closes with ✕, Esc or nothing selected', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup()
+      expect(inspector()).toBeNull()
+      press('BoxA')
+      const panel = within(inspector()!)
+      expect(panel.getByRole('heading', { name: /BoxA/ })).toBeTruthy()
+      expect(panel.getByText('Расставлен автоматически')).toBeTruthy()
+      expect(panel.getByText('2 × 1 × 1 м')).toBeTruthy()
+      expect(panel.getByText('1500 кг')).toBeTruthy()
+      expect(panel.getByText('1.5 т')).toBeTruthy()
+      expect(panel.getByText('макс. 5 по высоте')).toBeTruthy()
+      fireEvent.click(panel.getByRole('button', { name: 'Закрыть инспектор' }))
+      expect(inspector()).toBeNull()
+      press('BoxA')
+      expect(inspector()).toBeTruthy()
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(inspector()).toBeNull()
+      expect(screen.queryByRole('toolbar', { name: 'Действия со штабелем' })).toBeNull()
+    })
+
+    it('pins, returns to auto and deletes an auto-placed stack from the inspector', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA'], 2)
+      press('BoxA')
+      fireEvent.click(inspectorButton('Закрепить'))
+      expect(pins()).toHaveLength(1)
+      expect(pins()[0].locked).toBe(true)
+      expect(within(inspector()!).getByText(/Закреплён/)).toBeTruthy()
+      fireEvent.click(inspectorButton('Вернуть в авто'))
+      expect(pins()).toHaveLength(0)
+      expect(quantityOf('BoxA')).toBe(2)
+      press('BoxA')
+      const units = Number(inspectorButton(/^Удалить/).textContent!.match(/−(\d+)/)![1])
+      fireEvent.click(inspectorButton(/^Удалить/))
+      expect(quantityOf('BoxA')).toBe(2 - units)
+    })
+
+    it('rotates a stack and changes its layers from the mini-panel', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA'], 2)
+      const id = pinBox('BoxA', 1, { locked: true })
+      act(() => useCalculator.setState({ selectedPinIds: [id] }))
+      const pin = () => pins().find((p) => p.id === id)!
+      expect(stackButton('Убрать ярус').hasAttribute('disabled')).toBe(true)
+      expect(within(inspector()!).getAllByRole('button', { name: 'Убрать ярус' })[0].hasAttribute('disabled')).toBe(true)
+      fireEvent.click(stackButton('Добавить ярус'))
+      expect(pin().layers).toBe(2)
+      fireEvent.click(stackButton('Убрать ярус'))
+      expect(pin().layers).toBe(1)
+      fireEvent.click(stackButton('Повернуть'))
+      expect(pin().rotated).toBe(true)
+    })
+
+    it('the mini-panel\'s «⋯» holds «Вернуть в авто» and «Удалить»', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA', 'BoxB'])
+      const a = pinBox('BoxA', 1, { locked: true })
+      act(() => useCalculator.setState({ selectedPinIds: [a] }))
+      // The «⋯» menu: the popover the mini-panel opens.
+      const moreMenu = () => within(document.querySelector('[data-radix-popper-content-wrapper]') as HTMLElement)
+      fireEvent.click(stackButton('Ещё действия'))
+      fireEvent.click(moreMenu().getByRole('button', { name: 'Вернуть в авто' }))
+      expect(pins()).toHaveLength(0)
+      const b = pinBox('BoxB', 5, { locked: true })
+      act(() => useCalculator.setState({ selectedPinIds: [b] }))
+      fireEvent.click(stackButton('Ещё действия'))
+      fireEvent.click(moreMenu().getByRole('button', { name: 'Удалить (−1 ед.)' }))
+      expect(quantityOf('BoxB')).toBe(0)
+    })
+
+    it('in manual mode a stack is taken off the deck, its cargo kept, and «−» says why it is off', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup()
+      const item = useCalculator.getState().items[0]
+      act(() => {
+        useCalculator.setState({
+          mode: 'manual',
+          manualPlacements: [{ id: 'm1', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 1500 }],
+          selectedManualIds: ['m1'],
+        })
+      })
+      const panel = within(inspector()!)
+      expect(panel.getByText('Поставлен вручную')).toBeTruthy()
+      expect(panel.queryByRole('button', { name: 'Закрепить' })).toBeNull()
+      expect(stackButton('Убрать ярус').closest('span')!.getAttribute('title')).toMatch(/Минимум 1 ярус/)
+      fireEvent.click(inspectorButton('Убрать с палубы'))
+      expect(useCalculator.getState().manualPlacements).toHaveLength(0)
+      expect(quantityOf('BoxA')).toBe(1)
+      expect(inspector()).toBeNull()
+    })
+
+    it('several selected stacks: pin all, return to auto, delete after a confirmation', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA', 'BoxB'], 2)
+      const a = pinBox('BoxA', 1)
+      const b = pinBox('BoxB', 5)
+      act(() => useCalculator.setState({ selectedPinIds: [a, b] }))
+      const panel = within(inspector()!)
+      expect(panel.getByRole('heading', { name: 'Выбрано 2 штабеля' })).toBeTruthy()
+      fireEvent.click(panel.getByRole('button', { name: 'Закрепить все' }))
+      expect(pins().every((p) => p.locked)).toBe(true)
+      expect(useCalculator.getState().selectedPinIds).toEqual([a, b])
+
+      fireEvent.click(within(inspector()!).getByRole('button', { name: 'Удалить…' }))
+      const dialog = screen.getByRole('alertdialog')
+      expect(within(dialog).getByText('Удалить 2 штабеля?')).toBeTruthy()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить' }))
+      expect(pins()).toHaveLength(0)
+      expect(quantityOf('BoxA')).toBe(1)
+      expect(quantityOf('BoxB')).toBe(1)
+      expect(inspector()).toBeNull()
+    })
+
+    it('the right-click menu repeats the inspector\'s actions', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup()
+      fireEvent.contextMenu(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
+      const menu = within(screen.getByRole('menu', { name: 'Действия со штабелем' }))
+      expect(menu.getAllByRole('button').map((b) => b.textContent)).toEqual(['Повернуть', 'Закрепить', 'Удалить (−1 ед.)'])
+      // The stack is selected, so the inspector shows the same actions.
+      expect(inspectorButton('Закрепить')).toBeTruthy()
+      fireEvent.click(menu.getByRole('button', { name: 'Закрепить' }))
+      expect(pins()[0].locked).toBe(true)
+      expect(screen.queryByRole('menu', { name: 'Действия со штабелем' })).toBeNull()
+    })
+
+    it('moves the view so a stack under the inspector stays in sight, the scale kept', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA', 'BoxB'])
+      const left = pinBox('BoxA', 0)
+      const right = pinBox('BoxB', 8)
+      // The SVG and its mini-panel move together.
+      const shifted = () => (document.querySelector('[data-mini-panel]')!.parentElement as HTMLElement).style.transform
+      act(() => useCalculator.setState({ selectedPinIds: [left] }))
+      expect(shifted()).toBe('')
+      act(() => useCalculator.setState({ selectedPinIds: [right] }))
+      expect(shifted()).toMatch(/^translateX\(-\d+(\.\d+)?px\)$/)
+      const viewBox = document.querySelector('svg.w-full.h-auto')!.getAttribute('viewBox')
+      act(() => useCalculator.setState({ selectedPinIds: [] }))
+      expect(document.querySelector('svg.w-full.h-auto')!.getAttribute('viewBox')).toBe(viewBox)
+    })
+
+    it('lists what is wrong with the stack and leads to «Проверки»', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup()
+      const item = useCalculator.getState().items[0]
+      act(() => {
+        useCalculator.setState({
+          mode: 'manual',
+          deck: {
+            ...useCalculator.getState().deck,
+            restrictionZones: [{ id: 'crane', name: 'Кран', shapeType: 'rect', x: 0, y: 0, width: 4, length: 4 }],
+          },
+          manualPlacements: [{ id: 'm1', itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, weight: 1500 }],
+          selectedManualIds: ['m1'],
+        })
+      })
+      const problems = within(screen.getByRole('region', { name: 'Проблемы штабеля' }))
+      expect(problems.getByText('Стоит там, где нельзя: в зоне ограничения')).toBeTruthy()
+      fireEvent.click(problems.getByRole('button', { name: 'Показать в проверках' }))
+      expect(screen.getByRole('heading', { name: 'Проверки' })).toBeTruthy()
     })
   })
 })

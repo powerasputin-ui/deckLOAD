@@ -15,7 +15,7 @@ const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Ctrl+Y, Ctrl+Shift+Z', action: 'Повторить' },
   { keys: 'Стрелки', action: 'Сдвинуть выделенный штабель на четверть шага сетки' },
   { keys: 'Пробел', action: 'Повернуть выделенный штабель' },
-  { keys: 'Esc', action: 'Снять инструмент или выбранный для постановки груз' },
+  { keys: 'Esc', action: 'Снять инструмент, выбранный для постановки груз или выделение (закрывает инспектор)' },
 ]
 
 export function HelpMenu({ onStartTour, onShowIntro }: { onStartTour: () => void; onShowIntro: () => void }) {

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Locator } from '@playwright/test'
-import { sectionBar } from './helpers'
+import { sectionBar, stackMenu } from './helpers'
 
 // Playwright's .fill() does not reliably commit on this project's shadcn
 // number inputs (confirmed: value silently reverts, no console error) —
@@ -45,7 +45,7 @@ test.describe('Multi-trip voyages', () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
-      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
+      await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 

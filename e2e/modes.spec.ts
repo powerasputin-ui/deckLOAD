@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { statusLine, openSection } from './helpers'
+import { statusLine, openSection, stackMenu, stackTools } from './helpers'
 
 // The status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -46,9 +46,9 @@ test.describe('Auto / manual modes', () => {
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
-      await expect(page.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
+      await expect(stackMenu(page).getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    await page.getByRole('button', { name: 'Закрепить' }).click()
+    await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click()
     await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
 
     const before = await placedRect.getAttribute('x')
@@ -76,7 +76,7 @@ test.describe('Auto / manual modes', () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
-      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
+      await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
@@ -115,11 +115,11 @@ test.describe('Auto / manual modes', () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
-      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
+      await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    // Click rotate on the selected pin (purple circle around the ↻ icon)
-    await page.locator('svg circle[fill="#7c3aed"]').first().click({ force: true })
+    // Rotate the selected pin from its mini-panel.
+    await stackTools(page).getByRole('button', { name: 'Повернуть' }).click()
     await expect(page.getByText(/не разрешает поворот/)).toBeVisible()
   })
 })

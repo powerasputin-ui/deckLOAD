@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
-import { pluralRu } from '@/lib/utils'
+import { fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, autoPlacementKey } from '@/store/calculator'
@@ -82,7 +82,9 @@ import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts } from '@/lib/checks'
-import { gatherPlanFacts } from '@/lib/planFacts'
+import { gatherPlanFacts, stackProblems } from '@/lib/planFacts'
+import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
+import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
 import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, type DeckShipFrame } from '@/lib/stability'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
@@ -300,6 +302,7 @@ export default function Home() {
   const toggleAutoSelection = useCalculator((s) => s.toggleAutoSelection)
   const selectedAutoKeys = useCalculator((s) => s.selectedAutoKeys)
   const clearSelection = useCalculator((s) => s.clearSelection)
+  const selectPins = useCalculator((s) => s.selectPins)
   const toggleManualSelection = useCalculator((s) => s.toggleManualSelection)
   const clearManualSelection = useCalculator((s) => s.clearManualSelection)
   const separationRules = useCalculator((s) => s.separationRules)
@@ -1461,15 +1464,19 @@ export default function Home() {
     const newLayers = currentLayers + delta
     if (newLayers < 1) return { ok: false, reason: 'Минимум 1 ярус', maxPhys }
     if (newLayers > maxPhys) {
-      // maxPhys is bound by the item's own "Ярусов" cap (not the deck's
-      // height ceiling) whenever that cap is set and is the smaller/equal
-      // value actually in effect — including when deck.clearance is 0,
-      // where maxLayersFor now lets an explicit item cap through directly
-      // rather than silently forcing 1 (see maxLayersFor's own comment).
-      const reason =
-        item.maxLayers && item.maxLayers > 0 && item.maxLayers <= maxPhys
-          ? `Превышен лимит ярусов для этого груза (${item.maxLayers}) — измените поле «Ярусов» в списке грузов`
-          : `Превышена предельная высота штабеля — увеличьте её в разделе «Палуба», чтобы добавить ярус`
+      // Which limit binds (see maxLayersFor): without a height budget the
+      // cargo's own «Ярусов» decides, one tier when it is 0; with one, the
+      // «Ярусов» cap when it is the tighter, else the height. The reason is
+      // shown by the inactive «+», so it names the field to change.
+      const userCap = item.maxLayers && item.maxLayers > 0 ? Math.floor(item.maxLayers) : undefined
+      const heightLimited = Number.isFinite(stackHeightBudget([item], deck.clearance, deck.unit))
+      const reason = !heightLimited
+        ? userCap
+          ? `Не больше ${userCap} ${pluralRu(userCap, 'яруса', 'ярусов', 'ярусов')} — так задано в поле «Ярусов» у груза`
+          : 'Один ярус: у груза «Ярусов» 0, а высота штабеля не задана — задайте «Ярусов» у груза или предельную высоту в «Судно» → «Палуба»'
+        : userCap && userCap <= maxPhys
+          ? `Превышен лимит ярусов для этого груза (${userCap}) — измените поле «Ярусов» в списке грузов`
+          : 'Превышена предельная высота штабеля — увеличьте её в «Судно» → «Палуба», чтобы добавить ярус'
       return { ok: false, reason, maxPhys }
     }
     // Sum of layers across all placements of this item (excluding the one(s)
@@ -1708,19 +1715,24 @@ export default function Home() {
   const handleRemovePinned = (id: string) => {
     const pin = pinnedPlacements.find((p) => p.id === id)
     if (!pin) return
-    removePinned(clampedTripIndex, id)
+    removePinUnits(pin)
+    toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
+  }
+  // Drops the pin and takes its units off each cargo's quantity.
+  const removePinUnits = (pin: PinnedPlacement) => {
+    removePinned(clampedTripIndex, pin.id)
     const segments = pin.composition ?? [{ itemId: pin.itemId, layers: pin.layers }]
     const layersByItemId = new Map<string, number>()
     for (const seg of segments) {
       layersByItemId.set(seg.itemId, (layersByItemId.get(seg.itemId) ?? 0) + seg.layers)
     }
-    for (const [itemId, removedLayers] of layersByItemId) {
-      const currentItem = useCalculator.getState().items.find((it) => it.id === itemId)
-      if (currentItem) {
-        useCalculator.getState().updateItem(itemId, { quantity: Math.max(0, currentItem.quantity - removedLayers) })
-      }
+    for (const [itemId, removedLayers] of layersByItemId) takeUnits(itemId, removedLayers)
+  }
+  const takeUnits = (itemId: string, units: number) => {
+    const currentItem = useCalculator.getState().items.find((it) => it.id === itemId)
+    if (currentItem) {
+      useCalculator.getState().updateItem(itemId, { quantity: Math.max(0, currentItem.quantity - units) })
     }
-    toast.info(`Груз «${pin.name}» удалён (−${pin.layers} ед.)`)
   }
 
   // Locks/unlocks a pinned placement — a locked one stops responding to
@@ -2474,6 +2486,179 @@ export default function Home() {
     [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, items, deck, separationRulesInUnit]
   )
 
+  // Esc closes the inspector by dropping the selection (spec 5.4). An armed
+  // tool takes Esc first (above), and so do fields, dialogs and menus.
+  const hasSelection = selectedPinIds.length + selectedAutoKeys.length + selectedManualIds.length > 0
+  const toolArmed = !!(
+    placingLashingPoint ||
+    placingPowerSocket ||
+    placingAnnotation ||
+    activeStampId ||
+    pendingPresetStamp ||
+    drawingCustomShape ||
+    pendingCustomShape ||
+    editingDeckOutline ||
+    drawingRestrictionShape ||
+    drawingRestrictionZoneFreeform
+  )
+  useEffect(() => {
+    if (!hasSelection || toolArmed) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('input, textarea, select, [role="dialog"], [role="alertdialog"], [role="menu"], [data-radix-popper-content-wrapper]')) return
+      clearSelection()
+      clearManualSelection()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [hasSelection, toolArmed, clearSelection, clearManualSelection])
+
+  // The selection for the inspector, the mini-panel and the right-click menu
+  // (spec 6.5, 6.6): one stack with its details and actions, or several with
+  // the actions on all of them.
+  const samePlace = (a: { itemId: string; x: number; y: number }, b: { itemId: string; x: number; y: number }) =>
+    a.itemId === b.itemId && Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01
+  const selectedPin =
+    mode === 'auto' && selectedPinIds.length === 1 && selectedAutoKeys.length === 0
+      ? pinnedPlacements.find((p) => p.id === selectedPinIds[0])
+      : undefined
+  const selectedManual =
+    mode === 'manual' && selectedManualIds.length === 1 ? manualPlacements.find((m) => m.id === selectedManualIds[0]) : undefined
+  const inspected = (() => {
+    const record = selectedPin ?? selectedManual
+    const placed = selectedManual
+      ? result.placed.find((p) => manualPlacements[p.index]?.id === selectedManual.id)
+      : selectedPin
+        ? result.placed.find((p) => samePlace(p, selectedPin))
+        : selectedAutoStack
+    const source = record ?? placed
+    if (!source) return undefined
+    const kind: InspectedStack['kind'] = selectedManual ? 'manual' : selectedPin ? 'pin' : 'auto'
+    const item = items.find((it) => it.id === source.itemId)
+    const layers = Math.max(1, source.layers)
+    // «+» adds one more of the stack's own cargo. Only the height (or the
+    // cargo's «Ярусов» cap) makes it impossible: with every unit placed it
+    // takes one off another stack, and the handler explains anything else.
+    const ownLayers = record?.composition ? placementLayersOfItem(record, source.itemId) : layers
+    const add = checkLayerChange(source.itemId, ownLayers, 1, record?.id)
+    const addBlocked = ownLayers + 1 > add.maxPhys
+    const addReason = item && !(item.height > 0) ? 'У груза не задана высота' : add.reason
+    const unit = UNIT_LABEL[deck.unit]
+    const stack: InspectedStack = {
+      kind,
+      name: source.name,
+      number: cargoNumberByItemId.get(source.itemId),
+      size: item
+        ? `${fmtNumber(item.width)} × ${fmtNumber(item.length)} × ${fmtNumber(item.height)} ${unit}`
+        : `${fmtNumber(source.width)} × ${fmtNumber(source.length)} ${unit}`,
+      unitWeight: !record?.composition && item?.weight ? `${fmtNumber(item.weight)} кг` : undefined,
+      stackWeight: `${fmtTonnes(record ? placementTotalWeightKg(record, items) : (source.weight ?? 0) * layers)} т`,
+      layers,
+      maxLayers: add.maxPhys,
+      addLayer: addBlocked ? { ok: false, reason: addReason } : { ok: true },
+      removeLayer:
+        layers > 1
+          ? { ok: true }
+          : { ok: false, reason: `Минимум 1 ярус — штабель убирается кнопкой «${kind === 'manual' ? 'Убрать с палубы' : 'Удалить'}»` },
+      composition: record?.composition?.map((seg) => ({
+        number: cargoNumberByItemId.get(seg.itemId),
+        name: items.find((it) => it.id === seg.itemId)?.name ?? 'Неизвестный груз',
+        layers: seg.layers,
+      })),
+      state: kind === 'manual' ? 'manual' : kind === 'auto' ? 'auto' : selectedPin?.locked ? 'locked' : 'layout',
+      units: record ? placementTotalLayers(record) : layers,
+      problems: stackProblems({ placed, record, trip: result, deck, items, separationRules: separationRulesInUnit }),
+    }
+    return { stack, anchor: placed ?? source }
+  })()
+  // Built here rather than inside the function above: an auto stack's
+  // actions go through a ref (actOnAutoStack), and a function called during
+  // render mustn't hold them.
+  const inspectedActions: StackActions | undefined = !inspected
+    ? undefined
+    : selectedManual
+      ? {
+          rotate: () => handleRotateManual(selectedManual.id),
+          addLayer: () => handleLayerChangeManual(selectedManual.id, 1),
+          removeLayer: () => handleLayerChangeManual(selectedManual.id, -1),
+          remove: () => {
+            removeManualPlacement(selectedManual.id)
+            clearManualSelection()
+          },
+        }
+      : selectedPin
+        ? {
+            rotate: () => handleRotatePinned(selectedPin.id),
+            addLayer: () => handleLayerChangePinned(selectedPin.id, 1),
+            removeLayer: () => handleLayerChangePinned(selectedPin.id, -1),
+            pin: () => handleTogglePinLock(selectedPin.id, true),
+            unpin: () => removePinned(clampedTripIndex, selectedPin.id),
+            remove: () => handleRemovePinned(selectedPin.id),
+          }
+        : selectedAutoStack
+          ? {
+              rotate: () => actOnAutoStack(selectedAutoStack, { kind: 'rotate' }),
+              addLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: 1 }),
+              removeLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: -1 }),
+              pin: () => {
+                pinAutoStack(selectedAutoStack)
+              },
+              remove: () => actOnAutoStack(selectedAutoStack, { kind: 'remove' }),
+            }
+          : undefined
+  const selectionCount = mode === 'manual' ? selectedManualIds.length : selectedPinIds.length + selectedAutoKeys.length
+  const inspectedSelection = ((): InspectedSelection | undefined => {
+    if (selectionCount < 2) return undefined
+    if (mode === 'manual') {
+      const chosen = manualPlacements.filter((m) => selectedManualIds.includes(m.id))
+      return {
+        count: chosen.length,
+        mode,
+        units: chosen.reduce((sum, m) => sum + placementTotalLayers(m), 0),
+        removeAll: () => {
+          for (const m of chosen) removeManualPlacement(m.id)
+          clearManualSelection()
+          toast.info(`С палубы убрано штабелей: ${chosen.length}`)
+        },
+      }
+    }
+    const pins = pinnedPlacements.filter((p) => selectedPinIds.includes(p.id))
+    const autos = result.placed.filter(
+      (p) => selectedAutoKeys.includes(autoPlacementKey(p)) && !pinnedPlacements.some((pin) => samePlace(pin, p))
+    )
+    const units = pins.reduce((sum, p) => sum + placementTotalLayers(p), 0) + autos.reduce((sum, p) => sum + p.layers, 0)
+    return {
+      count: pins.length + autos.length,
+      mode,
+      units,
+      pinAll:
+        pins.some((p) => !p.locked) || autos.length > 0
+          ? () => {
+              for (const p of pins) if (!p.locked) handleTogglePinLock(p.id, true)
+              const ids = [...pins.map((p) => p.id), ...autos.map((p) => pinAutoStack(p))]
+              selectPins(ids)
+            }
+          : undefined,
+      unpinAll:
+        pins.length > 0
+          ? () => {
+              for (const p of pins) removePinned(clampedTripIndex, p.id)
+            }
+          : undefined,
+      removeAll: () => {
+        for (const p of pins) removePinUnits(p)
+        for (const p of autos) takeUnits(p.itemId, p.layers)
+        clearSelection()
+        toast.info(`Удалено штабелей: ${pins.length + autos.length} (−${units} ед.)`)
+      },
+    }
+  })()
+  const closeInspector = () => {
+    clearSelection()
+    clearManualSelection()
+  }
+
   const statusInput: StatusLineInput = {
     utilization: result.utilization,
     weightKg: result.totalWeight,
@@ -2681,6 +2866,7 @@ export default function Home() {
           )}
           {/* The deck sits in the middle of the area while it fits, and scrolls
               from the top when it doesn't (auto margins, not justify-center). */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
             <div className="my-auto w-full">
               {viewMode === '3d' ? (
@@ -2701,6 +2887,12 @@ export default function Home() {
               <DeckVisualization
                 ref={deckSvgRef}
                 toolbarContainer={canvasToolsEl}
+                selectionTools={inspected && <MiniPanel stack={inspected.stack} actions={inspectedActions!} />}
+                selectionAnchor={inspected?.anchor}
+                selectionMenu={inspected && <StackMenuItems stack={inspected.stack} actions={inspectedActions!} />}
+                // The inspector covers the deck area's right 320 px; its own
+                // 16 px padding (px-4) is part of that.
+                coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
                 printMode={deckPrintMode}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
                 result={result}
@@ -2830,41 +3022,19 @@ export default function Home() {
                 }}
                 onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                 onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}
-                onRemoveManual={removeManualPlacement}
                 onMergeManual={handleMergeManual}
                 manualPlacements={manualPlacements}
                 pinnedPlacements={pinnedPlacements}
                 selectedPinIds={selectedPinIds}
                 selectedAutoKeys={selectedAutoKeys}
                 onToggleAutoSelection={toggleAutoSelection}
-                onAutoStackAction={actOnAutoStack}
-                onUnpin={(id) => removePinned(clampedTripIndex, id)}
                 onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
                 onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
                 onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
                 onMergePinned={handleMergePinned}
-                onRemovePinned={handleRemovePinned}
                 onTogglePinLock={handleTogglePinLock}
-                onRotatePinned={handleRotatePinned}
                 onTogglePinSelection={togglePinSelection}
                 onClearSelection={clearSelection}
-                onRotateManual={handleRotateManual}
-                onLayerChangePinned={handleLayerChangePinned}
-                onLayerChangeManual={handleLayerChangeManual}
-                getLayerInfo={(itemId, currentLayers) => {
-                  const item = items.find((it) => it.id === itemId)
-                  const maxPhys = item ? maxLayersFor(item, deck.clearance, deck.unit) : 1
-                  // Stays clickable even when currently blocked by height/quantity —
-                  // clicking always explains why via a toast (handleLayerChangePinned/
-                  // Manual), rather than presenting a permanently greyed-out button.
-                  const canInc = !!item && item.height > 0
-                  return {
-                    maxPhys,
-                    canIncrease: canInc,
-                    canDecrease: currentLayers > 1,
-                    blockReason: canInc ? undefined : 'У груза не задана высота',
-                  }
-                }}
                 selectedManualIds={selectedManualIds}
                 onToggleManualSelection={toggleManualSelection}
                 onClearManualSelection={clearManualSelection}
@@ -2938,6 +3108,18 @@ export default function Home() {
               />
               )}
             </div>
+          </div>
+          {/* Over the right of the deck while stacks are selected (spec 5.4),
+              after it in the tab order. */}
+          {(inspected || inspectedSelection) && (
+            <Inspector
+              stack={inspected?.stack}
+              actions={inspectedActions}
+              selection={inspectedSelection}
+              onShowChecks={() => openSection('checks')}
+              onClose={closeInspector}
+            />
+          )}
           </div>
           <StatusLine input={statusInput} onOpenSection={openSection} />
         </main>

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, unitsCount } from './helpers'
+import { clearCalculation, unitsCount, stackMenu } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -76,8 +76,9 @@ test.describe('Auto-mode selection and pinning', () => {
     expect(moved[0].locked).toBe(true)
     expect(Math.hypot(moved[0].x - before.x, moved[0].y - before.y)).toBeGreaterThan(0.5)
 
-    // The deck-background menu also has buttons — scope to the item menu.
-    const itemMenu = page.locator('div.fixed.z-50.w-40')
+    // The deck-background menu and the inspector also have buttons — scope
+    // to the stack's own menu.
+    const itemMenu = stackMenu(page)
     await expect(async () => {
       await stack.click({ button: 'right', force: true })
       await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
@@ -108,11 +109,11 @@ test.describe('Auto-mode selection and pinning', () => {
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
-      await expect(page.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
+      await expect(stackMenu(page).getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
-    await page.getByRole('button', { name: 'Закрепить' }).click()
+    await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click()
 
-    const itemMenu = page.locator('div.fixed.z-50.w-40')
+    const itemMenu = stackMenu(page)
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
       await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
@@ -131,7 +132,7 @@ test.describe('Auto-mode selection and pinning', () => {
 
     await expect(async () => {
       await placedRect.click({ button: 'right', force: true })
-      await expect(page.getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
+      await expect(stackMenu(page).getByRole('button', { name: 'Закрепить' })).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
     // The deck-background menu's own items must not appear alongside it.
     await expect(page.getByRole('button', { name: 'Редактировать' })).not.toBeVisible()

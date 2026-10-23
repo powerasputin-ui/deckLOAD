@@ -64,6 +64,16 @@ interface DeckVisualizationProps {
   // Where the canvas tools (zoom, fit, ruler, photo) go: the row above the
   // deck (spec 6.10). Without it they float over the deck's corner.
   toolbarContainer?: HTMLElement | null
+  // The mini-panel of the selected stack (spec 6.6), placed over that stack
+  // (deck units); page.tsx builds it from the selection and its actions.
+  selectionTools?: React.ReactNode
+  selectionAnchor?: { x: number; y: number; width: number; length: number }
+  // The right-click menu of a stack: the inspector's actions. A right-click
+  // selects the stack first, so they act on it.
+  selectionMenu?: React.ReactNode
+  // Pixels at the right of the deck's box covered by an overlay — the
+  // inspector (spec 5.4) — that the selected stack is moved out from under.
+  coveredRight?: number
   // Drawn for the PDF: light colours whatever the theme, the whole deck in
   // view, labels sized for print rather than for this window.
   printMode?: boolean
@@ -100,7 +110,6 @@ interface DeckVisualizationProps {
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
   onUpdateManualClearance?: (id: string, margin: ClearanceMargin) => void
-  onRemoveManual?: (id: string) => void
   // Dragging one placement onto another merges them into a single stacked
   // footprint (layers add up, the dragged one is removed) — either the same
   // item, or a different item with the exact same footprint (e.g. a
@@ -115,36 +124,18 @@ interface DeckVisualizationProps {
   // selectedAutoKeys / autoPlacementKey).
   selectedAutoKeys?: string[]
   onToggleAutoSelection?: (key: string, additive: boolean) => void
-  // A button on a selected auto-placed stack changes it, so the page pins it
-  // (locked) and then performs the action on the pin.
-  onAutoStackAction?: (
-    placed: PlacedItem,
-    action: { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' } | { kind: 'nudge'; dx: number; dy: number }
-  ) => void
   // `locked`: the position is the user's choice (lock badge, kept by
   // «Автораспределение») — set for every pin a user action creates.
   onPinPlaced?: (placed: { itemId: string; name: string; x: number; y: number; width: number; length: number; layers: number; rotated: boolean; color: string; weight?: number; locked?: boolean }) => string | undefined
   onUpdatePinned?: (id: string, x: number, y: number) => void
   onUpdatePinnedClearance?: (id: string, margin: ClearanceMargin) => void
   onMergePinned?: (draggedId: string, targetId: string) => void
-  onRemovePinned?: (id: string) => void
   // Marks a pinned placement as the user's own choice («Закреплён»: lock
   // badge, kept by «Автораспределение»). No longer a drag gate — a fixed
   // stack can still be dragged, and stays fixed where it's dropped.
   onTogglePinLock?: (id: string, locked: boolean) => void
-  // «Вернуть в авто»: drops the pin, the auto-packer places the cargo again.
-  // Unlike onRemovePinned it never touches item.quantity.
-  onUnpin?: (id: string) => void
-  onRotatePinned?: (id: string) => void
   onTogglePinSelection?: (id: string, additive: boolean) => void
   onClearSelection?: () => void
-  // Manual mode rotate
-  onRotateManual?: (id: string) => void
-  // Layer change (per-placement)
-  onLayerChangePinned?: (id: string, delta: number) => void
-  onLayerChangeManual?: (id: string, delta: number) => void
-  // Layer validation info for single-selected placement
-  getLayerInfo?: (itemId: string, currentLayers: number, excludeId?: string) => { maxPhys: number; canIncrease: boolean; canDecrease: boolean; blockReason?: string }
   // Manual multi-selection
   selectedManualIds?: string[]
   onToggleManualSelection?: (id: string, additive: boolean) => void
@@ -223,6 +214,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   result,
   unit,
   toolbarContainer,
+  selectionTools,
+  selectionAnchor,
+  selectionMenu,
+  coveredRight = 0,
   printMode = false,
   deckForwardIsPositiveY = true,
   gap,
@@ -249,28 +244,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onPlace,
   onMoveManual,
   onUpdateManualClearance,
-  onRemoveManual,
   onMergeManual,
   manualPlacements,
   pinnedPlacements,
   selectedPinIds,
   selectedAutoKeys = [],
   onToggleAutoSelection,
-  onAutoStackAction,
-  onUnpin,
   onPinPlaced,
   onUpdatePinned,
   onUpdatePinnedClearance,
   onMergePinned,
-  onRemovePinned,
   onTogglePinLock,
-  onRotatePinned,
   onTogglePinSelection,
   onClearSelection,
-  onRotateManual,
-  onLayerChangePinned,
-  onLayerChangeManual,
-  getLayerInfo,
   selectedManualIds,
   onToggleManualSelection,
   onClearManualSelection,
@@ -313,18 +299,19 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // frame's proportions and letterboxes it). The drawing's labels are sized
   // in screen pixels (spec 9.5: 12 px) whatever the window; 1 until the SVG
   // is laid out (tests) and for print.
-  const [measuredScreenPx, setMeasuredScreenPx] = useState(1)
+  // The SVG's size on screen also places the mini-panel over a stack.
+  const [svgBox, setSvgBox] = useState<{ width: number; height: number } | null>(null)
   useEffect(() => {
     const svg = svgRef.current
     if (!svg || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
       const box = svg.getBoundingClientRect()
-      const k = Math.min(box.width / CANVAS_W, box.height / CANVAS_H)
-      if (k > 0) setMeasuredScreenPx(k)
+      if (box.width > 0 && box.height > 0) setSvgBox({ width: box.width, height: box.height })
     })
     observer.observe(svg)
     return () => observer.disconnect()
   }, [])
+  const measuredScreenPx = svgBox ? Math.min(svgBox.width / CANVAS_W, svgBox.height / CANVAS_H) : 1
   const screenPx = printMode ? 1 : measuredScreenPx
   const setSvgRef = useCallback(
     (node: SVGSVGElement | null) => {
@@ -423,14 +410,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     setBgCalibratePoints([])
     setBgCalibrateText('')
   }
-  // Right-click menu for an individual cargo item — lock/unlock (auto mode
-  // only; manual placements have no separate "pinned/locked" concept, so a
-  // right-click there just suppresses the deck-background menu instead).
-  const [itemContextMenu, setItemContextMenu] = useState<
-    | { x: number; y: number; kind: 'locked'; id: string }
-    | { x: number; y: number; kind: 'unlocked'; placed: PlacedItem; pinId?: string }
-    | null
-  >(null)
+  // Right-click menu of a stack: the inspector's actions (selectionMenu, spec
+  // 6.6). The right-click selects the stack, so they act on it.
+  const [itemContextMenu, setItemContextMenu] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
     if (!itemContextMenu) return
     const close = () => setItemContextMenu(null)
@@ -1104,6 +1086,35 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // ViewBox units per screen pixel: labels drawn on the deck are sized in
   // screen pixels (12 px), whatever the window and zoom.
   const labelPx = 1 / (screenPx * (printMode ? 1 : zoom))
+  // The selected stack in the SVG box's own pixels, for the mini-panel and
+  // for moving the view from under the inspector. The SVG keeps the canvas's
+  // proportions centred in its box, so a viewBox point maps to the box by
+  // the view's scale and that margin. While the stack is dragged, where the
+  // drag started: the view mustn't slide under the pointer.
+  const box = svgBox ?? { width: CANVAS_W, height: CANVAS_H }
+  const selectionRect = (() => {
+    if (!selectionAnchor) return null
+    const start = dragState?.moved ? dragState.startPlace : pinDrag?.moved ? pinDrag.startPlace : null
+    const anchor = start ? { ...selectionAnchor, x: start.x, y: start.y } : selectionAnchor
+    const k = measuredScreenPx * zoom
+    const { sx, sy } = deckToScreen(anchor.x, anchor.y)
+    return {
+      left: (box.width - CANVAS_W * measuredScreenPx) / 2 + (sx - pan.x) * k,
+      top: (box.height - CANVAS_H * measuredScreenPx) / 2 + (sy - pan.y) * k,
+      width: screenSpanW(anchor.width, anchor.length) * k,
+      height: screenSpanH(anchor.width, anchor.length) * k,
+    }
+  })()
+  // Under the inspector the selected stack moves left just far enough to
+  // show beside it, and no further than its own left edge allows (spec 5.4).
+  // The scale stays.
+  const viewShift = (() => {
+    if (!coveredRight || !selectionRect || printMode) return 0
+    const MARGIN = 16
+    const need = selectionRect.left + selectionRect.width + MARGIN - (box.width - coveredRight)
+    return Math.max(0, Math.min(need, selectionRect.left - MARGIN))
+  })()
+
   // The scale bar under the deck: whole grid steps, about 96 px on screen,
   // and the grid step named next to it (spec 6.1).
   const scaleBarStepCount = scaleBarSteps(gridStep * scale * screenPx * (printMode ? 1 : zoom))
@@ -1114,32 +1125,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     label:
       `${shortNumber(scaleBarStepCount * gridStep)} ${UNIT_LABEL[unit]}` +
       (showGrid ? ` · сетка ${shortNumber(gridStep)} ${UNIT_LABEL[unit]}` : ''),
-  }
-
-  // The rotate/delete/layer +/- controls anchor to an item's own corners in
-  // screen space — fine for normal cargo, but a thin item like a pipe
-  // (e.g. 9.5 x 0.15m) renders its short side as a near-zero pixel span, so
-  // two opposite corners collapse onto the same point and the controls pile
-  // up on top of each other. Anchor to a box centered on the item instead,
-  // clamped to a minimum on-screen span, so controls always have room to
-  // sit apart regardless of how thin the real footprint is.
-  const MIN_CONTROL_SPAN = 44
-  const controlAnchors = (x: number, y: number, width: number, length: number) => {
-    const { sx: left, sy: top } = deckToScreen(x, y)
-    const pxW = screenSpanW(width, length)
-    const pxH = screenSpanH(width, length)
-    const effW = Math.max(pxW, MIN_CONTROL_SPAN)
-    const effH = Math.max(pxH, MIN_CONTROL_SPAN)
-    const ccx = left + pxW / 2
-    const ccy = top + pxH / 2
-    return {
-      rcx: ccx - effW / 2,
-      rcy: ccy - effH / 2,
-      dcx: ccx + effW / 2,
-      dcy: ccy - effH / 2,
-      lcx: ccx + effW / 2,
-      lcy: ccy + effH / 2,
-    }
   }
 
   const stampDims = activeStamp
@@ -1601,9 +1586,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
-  // Right-click on an auto-mode item: explicit lock/unlock, without needing
-  // a drag. Stops propagation so this never also opens the deck-background
-  // menu (handleDeckContextMenu) — the two used to fire together before.
+  // Right-click on a stack selects it and opens its menu. Stops propagation
+  // so this never also opens the deck-background menu (handleDeckContextMenu)
+  // — the two used to fire together before.
   const handleAutoContextMenu = (
     e: React.MouseEvent,
     placed: PlacedItem,
@@ -1613,20 +1598,17 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     e.preventDefault()
     e.stopPropagation()
     if (deckToolArmed) return
-    if (existingPin?.locked) {
-      setItemContextMenu({ x: e.clientX, y: e.clientY, kind: 'locked', id: existingPin.id })
-    } else {
-      setItemContextMenu({ x: e.clientX, y: e.clientY, kind: 'unlocked', placed, pinId: existingPin?.id })
-    }
+    if (existingPin) onTogglePinSelection?.(existingPin.id, false)
+    else onToggleAutoSelection?.(autoPlacementKey(placed), false)
+    setItemContextMenu({ x: e.clientX, y: e.clientY })
   }
 
-  // Right-click on a manual placement has nothing to pin/unpin — manual
-  // items have no separate "pinned" concept — so this just suppresses the
-  // deck-background menu instead of doing nothing (which would otherwise
-  // pop the deck menu on top of the cargo, same bug as the auto-mode case).
-  const handleManualContextMenu = (e: React.MouseEvent) => {
+  const handleManualContextMenu = (e: React.MouseEvent, manualId: string) => {
     e.preventDefault()
     e.stopPropagation()
+    if (deckToolArmed) return
+    onToggleManualSelection?.(manualId, false)
+    setItemContextMenu({ x: e.clientX, y: e.clientY })
   }
 
   // Finds another placement of the SAME item substantially overlapped by the
@@ -2456,6 +2438,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             {canvasTools}
           </div>
         )}
+      <div
+        className="relative transition-transform duration-150 motion-reduce:transition-none"
+        style={viewShift > 0 ? { transform: `translateX(${-viewShift}px)` } : undefined}
+      >
       <svg
         ref={setSvgRef}
         viewBox={printMode ? `0 0 ${CANVAS_W} ${CANVAS_H}` : `${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
@@ -3494,7 +3480,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               }
               onItemContextMenu={
                 mode === 'manual' && p.manualId
-                  ? handleManualContextMenu
+                  ? (e) => handleManualContextMenu(e, p.manualId!)
                   : isInteractiveAuto
                     ? (e) => handleAutoContextMenu(e, p, matchingPin)
                     : undefined
@@ -3753,210 +3739,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })}
 
-        {/* Auto mode: rotate + delete + layer buttons on the single selected
-            stack — a pin, or a stack the auto-packer placed, which the first
-            button that changes it pins (onAutoStackAction). */}
-        {isInteractiveAuto &&
-          (() => {
-            const selectedPin =
-              selectedPinIds.length === 1 && selectedAutoKeys.length === 0
-                ? pinnedPlacements.find((p) => p.id === selectedPinIds[0])
-                : undefined
-            const selectedPlaced =
-              !selectedPin && selectedPinIds.length === 0 && selectedAutoKeys.length === 1
-                ? renderedItems.find(
-                    (p) =>
-                      autoPlacementKey(p) === selectedAutoKeys[0] &&
-                      !pinnedPlacements.some(
-                        (pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
-                      )
-                  )
-                : undefined
-            const pin = selectedPin ?? (selectedPlaced ? { ...selectedPlaced, id: '' } : undefined)
-            if (!pin) return null
-            const act = (
-              action: { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' },
-              onPin: (id: string) => void
-            ) => {
-              if (selectedPin) onPin(selectedPin.id)
-              else if (selectedPlaced) onAutoStackAction?.(selectedPlaced, action)
-            }
-            const { rcx, rcy, dcx, dcy, lcx, lcy } = controlAnchors(pin.x, pin.y, pin.width, pin.length)
-            const layerInfo = getLayerInfo?.(pin.itemId, pin.layers, pin.id)
-            const maxPhys = layerInfo?.maxPhys ?? 1
-            const canInc = layerInfo?.canIncrease ?? true
-            const blockReason = layerInfo?.blockReason
-            return (
-              <>
-                {onRotatePinned && (
-                  <g
-                    style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      act({ kind: 'rotate' }, onRotatePinned)
-                    }}
-                  >
-                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
-                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
-                  </g>
-                )}
-                {onLayerChangePinned && (
-                  <g
-                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (canInc) {
-                        act({ kind: 'layers', delta: 1 }, (id) => onLayerChangePinned(id, 1))
-                      } else {
-                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
-                      }
-                    }}
-                  >
-                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
-                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
-                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
-                  </g>
-                )}
-                {onLayerChangePinned && (
-                  <g
-                    style={{ cursor: pin.layers > 1 ? 'pointer' : 'not-allowed' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (pin.layers > 1) {
-                        act({ kind: 'layers', delta: -1 }, (id) => onLayerChangePinned(id, -1))
-                      } else {
-                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
-                      }
-                    }}
-                  >
-                    <title>{pin.layers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
-                    <circle cx={lcx} cy={lcy + 13} r={11} fill={pin.layers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
-                  </g>
-                )}
-                {onRemovePinned && (
-                  <g
-                    style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      act({ kind: 'remove' }, onRemovePinned)
-                    }}
-                  >
-                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
-                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
-                  </g>
-                )}
-                {/* Layer count badge */}
-                <g className="pointer-events-none">
-                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
-                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                    {pin.layers} / {maxPhys} яр.
-                  </text>
-                </g>
-              </>
-            )
-          })()}
-
-        {/* Manual mode: rotate + delete + layer buttons on selected */}
-        {mode === 'manual' &&
-          selectedManual &&
-          (() => {
-            const mp = manualPlacements.find((m) => m.id === selectedManual)
-            if (!mp) return null
-            const { rcx, rcy, dcx, dcy, lcx, lcy } = controlAnchors(mp.x, mp.y, mp.width, mp.length)
-            const currentLayers = Math.max(1, mp.layers)
-            const layerInfo = getLayerInfo?.(mp.itemId, currentLayers, mp.id)
-            const maxPhys = layerInfo?.maxPhys ?? 1
-            const canInc = layerInfo?.canIncrease ?? true
-            const blockReason = layerInfo?.blockReason
-            return (
-              <>
-                {onRotateManual && (
-                  <g
-                    style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onRotateManual(mp.id)
-                    }}
-                  >
-                    <circle cx={rcx} cy={rcy} r={16} fill="transparent" />
-                    <circle cx={rcx} cy={rcy} r={9} fill="#7c3aed" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={rcx} y={rcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">↻</text>
-                  </g>
-                )}
-                {onLayerChangeManual && (
-                  <g
-                    style={{ cursor: canInc ? 'pointer' : 'not-allowed' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (canInc) {
-                        onLayerChangeManual(mp.id, 1)
-                      } else {
-                        toast.warning(blockReason ?? `Невозможно добавить ярус`)
-                      }
-                    }}
-                  >
-                    <title>{canInc ? `Добавить ярус ровно на этом месте (макс. ${maxPhys}) — чтобы сложить груз с соседним, перетащите один на другой` : (blockReason ?? `Заблокировано`)}</title>
-                    <circle cx={lcx} cy={lcy - 13} r={17} fill="transparent" />
-                    <circle cx={lcx} cy={lcy - 13} r={11} fill={canInc ? '#0ea5e9' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={lcx} y={lcy - 12} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">+</text>
-                  </g>
-                )}
-                {onLayerChangeManual && (
-                  <g
-                    style={{ cursor: currentLayers > 1 ? 'pointer' : 'not-allowed' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (currentLayers > 1) {
-                        onLayerChangeManual(mp.id, -1)
-                      } else {
-                        toast.info('Минимум 1 ярус. Для удаления используйте ✕')
-                      }
-                    }}
-                  >
-                    <title>{currentLayers > 1 ? 'Убрать ярус' : 'Минимум 1 ярус'}</title>
-                    <circle cx={lcx} cy={lcy + 13} r={17} fill="transparent" />
-                    <circle cx={lcx} cy={lcy + 13} r={11} fill={currentLayers > 1 ? '#f59e0b' : '#94a3b8'} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={lcx} y={lcy + 14} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#fff" pointerEvents="none">−</text>
-                  </g>
-                )}
-                {onRemoveManual && (
-                  <g
-                    style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onRemoveManual(mp.id)
-                      onClearManualSelection?.()
-                    }}
-                  >
-                    <circle cx={dcx} cy={dcy} r={16} fill="transparent" />
-                    <circle cx={dcx} cy={dcy} r={9} fill="#ef4444" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
-                    <text x={dcx} y={dcy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={700} fill="#fff" pointerEvents="none">✕</text>
-                  </g>
-                )}
-                {/* Layer count badge */}
-                <g className="pointer-events-none">
-                  <rect x={rcx + 11} y={rcy - 4} width={36} height={14} rx={3} fill="rgba(15,23,42,0.85)" />
-                  <text x={rcx + 29} y={rcy + 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-                    {currentLayers} / {maxPhys} яр.
-                  </text>
-                </g>
-              </>
-            )
-          })()}
-
         {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
         {activeStamp && stampDims && hoverPos && !dragState && (() => {
           const clamped = clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad)
@@ -3983,6 +3765,32 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         })()}
 
       </svg>
+      {/* The selected stack's mini-panel (spec 6.6), above the stack or
+          under it when there's no room above; hidden while it is dragged. */}
+      {selectionTools && selectionRect && !printMode && !dragState?.moved && !pinDrag?.moved && (() => {
+        const PANEL_H = 44
+        const above = selectionRect.top - PANEL_H - 6 >= 0
+        // Kept within what is in sight — the box after the shift, short of
+        // the inspector — about a panel's half-width from either side.
+        const HALF = 100
+        const visibleLeft = viewShift + HALF
+        const visibleRight = box.width - coveredRight + viewShift - HALF
+        const centre = Math.min(Math.max(selectionRect.left + selectionRect.width / 2, visibleLeft), Math.max(visibleLeft, visibleRight))
+        return (
+          <div
+            data-mini-panel="true"
+            className="absolute z-10"
+            style={{
+              left: centre,
+              top: above ? selectionRect.top - 6 : selectionRect.top + selectionRect.height + 6,
+              transform: `translate(-50%, ${above ? '-100%' : '0'})`,
+            }}
+          >
+            {selectionTools}
+          </div>
+        )
+      })()}
+      </div>
       {contentsTooltip && (
         <div
           className="pointer-events-none fixed z-50 max-w-64 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-card-foreground shadow-md"
@@ -4026,47 +3834,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           </button>
         </div>
       )}
-      {itemContextMenu && (
+      {itemContextMenu && selectionMenu && (
         <div
-          className="fixed z-50 w-40 rounded-lg border bg-card p-1 shadow-md"
+          role="menu"
+          aria-label="Действия со штабелем"
+          className="fixed z-50 w-56 rounded-lg border bg-surface p-1 shadow-md"
           style={{
-            left: Math.min(itemContextMenu.x, window.innerWidth - 180),
-            top: Math.min(itemContextMenu.y, window.innerHeight - 80),
+            left: Math.min(itemContextMenu.x, window.innerWidth - 232),
+            top: Math.min(itemContextMenu.y, window.innerHeight - 140),
           }}
           onPointerDown={(e) => e.stopPropagation()}
+          // An item does its action, then the menu closes.
+          onClick={() => setItemContextMenu(null)}
         >
-          {itemContextMenu.kind === 'unlocked' ? (
-            <button
-              type="button"
-              className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-              onClick={() => {
-                // pinPlacedStack (pinFromPlaced in the store) creates the pin
-                // already locked and selects it; an existing layout pin is
-                // locked and selected the same way.
-                const pinId = itemContextMenu.pinId
-                if (pinId) {
-                  onTogglePinLock?.(pinId, true)
-                  onTogglePinSelection?.(pinId, false)
-                } else pinPlacedStack(itemContextMenu.placed)
-                setItemContextMenu(null)
-              }}
-            >
-              Закрепить
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-              onClick={() => {
-                // «Вернуть в авто»: the stack goes back to the auto-packer.
-                // Clearing only the lock left an invisible pin behind.
-                onUnpin?.(itemContextMenu.id)
-                setItemContextMenu(null)
-              }}
-            >
-              Вернуть в авто
-            </button>
-          )}
+          {selectionMenu}
         </div>
       )}
       {editingBackgroundImage && (

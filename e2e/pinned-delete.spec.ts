@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { unitsCount } from './helpers'
+import { unitsCount, stackMenu, inspector } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -27,12 +27,12 @@ test.describe('Deleting a pinned cargo item', () => {
       // A plain click only selects (no pinning) since the interaction
       // redesign — right-click "Закрепить" is now the explicit pin action.
       await placedRect.click({ button: 'right', force: true })
-      await page.getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
+      await stackMenu(page).getByRole('button', { name: 'Закрепить' }).click({ timeout: 1000 })
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
-    // Click the red X on the selected pin (only rendered for a single selection).
-    await page.locator('svg circle[fill="#ef4444"]').first().click({ force: true })
+    // «Удалить (−N ед.)» in the inspector of the selected pin.
+    await inspector(page).getByRole('button', { name: /^Удалить/ }).click()
 
     await expect(page.getByText(/удалён/)).toBeVisible()
     const after = await headerBadge(page).textContent()

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, stackTools } from './helpers'
 
 test.describe('Non-rectangular cargo shape rendering', () => {
   test('a preset circle keeps its shape (not a plain box) in manual mode', async ({ page }) => {
@@ -52,9 +52,9 @@ test.describe('Non-rectangular cargo shape rendering', () => {
     const beforeSharedY = beforeYs.some((y, i) => beforeYs.indexOf(y) !== i)
     expect(beforeSharedY).toBe(true)
 
-    // Select it, then click the on-canvas rotate icon (purple circle, ↻).
+    // Select it, then rotate it from the mini-panel over it.
     await triangle.click({ force: true })
-    await page.locator('svg circle[fill="#7c3aed"]').first().click({ force: true })
+    await stackTools(page).getByRole('button', { name: 'Повернуть' }).click()
 
     const after = parsePoints((await triangle.getAttribute('points')) ?? '')
     expect(after).toHaveLength(3)

@@ -12,6 +12,7 @@ import {
   isWholeDeckZone,
   lashingMethodologyFor,
   separationViolations,
+  zoneIdsOverlapping,
   DEFAULT_VESSEL_MOTION,
   DEFAULT_WIRE_ROPE_TYPE,
   WIRE_ROPE_SPECS,
@@ -19,6 +20,7 @@ import {
   type ManualPlacement,
   type PackingResult,
   type PinnedPlacement,
+  type PlacedItem,
   type SeparationRule,
 } from './packing'
 import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
@@ -31,6 +33,8 @@ import {
   type DeckShipFrame,
 } from './stability'
 import { vesselTemplateById } from './vesselTemplates'
+import { UNIT_LABEL } from './units'
+import { fmtNumber } from './utils'
 import type { PlanFacts, TripFacts, TripStability } from './checks'
 
 export interface PlanInput {
@@ -143,40 +147,49 @@ function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {
   return (deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length)) ? undefined : 'unchecked'
 }
 
-// A stack with lashing points is short when the force balance (IMO CSS Code,
-// simplified — the check behind the green and red points on the deck) fails,
-// or when it has fewer points than the required count and no justification
-// (the sidebar asks for one, and it goes into the PDF). Stacks without points
-// aren't judged.
+// A stack's lashing: 'none' without lashing points (not judged); 'short' when
+// the force balance (IMO CSS Code, simplified — the check behind the green
+// and red points on the deck) fails, or when it has fewer points than the
+// required count and no justification (the sidebar asks for one, and it
+// goes into the PDF).
+export function lashingVerdict(
+  r: ManualPlacement | PinnedPlacement,
+  deck: DeckConfig,
+  items: CargoItem[]
+): 'none' | 'ok' | 'short' {
+  const attached = (deck.lashingPoints ?? []).filter((pt) => pt.placementId === r.id)
+  if (attached.length === 0) return 'none'
+  const layers = Math.max(1, placementTotalLayers(r))
+  const balance = checkLashingBalance(
+    { x: r.x, y: r.y, width: r.width, length: r.length, weight: placementTotalWeightKg(r, items) / layers, layers },
+    attached,
+    deck.vesselMotion ?? DEFAULT_VESSEL_MOTION
+  )
+  const breakingLoadKN = WIRE_ROPE_SPECS[r.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE].breakingLoadKN
+  const required = Math.max(
+    0,
+    ...segmentLashingInputs(r, items).map((seg) => {
+      const a = assessLashingRequirement(seg.category, seg.weightKg, breakingLoadKN)
+      return a.status === 'calculated' ? a.requiredCount : 0
+    })
+  )
+  const tooFew = attached.length < required && !r.lashingJustification?.trim()
+  return (balance && !balance.ok) || tooFew ? 'short' : 'ok'
+}
+
 function lashingFacts(
   trips: readonly PackingResult[],
   records: readonly (ManualPlacement | PinnedPlacement)[],
   deck: DeckConfig,
   items: CargoItem[]
 ): PlanFacts['lashing'] {
-  const points = deck.lashingPoints ?? []
   let securedStacks = 0
   let shortStacks = 0
   for (const r of records) {
-    const attached = points.filter((pt) => pt.placementId === r.id)
-    if (attached.length === 0) continue
+    const verdict = lashingVerdict(r, deck, items)
+    if (verdict === 'none') continue
     securedStacks++
-    const layers = Math.max(1, placementTotalLayers(r))
-    const balance = checkLashingBalance(
-      { x: r.x, y: r.y, width: r.width, length: r.length, weight: placementTotalWeightKg(r, items) / layers, layers },
-      attached,
-      deck.vesselMotion ?? DEFAULT_VESSEL_MOTION
-    )
-    const breakingLoadKN = WIRE_ROPE_SPECS[r.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE].breakingLoadKN
-    const required = Math.max(
-      0,
-      ...segmentLashingInputs(r, items).map((seg) => {
-        const a = assessLashingRequirement(seg.category, seg.weightKg, breakingLoadKN)
-        return a.status === 'calculated' ? a.requiredCount : 0
-      })
-    )
-    const tooFew = attached.length < required && !r.lashingJustification?.trim()
-    if ((balance && !balance.ok) || tooFew) shortStacks++
+    if (verdict === 'short') shortStacks++
   }
   const dangerousGoodsStacks = trips.reduce(
     (sum, t) =>
@@ -187,4 +200,54 @@ function lashingFacts(
     0
   )
   return { securedStacks, shortStacks, dangerousGoodsStacks }
+}
+
+// What is wrong with one stack, for its inspector (spec 6.5): the facts the
+// checks count, about this stack only. `placed` is the stack on the open
+// trip's deck (absent when the packer refused the position), `record` its
+// pin or manual placement, when it has one.
+export function stackProblems(p: {
+  placed?: PlacedItem
+  record?: ManualPlacement | PinnedPlacement
+  trip: PackingResult
+  deck: DeckConfig
+  items: CargoItem[]
+  separationRules: readonly SeparationRule[]
+}): string[] {
+  const { placed, record, trip, deck, items } = p
+  const problems: string[] = []
+  if (placed?.conflict) problems.push(`Стоит там, где нельзя: ${placed.conflict.toLowerCase()}`)
+  if (record?.legacyUnknownComposition)
+    problems.push('Состав неизвестен: штабель объединили до того, как расчёт стал хранить состав')
+  if (placed) {
+    const zones = deck.loadZones ?? []
+    if (zones.length > 0) {
+      const loads = new Map(
+        computeZoneLoads(
+          trip.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, totalWeightKg: (pl.weight ?? 0) * pl.stackedCount })),
+          zones,
+          deck.outline,
+          deck.unit
+        ).map((z) => [z.zoneId, z])
+      )
+      for (const id of zoneIdsOverlapping(placed, zones)) {
+        const z = loads.get(id)
+        if (z?.exceeded) problems.push(`Перегружена зона: ${fmtNumber(z.densityTPerM2)} из ${fmtNumber(z.limitTPerM2)} т/м²`)
+      }
+    }
+    const index = trip.placed.indexOf(placed)
+    const pairs = separationViolations(
+      trip.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, categories: placementCategorySet(pl, items) })),
+      p.separationRules
+    )
+    for (const v of pairs) {
+      if (v.a !== index && v.b !== index) continue
+      const other = trip.placed[v.a === index ? v.b : v.a]
+      problems.push(
+        `Сепарация: ${fmtNumber(v.distance)} из ${fmtNumber(v.minDistance)} ${UNIT_LABEL[deck.unit]} до «${other.name}»`
+      )
+    }
+  }
+  if (record && lashingVerdict(record, deck, items) === 'short') problems.push('Не хватает крепления')
+  return problems
 }

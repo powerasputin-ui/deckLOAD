@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, setNumber, unitsCount, openSection } from './helpers'
+import { clearCalculation, setNumber, unitsCount, openSection, stackMenu } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -12,7 +12,7 @@ function headerBadge(page: Page) {
 // all of the item's units can be stacked together.
 async function returnStampedPipeToAuto(page: Page) {
   const pipe = page.locator('svg g[data-cargo-name^="Обсадная труба"]').first()
-  const itemMenu = page.locator('div.fixed.z-50.w-40')
+  const itemMenu = stackMenu(page)
   await expect(async () => {
     await pipe.click({ button: 'right', force: true })
     await expect(itemMenu.getByRole('button', { name: 'Вернуть в авто' })).toBeVisible({ timeout: 1000 })
@@ -90,6 +90,8 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // before the loop) — confirmed via debugging that reusing a stale box
     // for the second nudge missed the rect entirely after the first nudge
     // moved it, silently turning that "nudge" into a no-op.
+    // A dragged stack stays selected, and its inspector covers the right of
+    // the deck — Esc closes it before the next stack is taken.
     for (let i = 0; i < 2; i++) {
       const box = await pipeRects.nth(i).boundingBox()
       if (!box) throw new Error(`pipe rect ${i} not found before nudge`)
@@ -97,6 +99,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 5 })
       await page.mouse.up()
+      await page.keyboard.press('Escape')
     }
 
     // Re-read positions after the nudge (they moved) and drag A fully onto
