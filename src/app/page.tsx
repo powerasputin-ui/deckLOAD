@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, autoPlacementKey } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, autoPlacementKey, DEMO_DECK } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import { vesselTemplateById, type VesselTemplate } from '@/lib/vesselTemplates'
 import {
@@ -942,7 +942,7 @@ export default function Home() {
 
   const handleNewCalculation = () => {
     useCalculator.setState({
-      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+      deck: { ...DEMO_DECK },
       items: [],
       manualPlacements: [],
       pinnedPlacementsByTrip: {},

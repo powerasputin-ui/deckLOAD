@@ -7,7 +7,7 @@ import { clearCalculation, openSection } from './helpers'
 // Backspace on "20" produced "0.1" and typing "24" produced "0.124", and each
 // of those half-typed values reflowed the cargo already on the deck.
 
-// The deck diagram labels its own size ("20 м" along the top). `pattern` is a
+// The deck diagram labels its own size ("8 м" along the side). `pattern` is a
 // regex source, since non-integers may be shown with trailing zeros ("7.50 м").
 const deckLabel = (page: import('@playwright/test').Page, pattern: string) =>
   page.locator('svg text', { hasText: new RegExp(`^${pattern}$`) })
@@ -17,7 +17,7 @@ test.describe('Numeric fields', () => {
     await page.goto('/')
     await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
-    await expect(deckLabel(page, '20 м')).toBeVisible()
+    await expect(deckLabel(page, '8 м')).toBeVisible()
 
     await width.click()
     await width.press('Control+A')
@@ -25,7 +25,7 @@ test.describe('Numeric fields', () => {
 
     // Mid-edit: the field shows the draft, the deck is untouched.
     await expect(width).toHaveValue('24')
-    await expect(deckLabel(page, '20 м')).toBeVisible()
+    await expect(deckLabel(page, '8 м')).toBeVisible()
 
     await width.press('Enter')
     await expect(deckLabel(page, '24 м')).toBeVisible()
@@ -36,19 +36,19 @@ test.describe('Numeric fields', () => {
     await page.goto('/')
     await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
-    await expect(width).toHaveValue('20')
+    await expect(width).toHaveValue('8')
 
     await width.click()
     await width.press('End')
     await width.press('Backspace')
     await width.press('Backspace')
     await expect(width).toHaveValue('')
-    await expect(deckLabel(page, '20 м')).toBeVisible() // not 0.1 м
+    await expect(deckLabel(page, '8 м')).toBeVisible() // not 0.1 м
 
     // Left empty and abandoned: the old value comes back.
     await width.blur()
-    await expect(width).toHaveValue('20')
-    await expect(deckLabel(page, '20 м')).toBeVisible()
+    await expect(width).toHaveValue('8')
+    await expect(deckLabel(page, '8 м')).toBeVisible()
   })
 
   test('a comma works as the decimal separator', async ({ page }) => {
@@ -71,8 +71,8 @@ test.describe('Numeric fields', () => {
     await width.press('Control+A')
     await width.pressSequentially('99')
     await width.press('Escape')
-    await expect(width).toHaveValue('20')
-    await expect(deckLabel(page, '20 м')).toBeVisible()
+    await expect(width).toHaveValue('8')
+    await expect(deckLabel(page, '8 м')).toBeVisible()
   })
 
   test('arrow keys step the value and apply it immediately', async ({ page }) => {
@@ -81,8 +81,8 @@ test.describe('Numeric fields', () => {
     const width = page.getByLabel('Ширина')
     await width.click()
     await width.press('ArrowUp')
-    await expect(width).toHaveValue('20.1')
-    await expect(deckLabel(page, String.raw`20\.1\d* м`)).toBeVisible()
+    await expect(width).toHaveValue('8.1')
+    await expect(deckLabel(page, String.raw`8\.1\d* м`)).toBeVisible()
   })
 
   test('a cargo quantity typed digit by digit is applied once, when finished', async ({ page }) => {

@@ -261,9 +261,10 @@ test.describe('Restriction (obstacle) zones', () => {
     const widthField = page.getByTitle(/^Ширина/)
     await widthField.fill('1')
     await widthField.blur()
+    // «Ширина» runs across the ship: up and down on the drawing.
     await expect(async () => {
       const after = await zonePolygon.boundingBox()
-      expect(after?.width).toBeLessThan(before.width - 20)
+      expect(after?.height).toBeLessThan(before.height - 20)
     }).toPass()
 
     // The round red delete button (matching the one used on placed cargo)

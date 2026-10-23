@@ -132,7 +132,7 @@ describe('Home (page.tsx)', () => {
     expect(screen.getByRole('button', { name: 'Открыть файл…' })).toBeTruthy()
     expect(screen.queryByText('Скачать JSON')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Все расчёты…' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent(/20×8 м/)
+    expect(screen.getByRole('dialog')).toHaveTextContent(/8×20 м/)
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
 
     openSection('Судно')
@@ -184,16 +184,16 @@ describe('Home (page.tsx)', () => {
 
     it('names the sides of the hull and moves them when the bow is switched', () => {
       render(<Home />)
-      // The default deck: 20 m from side to side, 8 m from bow to stern, the
-      // bow at +y.
-      expect(sideEdges()).toEqual({ port: 'left', starboard: 'right', bow: 'bottom', stern: 'top' })
+      // The default deck: 8 m from side to side, 20 m from bow to stern, the
+      // bow at +y — drawn lengthwise, bow at the right.
+      expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'right', stern: 'left' })
       expect(bowLabel()).toBe('↓ НОС')
       openSection('Судно')
       fireEvent.click(screen.getByRole('button', { name: /Остойчивость судна/ }))
-      expect(screen.getByText('Нос на схеме: снизу')).toBeTruthy()
+      expect(screen.getByText('Нос на схеме: справа')).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
-      expect(screen.getByText('Нос на схеме: сверху')).toBeTruthy()
-      expect(sideEdges()).toEqual({ port: 'left', starboard: 'right', bow: 'top', stern: 'bottom' })
+      expect(screen.getByText('Нос на схеме: слева')).toBeTruthy()
+      expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'left', stern: 'right' })
       expect(bowLabel()).toBe('↑ НОС')
     })
 
@@ -2031,6 +2031,27 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
   })
 
+  // The presets keep a long item's long side in «ширина», across the ship:
+  // on the 8 m wide deck a 9.5 m pipe fits only turned fore and aft.
+  it('a stamp that fits the deck only turned is placed turned', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 8, length: 20 } })
+      useCalculator.getState().addItem({ name: 'Труба', width: 9.5, length: 0.25, height: 0.25, quantity: 1, weight: 700 })
+    })
+    const pipe = useCalculator.getState().items.find((it) => it.name === 'Труба')!
+    act(() => {
+      useCalculator.getState().setActiveStamp(pipe.id)
+    })
+    withIdentitySvgTransform(() => {
+      fireEvent.click(document.querySelector('svg.w-full.h-auto')!, { clientX: DECK_CLICK_CLIENT_X, clientY: DECK_CLICK_CLIENT_Y })
+    })
+    const placed = Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    expect(placed).toHaveLength(1)
+    expect(placed[0]).toMatchObject({ width: 0.25, length: 9.5, rotated: true })
+  })
+
   it('onPlace quantity gate: composed [A2,B3] still allows placing more A when A\'s true remaining quantity is positive (K#R23-onplace-allow-A)', () => {
     render(<Home />)
     clearDemoCargo()
@@ -3334,7 +3355,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(useCalculator.getState().items).toEqual([])
     expect(useCalculator.getState().deck.backgroundImage).toBeUndefined()
-    expect(useCalculator.getState().deck.width).toBe(20)
+    expect(useCalculator.getState().deck.width).toBe(8)
   })
 
   // Spec 5.2: «Открыть пример» used to be «Сбросить к примеру», which replaced
@@ -3355,7 +3376,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(projects.find((p) => p.id === activeId)!.name).toBe('Демо-расчёт')
     expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(false)
     expect(useCalculator.getState().items.length).toBeGreaterThan(0)
-    expect(useCalculator.getState().deck.width).toBe(20)
+    expect(useCalculator.getState().deck.width).toBe(8)
 
     act(() => {
       useProjects.getState().switchTo(before!)

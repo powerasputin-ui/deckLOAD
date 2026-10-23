@@ -830,9 +830,13 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
 // stacking-layer counts, 3D render height, and the stability VCG estimate
 // for the exact same named item. Import this in both places instead of
 // re-typing the literals.
+//
+// 8 m across (width runs port to starboard) and 20 m fore and aft: the long
+// side is drawn horizontally with the bow at the right. It was 20 × 8, which
+// in the stability model's terms is a ship wider than it is long.
 export const DEMO_DECK: { width: number; length: number; unit: Unit; gap: number; boardOffset: number; clearance: number } = {
-  width: 20,
-  length: 8,
+  width: 8,
+  length: 20,
   unit: 'm',
   gap: 0.1,
   boardOffset: 0.2,
@@ -898,7 +902,7 @@ export const useCalculator = create<CalculatorState>()(
   // a "flash of wrong content" on every refresh. First-time visitors still
   // get the demo, but through freshProject() in store/projects.ts, which
   // feeds this store via that same load-project effect, not from here.
-  deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+  deck: { ...DEMO_DECK },
   items: [],
   separationRules: [],
   sortStrategy: 'area-desc',

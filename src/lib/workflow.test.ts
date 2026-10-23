@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { sectionMarks, type WorkflowState } from './workflow'
 
 const base: WorkflowState = {
-  deck: { width: 20, length: 8, unit: 'm' },
+  deck: { width: 8, length: 20, unit: 'm' },
   items: [],
   placedUnits: 0,
   pdfUpToDate: false,
@@ -21,12 +21,12 @@ describe('section marks', () => {
 
   it('«Судно» is done for a library vessel, a changed deck or cargo already on the deck', () => {
     expect(sectionMarks({ ...base, vesselTemplateId: 'aleksey-kuznetsov' }).vessel.kind).toBe('done')
-    expect(sectionMarks({ ...base, deck: { width: 24, length: 8, unit: 'm' } }).vessel.kind).toBe('done')
+    expect(sectionMarks({ ...base, deck: { width: 8, length: 24, unit: 'm' } }).vessel.kind).toBe('done')
     expect(sectionMarks({ ...base, items: [{ quantity: 1 }], placedUnits: 1 }).vessel.kind).toBe('done')
   })
 
-  it('the same 20×8 m deck in centimetres is not a change', () => {
-    expect(sectionMarks({ ...base, deck: { width: 2000, length: 800, unit: 'cm' } }).vessel.kind).toBe('none')
+  it('the same 8×20 m deck in centimetres is not a change', () => {
+    expect(sectionMarks({ ...base, deck: { width: 800, length: 2000, unit: 'cm' } }).vessel.kind).toBe('none')
   })
 
   it('«Грузы» is done once a cargo has a quantity of 1 or more', () => {

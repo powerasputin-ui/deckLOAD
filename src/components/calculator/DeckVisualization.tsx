@@ -1127,8 +1127,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       (showGrid ? ` · сетка ${shortNumber(gridStep)} ${UNIT_LABEL[unit]}` : ''),
   }
 
+  // A stamp that doesn't fit the deck the way it lies, but fits turned, is
+  // turned. The presets keep a long item's long side in «ширина», across the
+  // ship, so a 9.5 m pipe would not fit an 8 m wide deck as it lies.
+  const stampFits = (w: number, l: number) => w <= deckWidth - 2 * edgePad + 1e-9 && l <= deckLength - 2 * edgePad + 1e-9
+  const [stampW, stampL] = !activeStamp
+    ? [0, 0]
+    : stampRotated
+      ? [activeStamp.length, activeStamp.width]
+      : [activeStamp.width, activeStamp.length]
+  const stampTurned = !!activeStamp && stampRotated !== (!stampFits(stampW, stampL) && stampFits(stampL, stampW))
   const stampDims = activeStamp
-    ? stampRotated
+    ? stampTurned
       ? { w: activeStamp.length, l: activeStamp.width }
       : { w: activeStamp.width, l: activeStamp.length }
     : null
@@ -1454,7 +1464,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     // always has, but a click that's rejected only because of an invisible
     // inflated margin looked like the click just did nothing.
     const rawOthers = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, rotated: m.rotated, outline: m.outline }))
-    const target = { ...clamped, width: stampDims.w, length: stampDims.l, rotated: stampRotated, outline: activeStamp.outline }
+    const target = { ...clamped, width: stampDims.w, length: stampDims.l, rotated: stampTurned, outline: activeStamp.outline }
     if (collidesPrecisely(target, rawOthers, gap)) {
       return // ignore overlapping placement
     }
@@ -1521,7 +1531,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       width: stampDims.w,
       length: stampDims.l,
       layers: 1,
-      rotated: stampRotated,
+      rotated: stampTurned,
       color: activeStamp.color,
       weight: activeStamp.weight,
     })
@@ -3198,6 +3208,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 strokeDasharray="6 4"
                 className="pointer-events-none"
               />
+              {/* The photo lies under the deck's own layers, which take the
+                  pointer where the two overlap: this takes the drag there.
+                  Not while calibrating, when clicks mark points. */}
+              {!bgCalibrateMode && (
+                <rect
+                  data-photo-drag="true"
+                  x={sx}
+                  y={sy}
+                  width={bw}
+                  height={bh}
+                  fill="transparent"
+                  style={{ cursor: 'move' }}
+                  onPointerDown={handleBgImageBodyPointerDown}
+                />
+              )}
               {corners.map((c) => (
                 <circle
                   key={c.key}
@@ -3757,7 +3782,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               strokeWidth={1.5}
               strokeDasharray="4 2"
               outline={activeStamp.outline}
-              rotated={stampRotated}
+              rotated={stampTurned}
               scale={scale}
             />
           </g>

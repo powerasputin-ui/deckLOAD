@@ -173,8 +173,8 @@ describe('projects store', () => {
     useProjects.getState().hydrate()
     const project = useProjects.getState().projects[0]
     expect(project.deck.unit).toBe('m')
-    expect(project.deck.width).toBe(20)
-    expect(project.deck.length).toBe(8)
+    expect(project.deck.width).toBe(8)
+    expect(project.deck.length).toBe(20)
     expect(project.deck.gap).toBe(0.1)
     expect(project.deck.boardOffset).toBe(0.2)
     expect(project.deck.clearance).toBe(0)

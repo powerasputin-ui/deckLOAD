@@ -1,5 +1,23 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { clearCalculation, setNumber, openSection } from './helpers'
+
+// The outline's vertex handle at the top right of the drawing. Which deck
+// corner that is depends on how the deck is drawn (long side horizontal, bow
+// to the right), so it is found on screen.
+async function topRightHandle(page: Page) {
+  const handles = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]')
+  await expect(handles.first()).toBeVisible()
+  let best = 0
+  let bestScore = -Infinity
+  for (let i = 0; i < (await handles.count()); i++) {
+    const b = await handles.nth(i).boundingBox()
+    if (b && b.x - b.y > bestScore) {
+      bestScore = b.x - b.y
+      best = i
+    }
+  }
+  return handles.nth(best)
+}
 
 test.describe('Non-rectangular deck outline', () => {
   test('right-click menu edits the deck outline, cargo is blocked from the cut corner, and 3D floor matches', async ({ page }) => {
@@ -13,7 +31,7 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByRole('button', { name: 'Редактировать' }).click()
 
     // Drag the top-right vertex handle inward to cut that corner.
-    const handle = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]').nth(1)
+    const handle = await topRightHandle(page)
     await handle.hover()
     await page.mouse.down()
     const box = await handle.boundingBox()
@@ -69,7 +87,7 @@ test.describe('Non-rectangular deck outline', () => {
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
     await page.getByRole('button', { name: 'Редактировать' }).click()
 
-    const handle = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]').nth(1)
+    const handle = await topRightHandle(page)
     await handle.hover()
     await page.mouse.down()
     const box = await handle.boundingBox()
@@ -94,8 +112,10 @@ test.describe('Non-rectangular deck outline', () => {
     await background.click({ position: { x: 3, y: bgBox.height - 3 }, force: true })
     await expect(page.getByText(/0\/3 ед\./)).toBeVisible()
 
-    // Well past the offset on both axes — must succeed.
-    await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.7 }, force: true })
+    // Well past the offset on both axes — must succeed. (Mid-height: lower
+    // down, the 2 m item is pushed back against the offset line, and a rect
+    // touching the outline counts as outside it.)
+    await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.4 }, force: true })
     await expect(page.getByText(/1\/3 ед\./)).toBeVisible()
   })
 
@@ -115,7 +135,7 @@ test.describe('Non-rectangular deck outline', () => {
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
     await page.getByRole('button', { name: 'Редактировать' }).click()
 
-    const handle = page.locator('svg circle[fill="rgba(37,99,235,0.9)"]').nth(1)
+    const handle = await topRightHandle(page)
     await handle.hover()
     await page.mouse.down()
     const box = await handle.boundingBox()

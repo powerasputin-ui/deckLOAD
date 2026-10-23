@@ -33,8 +33,9 @@ export interface WorkflowState {
   pdfUpToDate: boolean
 }
 
-// A new calculation's deck.
-const NEW_DECK_M = { width: 20, length: 8 }
+// A new calculation's deck (DEMO_DECK in the store): 8 m across, 20 m fore
+// and aft.
+const NEW_DECK_M = { width: 8, length: 20 }
 
 function sameLength(a: number, b: number): boolean {
   return Math.abs(a - b) < 1e-6

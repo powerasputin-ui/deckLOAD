@@ -854,8 +854,8 @@ export function normalizeProject(p: Partial<Project>): Project {
     createdAt: typeof p.createdAt === 'number' ? p.createdAt : now,
     updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : now,
     deck: {
-      width: toFinitePositive(p.deck?.width, 20),
-      length: toFinitePositive(p.deck?.length, 8),
+      width: toFinitePositive(p.deck?.width, DEMO_DECK.width),
+      length: toFinitePositive(p.deck?.length, DEMO_DECK.length),
       unit,
       gap: toFiniteNonNegative(p.deck?.gap, 0.1),
       boardOffset: toFiniteNonNegative(p.deck?.boardOffset, 0.2),

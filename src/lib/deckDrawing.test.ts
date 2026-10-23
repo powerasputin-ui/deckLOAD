@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from './deckDrawing'
 
 describe('hull sides on the drawing', () => {
-  it('a deck wider than long (the demo 20×8) keeps bow and stern on its long edges, top and bottom', () => {
+  it('a deck wider than long (20 m across, 8 m fore and aft) keeps bow and stern on its long edges, top and bottom', () => {
     expect(deckDrawnTransposed(20, 8)).toBe(false)
     expect(hullSideEdges(20, 8, true)).toEqual({ port: 'left', starboard: 'right', bow: 'bottom', stern: 'top' })
     expect(hullSideEdges(20, 8, false)).toEqual({ port: 'left', starboard: 'right', bow: 'top', stern: 'bottom' })

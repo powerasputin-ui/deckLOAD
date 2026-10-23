@@ -28,7 +28,7 @@ test.describe('Deck settings', () => {
     // the click+assert pair instead of a single fixed wait.
     await expect(async () => {
       await page.getByRole('radio', { name: 'см' }).click()
-      await expect(page.getByLabel('Ширина')).toHaveValue('2000', { timeout: 1000 })
+      await expect(page.getByLabel('Ширина')).toHaveValue('800', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
     await openSection(page, 'Грузы')
     await expect(page.getByText(/размеры в см/)).toBeVisible()

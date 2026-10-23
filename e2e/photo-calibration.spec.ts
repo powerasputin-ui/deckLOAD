@@ -106,12 +106,11 @@ test.describe('Photo scale calibration', () => {
     // Dragging the photo still works after the canceled calibration.
     const image = page.locator('svg image')
     const before = await image.boundingBox()
-    const svgBox = await page.locator('svg', { has: page.locator('image') }).first().boundingBox()
-    if (!before || !svgBox) throw new Error('photo not found')
-    // Grab it where it sticks out above the deck: over the deck itself the
-    // free-space hatch overlay sits on top of the photo and takes the pointer.
-    const startX = before.x + 30
-    const startY = svgBox.y + 20
+    if (!before) throw new Error('photo not found')
+    // Grab it in the middle, over the deck: the photo lies inside the 8 m
+    // wide deck, and while it is being edited it takes the drag there.
+    const startX = before.x + before.width / 2
+    const startY = before.y + before.height / 2
     await page.mouse.move(startX, startY)
     await page.mouse.down()
     await page.mouse.move(startX + 40, startY, { steps: 5 })
