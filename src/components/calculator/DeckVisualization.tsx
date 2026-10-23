@@ -54,6 +54,20 @@ import {
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
+import {
+  ConflictHatch,
+  HatchPatterns,
+  LayerGhosts,
+  LayersBadge,
+  LockBadge,
+  MergeTargetBadge,
+  MixedLoadMarker,
+  OverloadBadge,
+  PowerSocketGlyph,
+  RotatedMark,
+  lashingPointColor,
+  stackOutline,
+} from './deckMarks'
 import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
@@ -2312,23 +2326,16 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   const canvasTools = (
     <>
+        {/* Spec 6.10: Уменьшить, Увеличить, Вписать, Линейка; the photo stays
+            here until stage 4 moves it to «Судно». The wheel zooms at the
+            cursor too. */}
         <Button
           type="button"
           size="icon"
           variant="ghost"
           className="h-7 w-7 pointer-events-auto"
-          title="Увеличить"
-          disabled={zoom >= MAX_ZOOM}
-          onClick={() => zoomAtCenter(zoom + 0.5)}
-        >
-          <ZoomIn className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="h-7 w-7 pointer-events-auto"
-          title="Уменьшить"
+          aria-label="Уменьшить"
+          title="Уменьшить (колесо мыши — у курсора)"
           disabled={zoom <= MIN_ZOOM}
           onClick={() => zoomAtCenter(zoom - 0.5)}
         >
@@ -2339,7 +2346,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           size="icon"
           variant="ghost"
           className="h-7 w-7 pointer-events-auto"
-          title="Сбросить масштаб"
+          aria-label="Увеличить"
+          title="Увеличить (колесо мыши — у курсора)"
+          disabled={zoom >= MAX_ZOOM}
+          onClick={() => zoomAtCenter(zoom + 0.5)}
+        >
+          <ZoomIn className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7 pointer-events-auto"
+          aria-label="Вписать"
+          title="Вписать палубу целиком"
           disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
           onClick={resetZoom}
         >
@@ -2350,6 +2370,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           size="icon"
           variant={rulerMode ? 'secondary' : 'ghost'}
           className="h-7 w-7 pointer-events-auto"
+          aria-label="Линейка"
+          aria-pressed={rulerMode}
           title="Линейка — измерить расстояние на палубе"
           onClick={() => { setRulerMode((v) => !v); setRulerPoints([]); setRulerHoverPos(null) }}
         >
@@ -2369,6 +2391,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               size="icon"
               variant={backgroundImage ? 'secondary' : 'ghost'}
               className="h-7 w-7 pointer-events-auto"
+              aria-label="Фото палубы"
               title="Фоновое фото палубы"
             >
               <ImageIcon className="h-4 w-4" />
@@ -2481,20 +2504,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               strokeWidth={0.75}
             />
           </pattern>
-          {/* Free space: a light --ok hatch (spec 9.5). Obstacles: a --danger
-              hatch. Line opacity × line coverage gives the spec's ~0.15 and
-              0.12 overall tint. */}
-          <pattern id="free-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="8" height="8" fill="transparent" />
-            <line x1="0" y1="0" x2="0" y2="8" stroke={palette.ok} strokeOpacity={0.4} strokeWidth="3" />
-          </pattern>
-          <pattern id="obstacle-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="6" height="6" fill="transparent" />
-            <line x1="0" y1="0" x2="0" y2="6" stroke={palette.danger} strokeOpacity={0.5} strokeWidth="1.5" />
-          </pattern>
-          <pattern id="conflict-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="6" stroke={palette.danger} strokeOpacity={0.85} strokeWidth="2.5" />
-          </pattern>
+          <HatchPatterns palette={palette} ids={{ free: 'free-hatch', obstacle: 'obstacle-hatch', conflict: 'conflict-hatch' }} />
           {deckOutline && deckOutline.length >= 3 && (
             <clipPath id="deck-outline-clip">
               <polygon points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')} />
@@ -3560,7 +3570,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   y1={deckToScreen(pt.cornerX!, pt.cornerY!).sy}
                   x2={px}
                   y2={py}
-                  stroke={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.6)'}
+                  stroke={check ? lashingPointColor(check) : 'rgba(15,23,42,0.6)'}
                   strokeWidth={isSelected ? 2.5 : 1.5}
                 />
               )}
@@ -3583,7 +3593,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 cx={px}
                 cy={py}
                 r={6}
-                fill={check ? (check.ok ? '#16a34a' : '#dc2626') : 'rgba(15,23,42,0.85)'}
+                fill={lashingPointColor(check)}
                 stroke="#fff"
                 strokeWidth={1.5}
                 style={{ cursor: interactive ? 'move' : 'default' }}
@@ -4257,16 +4267,7 @@ function PlacedRect({
   mergeTarget?: boolean
   dimmed?: boolean
 }) {
-  const strokeColor = mergeTarget
-    ? '#16a34a'
-    : overLoad || conflict
-      ? '#dc2626'
-      : selected
-        ? '#7c3aed'
-        : hovered
-          ? '#94a3b8'
-          : CARGO_INK
-  const strokeWidth = mergeTarget ? 4 : overLoad || conflict ? 3 : selected ? 3 : hovered ? 2 : 1
+  const outline = stackOutline({ mergeTarget, problem: overLoad || !!conflict, selected, hovered, locked })
   const cursor = manualMode
     ? onPointerDown ? 'move' : 'default'
     : onPointerDown
@@ -4331,12 +4332,7 @@ function PlacedRect({
           below — since a rectangular ghost-outline reads wrong for round
           stock, and a thin pipe's real w/h is often sub-pixel anyway. */}
       {item.stackedCount > 1 && item.shape !== 'cylinder' && w >= 16 && h >= 16 && (
-        <g className="pointer-events-none" opacity={0.5}>
-          <rect x={x - 3} y={y - 3} width={w} height={h} rx={2} fill="none" stroke={tone} strokeWidth={1.5} />
-          {item.stackedCount > 2 && (
-            <rect x={x - 6} y={y - 6} width={w} height={h} rx={2} fill="none" stroke={tone} strokeWidth={1.5} />
-          )}
-        </g>
+        <LayerGhosts x={x} y={y} w={w} h={h} count={item.stackedCount} tone={tone} />
       )}
       <FootprintShape
         shape={item.shape}
@@ -4346,9 +4342,9 @@ function PlacedRect({
         h={h}
         fill={tone}
         fillOpacity={1}
-        stroke={strokeColor}
-        strokeWidth={strokeWidth}
-        strokeDasharray={mergeTarget ? '6 3' : locked ? '4 2' : undefined}
+        stroke={outline.stroke}
+        strokeWidth={outline.strokeWidth}
+        strokeDasharray={outline.strokeDasharray}
         outline={item.outline}
         rotated={item.rotated}
         scale={scale}
@@ -4357,30 +4353,9 @@ function PlacedRect({
         nestTiers={item.nest?.tierCounts.length}
       />
       {(overLoadTitle || conflict) && <title>{[conflict, overLoadTitle].filter(Boolean).join(' · ')}</title>}
-      {conflict && (
-        <rect
-          data-conflict="true"
-          x={x}
-          y={y}
-          width={w}
-          height={h}
-          rx={2}
-          fill="url(#conflict-hatch)"
-          className="pointer-events-none"
-        />
-      )}
-      {overLoad && w >= 14 && h >= 14 && (
-        <g className="pointer-events-none">
-          <circle cx={x + 8} cy={y + 8} r={7} fill="#dc2626" stroke="#fff" strokeWidth={1.2} />
-          <text x={x + 8} y={y + 11} fontSize={10} fontWeight={800} textAnchor="middle" fill="#fff" className="select-none">!</text>
-        </g>
-      )}
-      {mergeTarget && (
-        <g className="pointer-events-none">
-          <rect x={x + w / 2 - 14} y={y + h / 2 - 12} width={28} height={24} rx={4} fill="rgba(22,163,74,0.95)" stroke="#fff" strokeWidth={1.5} />
-          <text x={x + w / 2} y={y + h / 2 + 5} textAnchor="middle" fontSize={16} fontWeight={800} fill="#fff" className="select-none">+</text>
-        </g>
-      )}
+      {conflict && <ConflictHatch x={x} y={y} w={w} h={h} patternId="conflict-hatch" />}
+      {overLoad && w >= 14 && h >= 14 && <OverloadBadge x={x} y={y} />}
+      {mergeTarget && <MergeTargetBadge x={x} y={y} w={w} h={h} />}
       {category && showLabels && w > 30 && h > 30 && (
         <g className="pointer-events-none">
           <text x={x + 4} y={y + h - 5} fontSize={8} fill={CARGO_INK} fillOpacity={0.8} className="select-none">
@@ -4388,12 +4363,7 @@ function PlacedRect({
           </text>
         </g>
       )}
-      {locked && (
-        <g className="pointer-events-none">
-          <rect x={x + w - 16} y={y + h - 14} width={14} height={11} rx={2} fill="rgba(124,58,237,0.9)" />
-          <text x={x + w - 9} y={y + h - 4.5} fontSize={9} textAnchor="middle" fill="#fff" className="select-none">🔒</text>
-        </g>
-      )}
+      {locked && <LockBadge x={x} y={y} w={w} h={h} />}
       {showLabels && w > 30 && h > 18 && (() => {
         // A stacked pipe pyramid's true occupied footprint is WIDER than a
         // single pipe's own cross-section the moment more than one layer is
@@ -4423,81 +4393,11 @@ function PlacedRect({
           per-row circle glyph used to draw here for cylinders, but reading
           "4 circles" for a 10-unit pyramid (4-wide base, 3 rows) was
           confusing — this always shows the true number actually stacked. */}
-      {item.stackedCount > 1 && w >= 16 && h >= 16 && (
-        <g className="pointer-events-none">
-          <rect x={x + w - 22} y={y + 2} width={20} height={14} rx={3} fill="rgba(0,0,0,0.55)" />
-          <text x={x + w - 12} y={y + 12} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-            ×{item.stackedCount}
-          </text>
-        </g>
-      )}
-      {/* Mixed-load marker (Round 22) — a composed placement's ×N badge
-          above shows the true TOTAL unit count, but says nothing about
-          those units belonging to more than one physical CargoItem. This
-          small split-circle glyph sits just left of that badge at normal
-          sizes, using the same plain-SVG-primitive style as every other
-          marker in this file (no icon font/library, see PowerSocketGlyph's
-          own doc comment) and neutral slate tones that don't imply any
-          particular constituent's real color.
-          Geometry corrective pass: the un-clamped "x + w - 30" position
-          this started with placed the marker entirely outside the
-          placement's own footprint at the gate's own minimum width (w=16
-          -> marker spans [x-20, x-8], fully left of the box). Clamping mcx
-          to stay within [x + mr, x + w - mr] keeps the marker's circle
-          anchored inside the placement at any gated width. At/below ~w=36
-          this necessarily means overlapping the ×N badge (that badge is
-          20px wide by itself, already wider than the 16px minimum gate —
-          there is no position that avoids ALL overlap in a box that small,
-          the ×N badge itself already overflows the box's own left edge at
-          w=16). Overlapping a sibling badge at an extreme small size is
-          the deliberately accepted tradeoff — floating the marker in empty
-          space with no visible relationship to any placement, which is
-          what the un-clamped formula did, is strictly worse. At normal
-          widths (the vast majority of real placements) the clamp is a
-          no-op and this renders identically to before. */}
-      {mixedLoad && w >= 16 && h >= 16 && (() => {
-        const mr = 6
-        const desiredMcx = x + w - 30
-        const mcx = Math.min(Math.max(desiredMcx, x + mr), x + w - mr)
-        const mcy = y + 9
-        return (
-          <g className="pointer-events-none">
-            <title>Смешанный груз: несколько видов физически в одном месте</title>
-            <circle cx={mcx} cy={mcy} r={mr} fill="#475569" stroke="#fff" strokeWidth={1} />
-            <path
-              d={`M ${mcx} ${mcy - mr} A ${mr} ${mr} 0 0 1 ${mcx} ${mcy + mr} L ${mcx} ${mcy - mr} Z`}
-              fill="#cbd5e1"
-            />
-          </g>
-        )
-      })()}
-      {item.rotated && item.stackedCount <= 1 && w >= 16 && h >= 16 && (
-        <text x={x + w - 6} y={y + 12} fontSize={10} textAnchor="end" fill="rgba(255,255,255,0.9)" className="select-none pointer-events-none">
-          ↻
-        </text>
-      )}
-    </g>
-  )
-}
-
-// Hand-drawn plug glyph for power-socket markers — this file has no
-// precedent for embedding a lucide icon inside the SVG deck canvas
-// (every marker here, e.g. lashing points, is plain SVG primitives), so
-// this stays consistent: a small amber rounded body with two short prong
-// lines, distinct in color from the dark lashing pin / zone strokes so it
-// reads as "electrical" at a glance.
-function PowerSocketGlyph({ x, y, interactive, onPointerDown }: {
-  x: number
-  y: number
-  interactive?: boolean
-  onPointerDown?: (e: React.PointerEvent) => void
-}) {
-  return (
-    <g style={interactive ? { cursor: 'move' } : undefined} onPointerDown={onPointerDown}>
-      {interactive && <circle cx={x} cy={y} r={9} fill="transparent" />}
-      <rect x={x - 6} y={y - 5} width={12} height={10} rx={2.5} fill="#f59e0b" stroke="#fff" strokeWidth={1.2} />
-      <line x1={x - 2.5} y1={y - 5} x2={x - 2.5} y2={y - 8} stroke="#fff" strokeWidth={1.4} />
-      <line x1={x + 2.5} y1={y - 5} x2={x + 2.5} y2={y - 8} stroke="#fff" strokeWidth={1.4} />
+      {item.stackedCount > 1 && w >= 16 && h >= 16 && <LayersBadge x={x} y={y} w={w} count={item.stackedCount} />}
+      {/* Mixed-load marker (Round 22): the ×N badge counts the units but
+          doesn't say they belong to more than one cargo. */}
+      {mixedLoad && w >= 16 && h >= 16 && <MixedLoadMarker x={x} y={y} w={w} />}
+      {item.rotated && item.stackedCount <= 1 && w >= 16 && h >= 16 && <RotatedMark x={x} y={y} w={w} />}
     </g>
   )
 }

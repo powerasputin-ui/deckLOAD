@@ -1,6 +1,21 @@
 import { test, expect } from '@playwright/test'
-import type { Page } from '@playwright/test'
-import { clearCalculation, setNumber, unitsCount, openSection, stackMenu } from './helpers'
+import type { Locator, Page } from '@playwright/test'
+import { clearCalculation, setNumber, unitsCount, openSection, stackMenu, inspector } from './helpers'
+
+// A stack's box once it has stopped moving. Esc closes the inspector, and the
+// view slides back from under it (150 ms): a box read at once is mid-slide.
+async function settledBox(stack: Locator) {
+  const page = stack.page()
+  await expect(inspector(page)).toHaveCount(0)
+  let prev = await stack.boundingBox()
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(50)
+    const box = await stack.boundingBox()
+    if (box && prev && box.x === prev.x && box.y === prev.y && box.width === prev.width && box.height === prev.height) return box
+    prev = box
+  }
+  throw new Error('the stack kept moving')
+}
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -93,8 +108,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // A dragged stack stays selected, and its inspector covers the right of
     // the deck — Esc closes it before the next stack is taken.
     for (let i = 0; i < 2; i++) {
-      const box = await pipeRects.nth(i).boundingBox()
-      if (!box) throw new Error(`pipe rect ${i} not found before nudge`)
+      const box = await settledBox(pipeRects.nth(i))
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 5 })
@@ -106,9 +120,8 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // B to trigger the merge.
     const rectA = pipeRects.nth(0)
     const rectB = pipeRects.nth(1)
-    const freshA = await rectA.boundingBox()
-    const freshB = await rectB.boundingBox()
-    if (!freshA || !freshB) throw new Error('pipe rects not found after nudge')
+    const freshA = await settledBox(rectA)
+    const freshB = await settledBox(rectB)
 
     await page.mouse.move(freshA.x + freshA.width / 2, freshA.y + freshA.height / 2)
     await page.mouse.down()
@@ -163,9 +176,8 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await expect(boxRects).toHaveCount(2)
     await boxRects.nth(0).scrollIntoViewIfNeeded()
 
-    const boxA = await boxRects.nth(0).boundingBox()
-    const boxB = await boxRects.nth(1).boundingBox()
-    if (!boxA || !boxB) throw new Error('box rects not found')
+    const boxA = await settledBox(boxRects.nth(0))
+    const boxB = await settledBox(boxRects.nth(1))
 
     await page.mouse.move(boxA.x + boxA.width / 2, boxA.y + boxA.height / 2)
     await page.mouse.down()
@@ -222,18 +234,19 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
       const labels = await pipePlacements.allTextContents()
       return labels.map((t, i) => [t, i] as const).filter(([t]) => /×8$/.test(t)).map(([t, i]) => ({ copy: t.includes('(копия)'), i }))
     }
+    // A dragged stack stays selected, and its inspector covers the right of
+    // the deck — Esc closes it before the next stack is taken.
     for (const { i } of await eightStacks()) {
-      const box = await pipePlacements.nth(i).boundingBox()
-      if (!box) throw new Error(`pipe stack ${i} not found before nudge`)
+      const box = await settledBox(pipePlacements.nth(i))
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 5 })
       await page.mouse.up()
+      await page.keyboard.press('Escape')
     }
     const stacks = await eightStacks()
-    const from = await pipePlacements.nth(stacks.find((st) => st.copy)!.i).boundingBox()
-    const onto = await pipePlacements.nth(stacks.find((st) => !st.copy)!.i).boundingBox()
-    if (!from || !onto) throw new Error('8-stacks not found after nudge')
+    const from = await settledBox(pipePlacements.nth(stacks.find((st) => st.copy)!.i))
+    const onto = await settledBox(pipePlacements.nth(stacks.find((st) => !st.copy)!.i))
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
     await page.mouse.down()
     await page.mouse.move(onto.x + onto.width / 2, onto.y + onto.height / 2, { steps: 10 })

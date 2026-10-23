@@ -169,6 +169,41 @@ describe('Home (page.tsx)', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
+  // Stage 2 (spec 6.3, 6.10): every mark the deck draws is explained in
+  // «Вид» → «Условные обозначения».
+  it('«Вид» explains the marks of the deck and goes back to its settings', () => {
+    render(<Home />)
+    fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Условные обозначения' }))
+    const stacks = screen.getByRole('region', { name: 'Штабели' })
+    const deck = screen.getByRole('region', { name: 'Палуба' })
+    expect(within(stacks).getByText('Закреплён: авторасстановка его не двигает')).toBeTruthy()
+    expect(within(stacks).getByText('Перегружена зона нагрузки под штабелем')).toBeTruthy()
+    expect(within(deck).getByText('Свободное место внутри отступа от борта')).toBeTruthy()
+    expect(within(deck).getByText('Розетка')).toBeTruthy()
+    // The samples are the deck's own marks: the lock badge, the ×N badge.
+    const sample = (key: string) => document.querySelector(`[data-legend-entry="${key}"] svg`)!
+    expect(sample('locked').textContent).toContain('🔒')
+    expect(sample('layers').textContent).toContain('×3')
+    expect(screen.queryByRole('switch', { name: 'Сетка' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Назад к настройкам вида' }))
+    expect(screen.getByRole('switch', { name: 'Сетка' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Штабели' })).toBeNull()
+  })
+
+  it('the canvas tools come in the order of the spec, each with a name', () => {
+    render(<Home />)
+    const tools = screen.getByRole('button', { name: 'Вписать' }).parentElement!
+    expect(within(tools).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Уменьшить',
+      'Увеличить',
+      'Вписать',
+      'Линейка',
+      'Фото палубы',
+    ])
+  })
+
   // Stage 1 (spec 6.1, 9.5): the deck reads as a drawing — the sides of the
   // hull named around it, its overall dimensions and a scale bar — in the
   // theme's colours on screen and in light ones in the PDF.
