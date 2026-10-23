@@ -20,14 +20,15 @@ test.describe('Lashing points (securing-force check)', () => {
     await page.getByRole('button', { name: /Крепление груза/ }).click()
     await page.getByRole('button', { name: 'Добавить крепление' }).click()
 
-    // First click on the placed item's top-left corner attaches the line's
-    // cargo-side end; second click out on open deck sets the anchor.
-    await background.click({ position: { x: 100, y: 100 }, force: true })
+    // First click on the placed item near its top-left corner attaches the
+    // line's cargo-side end to that corner — a few pixels inside the stack,
+    // since its edge may sit a fraction of a pixel off the click that placed
+    // it; second click out on open deck sets the anchor.
+    await background.click({ position: { x: 106, y: 106 }, force: true })
     await background.click({ position: { x: 250, y: 200 }, force: true })
 
-    // A pass/fail marker (green #16a34a or red #dc2626 anchor circle) must
-    // now be rendered for the attached point.
-    const marker = page.locator('svg circle[fill="#16a34a"], svg circle[fill="#dc2626"]')
+    // A pass/fail marker must now be rendered for the attached point.
+    const marker = page.locator('svg circle[data-lashing-check]')
     await expect(marker.first()).toBeVisible()
 
     // The sidebar's summary line reflects at least one secured/attached point.

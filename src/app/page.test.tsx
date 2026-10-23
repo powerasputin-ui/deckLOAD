@@ -7,6 +7,7 @@ import { useProjects } from '@/store/projects'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { cargoToneForNumber } from '@/lib/cargoPalette'
+import { THEME_TOKENS } from '@/lib/theme'
 
 // The PDF itself needs a real canvas; tests check what the page hands over.
 vi.mock('@/lib/exportPdf', async (importOriginal) => ({
@@ -65,7 +66,7 @@ function clickAutoRedistribute() {
 // The deck's width field, in «Судно».
 function deckWidthInput(): HTMLInputElement {
   openSection('Судно')
-  return screen.getByLabelText('Ширина') as HTMLInputElement
+  return screen.getByLabelText('Ширина (борт–борт)') as HTMLInputElement
 }
 
 function stubLocalStorage() {
@@ -156,6 +157,90 @@ describe('Home (page.tsx)', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Как в системе' }))
     expect(localStorage.getItem('deckload-theme')).toBeNull()
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  // Stage 1 (spec 6.1, 9.5): the deck reads as a drawing — the sides of the
+  // hull named around it, its overall dimensions and a scale bar — in the
+  // theme's colours on screen and in light ones in the PDF.
+  describe('the deck as a drawing', () => {
+    const sideEdges = () =>
+      Object.fromEntries(
+        Array.from(document.querySelectorAll('svg [data-hull-side]')).map((el) => [
+          el.getAttribute('data-hull-side'),
+          el.getAttribute('data-edge'),
+        ])
+      )
+    const bowLabel = () => document.querySelector('svg [data-hull-side="bow"]')!.textContent
+
+    it('names the sides of the hull and moves them when the bow is switched', () => {
+      render(<Home />)
+      // The default deck: 20 m from side to side, 8 m from bow to stern, the
+      // bow at +y.
+      expect(sideEdges()).toEqual({ port: 'left', starboard: 'right', bow: 'bottom', stern: 'top' })
+      expect(bowLabel()).toBe('↓ НОС')
+      openSection('Судно')
+      fireEvent.click(screen.getByRole('button', { name: /Остойчивость судна/ }))
+      expect(screen.getByText('Нос на схеме: снизу')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
+      expect(screen.getByText('Нос на схеме: сверху')).toBeTruthy()
+      expect(sideEdges()).toEqual({ port: 'left', starboard: 'right', bow: 'top', stern: 'bottom' })
+      expect(bowLabel()).toBe('↑ НОС')
+    })
+
+    it('asks to check the bow on a library vessel whose data does not give it', () => {
+      render(<Home />)
+      openSection('Судно')
+      const card = (label: string) => screen.getByText(label).closest('button')!
+      expect(within(card('Коммандер (IMO 9340609)')).getByText('Направление носа по умолчанию — проверьте')).toBeTruthy()
+      expect(within(card('Алексей Кузнецов (IMO 9692648)')).queryByText(/Направление носа/)).toBeNull()
+    })
+
+    it('turns the labels with a deck drawn lengthwise', () => {
+      render(<Home />)
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 16.9, length: 49.1 } })
+      })
+      expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'right', stern: 'left' })
+      expect(bowLabel()).toBe('↓ НОС')
+    })
+
+    it('gives the overall dimensions and a scale bar that names the grid step', () => {
+      render(<Home />)
+      const dimension = (axis: 'horizontal' | 'vertical') =>
+        document.querySelector(`svg [data-dimension="${axis}"] text`)!.textContent
+      const scaleBar = () => document.querySelector('svg [data-scale-bar] text')!.textContent
+      expect(dimension('horizontal')).toBe('20 м')
+      expect(dimension('vertical')).toBe('8 м')
+      expect(scaleBar()).toBe('2 м · сетка 1 м')
+      fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
+      fireEvent.click(screen.getByRole('switch', { name: 'Сетка' }))
+      expect(scaleBar()).toBe('2 м')
+    })
+
+    it('draws the deck in the dark theme on screen and in light colours for the PDF', async () => {
+      vi.mocked(exportDeckPlanToPdf).mockClear()
+      render(
+        <ThemeProvider>
+          <Home />
+        </ThemeProvider>
+      )
+      const deckFill = (svg: Element) => svg.querySelector('rect[data-deck-background]')!.getAttribute('fill')
+      const bowFill = (svg: Element) => svg.querySelector('[data-hull-side="bow"]')!.getAttribute('fill')
+      fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
+      fireEvent.click(screen.getByRole('radio', { name: 'Тёмная' }))
+      const screenSvg = document.querySelector('svg.w-full.h-auto')!
+      expect(deckFill(screenSvg)).toBe(THEME_TOKENS.dark.deck)
+      expect(bowFill(screenSvg)).toBe(THEME_TOKENS.dark.ink)
+
+      fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
+      await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
+      const printed = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].svgEl
+      expect(printed).not.toBe(screenSvg)
+      expect(deckFill(printed)).toBe(THEME_TOKENS.light.deck)
+      expect(bowFill(printed)).toBe(THEME_TOKENS.light.ink)
+      // The screen stays dark.
+      expect(deckFill(document.querySelector('svg.w-full.h-auto')!)).toBe(THEME_TOKENS.dark.deck)
+    })
   })
 
   // Stage 1 (spec 6.2, 9.2): a cargo's number is its place in the list. Its
@@ -2610,7 +2695,14 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // which stays reliable even when two placements share an itemId (same
   // fill color) or when rendering order isn't guaranteed to match array
   // order.
-  const DECK_SCALE_R24 = 49.6
+  // ViewBox units per deck unit, read off the drawn deck rectangle rather
+  // than hard-coded: the margin around the deck (room for the drawing's
+  // labels) decides it. These tests use square decks, which are never drawn
+  // transposed, so the rectangle's width is deck.width units.
+  function deckScaleR24(): number {
+    const deckRect = document.querySelector('rect[data-deck-background]')!
+    return Number(deckRect.getAttribute('width')) / useCalculator.getState().deck.width
+  }
 
   function placementGroupByLabel(label: string): Element {
     const groups = Array.from(document.querySelectorAll('g[data-cargo-placement="true"]'))
@@ -2624,10 +2716,11 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const g = placementGroupByLabel(fromLabel)
     const downX = 100
     const downY = 100
+    const scale = deckScaleR24()
     withIdentitySvgTransform(() => {
       fireEvent.pointerDown(g, { clientX: downX, clientY: downY, button: 0 })
-      fireEvent.pointerMove(svg, { clientX: downX + dxDeck * DECK_SCALE_R24, clientY: downY + dyDeck * DECK_SCALE_R24 })
-      fireEvent.pointerUp(svg, { clientX: downX + dxDeck * DECK_SCALE_R24, clientY: downY + dyDeck * DECK_SCALE_R24 })
+      fireEvent.pointerMove(svg, { clientX: downX + dxDeck * scale, clientY: downY + dyDeck * scale })
+      fireEvent.pointerUp(svg, { clientX: downX + dxDeck * scale, clientY: downY + dyDeck * scale })
     })
   }
 

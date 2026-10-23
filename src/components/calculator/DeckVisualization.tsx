@@ -2,6 +2,10 @@
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useTheme } from '@/components/ThemeProvider'
+import { THEME_TOKENS } from '@/lib/theme'
+import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from '@/lib/deckDrawing'
+import { DeckDrawingFrame, DRAWING_MARGIN_PX } from './DeckDrawingFrame'
 import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler, Move, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -60,6 +64,12 @@ interface DeckVisualizationProps {
   // Where the canvas tools (zoom, fit, ruler, photo) go: the row above the
   // deck (spec 6.10). Without it they float over the deck's corner.
   toolbarContainer?: HTMLElement | null
+  // Drawn for the PDF: light colours whatever the theme, the whole deck in
+  // view, labels sized for print rather than for this window.
+  printMode?: boolean
+  // Which end of the deck length is the bow (stability.ts's convention) —
+  // for the side labels around the deck.
+  deckForwardIsPositiveY?: boolean
   gap: number
   boardOffset: number
   showFreeSpace: boolean
@@ -204,10 +214,17 @@ interface DeckVisualizationProps {
 // a click that wobbles a pixel or two is still a click, not a drag.
 const DRAG_THRESHOLD_PX = 4
 
+// The fixed frame the deck is drawn in (viewBox units); zoom and pan look
+// into it.
+const CANVAS_W = 900
+const CANVAS_H = 560
+
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
   result,
   unit,
   toolbarContainer,
+  printMode = false,
+  deckForwardIsPositiveY = true,
   gap,
   boardOffset,
   showFreeSpace,
@@ -287,7 +304,28 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onSetDrawingRestrictionZoneFreeform,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
+  // The deck's own colours are values from the theme, not CSS variables: the
+  // PDF rasterizes this SVG without the page's stylesheet. Print is light.
+  const { resolved: screenTheme } = useTheme()
+  const palette = THEME_TOKENS[printMode ? 'light' : screenTheme]
   const svgRef = useRef<SVGSVGElement>(null)
+  // Screen pixels per viewBox unit at zoom 1 (the SVG keeps the 900×560
+  // frame's proportions and letterboxes it). The drawing's labels are sized
+  // in screen pixels (spec 9.5: 12 px) whatever the window; 1 until the SVG
+  // is laid out (tests) and for print.
+  const [measuredScreenPx, setMeasuredScreenPx] = useState(1)
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      const box = svg.getBoundingClientRect()
+      const k = Math.min(box.width / CANVAS_W, box.height / CANVAS_H)
+      if (k > 0) setMeasuredScreenPx(k)
+    })
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [])
+  const screenPx = printMode ? 1 : measuredScreenPx
   const setSvgRef = useCallback(
     (node: SVGSVGElement | null) => {
       svgRef.current = node
@@ -296,7 +334,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     },
     [forwardedRef]
   )
-  // Zoom/pan: viewBox stays at maxW×maxH (deck-unit conversion below is
+  // Zoom/pan: viewBox stays at CANVAS_W×CANVAS_H (deck-unit conversion below is
   // unaffected), but we can show a smaller/shifted window into it. Since
   // screenToDeck reads getScreenCTM() (which already reflects the current
   // viewBox), all existing click/drag placement math keeps working unchanged.
@@ -852,37 +890,37 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // screen-size build below goes through `rotated` consistently so deck-local
   // (x, y, width, length) — and everything derived from them elsewhere, e.g.
   // stability.ts's TCG/LCG — never change; only the on-screen picture does.
-  const rotated = deckLength > deckWidth
-  const maxW = 900
-  const maxH = 560
-  const pad = 32
+  const rotated = deckDrawnTransposed(deckWidth, deckLength)
+  // Room around the deck for the drawing's labels (DeckDrawingFrame), in
+  // viewBox units for this window's scale.
+  const pad = Math.min(80, Math.max(32, Math.ceil(DRAWING_MARGIN_PX / screenPx)))
   const rDeckWidth = rotated ? deckLength : deckWidth
   const rDeckHeight = rotated ? deckWidth : deckLength
   const scale = Math.min(
-    (maxW - pad * 2) / Math.max(rDeckWidth, 1),
-    (maxH - pad * 2) / Math.max(rDeckHeight, 1)
+    (CANVAS_W - pad * 2) / Math.max(rDeckWidth, 1),
+    (CANVAS_H - pad * 2) / Math.max(rDeckHeight, 1)
   )
   const w = rDeckWidth * scale
   const h = rDeckHeight * scale
-  const offX = (maxW - w) / 2
-  const offY = (maxH - h) / 2
+  const offX = (CANVAS_W - w) / 2
+  const offY = (CANVAS_H - h) / 2
   // Deck-unit equivalent of the `pad` screen-px margin already reserved
-  // around the deck rectangle in the fixed maxW×maxH canvas — the natural
+  // around the deck rectangle in the fixed CANVAS_W×CANVAS_H canvas — the natural
   // "how far outside the hull is still visible" distance, reused as the
   // standard clearance for annotation placement (see handleAnnotationClick).
   const annotationEdgeMarginDeckUnits = pad / scale
 
-  const gridStep = computeGridStep(deckWidth, deckLength)
+  const gridStep = computeGridStep(deckWidth, deckLength, unit)
 
-  // Zoom/pan window into the fixed maxW×maxH user-space coordinate system.
+  // Zoom/pan window into the fixed CANVAS_W×CANVAS_H user-space coordinate system.
   const MIN_ZOOM = 1
   const MAX_ZOOM = 4
-  const viewBoxW = maxW / zoom
-  const viewBoxH = maxH / zoom
+  const viewBoxW = CANVAS_W / zoom
+  const viewBoxH = CANVAS_H / zoom
   const clampPan = useCallback(
     (p: { x: number; y: number }, vbW: number, vbH: number) => ({
-      x: Math.min(Math.max(p.x, 0), Math.max(0, maxW - vbW)),
-      y: Math.min(Math.max(p.y, 0), Math.max(0, maxH - vbH)),
+      x: Math.min(Math.max(p.x, 0), Math.max(0, CANVAS_W - vbW)),
+      y: Math.min(Math.max(p.y, 0), Math.max(0, CANVAS_H - vbH)),
     }),
     []
   )
@@ -905,15 +943,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   )
 
   // Zooms so that the given point, expressed in the same user-space units as
-  // pan.x/pan.y (0..maxW / 0..maxH), stays visually fixed under itself.
+  // pan.x/pan.y (0..CANVAS_W / 0..CANVAS_H), stays visually fixed under itself.
   const zoomAtPoint = useCallback(
     (anchor: { x: number; y: number }, nextZoom: number) => {
       const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom))
       setZoom((prevZoom) => {
-        const nextW = maxW / clamped
-        const nextH = maxH / clamped
-        const fracX = (anchor.x - pan.x) / (maxW / prevZoom)
-        const fracY = (anchor.y - pan.y) / (maxH / prevZoom)
+        const nextW = CANVAS_W / clamped
+        const nextH = CANVAS_H / clamped
+        const fracX = (anchor.x - pan.x) / (CANVAS_W / prevZoom)
+        const fracY = (anchor.y - pan.y) / (CANVAS_H / prevZoom)
         setPan(clampPan({ x: anchor.x - fracX * nextW, y: anchor.y - fracY * nextH }, nextW, nextH))
         return clamped
       })
@@ -1063,6 +1101,20 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const cornerKey = (k: 'nw' | 'ne' | 'sw' | 'se'): 'nw' | 'ne' | 'sw' | 'se' =>
     rotated ? ({ nw: 'nw', se: 'se', ne: 'sw', sw: 'ne' } as const)[k] : k
   const fmt = fmtNumber
+  // ViewBox units per screen pixel: labels drawn on the deck are sized in
+  // screen pixels (12 px), whatever the window and zoom.
+  const labelPx = 1 / (screenPx * (printMode ? 1 : zoom))
+  // The scale bar under the deck: whole grid steps, about 96 px on screen,
+  // and the grid step named next to it (spec 6.1).
+  const scaleBarStepCount = scaleBarSteps(gridStep * scale * screenPx * (printMode ? 1 : zoom))
+  const shortNumber = (v: number) => String(Math.round(v * 100) / 100)
+  const scaleBar = {
+    stepUnits: gridStep * scale,
+    steps: scaleBarStepCount,
+    label:
+      `${shortNumber(scaleBarStepCount * gridStep)} ${UNIT_LABEL[unit]}` +
+      (showGrid ? ` · сетка ${shortNumber(gridStep)} ${UNIT_LABEL[unit]}` : ''),
+  }
 
   // The rotate/delete/layer +/- controls anchor to an item's own corners in
   // screen space — fine for normal cargo, but a thin item like a pipe
@@ -2406,8 +2458,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         )}
       <svg
         ref={setSvgRef}
-        viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
-        className="w-full h-auto"
+        viewBox={printMode ? `0 0 ${CANVAS_W} ${CANVAS_H}` : `${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
+        className="w-full h-auto font-sans"
+        // For the PDF, which draws this SVG without the page's fonts.
+        fontFamily="'IBM Plex Sans', Arial, sans-serif"
         style={{ maxHeight: 560, cursor: backgroundCursor, touchAction: 'none' }}
         onClick={mode === 'manual' || placingLashingPoint || placingPowerSocket || placingAnnotation || activeStamp || drawingCustomShape || editingDeckOutline || drawingRestrictionShape || drawingRestrictionZoneFreeform || rulerMode || bgCalibrateMode ? handleDeckClick : undefined}
         onPointerDown={handleBackgroundPointerDown}
@@ -2427,16 +2481,23 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <path
               d={`M ${gridStep * scale} 0 L 0 0 0 ${gridStep * scale}`}
               fill="none"
-              stroke="#cbd5e1"
-              strokeWidth={0.5}
+              stroke={palette.deckGrid}
+              strokeWidth={0.75}
             />
           </pattern>
+          {/* Free space: a light --ok hatch (spec 9.5). Obstacles: a --danger
+              hatch. Line opacity × line coverage gives the spec's ~0.15 and
+              0.12 overall tint. */}
           <pattern id="free-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <rect width="8" height="8" fill="transparent" />
-            <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(16,185,129,0.28)" strokeWidth="3" />
+            <line x1="0" y1="0" x2="0" y2="8" stroke={palette.ok} strokeOpacity={0.4} strokeWidth="3" />
+          </pattern>
+          <pattern id="obstacle-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="6" height="6" fill="transparent" />
+            <line x1="0" y1="0" x2="0" y2="6" stroke={palette.danger} strokeOpacity={0.5} strokeWidth="1.5" />
           </pattern>
           <pattern id="conflict-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(220,38,38,0.8)" strokeWidth="2.5" />
+            <line x1="0" y1="0" x2="0" y2="6" stroke={palette.danger} strokeOpacity={0.85} strokeWidth="2.5" />
           </pattern>
           {deckOutline && deckOutline.length >= 3 && (
             <clipPath id="deck-outline-clip">
@@ -2458,8 +2519,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             width={w}
             height={h}
             rx={6}
-            fill="#ffffff"
-            stroke="#1e293b"
+            fill={palette.deck}
+            stroke={palette.deckOutline}
             strokeWidth={2}
           />
         </g>
@@ -2506,11 +2567,24 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           <polygon
             points={deckOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
             fill="none"
-            stroke="#1e293b"
+            stroke={palette.deckOutline}
             strokeWidth={2}
             className="pointer-events-none"
           />
         )}
+
+        <DeckDrawingFrame
+          offX={offX}
+          offY={offY}
+          w={w}
+          h={h}
+          px={labelPx}
+          sides={hullSideEdges(deckWidth, deckLength, deckForwardIsPositiveY)}
+          horizontalDimension={`${fmt(rotated ? deckLength : deckWidth)} ${UNIT_LABEL[unit]}`}
+          verticalDimension={`${fmt(rotated ? deckWidth : deckLength)} ${UNIT_LABEL[unit]}`}
+          scaleBar={scaleBar}
+          palette={palette}
+        />
 
         {/* Edge padding border (usable region) — follows the real contour
             (usableOutline) on a non-rectangular deck instead of a plain
@@ -2521,10 +2595,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             <polygon
               points={usableOutline.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
               fill="none"
-              stroke="#94a3b8"
+              stroke={palette.lineStrong}
               strokeWidth={0.75}
               strokeDasharray="3 3"
-              opacity={0.6}
+              opacity={0.8}
               className="pointer-events-none"
             />
           ) : (
@@ -2540,10 +2614,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               width={Math.max(0, screenSpanW(deckWidth - edgePad * 2, deckLength - edgePad * 2))}
               height={Math.max(0, screenSpanH(deckWidth - edgePad * 2, deckLength - edgePad * 2))}
               fill="none"
-              stroke="#94a3b8"
+              stroke={palette.lineStrong}
               strokeWidth={0.75}
               strokeDasharray="3 3"
-              opacity={0.6}
+              opacity={0.8}
             />
           ))}
 
@@ -2628,20 +2702,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 y={zy}
                 width={zw}
                 height={zh}
-                fill="rgba(59,130,246,0.06)"
-                stroke={isSelected ? '#2563eb' : 'rgba(59,130,246,0.55)'}
-                strokeWidth={isSelected ? 2 : 1}
+                fill={palette.ink2}
+                fillOpacity={0.04}
+                stroke={isSelected ? palette.accent : palette.ink2}
+                strokeWidth={isSelected ? 2 : 1.25}
                 strokeDasharray="6 3"
                 style={{ cursor: interactive ? 'move' : 'default' }}
                 onPointerDown={interactive ? (e) => handleZonePointerDown(e, z) : undefined}
               />
-              {zw > 30 && zh > 16 && (
+              {zw > 48 * labelPx && zh > 18 * labelPx && (
                 <text
-                  x={zx + 4}
-                  y={zy + 13}
-                  fontSize={10}
+                  x={zx + 4 * labelPx}
+                  y={zy + 14 * labelPx}
+                  fontSize={12 * labelPx}
                   fontWeight={600}
-                  fill="rgba(37,99,235,0.9)"
+                  fill={palette.ink2}
                   className="select-none pointer-events-none"
                 >
                   {z.maxLoadPerArea} т/м²
@@ -2651,10 +2726,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 corners.map((c) => (
                   <circle
                     key={c.key}
+                    data-zone-handle={c.key}
                     cx={c.cx}
                     cy={c.cy}
                     r={5}
-                    fill="#2563eb"
+                    fill={palette.accent}
                     stroke="#fff"
                     strokeWidth={1.2}
                     style={{ cursor: (c.key === 'nw' || c.key === 'se') ? 'nwse-resize' : 'nesw-resize' }}
@@ -2711,7 +2787,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   width={zw}
                   height={zh}
                   fill="none"
-                  stroke="rgba(220,38,38,0.5)"
+                  stroke={palette.danger}
+                  strokeOpacity={0.6}
                   strokeWidth={1.5}
                   strokeDasharray="5 3"
                   className="pointer-events-none"
@@ -2759,9 +2836,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           return (
             <g key={`rzone-${z.id}`}>
               <polygon
+                data-restriction-zone={z.id}
                 points={points}
-                fill="rgba(220,38,38,0.12)"
-                stroke={isSelected ? '#dc2626' : 'rgba(220,38,38,0.7)'}
+                fill="url(#obstacle-hatch)"
+                stroke={palette.danger}
+                strokeOpacity={isSelected ? 1 : 0.8}
                 strokeWidth={isSelected ? 2 : 1.5}
                 strokeDasharray="5 3"
                 style={{ cursor: interactive ? 'move' : 'default' }}
@@ -2783,15 +2862,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
                 }
               />
-              {zw > 24 && zh > 14 && (
+              {zw > 24 * labelPx && zh > 16 * labelPx && (
                 <text
                   x={zx + zw / 2}
-                  y={zy + zh / 2 - (isSelected ? 6 : 0)}
-                  fontSize={10}
+                  y={zy + zh / 2 - (isSelected ? 7 * labelPx : 0)}
+                  fontSize={12 * labelPx}
                   fontWeight={600}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  fill="#991b1b"
+                  fill={palette.danger}
                   className="select-none pointer-events-none"
                 >
                   {z.name}
@@ -2801,15 +2880,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   clutter the deck for every zone at once. Exact editing
                   happens via the width/length fields in the Presets bar's
                   zone chip; this is a "what am I looking at" readout. */}
-              {isSelected && zw > 24 && zh > 14 && (
+              {isSelected && zw > 24 * labelPx && zh > 30 * labelPx && (
                 <text
                   x={zx + zw / 2}
-                  y={zy + zh / 2 + 8}
-                  fontSize={9}
+                  y={zy + zh / 2 + 8 * labelPx}
+                  fontSize={12 * labelPx}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  fill="#991b1b"
-                  className="select-none pointer-events-none"
+                  fill={palette.danger}
+                  className="select-none pointer-events-none font-mono"
                 >
                   {fmt(z.width)} × {fmt(z.length)} {UNIT_LABEL[unit]}
                 </text>
@@ -2827,12 +2906,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                   {corners.map((c) => (
                     <rect
                       key={c.key}
+                      data-restriction-zone-handle={c.key}
                       x={c.cx - 5}
                       y={c.cy - 5}
                       width={10}
                       height={10}
                       fill="#fff"
-                      stroke="#dc2626"
+                      stroke={palette.danger}
                       strokeWidth={1.5}
                       style={{ cursor: c.key === 'nw' || c.key === 'se' ? 'nwse-resize' : 'nesw-resize' }}
                       onPointerDown={(e) => {
@@ -2902,6 +2982,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             reappear once "Добавить" was clicked, which read as broken. */}
         {pendingZoneDraft && (
           <polygon
+            data-restriction-zone="draft"
             points={restrictionZonePolygon(pendingZoneDraft).map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')}
             fill="rgba(220,38,38,0.15)"
             stroke="#dc2626"
@@ -3487,6 +3568,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </text>
               )}
               <circle
+                data-lashing-check={check ? (check.ok ? 'ok' : 'fail') : undefined}
                 cx={px}
                 cy={py}
                 r={6}
@@ -3519,7 +3601,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </>
               )}
               {pt.label && (
-                <text x={px + 8} y={py + 3} fontSize={9} fill="rgba(15,23,42,0.9)" className="select-none pointer-events-none">
+                <text x={px + 8} y={py + 3} fontSize={9} fill={palette.ink} className="select-none pointer-events-none">
                   {pt.label}
                 </text>
               )}
@@ -3900,25 +3982,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })()}
 
-        {/* Dimension labels — the horizontal (top) label always names
-            whichever real dimension is currently drawn along the screen's
-            horizontal axis, and the vertical (side) label the other one, so
-            the printed numbers stay next to the side of the box they
-            actually measure regardless of `rotated`. */}
-        <text x={offX + w / 2} y={offY - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#0f172a">
-          {fmt(rotated ? deckLength : deckWidth)} {UNIT_LABEL[unit]}
-        </text>
-        <text
-          x={offX - 16}
-          y={offY + h / 2}
-          textAnchor="middle"
-          fontSize={13}
-          fontWeight={600}
-          fill="#0f172a"
-          transform={`rotate(-90 ${offX - 16} ${offY + h / 2})`}
-        >
-          {fmt(rotated ? deckWidth : deckLength)} {UNIT_LABEL[unit]}
-        </text>
       </svg>
       {contentsTooltip && (
         <div

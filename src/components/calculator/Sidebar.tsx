@@ -44,6 +44,7 @@ import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
 import { BlockOpenState } from '@/components/shell/SectionPanel'
+import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -155,7 +156,7 @@ export function DeckSettings() {
       <div className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <label htmlFor={`${uid}-width`} className="text-xs text-muted-foreground">Ширина</label>
+            <label htmlFor={`${uid}-width`} className="text-xs text-muted-foreground">Ширина (борт–борт)</label>
             <NumberField
               id={`${uid}-width`}
               min={0.1}
@@ -170,7 +171,7 @@ export function DeckSettings() {
             />
           </div>
           <div className="space-y-1">
-            <label htmlFor={`${uid}-length`} className="text-xs text-muted-foreground">Длина</label>
+            <label htmlFor={`${uid}-length`} className="text-xs text-muted-foreground">Длина (нос–корма)</label>
             <NumberField
               id={`${uid}-length`}
               min={0.1}
@@ -856,6 +857,9 @@ export function VesselStabilitySection() {
   const vessel = useCalculator((s) => s.deck.vessel)
   const shipFrame = useCalculator((s) => s.deck.shipFrame)
   const forwardIsPositiveY = useCalculator((s) => s.deck.deckForwardIsPositiveY ?? true)
+  const deckWidth = useCalculator((s) => s.deck.width)
+  const deckLength = useCalculator((s) => s.deck.length)
+  const bowEdge = hullSideEdges(deckWidth, deckLength, forwardIsPositiveY).bow
   const setVesselParticulars = useCalculator((s) => s.setVesselParticulars)
   const addHydrostaticPoint = useCalculator((s) => s.addHydrostaticPoint)
   const updateHydrostaticPoint = useCalculator((s) => s.updateHydrostaticPoint)
@@ -1070,7 +1074,9 @@ export function VesselStabilitySection() {
             />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Нос палубы: {forwardIsPositiveY ? '+Y' : '−Y'}</span>
+            <span className="text-xs text-muted-foreground" title={`В расчёте нос на ${forwardIsPositiveY ? '+Y' : '−Y'} палубы`}>
+              Нос на схеме: {DRAWING_EDGE_WORD[bowEdge]}
+            </span>
             <Button
               size="sm"
               variant="outline"

@@ -57,6 +57,7 @@ import {
   type SeparationRule,
   type LashingPoint,
   type RestrictionZone,
+  computeGridStep,
 } from './packing'
 import { placementCategorySet, resolveUniformOutline, resolveUniformShape, segmentsOf } from './placementComposition'
 
@@ -3321,5 +3322,30 @@ describe('UnplacedItem.kind', () => {
 
     const manual = packingResultFromManual(3, 1, [], 2, [box])
     expect(manual.unplaced.map((u) => u.kind)).toEqual(['manual'])
+  })
+})
+
+// Spec 6.1: 0.5 m up to 6 m, 1 m up to 20 m, 5 m up to 60 m, 10 m beyond —
+// in the deck's own unit. A 20 m deck kept in centimetres used to get a
+// 10 cm grid (the thresholds were applied to the bare 2000).
+describe('computeGridStep', () => {
+  it('steps by the deck size in metres', () => {
+    expect(computeGridStep(5, 3)).toBe(0.5)
+    expect(computeGridStep(20, 8)).toBe(1)
+    expect(computeGridStep(49.1, 16.9)).toBe(5)
+    expect(computeGridStep(120, 30)).toBe(10)
+  })
+
+  it('gives the same step in centimetres', () => {
+    expect(computeGridStep(500, 300, 'cm')).toBe(50)
+    expect(computeGridStep(2000, 800, 'cm')).toBe(100)
+    expect(computeGridStep(4910, 1690, 'cm')).toBe(500)
+  })
+
+  it('in feet, picks the nearest 1-2-5 number of feet', () => {
+    // 20 m ≈ 65.6 ft → 1 m ≈ 3.28 ft → 5 ft; 49.1 m → 5 m ≈ 16.4 ft → 20 ft.
+    expect(computeGridStep(65.6, 26.2, 'ft')).toBe(5)
+    expect(computeGridStep(161.1, 55.4, 'ft')).toBe(20)
+    expect(computeGridStep(16.4, 9.8, 'ft')).toBe(2)
   })
 })

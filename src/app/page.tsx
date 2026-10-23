@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import dynamic from 'next/dynamic'
+import { flushSync } from 'react-dom'
 import { v4 as uuid } from 'uuid'
 import {
   AlertTriangle,
@@ -886,6 +887,19 @@ export default function Home() {
   const pdfUpToDate =
     pdfMadeFrom !== null && (Object.keys(calculation) as (keyof typeof calculation)[]).every((k) => pdfMadeFrom[k] === calculation[k])
 
+  // The PDF gets the deck as drawn for print — light colours whatever the
+  // theme, the whole deck, labels sized for paper (DeckVisualization's
+  // printMode). It is switched on only for the moment of copying the SVG:
+  // flushSync renders it, the copy is taken, flushSync switches it back, all
+  // before the browser paints, so the screen never shows it.
+  const [deckPrintMode, setDeckPrintMode] = useState(false)
+  const copyDeckForPrint = (svgEl: SVGSVGElement): SVGSVGElement => {
+    flushSync(() => setDeckPrintMode(true))
+    const copy = svgEl.cloneNode(true) as SVGSVGElement
+    flushSync(() => setDeckPrintMode(false))
+    return copy
+  }
+
   const handleExportPdf = async () => {
     // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D —
     // exporting from 3D used to fail with «Схема палубы ещё не готова».
@@ -911,7 +925,7 @@ export default function Home() {
     const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
     const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
     try {
-      await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, cargoNumberByItemId })
+      await exportDeckPlanToPdf({ svgEl: copyDeckForPrint(svgEl), deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, cargoNumberByItemId })
       setPdfMadeFrom(calculation)
       toast.success('PDF скачан')
     } catch {
@@ -1226,7 +1240,7 @@ export default function Home() {
   // same edge, outline and collision checks as a drag. A pin moved this way
   // becomes «Закреплён».
   const nudgePlacement = (selectedId: string, dx: number, dy: number) => {
-    const step = computeGridStep(deck.width, deck.length) / 4
+    const step = computeGridStep(deck.width, deck.length, deck.unit) / 4
     const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
     const current = placements.find((p) => p.id === selectedId)
     if (!current) return
@@ -2662,6 +2676,8 @@ export default function Home() {
               <DeckVisualization
                 ref={deckSvgRef}
                 toolbarContainer={canvasToolsEl}
+                printMode={deckPrintMode}
+                deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
                 result={result}
                 unit={deck.unit}
                 gap={deck.gap}

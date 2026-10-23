@@ -89,7 +89,7 @@ test.describe('Load zones on a non-rectangular deck', () => {
     expect(afterMoveX).not.toBeCloseTo(startX, 1)
 
     // Resize it via a corner handle — should also actually resize.
-    const corner = page.locator('svg circle[fill="#2563eb"]').first()
+    const corner = page.locator('svg circle[data-zone-handle]').first()
     const cBox = await corner.boundingBox()
     if (!cBox) throw new Error('resize handle not found')
     const cx = cBox.x + cBox.width / 2

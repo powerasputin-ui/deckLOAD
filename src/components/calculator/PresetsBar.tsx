@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL, convertLength } from '@/store/calculator'
-import { type CargoShape, type RestrictionZoneShape, type AnnotationKind } from '@/lib/packing'
+import { type CargoShape, type RestrictionZoneShape } from '@/lib/packing'
 import { computePipeNest, REAL_CRATE_HEIGHT_M_OD1073M } from '@/lib/pipeNest'
 import { cn, fmtNumber } from '@/lib/utils'
 
@@ -25,13 +25,6 @@ const RESTRICTION_ZONE_CATEGORY_KEY = '__restriction_zones__'
 // Same reasoning as RESTRICTION_ZONE_CATEGORY_KEY — annotations aren't
 // CargoItem-shaped either.
 const ANNOTATIONS_CATEGORY_KEY = '__annotations__'
-
-const ANNOTATION_STAMPS: { kind: Exclude<AnnotationKind, 'note'>; label: string }[] = [
-  { kind: 'bow', label: 'Нос' },
-  { kind: 'stern', label: 'Корма' },
-  { kind: 'port', label: 'Лево борт' },
-  { kind: 'starboard', label: 'Право борт' },
-]
 
 const RESTRICTION_ZONE_SHAPES: { shapeType: RestrictionZoneShape; label: string; Icon: typeof Square }[] = [
   { shapeType: 'rect', label: 'Прямоугольник', Icon: Square },
@@ -367,23 +360,6 @@ export function PresetsBar({ onPlaceCustomShape }: { onPlaceCustomShape: (name: 
           )}
           {activePresetCategory === ANNOTATIONS_CATEGORY_KEY && (
             <div className="thin-scrollbar flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-0.5">
-              <div className="flex shrink-0 items-center gap-1 rounded-lg border p-1.5">
-                <span className="px-0.5 text-xs text-muted-foreground">Метка:</span>
-                {ANNOTATION_STAMPS.map(({ kind, label }) => (
-                  <button
-                    key={kind}
-                    onClick={() => setPlacingAnnotation(placingAnnotation?.kind === kind ? null : { kind, withLeader: false })}
-                    className={cn(
-                      'h-6 px-2 flex items-center justify-center rounded-md border text-xs',
-                      placingAnnotation?.kind === kind
-                        ? 'border-slate-400 bg-slate-100 text-slate-700 ring-1 ring-slate-300 dark:bg-slate-800/40 dark:text-slate-200 dark:ring-slate-600'
-                        : 'border-border hover:bg-accent'
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
               <button
                 onClick={() => setPlacingAnnotation(placingAnnotation?.kind === 'note' ? null : { kind: 'note', withLeader })}
                 className={cn(

@@ -46,7 +46,7 @@ test.describe('Restriction (obstacle) zones', () => {
     // Click the actual rendered zone polygon's own screen-space centroid
     // (not a guessed offset from the drag gesture) — robust against any
     // rounding/clamping the draw-to-create step applies to the raw drag.
-    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
@@ -79,7 +79,7 @@ test.describe('Restriction (obstacle) zones', () => {
     // The finalize form is open, but the drawn shape must already be on
     // screen at this point, not only after "Добавить" is clicked.
     await expect(page.getByPlaceholder('Название зоны')).toBeVisible()
-    await expect(page.locator('svg polygon[fill^="rgba(220"]').first()).toBeVisible()
+    await expect(page.locator('svg polygon[data-restriction-zone]').first()).toBeVisible()
   })
 
   test('freeform point-by-point drawing produces a zone that also hard-blocks placement', async ({ page }) => {
@@ -104,7 +104,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
     const zoneNameInput = page.getByPlaceholder('Название зоны')
     await expect(zoneNameInput).toBeVisible()
-    await expect(page.locator('svg polygon[fill^="rgba(220"]').first()).toBeVisible()
+    await expect(page.locator('svg polygon[data-restriction-zone]').first()).toBeVisible()
     const zoneForm = zoneNameInput.locator('xpath=ancestor::div[contains(@class, "absolute")][1]')
     await zoneForm.getByRole('button', { name: 'Фальшборт' }).click()
     await zoneForm.getByRole('button', { name: 'Добавить' }).click()
@@ -112,7 +112,7 @@ test.describe('Restriction (obstacle) zones', () => {
 
     await page.getByRole('button', { name: 'Контейнеры' }).click()
     await page.getByRole('button', { name: /Паллета EUR/ }).click()
-    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
@@ -145,14 +145,14 @@ test.describe('Restriction (obstacle) zones', () => {
     await expect(zoneNameInput).toBeHidden()
 
     // Select the zone (click its body without moving it).
-    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const before = await zonePolygon.boundingBox()
     if (!before) throw new Error('zone polygon not found')
     await page.mouse.click(before.x + before.width / 2, before.y + before.height / 2)
 
     // A freeform ('custom') zone must now show 4 corner resize handles,
     // same as the 4 bbox-derived shapes — this used to be entirely absent.
-    const handles = page.locator('svg rect[stroke="#dc2626"]')
+    const handles = page.locator('svg rect[data-restriction-zone-handle]')
     await expect(handles).toHaveCount(4)
 
     // Drag the SE handle outward — the outline must scale with the bbox,
@@ -179,7 +179,7 @@ test.describe('Restriction (obstacle) zones', () => {
     const delBox = await deleteButton.boundingBox()
     if (!delBox) throw new Error('delete button not found')
     await page.mouse.click(delBox.x + delBox.width / 2, delBox.y + delBox.height / 2)
-    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(0)
+    await expect(page.locator('svg polygon[data-restriction-zone]')).toHaveCount(0)
   })
 
   test('dragging a freeform zone across many pointer-move steps keeps its outline in sync with its position (regression: used to drift off the deck)', async ({ page }) => {
@@ -207,7 +207,7 @@ test.describe('Restriction (obstacle) zones', () => {
     await zoneForm.getByRole('button', { name: 'Добавить' }).click()
     await expect(zoneNameInput).toBeHidden()
 
-    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const before = await zonePolygon.boundingBox()
     if (!before) throw new Error('zone polygon not found')
 
@@ -254,7 +254,7 @@ test.describe('Restriction (obstacle) zones', () => {
     await zoneForm.getByRole('button', { name: 'Добавить' }).click()
     await expect(zoneNameInput).toBeHidden()
 
-    const zonePolygon = page.locator('svg polygon[fill^="rgba(220"]').first()
+    const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const before = await zonePolygon.boundingBox()
     if (!before) throw new Error('zone polygon not found')
 
@@ -269,7 +269,7 @@ test.describe('Restriction (obstacle) zones', () => {
     // The round red delete button (matching the one used on placed cargo)
     // removes the zone.
     await page.getByTitle('Удалить зону').click()
-    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(0)
+    await expect(page.locator('svg polygon[data-restriction-zone]')).toHaveCount(0)
   })
 
   test('the drawing tool disarms itself the moment a zone is finished, so a stray click does not start a second one (regression)', async ({ page }) => {
@@ -300,6 +300,6 @@ test.describe('Restriction (obstacle) zones', () => {
     // A click on empty deck while the name form is still open must not
     // start a second drag-to-create.
     await background.click({ position: { x: 250, y: 200 }, force: true })
-    await expect(page.locator('svg polygon[fill^="rgba(220"]')).toHaveCount(1)
+    await expect(page.locator('svg polygon[data-restriction-zone]')).toHaveCount(1)
   })
 })

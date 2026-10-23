@@ -355,8 +355,10 @@ export interface PowerSocket {
 // A free-form text annotation — AutoCAD-style leader note. Purely
 // documentation/communication, never read by any calculation (unlike
 // deckForwardIsPositiveY, which is the real, separately-set direction the
-// stability solver uses). `kind` only changes which quick-stamp button in
-// PresetsBar pre-filled its text — it never changes behavior or rendering.
+// stability solver uses). `kind` only says which quick-stamp button
+// pre-filled its text — it never changes behavior or rendering. The bow,
+// stern and side stamps are gone: the deck labels its sides itself (spec
+// 6.1). Old calculations keep theirs as ordinary notes.
 export type AnnotationKind = 'bow' | 'stern' | 'port' | 'starboard' | 'note'
 
 export interface DeckAnnotation {
@@ -2558,12 +2560,24 @@ export interface ManualPlacement {
 // own size so a tiny deck doesn't get a coarse 10m step and a huge deck
 // doesn't get an imperceptible 0.5m one. Shared by 2D drag-snapping and the
 // 3D keyboard nudge, so both move cargo by the same increment.
-export function computeGridStep(deckWidth: number, deckLength: number): number {
-  const dim = Math.max(deckWidth, deckLength)
-  if (dim <= 6) return 0.5
-  if (dim <= 20) return 1
-  if (dim <= 60) return 5
-  return 10
+//
+// The thresholds and steps are metres (spec 6.1: 0.5 m up to 6 m, 1 m up to
+// 20 m, 5 m up to 60 m, 10 m beyond); the result is in the deck's own unit.
+// They used to be applied to the bare number, so a 20 m deck kept in
+// centimetres (2000) got a 10 cm grid. In feet the step is the nearest
+// 1-2-5 number of feet rather than an odd 3.28.
+export function computeGridStep(deckWidth: number, deckLength: number, unit: Unit = 'm'): number {
+  const dimM = toMeters(Math.max(deckWidth, deckLength), unit)
+  const stepM = dimM <= 6 ? 0.5 : dimM <= 20 ? 1 : dimM <= 60 ? 5 : 10
+  const step = convertLength(stepM, 'm', unit)
+  return unit === 'ft' ? nearestOneTwoFive(step) : step
+}
+
+// 1, 2, 5, 10, 20, 50… — whichever is closest by ratio.
+function nearestOneTwoFive(value: number): number {
+  const decade = 10 ** Math.floor(Math.log10(value))
+  const candidates = [1, 2, 5, 10].map((m) => m * decade)
+  return candidates.reduce((best, c) => (Math.abs(Math.log(c / value)) < Math.abs(Math.log(best / value)) ? c : best))
 }
 
 // One row of a pyramid pile of round stock (pipes/rebar). `rowIndex` is

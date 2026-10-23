@@ -44,6 +44,11 @@ export function VesselSection({
                       {applied && <span className="shrink-0 text-xs text-ink-2">применено</span>}
                     </span>
                     <span className="block text-xs text-ink-2">{vesselSummary(tpl)}</span>
+                    {/* The vessel's data doesn't say which end of the deck
+                        is the bow, so +y is assumed (spec 6.1). */}
+                    {tpl.deckForwardIsPositiveY === undefined && (
+                      <span className="block text-xs text-warn">Направление носа по умолчанию — проверьте</span>
+                    )}
                   </span>
                 </button>
               </li>
