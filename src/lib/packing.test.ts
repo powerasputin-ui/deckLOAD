@@ -26,6 +26,7 @@ import {
   WIRE_ROPE_SPECS,
   violatesSeparation,
   violatesSeparationForCategories,
+  separationViolations,
   resolvePyramidShape,
   rotateOutline90,
   polygonsOverlap,
@@ -2861,6 +2862,45 @@ describe('Round 29: malformed placement is quarantined from packing (physical sa
       { x: 3, id: 'm1' },
       { x: 5, id: 'm2' },
     ])
+  })
+})
+
+describe('separationViolations', () => {
+  const rule = (partial: Partial<SeparationRule> & { id: string }): SeparationRule => ({
+    categoryA: 'hazard', categoryB: 'standard', minDistance: 5, ...partial,
+  })
+  const stack = (x: number, categories: string[]) => ({ x, y: 0, width: 1, length: 1, categories })
+
+  it('lists every pair closer than its rule, in either order, once', () => {
+    const stacks = [stack(0, ['hazard']), stack(3, ['standard']), stack(20, ['standard']), stack(5, ['hazard'])]
+    expect(separationViolations(stacks, [rule({ id: 'r1' })])).toEqual([
+      { a: 0, b: 1, distance: 2, minDistance: 5 },
+      // The rule is hazard–standard; this pair is standard–hazard.
+      { a: 1, b: 3, distance: 1, minDistance: 5 },
+    ])
+  })
+
+  it('is empty without rules and skips stacks with no category', () => {
+    const stacks = [stack(0, ['hazard']), stack(1.5, []), stack(3, ['standard'])]
+    expect(separationViolations(stacks, [])).toEqual([])
+    expect(separationViolations(stacks, undefined)).toEqual([])
+    expect(separationViolations(stacks, [rule({ id: 'r1' })])).toEqual([{ a: 0, b: 2, distance: 2, minDistance: 5 }])
+  })
+
+  it('takes the strictest rule for a pair', () => {
+    const stacks = [stack(0, ['hazard']), stack(5, ['standard', 'fuel'])]
+    const rules = [rule({ id: 'r1', minDistance: 3 }), rule({ id: 'r2', categoryB: 'fuel', minDistance: 6 })]
+    // 4 m apart: fine for 3 m, not for 6 m.
+    expect(separationViolations(stacks, rules)).toEqual([{ a: 0, b: 1, distance: 4, minDistance: 6 }])
+  })
+
+  it('counts a composed stack with every category it holds', () => {
+    const stacks = [stack(0, ['neutral', 'hazard']), stack(3, ['standard'])]
+    expect(separationViolations(stacks, [rule({ id: 'r1' })])).toHaveLength(1)
+  })
+
+  it('accepts a pair exactly at the distance', () => {
+    expect(separationViolations([stack(0, ['hazard']), stack(6, ['standard'])], [rule({ id: 'r1' })])).toEqual([])
   })
 })
 

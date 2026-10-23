@@ -81,6 +81,8 @@ import { ChecksSection } from '@/components/sections/ChecksSection'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
+import { buildChecks, checkCounts } from '@/lib/checks'
+import { gatherPlanFacts } from '@/lib/planFacts'
 import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, type DeckShipFrame } from '@/lib/stability'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
@@ -2453,6 +2455,25 @@ export default function Home() {
     return { valueM: stability.GM_fluid, ok: stability.GM_fluid >= limit, estimated: stability.extrapolated }
   }, [deck.vessel, deck.shipFrame, deck.width, deck.length, deck.deckForwardIsPositiveY, deck.unit, result.placed, items])
 
+  // The whole plan's checks (spec 8.4), every trip: their ✕ and ⚠ in the
+  // status line and on the «Проверки» tab, the list at the top of that
+  // section.
+  const planChecks = useMemo(
+    () =>
+      buildChecks(
+        gatherPlanFacts({
+          mode,
+          trips: hasEmptyTrailingTrip ? trips.slice(0, -1) : trips,
+          pinnedPlacementsByTrip,
+          manualPlacements,
+          items,
+          deck,
+          separationRules: separationRulesInUnit,
+        })
+      ),
+    [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, items, deck, separationRulesInUnit]
+  )
+
   const statusInput: StatusLineInput = {
     utilization: result.utilization,
     weightKg: result.totalWeight,
@@ -2461,12 +2482,14 @@ export default function Home() {
     totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
     tripCount: shownTrips.length,
     gm: statusGm,
+    checks: planChecks,
   }
   const marks = sectionMarks({
     vesselTemplateId: deck.vesselTemplateId,
     deck: { width: deck.width, length: deck.length, unit: deck.unit },
     items,
     placedUnits: statusInput.placedUnits,
+    checks: checkCounts(planChecks),
     pdfUpToDate,
   })
 
@@ -2596,6 +2619,8 @@ export default function Home() {
           )}
           {activeSection === 'checks' && (
             <ChecksSection
+              checks={planChecks}
+              onOpenSection={openSection}
               stats={{
                 result,
                 unit: deck.unit,

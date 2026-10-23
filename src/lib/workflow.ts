@@ -49,11 +49,13 @@ export function sectionMarks(s: WorkflowState): Record<SectionId, SectionMark> {
     !sameLength(toMeters(s.deck.width, s.deck.unit), NEW_DECK_M.width) ||
     !sameLength(toMeters(s.deck.length, s.deck.unit), NEW_DECK_M.length)
 
+  // ✕ and ⚠ show whatever the cargo (a deck-strength limit not chosen is a
+  // warning before any cargo); «done» needs cargo to have been checked.
   let checks: SectionMark = none
-  if (hasCargo && s.checks) {
+  if (s.checks) {
     if (s.checks.errors > 0) checks = { kind: 'errors', count: s.checks.errors }
     else if (s.checks.warnings > 0) checks = { kind: 'warnings', count: s.checks.warnings }
-    else checks = done
+    else if (hasCargo) checks = done
   }
 
   return {

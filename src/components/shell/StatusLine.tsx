@@ -25,11 +25,12 @@ export function StatusLine({ input, onOpenSection }: { input: StatusLineInput; o
           <button
             type="button"
             title={item.title}
+            aria-label={item.label}
             onClick={() => onOpenSection(item.target)}
             data-status-item={item.id}
             className={cn(
               'whitespace-nowrap rounded px-1.5 py-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              item.tone === 'danger' ? 'font-medium text-danger' : 'text-ink'
+              item.tone === 'danger' ? 'font-medium text-danger' : item.tone === 'warn' ? 'font-medium text-warn' : 'text-ink'
             )}
           >
             {item.text}

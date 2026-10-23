@@ -48,6 +48,10 @@ describe('section marks', () => {
     expect(sectionMarks({ ...base, checks: { errors: 0, warnings: 0 } }).checks.kind).toBe('none')
   })
 
+  it('«Проверки» shows ✕ and ⚠ without cargo too, as the status line does', () => {
+    expect(sectionMarks({ ...base, checks: { errors: 0, warnings: 1 } }).checks).toEqual({ kind: 'warnings', count: 1 })
+  })
+
   it('«Проверки» has no mark while the checks aren’t counted', () => {
     expect(sectionMarks({ ...base, items: [{ quantity: 1 }] }).checks.kind).toBe('none')
   })

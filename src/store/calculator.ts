@@ -10,6 +10,7 @@ import {
   maxLayersFor,
   stackHeightBudget,
   violatesSeparation,
+  isWholeDeckZone,
   DEFAULT_VESSEL_MOTION,
   type StabilityOverride,
   type CargoItem,
@@ -2182,19 +2183,6 @@ export function autoPlacementKey(p: { itemId: string; x: number; y: number }): s
   return `${p.itemId}@${p.x.toFixed(3)},${p.y.toFixed(3)}`
 }
 
-// A load zone laid over the whole deck — what a deck-strength choice creates
-// (chooseDeckStrength). The tolerance is relative to the deck, so rounding
-// from a unit conversion doesn't break the match.
-export function isWholeDeckZone(
-  z: { x: number; y: number; width: number; length: number },
-  deckWidth: number,
-  deckLength: number
-): boolean {
-  const tol = Math.max(deckWidth, deckLength) * 1e-3
-  return (
-    Math.abs(z.x) <= tol &&
-    Math.abs(z.y) <= tol &&
-    Math.abs(z.width - deckWidth) <= tol &&
-    Math.abs(z.length - deckLength) <= tol
-  )
-}
+// Lives in packing.ts, next to LoadZone; still exported from here for the
+// components that import it with the store.
+export { isWholeDeckZone }

@@ -1,0 +1,190 @@
+// The facts the checks (checks.ts) are built from, gathered over the whole
+// plan — every trip, not only the one on screen — with the calculations the
+// app already has: zone loads, separation, the lashing force balance and the
+// required lashing count, stability and the IMO criteria. Nothing new is
+// calculated here; the same functions the deck, the sidebar and the PDF use
+// are run over the plan.
+import type { DeckConfig } from '@/store/calculator'
+import {
+  assessLashingRequirement,
+  checkLashingBalance,
+  computeZoneLoads,
+  isWholeDeckZone,
+  lashingMethodologyFor,
+  separationViolations,
+  DEFAULT_VESSEL_MOTION,
+  DEFAULT_WIRE_ROPE_TYPE,
+  WIRE_ROPE_SPECS,
+  type CargoItem,
+  type ManualPlacement,
+  type PackingResult,
+  type PinnedPlacement,
+  type SeparationRule,
+} from './packing'
+import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
+import {
+  buildLoadingConditionFromPlacements,
+  checkIMOCriteria,
+  computeGZCurve,
+  computeStabilityResult,
+  G_METACENTRIC_MIN_SAFE,
+  type DeckShipFrame,
+} from './stability'
+import { vesselTemplateById } from './vesselTemplates'
+import type { PlanFacts, TripFacts, TripStability } from './checks'
+
+export interface PlanInput {
+  mode: 'auto' | 'manual'
+  // The trips shown (an empty trailing trip left out).
+  trips: readonly PackingResult[]
+  pinnedPlacementsByTrip: Readonly<Record<number, readonly PinnedPlacement[]>>
+  manualPlacements: readonly ManualPlacement[]
+  items: CargoItem[]
+  deck: DeckConfig
+  // In the deck's unit, like the placements.
+  separationRules: readonly SeparationRule[]
+}
+
+const NO_SHIP_FRAME: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
+
+export function gatherPlanFacts(p: PlanInput): PlanFacts {
+  const { mode, trips, deck, items } = p
+  const isQuarantined = (pl: { malformed?: unknown; composition?: unknown }) => !!pl.malformed && !pl.composition
+  const pinsOf = (tripIndex: number) => p.pinnedPlacementsByTrip[tripIndex] ?? []
+  // The plan's own placement records — the ones lashing points attach to and
+  // flags live on. Pins left from an earlier auto session aren't part of a
+  // manual plan.
+  const records: readonly (ManualPlacement | PinnedPlacement)[] =
+    mode === 'manual' ? p.manualPlacements : trips.flatMap((_, i) => pinsOf(i))
+
+  const lastTrip = trips[trips.length - 1]
+  const tripFacts = trips.map((t): TripFacts => ({
+    weightKg: t.totalWeight,
+    overloadedZones: overloadedZoneCount(t, deck),
+    separationViolations: separationViolations(
+      t.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, categories: placementCategorySet(pl, items) })),
+      p.separationRules
+    ).length,
+    stability: tripStability(t, deck, items),
+  }))
+
+  return {
+    mode,
+    totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
+    // Each trip passes on what it couldn't place, so what the last one
+    // leaves fits nowhere; in manual mode it is what isn't placed yet.
+    unplacedUnits: lastTrip ? Math.max(0, lastTrip.requestedCount - lastTrip.placedCount) : 0,
+    trips: tripFacts,
+    maxDeckCargoT: deck.maxDeckCargoT,
+    zoneCount: deck.loadZones?.length ?? 0,
+    deckStrength: deckStrengthState(deck),
+    separationRuleCount: p.separationRules.length,
+    lashing: lashingFacts(trips, records.filter((r) => !isQuarantined(r)), deck, items),
+    hasVessel: !!deck.vessel,
+    attention: {
+      malformed: trips.reduce((sum, t) => sum + t.quarantined.length, 0),
+      legacyUnknown: records.filter((r) => r.legacyUnknownComposition).length,
+      // Only a position the user locked is a problem: a rejected layout pin
+      // (left by an applied variant) just has its units placed elsewhere.
+      rejectedPins:
+        mode === 'auto'
+          ? trips.reduce(
+              (sum, t, i) =>
+                sum + t.unplaced.filter((u) => u.kind === 'pin' && pinsOf(i).find((pin) => pin.id === u.pinId)?.locked).length,
+              0
+            )
+          : 0,
+      manualConflicts: mode === 'manual' ? trips.reduce((sum, t) => sum + t.placed.filter((pl) => pl.conflict).length, 0) : 0,
+    },
+  }
+}
+
+function overloadedZoneCount(t: PackingResult, deck: DeckConfig): number {
+  if (!deck.loadZones || deck.loadZones.length === 0) return 0
+  const placements = t.placed.map((pl) => ({
+    x: pl.x,
+    y: pl.y,
+    width: pl.width,
+    length: pl.length,
+    totalWeightKg: (pl.weight ?? 0) * pl.stackedCount,
+  }))
+  return computeZoneLoads(placements, deck.loadZones, deck.outline, deck.unit).filter((z) => z.exceeded).length
+}
+
+// The same reading of the vessel's data as StabilityPanel.
+function tripStability(t: PackingResult, deck: DeckConfig, items: CargoItem[]): TripStability | undefined {
+  const vessel = deck.vessel
+  if (!vessel) return undefined
+  const loading = buildLoadingConditionFromPlacements(
+    vessel,
+    deck.shipFrame ?? NO_SHIP_FRAME,
+    { width: deck.width, length: deck.length },
+    deck.deckForwardIsPositiveY ?? true,
+    t.placed,
+    deck.unit,
+    items
+  )
+  const stability = computeStabilityResult(vessel, loading)
+  if (!stability) return undefined
+  const gz = computeGZCurve(vessel, loading)
+  const { minGM, downfloodingAngleDeg } = vessel.particulars
+  const criteria = gz ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : []
+  return {
+    gmOk: stability.GM_fluid >= (minGM ?? G_METACENTRIC_MIN_SAFE),
+    failedCriteria: criteria.filter((c) => !c.pass).length,
+    estimated: stability.extrapolated || (gz?.knOutOfRange ?? false),
+    hasCrossCurves: !!gz,
+  }
+}
+
+function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {
+  if (!vesselTemplateById(deck.vesselTemplateId)?.limits?.deckStrengthTPerM2) return undefined
+  if (deck.deckStrengthChoiceTPerM2 === undefined) return 'pending'
+  return (deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length)) ? undefined : 'unchecked'
+}
+
+// A stack with lashing points is short when the force balance (IMO CSS Code,
+// simplified — the check behind the green and red points on the deck) fails,
+// or when it has fewer points than the required count and no justification
+// (the sidebar asks for one, and it goes into the PDF). Stacks without points
+// aren't judged.
+function lashingFacts(
+  trips: readonly PackingResult[],
+  records: readonly (ManualPlacement | PinnedPlacement)[],
+  deck: DeckConfig,
+  items: CargoItem[]
+): PlanFacts['lashing'] {
+  const points = deck.lashingPoints ?? []
+  let securedStacks = 0
+  let shortStacks = 0
+  for (const r of records) {
+    const attached = points.filter((pt) => pt.placementId === r.id)
+    if (attached.length === 0) continue
+    securedStacks++
+    const layers = Math.max(1, placementTotalLayers(r))
+    const balance = checkLashingBalance(
+      { x: r.x, y: r.y, width: r.width, length: r.length, weight: placementTotalWeightKg(r, items) / layers, layers },
+      attached,
+      deck.vesselMotion ?? DEFAULT_VESSEL_MOTION
+    )
+    const breakingLoadKN = WIRE_ROPE_SPECS[r.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE].breakingLoadKN
+    const required = Math.max(
+      0,
+      ...segmentLashingInputs(r, items).map((seg) => {
+        const a = assessLashingRequirement(seg.category, seg.weightKg, breakingLoadKN)
+        return a.status === 'calculated' ? a.requiredCount : 0
+      })
+    )
+    const tooFew = attached.length < required && !r.lashingJustification?.trim()
+    if ((balance && !balance.ok) || tooFew) shortStacks++
+  }
+  const dangerousGoodsStacks = trips.reduce(
+    (sum, t) =>
+      sum +
+      t.placed.filter((pl) =>
+        segmentLashingInputs(pl, items).some((seg) => lashingMethodologyFor(seg.category) === 'dangerous-goods')
+      ).length,
+    0
+  )
+  return { securedStacks, shortStacks, dangerousGoodsStacks }
+}

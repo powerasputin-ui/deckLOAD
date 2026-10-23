@@ -191,6 +191,23 @@ export function zoneAreaWithinOutline(
   return Math.min(rectArea, polygonArea(clipped))
 }
 
+// A load zone laid over the whole deck — what a deck-strength choice creates
+// (chooseDeckStrength). The tolerance is relative to the deck, so rounding
+// from a unit conversion doesn't break the match.
+export function isWholeDeckZone(
+  z: { x: number; y: number; width: number; length: number },
+  deckWidth: number,
+  deckLength: number
+): boolean {
+  const tol = Math.max(deckWidth, deckLength) * 1e-3
+  return (
+    Math.abs(z.x) <= tol &&
+    Math.abs(z.y) <= tol &&
+    Math.abs(z.width - deckWidth) <= tol &&
+    Math.abs(z.length - deckLength) <= tol
+  )
+}
+
 // Aggregates the full weight of every placement that overlaps a zone at all
 // (no proration by overlap area — a conservative, physically-safe
 // approximation: a box straddling a zone edge counts fully toward it) and
@@ -472,6 +489,9 @@ export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: 
 // so callers must show both, never merge them into one verdict.
 export type WireRopeType = 'wire_19_5_g1zhn_1670' | 'custom'
 
+// The wire a stack is lashed with until another one is picked for it.
+export const DEFAULT_WIRE_ROPE_TYPE: WireRopeType = 'wire_19_5_g1zhn_1670'
+
 export const WIRE_ROPE_SPECS: Record<WireRopeType, { label: string; breakingLoadKN: number }> = {
   // Real — ДВТК/638.362241.023 REV3 п. 2.2.2: "стальной канат 19,5-Г-I-Ж-Н
   // 1670 ГОСТ 2688-80 с разрывным усилием каната в целом BL= 203 кН (20,7т)".
@@ -721,6 +741,49 @@ export function violatesSeparationForCategories(
     if (violatesSeparation({ ...candidate, category: candCat }, expandedOthers, rules)) return true
   }
   return false
+}
+
+// Every pair of stacks on one deck that stands closer than a separation rule
+// allows — for the «Сепарация» check (spec 8.4), where violatesSeparation
+// above only answers for one candidate at a time. The rules match the same
+// way: either order, and a composed stack takes part with every category it
+// holds (see violatesSeparationForCategories). A pair is reported once, under
+// the strictest rule that applies to it: with 3 m and 5 m rules, 4 m apart
+// breaks the 5 m one.
+export interface SeparationViolation {
+  // Indices into `stacks`, a < b.
+  a: number
+  b: number
+  // Edge to edge, in the stacks' unit.
+  distance: number
+  minDistance: number
+}
+
+export function separationViolations(
+  stacks: readonly { x: number; y: number; width: number; length: number; categories: Iterable<string> }[],
+  rules: readonly SeparationRule[] | undefined
+): SeparationViolation[] {
+  if (!rules || rules.length === 0) return []
+  const eps = 1e-9
+  const categories = stacks.map((s) => new Set(s.categories))
+  const found: SeparationViolation[] = []
+  for (let a = 0; a < stacks.length; a++) {
+    if (categories[a].size === 0) continue
+    for (let b = a + 1; b < stacks.length; b++) {
+      if (categories[b].size === 0) continue
+      let minDistance = 0
+      for (const r of rules) {
+        const applies =
+          (categories[a].has(r.categoryA) && categories[b].has(r.categoryB)) ||
+          (categories[a].has(r.categoryB) && categories[b].has(r.categoryA))
+        if (applies) minDistance = Math.max(minDistance, r.minDistance)
+      }
+      if (minDistance <= 0) continue
+      const distance = edgeDistance(stacks[a], stacks[b])
+      if (distance < minDistance - eps) found.push({ a, b, distance, minDistance })
+    }
+  }
+  return found
 }
 
 export interface PlacedItem {

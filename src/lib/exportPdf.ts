@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
 import type { ManualPlacement, PackingResult, PinnedPlacement } from './packing'
-import { assessLashingRequirement, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
+import { assessLashingRequirement, DEFAULT_WIRE_ROPE_TYPE, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
 import type { DeckConfig, Unit } from '@/store/calculator'
 import { UNIT_LABEL } from '@/store/calculator'
 import { fmtNumber, pluralRu } from './utils'
@@ -145,7 +145,7 @@ export function buildLashingRequirementRows(
   const dangerousGoodsNames: string[] = []
   const rows = placements
     .flatMap((p) => {
-      const wireType = p.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+      const wireType = p.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE
       const segments = segmentLashingInputs(p, items)
       const multiSegment = segments.length > 1
       return segments.map((seg) => {

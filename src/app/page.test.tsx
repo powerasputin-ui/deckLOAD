@@ -401,6 +401,44 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByRole('heading', { name: 'Грузы' })).toBeTruthy()
     })
 
+    // Stage 2, group B (spec 8.3, 8.4): the whole plan's checks — their ✕
+    // and ⚠ in the status line and on the «Проверки» tab, the list on top
+    // of that section.
+    it('counts failed checks in the status line and on «Проверки», and lists them there', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        // Larger than the 20×8 m deck: fits in no trip.
+        useCalculator.getState().addItem({ name: 'Плита', width: 30, length: 30, quantity: 1, height: 1, weight: 1000 })
+        // Its securing is an IMDG matter the app doesn't calculate.
+        useCalculator.getState().addItem({ name: 'Реагент', width: 1, length: 1, quantity: 1, height: 1, weight: 100, category: 'Опасный груз' })
+      })
+      const status = screen.getByRole('status', { name: 'Итог расчёта' })
+      expect(within(status).getByRole('button', { name: 'Проверки — 1 ошибка: Вместимость и рейсы' }).textContent).toBe('✕ 1')
+      expect(within(status).getByRole('button', { name: 'Проверки — 1 предупреждение: Крепление' }).textContent).toBe('⚠ 1')
+      expect(sectionButton('Проверки').textContent).toMatch(/1 ошибка/)
+
+      fireEvent.click(within(status).getByRole('button', { name: /^Проверки — 1 ошибка/ }))
+      expect(screen.getByRole('heading', { name: 'Проверки' })).toBeTruthy()
+      const summary = screen.getByRole('list', { name: 'Сводка проверок' })
+      const row = (id: string) => summary.querySelector(`[data-check="${id}"]`)!
+      expect(row('capacity').getAttribute('data-check-status')).toBe('error')
+      expect(row('capacity').textContent).toMatch(/1 ед\. не помещаются ни в один рейс/)
+      expect(row('lashing').getAttribute('data-check-status')).toBe('warn')
+      expect(row('separation').textContent).toMatch(/не проверяется.*Правил нет/)
+
+      fireEvent.click(within(summary).getByRole('button', { name: 'Вместимость и рейсы: открыть раздел «Размещение»' }))
+      expect(screen.getByRole('heading', { name: 'Размещение' })).toBeTruthy()
+
+      // Fixed: the tab is ticked only by warnings now.
+      act(() => {
+        const plate = useCalculator.getState().items.find((it) => it.name === 'Плита')!
+        useCalculator.getState().removeItem(plate.id)
+      })
+      expect(within(status).queryByRole('button', { name: /ошибк/ })).toBeNull()
+      expect(sectionButton('Проверки').textContent).toMatch(/1 предупреждение/)
+    })
+
     it('the calculation menu creates, renames, duplicates and deletes calculations', () => {
       render(<Home />)
       const count = () => useProjects.getState().projects.length

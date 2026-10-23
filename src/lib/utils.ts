@@ -31,3 +31,12 @@ export function pluralRu(n: number, one: string, few: string, many: string): str
   if (mod10 >= 2 && mod10 <= 4) return few
   return many
 }
+
+/**
+ * A weight given in kilograms, as tonnes to one decimal without a trailing
+ * «.0»: 16 600 → «16.6», 2 550 000 → «2550».
+ */
+export function fmtTonnes(kg: number): string {
+  const t = Math.round(kg / 100) / 10
+  return Number.isInteger(t) ? `${t}` : t.toFixed(1)
+}

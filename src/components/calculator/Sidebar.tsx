@@ -30,6 +30,7 @@ import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, isWholeDeckZ
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
+  DEFAULT_WIRE_ROPE_TYPE,
   assessLashingRequirement,
   type SortStrategy,
   type LashingDeviceType,
@@ -557,7 +558,7 @@ export function LashingPointsSection({
   const selectedPointsCount = selectedPlacement?.id
     ? points.filter((p) => p.placementId === selectedPlacement.id).length
     : 0
-  const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? 'wire_19_5_g1zhn_1670'
+  const selectedWireType: WireRopeType = selectedPlacement?.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE
   // Round 19: per-segment assessment — a composed placement can span
   // multiple distinct categories (e.g. ordinary cargo + dangerous goods),
   // so it's assessed as N independent verdicts (one per constituent
