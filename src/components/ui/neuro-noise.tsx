@@ -440,7 +440,10 @@ export function ShaderBackground({ className }: { className?: string }) {
     let inView = true
     let disposed = false
     const start = performance.now()
-    const timeAnimated = Math.abs(UNIFORMS.timeScale) > 0.0001
+    // No animation under «уменьшить движение» (spec 9.6): one still frame,
+    // drawn again only when the size changes.
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+    const timeAnimated = !reduceMotion && Math.abs(UNIFORMS.timeScale) > 0.0001
 
     const resizeCanvas = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -558,7 +561,7 @@ export function ShaderBackground({ className }: { className?: string }) {
         uni.scene,
         width,
         height,
-        ((now - start) / 1000) * UNIFORMS.timeScale,
+        timeAnimated ? ((now - start) / 1000) * UNIFORMS.timeScale : 0,
         UNIFORMS.colorCount,
       )
       gl.uniform4f(

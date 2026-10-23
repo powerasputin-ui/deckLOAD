@@ -20,7 +20,11 @@ test.describe('First-run gate', () => {
   })
 
   test.describe('a first-time visitor', () => {
-    test.use({ storageState: { cookies: [], origins: [] } })
+    // Reduced motion: the intro's shader backdrop draws one still frame
+    // (spec 9.6). Animated, it starves a software-rendered headless page of
+    // frames, and a click on «Войти на сайт» could wait out its timeout —
+    // the gate, not the animation, is what this test is about.
+    test.use({ storageState: { cookies: [], origins: [] }, contextOptions: { reducedMotion: 'reduce' } })
 
     test('sees the intro, then the calculator with the product tour — and neither comes back after being dismissed', async ({ page }) => {
       test.setTimeout(60_000)
