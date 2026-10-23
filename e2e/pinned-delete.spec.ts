@@ -1,11 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { unitsCount } from './helpers'
 
-// Placed/total + utilization text lives in the deck card's footer (e.g.
-// "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
-// that was removed as redundant clutter.
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Deleting a pinned cargo item', () => {

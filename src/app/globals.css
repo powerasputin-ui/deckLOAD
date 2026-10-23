@@ -177,3 +177,22 @@
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: var(--muted-foreground);
 }
+
+/* A section of the left panel still holds today's cards until stages 3–4
+   rebuild them. Inside the panel they lose the box — no border, shadow or
+   fill — and a line divides one block from the next (spec 9.4). */
+.section-content > * + * {
+  border-top: 1px solid var(--line);
+}
+.section-content [data-slot='card'] {
+  border-width: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding-block: 16px;
+  gap: 12px;
+}
+.section-content [data-slot='card-header'],
+.section-content [data-slot='card-content'] {
+  padding-inline: 16px;
+}

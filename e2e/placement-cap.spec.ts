@@ -19,7 +19,7 @@ test.describe('Click-to-place quantity cap', () => {
     // Playwright's actionability check, which the free-space hatch overlay
     // (a sibling rect painted on top) otherwise fails — same pattern already
     // used for SVG clicks elsewhere in this suite.
-    await page.getByText('Груз 1', { exact: true }).first().click()
+    await page.getByRole('button', { name: /^\d+\s*Груз 1(?!\d)/ }).click()
     await background.click({ position: { x: 40, y: 40 }, force: true })
     await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
@@ -30,7 +30,7 @@ test.describe('Click-to-place quantity cap', () => {
     await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
     // Item 2 is unaffected — still places normally.
-    await page.getByText('Груз 2', { exact: true }).first().click()
+    await page.getByRole('button', { name: /^\d+\s*Груз 2(?!\d)/ }).click()
     await background.click({ position: { x: 300, y: 200 }, force: true })
     await expect(page.getByText(/2\/2 ед\./)).toBeVisible()
   })

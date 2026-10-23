@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { sectionBar } from './helpers'
 import { readFile } from 'node:fs/promises'
 
 // An unreadable saved record must survive until the user decides what to do
@@ -31,7 +32,7 @@ test.describe('Corrupted saved data', () => {
     await expect(page.getByText('Сохранённые данные повреждены')).toBeVisible()
     // The demo project is loaded into the calculator, which arms the
     // debounced autosave — give it well past its 400 ms to (not) fire.
-    await expect(page.getByRole('button', { name: 'Очистить' })).toBeVisible()
+    await expect(sectionBar(page)).toBeVisible()
     await page.waitForTimeout(1500)
     expect(await stored()).toBe(DAMAGED)
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, openSection } from './helpers'
 
 // The numeric fields keep what you type as a draft and apply it on Enter/blur.
 // They used to be controlled type="number" inputs that pushed every keystroke
@@ -15,6 +15,7 @@ const deckLabel = (page: import('@playwright/test').Page, pattern: string) =>
 test.describe('Numeric fields', () => {
   test('typing a new deck width over the old one gives exactly what was typed', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
     await expect(deckLabel(page, '20 м')).toBeVisible()
 
@@ -33,6 +34,7 @@ test.describe('Numeric fields', () => {
 
   test('emptying a field with Backspace does not collapse it to the minimum', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
     await expect(width).toHaveValue('20')
 
@@ -51,6 +53,7 @@ test.describe('Numeric fields', () => {
 
   test('a comma works as the decimal separator', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
     await width.click()
     await width.press('Control+A')
@@ -62,6 +65,7 @@ test.describe('Numeric fields', () => {
 
   test('Escape throws an unfinished edit away', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
     await width.click()
     await width.press('Control+A')
@@ -73,6 +77,7 @@ test.describe('Numeric fields', () => {
 
   test('arrow keys step the value and apply it immediately', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Судно')
     const width = page.getByLabel('Ширина')
     await width.click()
     await width.press('ArrowUp')

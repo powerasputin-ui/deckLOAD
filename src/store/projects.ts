@@ -111,7 +111,7 @@ interface ProjectsState {
 
   hydrate: () => void
   discardCorruptedStorage: () => void
-  createProject: (name?: string) => string
+  createProject: (name?: string, options?: { demo?: boolean }) => string
   renameProject: (id: string, name: string) => void
   deleteProject: (id: string) => void
   switchTo: (id: string) => void
@@ -1070,13 +1070,13 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     }
   },
 
-  createProject: (name) => {
+  createProject: (name, options) => {
     // Flush any edit still sitting in the debounce window before the
     // currently-active project stops being active — otherwise it's silently
     // dropped (see the pendingAutosave block above).
     flushPendingAutosave((d) => get().saveSnapshot(d))
-    // New projects start EMPTY (no preset). Use "Сбросить к примеру" for demo data.
-    const p = freshProject(name || `Расчёт ${get().projects.length + 1}`, false)
+    // New projects start EMPTY, unless they open the example («Открыть пример»).
+    const p = freshProject(name || `Расчёт ${get().projects.length + 1}`, options?.demo ?? false)
     set((s) => {
       const next = { projects: [...s.projects, p], activeId: p.id }
       saveToStorage(next.projects, next.activeId)

@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { openSection, unitsCount } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 // Visible text outside the deck drawing (svg) set smaller than 12 px.
@@ -24,19 +26,40 @@ async function textBelow12px(page: Page): Promise<string[]> {
   })
 }
 
-// Stage 1 (spec 9.3): nothing smaller than 12 px outside the deck.
-test('no text outside the deck is smaller than 12 px, sections and settings open', async ({ page }) => {
+// Stage 1 (spec 9.3): nothing smaller than 12 px outside the deck — checked
+// in every section of the frame, with their blocks open, and in the menus.
+test('no text outside the deck is smaller than 12 px, in every section and menu', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
   await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
-  for (const title of ['Зоны нагрузки', 'Сепарация груза', 'Крепление груза', 'Остойчивость судна']) {
-    await page.getByRole('button', { name: new RegExp(`^${title}`) }).click()
-  }
   await page.getByRole('button', { name: 'Пресеты' }).click()
   expect(await textBelow12px(page)).toEqual([])
 
-  await page.getByRole('button', { name: 'Настройки' }).click()
+  await openSection(page, 'Судно')
+  for (const title of ['Зоны нагрузки', 'Остойчивость судна']) {
+    await page.getByRole('button', { name: new RegExp(`^${title}`) }).click()
+  }
+  expect(await textBelow12px(page)).toEqual([])
+
+  await openSection(page, 'Размещение')
+  expect(await textBelow12px(page)).toEqual([])
+
+  await openSection(page, 'Проверки')
+  for (const title of ['Сепарация груза', 'Крепление груза']) {
+    await page.getByRole('button', { name: new RegExp(`^${title}`) }).click()
+  }
+  expect(await textBelow12px(page)).toEqual([])
+
+  await openSection(page, 'Отчёт')
+  expect(await textBelow12px(page)).toEqual([])
+
+  await page.getByRole('button', { name: 'Вид' }).click()
   await expect(page.getByRole('radio', { name: 'Тёмная' })).toBeVisible()
+  expect(await textBelow12px(page)).toEqual([])
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: /^Меню расчёта/ }).click()
+  await expect(page.getByRole('button', { name: 'Все расчёты…' })).toBeVisible()
   expect(await textBelow12px(page)).toEqual([])
 })

@@ -1,59 +1,31 @@
 'use client'
 
-import { useId, useState } from 'react'
+// The blocks of the left panel's «Судно» and «Проверки» sections (spec 13,
+// stage 2: today's content, moved as is). Stages 3–4 rebuild them; until
+// then each keeps its own collapsible heading.
+import { useContext, useId, useState } from 'react'
 // Stable empty-array references for zustand selectors — `s.deck.x ?? []`
 // would allocate a new array every call, which useSyncExternalStore treats
 // as "the snapshot changed" and re-renders forever.
 const EMPTY_ZONES: never[] = []
 const EMPTY_POINTS: never[] = []
 import {
-  FolderOpen,
   Plus,
-  RotateCcw,
   Settings2,
   Layers,
-  Eye,
   ChevronDown,
   ChevronRight,
-  Pencil,
-  Check,
-  Copy,
   Trash2,
-  PanelLeftClose,
-  PanelLeft,
   Anchor,
   Scale,
   ShieldAlert,
   MapPin,
-  Box,
-  Undo2,
-  Redo2,
   Ship,
   AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import { useProjects } from '@/store/projects'
 import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, isWholeDeckZone, type Unit } from '@/store/calculator'
 import {
   LASHING_DEVICES,
@@ -69,10 +41,9 @@ import {
 } from '@/lib/packing'
 import { DEFAULT_VESSEL_PARTICULARS, type VesselParticulars } from '@/lib/stability'
 import { vesselTemplateById } from '@/lib/vesselTemplates'
-import { useTheme } from '@/components/ThemeProvider'
-import type { ThemePreference } from '@/lib/theme'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
+import { BlockOpenState } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -84,36 +55,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@/components/ui/toggle-group'
 
-interface SidebarProps {
-  collapsed: boolean
-  onToggle: () => void
-  onNewCalculation: () => void
-  onResetCurrent: () => void
-  viewMode: '2d' | '3d'
-  onViewModeChange: (mode: '2d' | '3d') => void
-  canUndo: boolean
-  canRedo: boolean
-  onUndo: () => void
-  onRedo: () => void
-  // Every load zone's live density (t/m²), whether or not it currently
-  // exceeds its limit — see LoadZonesSection for why this matters.
-  zoneLoads?: ZoneLoadCheck[]
-  // A purely auto-placed stack selected on the deck (no pin yet): «Крепление
-  // груза» shows it like a pin, and onPatchAutoStack pins it on the first change.
-  selectedAutoStack?: PlacedItem
-  onPatchAutoStack?: (placed: PlacedItem, patch: PlacementPatch) => void
-}
-
-type PlacementPatch = {
+export type PlacementPatch = {
   clearanceMargin?: ClearanceMargin
   lashingWireType?: WireRopeType
   lashingJustification?: string
@@ -127,406 +73,7 @@ type PlacementPatch = {
 // into a normal, explained validation instead.
 const MAX_DECK_DIMENSION_M = 1000
 
-const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
-  { value: 'light', label: 'Светлая' },
-  { value: 'dark', label: 'Тёмная' },
-  { value: 'system', label: 'Как в системе' },
-]
-
-export function Sidebar({
-  collapsed,
-  onToggle,
-  onNewCalculation,
-  onResetCurrent,
-  viewMode,
-  onViewModeChange,
-  canUndo,
-  canRedo,
-  onUndo,
-  onRedo,
-  zoneLoads,
-  selectedAutoStack,
-  onPatchAutoStack,
-}: SidebarProps) {
-  const { preference: themePreference, setPreference: setThemePreference } = useTheme()
-  const projects = useProjects((s) => s.projects)
-  const activeId = useProjects((s) => s.activeId)
-  const switchTo = useProjects((s) => s.switchTo)
-  const createProject = useProjects((s) => s.createProject)
-  const deleteProject = useProjects((s) => s.deleteProject)
-  const duplicateProject = useProjects((s) => s.duplicateProject)
-  const renameProject = useProjects((s) => s.renameProject)
-
-  const globalRotation = useCalculator((s) => s.globalRotation)
-  const showFreeSpace = useCalculator((s) => s.showFreeSpace)
-  const showGrid = useCalculator((s) => s.showGrid)
-  const showLabels = useCalculator((s) => s.showLabels)
-  const showCargoContents = useCalculator((s) => s.showCargoContents)
-  const toggleGlobalRotation = useCalculator((s) => s.toggleGlobalRotation)
-  const toggleFreeSpace = useCalculator((s) => s.toggleFreeSpace)
-  const toggleGrid = useCalculator((s) => s.toggleGrid)
-  const toggleLabels = useCalculator((s) => s.toggleLabels)
-  const toggleCargoContents = useCalculator((s) => s.toggleCargoContents)
-
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
-  // "Очистить" and "Сбросить к примеру" replace the whole calculator state —
-  // cargo, placements AND the deck itself (photo, outline, zones, lashing
-  // points, vessel data) — and drop the undo history, so both go through a
-  // confirmation first.
-  const [pendingReset, setPendingReset] = useState<ResetKind | null>(null)
-  const confirmReset = (kind: ResetKind) => {
-    setPendingReset(null)
-    if (kind === 'clear') onNewCalculation()
-    else onResetCurrent()
-  }
-
-  const handleCreate = () => {
-    createProject()
-    toast.success('Создан новый расчёт')
-  }
-
-  const startEdit = (id: string, name: string) => {
-    setEditingId(id)
-    setEditName(name)
-  }
-  const commitEdit = () => {
-    if (editingId && editName.trim()) renameProject(editingId, editName.trim())
-    setEditingId(null)
-  }
-
-  if (collapsed) {
-    return (
-      <aside className="w-14 shrink-0 border-r bg-card flex flex-col items-center py-3 gap-2">
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={onToggle} className="h-9 w-9">
-                <PanelLeft className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Развернуть меню</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <Separator className="my-1" />
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={handleCreate} className="h-9 w-9">
-                <Plus className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Новый расчёт</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={() => setPendingReset('clear')} className="h-9 w-9">
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Очистить текущий</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <div className="mt-auto flex flex-col items-center gap-1">
-          <Separator className="my-1" />
-        </div>
-        <ConfirmResetDialog kind={pendingReset} onCancel={() => setPendingReset(null)} onConfirm={confirmReset} />
-      </aside>
-    )
-  }
-
-  return (
-    <aside className="w-72 shrink-0 border-r bg-card flex flex-col h-full overflow-hidden">
-      {/* Collapse button + undo/redo + 2D/3D view toggle — all one line */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          title="Отменить (Ctrl+Z)"
-          disabled={!canUndo}
-          onClick={onUndo}
-        >
-          <Undo2 className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          title="Повторить (Ctrl+Y)"
-          disabled={!canRedo}
-          onClick={onRedo}
-        >
-          <Redo2 className="h-4 w-4" />
-        </Button>
-        <div className="flex-1" data-tour="view-mode">
-        <ToggleGroup
-          type="single"
-          value={viewMode}
-          onValueChange={(v) => { if (v) onViewModeChange(v as '2d' | '3d') }}
-          className="grid grid-cols-2 gap-2"
-        >
-          <ToggleGroupItem
-            value="2d"
-            className="h-8 rounded-md border data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background"
-          >
-            <span className="text-xs font-medium">2D</span>
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="3d"
-            className="h-8 rounded-md border data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background"
-          >
-            <Box className="h-3.5 w-3.5 mr-1" />
-            <span className="text-xs font-medium">3D</span>
-          </ToggleGroupItem>
-        </ToggleGroup>
-        </div>
-        <Button variant="ghost" size="icon" onClick={onToggle} className="h-8 w-8 shrink-0">
-          <PanelLeftClose className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="flex-1 flex flex-col min-h-0 px-3 py-3">
-      <div className="thin-scrollbar min-h-[360px] overflow-y-auto space-y-4 pr-0.5">
-        {/* Quick actions */}
-        <div className="grid grid-cols-2 gap-2">
-          <Button size="sm" onClick={handleCreate} className="h-8">
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            Новый
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setPendingReset('clear')} className="h-8">
-            <RotateCcw className="h-3.5 w-3.5 mr-1" />
-            Очистить
-          </Button>
-        </div>
-        {/* Projects list */}
-        <Section icon={<FolderOpen className="h-4 w-4" />} title="Расчёты" badge={projects.length}>
-          <div className="space-y-1">
-            {projects.length === 0 && (
-              <p className="text-xs text-muted-foreground px-2 py-1">
-                Нет сохранённых расчётов
-              </p>
-            )}
-            {projects.map((p) => {
-              const active = p.id === activeId
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    'group flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-all',
-                    active
-                      ? 'border-slate-400 bg-slate-100 dark:bg-slate-800/40 dark:border-slate-600'
-                      : 'border-transparent hover:bg-accent'
-                  )}
-                >
-                  {editingId === p.id ? (
-                    <Input
-                      autoFocus
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitEdit()
-                        if (e.key === 'Escape') setEditingId(null)
-                      }}
-                      onBlur={commitEdit}
-                      className="h-6 text-xs px-1.5 flex-1"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => switchTo(p.id)}
-                      className="flex-1 min-w-0 text-left"
-                    >
-                      <div className="text-xs font-medium truncate">{p.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {p.items.length} гр. · {fmtNumber(p.deck.width)}×{fmtNumber(p.deck.length)} {UNIT_LABEL[p.deck.unit]}
-                      </div>
-                    </button>
-                  )}
-                  <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    {editingId === p.id ? (
-                      <MiniBtn onClick={commitEdit} title="ОК">
-                        <Check className="h-3 w-3" />
-                      </MiniBtn>
-                    ) : (
-                      <MiniBtn onClick={() => startEdit(p.id, p.name)} title="Переименовать">
-                        <Pencil className="h-3 w-3" />
-                      </MiniBtn>
-                    )}
-                    <MiniBtn
-                      onClick={() => {
-                        duplicateProject(p.id)
-                        toast.success('Дублировано')
-                      }}
-                      title="Дублировать"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </MiniBtn>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <button title="Удалить" className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Удалить «{p.name}»?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Расчёт будет удалён безвозвратно.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Отмена</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            onClick={() => {
-                              deleteProject(p.id)
-                              toast.info('Удалено')
-                            }}
-                          >
-                            Удалить
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </Section>
-
-        {/* Deck settings */}
-        <DeckSettings />
-
-        {/* Load zones (per-area capacity) */}
-        <LoadZonesSection zoneLoads={zoneLoads} />
-
-        {/* Cargo category separation rules */}
-        <SeparationRulesSection />
-
-        {/* Lashing/securing points (visual markers) */}
-        <LashingPointsSection autoStack={selectedAutoStack} onPatchAutoStack={onPatchAutoStack} />
-
-        {/* Ship stability calculator (planning/indicative — see StabilityPanel's disclaimer) */}
-        <VesselStabilitySection />
-      </div>
-      </div>
-
-      {/* Footer settings (display toggles + reset-to-demo) */}
-      <div className="border-t p-3">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" className="w-full h-8 text-xs">
-              <Settings2 className="h-3.5 w-3.5 mr-1.5" />
-              Настройки
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent side="top" align="start" className="w-64 p-3 space-y-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <Eye className="h-3.5 w-3.5" />
-                Отображение
-              </div>
-              <div className="space-y-2 pl-1">
-                <div className="space-y-1">
-                  <span className="text-xs">Тема</span>
-                  {/* Stage 2 moves this to «Вид». */}
-                  <ToggleGroup
-                    type="single"
-                    value={themePreference}
-                    onValueChange={(v) => v && setThemePreference(v as ThemePreference)}
-                    aria-label="Тема"
-                    className="grid grid-cols-2 gap-1"
-                  >
-                    {THEME_OPTIONS.map((o) => (
-                      <ToggleGroupItem
-                        key={o.value}
-                        value={o.value}
-                        className={cn(
-                          'h-7 rounded-md border text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=off]:bg-background',
-                          o.value === 'system' && 'col-span-2'
-                        )}
-                      >
-                        {o.label}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </div>
-                <Toggle label="Разрешить вращение" checked={globalRotation} onToggle={toggleGlobalRotation} />
-                <Toggle label="Свободное пространство" checked={showFreeSpace} onToggle={toggleFreeSpace} />
-                <Toggle label="Сетка" checked={showGrid} onToggle={toggleGrid} />
-                <Toggle label="Метки грузов" checked={showLabels} onToggle={toggleLabels} />
-                <Toggle label="Содержимое груза" checked={showCargoContents} onToggle={toggleCargoContents} />
-              </div>
-            </div>
-            <Separator />
-            <Button variant="ghost" size="sm" onClick={() => setPendingReset('demo')} className="w-full h-8 text-xs">
-              <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-              Сбросить к примеру
-            </Button>
-          </PopoverContent>
-        </Popover>
-      </div>
-      <ConfirmResetDialog kind={pendingReset} onCancel={() => setPendingReset(null)} onConfirm={confirmReset} />
-    </aside>
-  )
-}
-
-type ResetKind = 'clear' | 'demo'
-
-const RESET_COPY: Record<ResetKind, { title: string; description: string; action: string }> = {
-  clear: {
-    title: 'Очистить текущий расчёт?',
-    description:
-      'Будут удалены все грузы и расстановка, а также фото палубы, контур, зоны нагрузки, точки крепления и данные судна. Размеры палубы вернутся к 20×8 м. Вернуть расчёт будет нельзя — история отмены тоже сбрасывается.',
-    action: 'Очистить',
-  },
-  demo: {
-    title: 'Заменить расчёт демонстрационным примером?',
-    description:
-      'Текущие грузы, расстановка и все настройки палубы (фото, контур, зоны, крепления, данные судна) будут заменены демонстрационным расчётом. Вернуть прежний расчёт будет нельзя — история отмены тоже сбрасывается.',
-    action: 'Заменить на пример',
-  },
-}
-
-function ConfirmResetDialog({
-  kind,
-  onCancel,
-  onConfirm,
-}: {
-  kind: ResetKind | null
-  onCancel: () => void
-  onConfirm: (kind: ResetKind) => void
-}) {
-  // Keep the last copy while the dialog animates out, so the text doesn't
-  // blank mid-fade when `kind` flips back to null.
-  const [shown, setShown] = useState<ResetKind>('clear')
-  if (kind !== null && kind !== shown) setShown(kind)
-  const copy = RESET_COPY[shown]
-  return (
-    <AlertDialog open={kind !== null} onOpenChange={(open) => { if (!open) onCancel() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Отмена</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            onClick={() => kind && onConfirm(kind)}
-          >
-            {copy.action}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-function Section({
+export function Section({
   icon,
   title,
   badge,
@@ -548,7 +95,13 @@ function Section({
   // collapsed (children unmount when `open` is false, the header never does).
   tourId?: string
 }) {
-  const [open, setOpen] = useState(defaultOpen || !!openWhen)
+  // Open or closed as the user last left it in this page (see BlockOpenState).
+  const remembered = useContext(BlockOpenState)
+  const [open, setOpenState] = useState(() => remembered?.get(title) ?? (defaultOpen || !!openWhen))
+  const setOpen = (next: boolean) => {
+    remembered?.set(title, next)
+    setOpenState(next)
+  }
   const [prevOpenWhen, setPrevOpenWhen] = useState(openWhen)
   if (openWhen !== prevOpenWhen) {
     setPrevOpenWhen(openWhen)
@@ -557,18 +110,19 @@ function Section({
   return (
     <div data-tour={tourId}>
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left mb-1.5 group"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="group mb-2 flex w-full items-center gap-2 text-left"
       >
         {open ? (
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronDown className="h-4 w-4 text-ink-2" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronRight className="h-4 w-4 text-ink-2" />
         )}
-        <span className="text-muted-foreground group-hover:text-foreground transition-colors">
+        <span className="text-ink-2 transition-colors group-hover:text-foreground">
           {icon}
         </span>
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="text-sm font-semibold">
           {title}
         </span>
         {badge !== undefined && (
@@ -582,27 +136,7 @@ function Section({
   )
 }
 
-function MiniBtn({
-  children,
-  onClick,
-  title,
-}: {
-  children: React.ReactNode
-  onClick: () => void
-  title: string
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-    >
-      {children}
-    </button>
-  )
-}
-
-function DeckSettings() {
+export function DeckSettings() {
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
   const setUnit = useCalculator((s) => s.setUnit)
@@ -738,24 +272,7 @@ function DeckSettings() {
   )
 }
 
-function Toggle({
-  label,
-  checked,
-  onToggle,
-}: {
-  label: string
-  checked: boolean
-  onToggle: () => void
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs">{label}</span>
-      <Switch checked={checked} onCheckedChange={onToggle} />
-    </div>
-  )
-}
-
-function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
+export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const zones = useCalculator((s) => s.deck.loadZones ?? EMPTY_ZONES)
   const unit = useCalculator((s) => s.deck.unit)
   const addLoadZone = useCalculator((s) => s.addLoadZone)
@@ -882,7 +399,7 @@ function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   )
 }
 
-function SeparationRulesSection() {
+export function SeparationRulesSection() {
   const rules = useCalculator((s) => s.separationRules)
   const addSeparationRule = useCalculator((s) => s.addSeparationRule)
   const removeSeparationRule = useCalculator((s) => s.removeSeparationRule)
@@ -967,7 +484,7 @@ function SeparationRulesSection() {
   )
 }
 
-function LashingPointsSection({
+export function LashingPointsSection({
   autoStack,
   onPatchAutoStack,
 }: {
@@ -1335,7 +852,7 @@ function LashingPointsSection({
   )
 }
 
-function VesselStabilitySection() {
+export function VesselStabilitySection() {
   const vessel = useCalculator((s) => s.deck.vessel)
   const shipFrame = useCalculator((s) => s.deck.shipFrame)
   const forwardIsPositiveY = useCalculator((s) => s.deck.deckForwardIsPositiveY ?? true)

@@ -26,27 +26,22 @@ test.describe('Cargo management', () => {
     await expect(page.getByText('Превышает размеры палубы')).toBeVisible()
   })
 
-  test('back-to-top button appears below the cargo list (not overlapping) and scrolls the page', async ({ page }) => {
+  // Stage 2: the cargo list sits in the left panel with no scroll box of its
+  // own — the panel scrolls. That replaced the list's inner scroll and its
+  // «Наверх» button, so every card is reached by scrolling the panel.
+  test('the cargo list scrolls with the panel and has no scroll box of its own', async ({ page }) => {
     await page.goto('/')
-    // Add enough items to force the internal list to overflow and scroll.
     for (let i = 0; i < 15; i++) {
       await page.getByRole('button', { name: 'Добавить', exact: true }).click()
     }
-
-    const list = page.locator('[data-slot="scroll-area-viewport"]').last()
-    await list.evaluate((el) => { el.scrollTop = 300 })
-
-    const backToTop = page.getByRole('button', { name: 'Наверх' })
-    await expect(backToTop).toBeVisible()
-
-    // Positioned below the scroll box, not overlapping it.
-    const listBox = await list.boundingBox()
-    const btnBox = await backToTop.boundingBox()
-    expect(btnBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height - 1)
-
-    await backToTop.click()
-    await expect(backToTop).not.toBeVisible()
-    await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(0)
+    const list = page.locator('[data-tour="cargo-list"]')
+    await expect(list.locator('[data-slot="scroll-area-viewport"]')).toHaveCount(0)
+    const panel = page.locator('.section-content')
+    await expect.poll(() => panel.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+    const lastCard = list.locator('.rounded-lg.border.bg-card').last()
+    await lastCard.scrollIntoViewIfNeeded()
+    await expect(lastCard).toBeInViewport()
+    await expect(page.getByRole('button', { name: 'Наверх' })).toHaveCount(0)
   })
 
   // Regression: the rendered box position used to only reflect the

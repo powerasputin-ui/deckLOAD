@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { unitsCount } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Undo/redo', () => {

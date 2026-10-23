@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'react'
+import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler, Move, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -56,6 +57,9 @@ import { toast } from 'sonner'
 interface DeckVisualizationProps {
   result: PackingResult
   unit: 'm' | 'cm' | 'ft'
+  // Where the canvas tools (zoom, fit, ruler, photo) go: the row above the
+  // deck (spec 6.10). Without it they float over the deck's corner.
+  toolbarContainer?: HTMLElement | null
   gap: number
   boardOffset: number
   showFreeSpace: boolean
@@ -203,6 +207,7 @@ const DRAG_THRESHOLD_PX = 4
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
   result,
   unit,
+  toolbarContainer,
   gap,
   boardOffset,
   showFreeSpace,
@@ -2261,14 +2266,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         ? 'crosshair'
         : 'default'
 
-  return (
-    <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
-      {/* pointer-events-none on the container + pointer-events-auto on each
-          button: this panel floats over the deck's top-right corner, which
-          is also where an outline-editor vertex handle can sit — without
-          this split the panel's own (non-interactive) padding silently
-          swallowed clicks/drags meant for the SVG underneath it. */}
-      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm pointer-events-none">
+  const canvasTools = (
+    <>
         <Button
           type="button"
           size="icon"
@@ -2331,7 +2330,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               <ImageIcon className="h-4 w-4" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent side="left" align="start" className="w-64 p-3 space-y-3">
+          <PopoverContent side={toolbarContainer ? 'bottom' : 'left'} align={toolbarContainer ? 'end' : 'start'} className="w-64 p-3 space-y-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Фоновое фото
             </div>
@@ -2386,7 +2385,25 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             )}
           </PopoverContent>
         </Popover>
-      </div>
+    </>
+  )
+
+  return (
+    <div className="w-full overflow-x-auto relative" onMouseLeave={handleManualLeave}>
+      {/* The canvas tools sit in the row above the deck when the page gives
+          them a place there (spec 6.10) — floating over the deck's corner
+          they covered the outline editor's corner handle once the deck
+          filled the width. Without a place they float as before;
+          pointer-events-none on that container + pointer-events-auto on
+          each button keeps its padding from swallowing clicks meant for the
+          SVG under it. */}
+      {toolbarContainer
+        ? createPortal(<div className="flex items-center gap-0.5 rounded-md border bg-surface p-0.5">{canvasTools}</div>, toolbarContainer)
+        : (
+          <div className="absolute right-2 top-2 z-10 flex flex-col gap-1 rounded-lg border bg-card/95 p-1 shadow-sm backdrop-blur-sm pointer-events-none">
+            {canvasTools}
+          </div>
+        )}
       <svg
         ref={setSvgRef}
         viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}

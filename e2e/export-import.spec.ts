@@ -1,21 +1,20 @@
 import { test, expect } from '@playwright/test'
+import { projectMenuItem } from './helpers'
 
 test.describe('Project JSON export/import', () => {
   test('downloading the project produces a deckload-*.json file', async ({ page }) => {
     await page.goto('/')
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Сохранить файл проекта' }).click(),
+      projectMenuItem(page, 'Сохранить файл…'),
     ])
     expect(download.suggestedFilename()).toMatch(/^deckload-.*\.json$/)
   })
 
   test('importing a valid project file adds a new project without overwriting the current one', async ({ page }) => {
     await page.goto('/')
-    // Wait for the sidebar's project list to actually be hydrated before
-    // counting — .count() doesn't auto-retry like .toBeVisible() does.
-    await expect(page.locator('aside').getByText('Демо-расчёт').first()).toBeVisible()
-    const projectRowsBefore = await page.locator('aside').getByText('Демо-расчёт').count()
+    // Wait for the demo calculation to be loaded before importing.
+    await expect(page.getByRole('button', { name: 'Меню расчёта «Демо-расчёт»' })).toBeVisible()
 
     const projectJson = JSON.stringify({
       name: 'Импортированный расчёт',
@@ -41,16 +40,13 @@ test.describe('Project JSON export/import', () => {
     })
 
     await expect(page.getByText('Проект импортирован')).toBeVisible()
-    const projectRowsAfter = await page.locator('aside').getByText('Демо-расчёт').count()
-    // The imported project is a fresh copy named after the original demo
-    // project's name field only if re-imported from an export; here it has
-    // its own distinct name, so assert on that instead of the demo count.
-    expect(projectRowsAfter).toBe(projectRowsBefore)
-    await expect(page.locator('aside').getByText('Импортированный расчёт')).toBeVisible()
-    // The newly imported project becomes active. Scope to the cargo list
-    // card specifically — the deck panel's "choose cargo to place" stamp
-    // list (visible in both modes) also renders a same-named button.
+    // The imported project becomes the open one, and the demo stays.
+    await expect(page.getByRole('button', { name: 'Меню расчёта «Импортированный расчёт»' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Тестовый груз', exact: true })).toBeVisible()
+    await projectMenuItem(page, 'Все расчёты…')
+    const list = page.getByRole('dialog')
+    await expect(list.getByText('Демо-расчёт', { exact: true })).toBeVisible()
+    await expect(list.getByText('Импортированный расчёт', { exact: true })).toBeVisible()
   })
 
   test('importing garbage JSON is rejected without creating a project', async ({ page }) => {

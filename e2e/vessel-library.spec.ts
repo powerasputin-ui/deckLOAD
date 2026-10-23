@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { openSection, unitsCount } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Library vessel deck strength', () => {
@@ -12,22 +14,27 @@ test.describe('Library vessel deck strength', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
-    await page.getByRole('button', { name: /Библиотека судов/ }).click()
+    await openSection(page, 'Судно')
     await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
 
-    // Said in the stats and waiting, opened, in «Зоны нагрузки».
-    await expect(page.getByText('лимит не выбран')).toBeVisible()
+    // Waiting, opened, in «Зоны нагрузки» — and said in the stats («Проверки»).
     await expect(page.getByText('Лимит прочности палубы не выбран')).toBeVisible()
+    await openSection(page, 'Проверки')
+    await expect(page.getByText('лимит не выбран')).toBeVisible()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: '5 т/м²' }).click()
     await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
+    await openSection(page, 'Проверки')
     await expect(page.getByText('лимит не выбран')).toHaveCount(0)
 
     // Let the debounced autosave land, then reload.
     await page.waitForTimeout(800)
     await page.reload()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: /^Зоны нагрузки/ }).click()
     await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
     await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
+    await openSection(page, 'Проверки')
     await expect(page.getByText('лимит не выбран')).toHaveCount(0)
   })
 })

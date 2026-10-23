@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { unitsCount } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 // Phase 0, C1 (stopgap until the cargo table): at 1280–1440 px the six fields

@@ -1,33 +1,36 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { setNumber } from './helpers'
+import { openSection, setNumber, statusLine, unitsCount } from './helpers'
 
-// Placed/total + utilization text lives in the deck card's footer (e.g.
-// "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
-// that was removed as redundant clutter.
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Deck settings', () => {
   test('changing deck width updates statistics', async ({ page }) => {
     await page.goto('/')
-    const initial = await headerBadge(page).textContent()
-    // Use the first "Ширина" input in the sidebar (deck settings)
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    const initial = await statusLine(page).textContent()
+    await openSection(page, 'Судно')
     await setNumber(page.locator('aside label:has-text("Ширина") + input').first(), '5')
     await setNumber(page.locator('aside label:has-text("Длина") + input').first(), '5')
-    // The badge text should eventually differ from the initial value
-    await expect(headerBadge(page)).not.toHaveText(initial ?? '')
+    // The status line should eventually differ from the initial value
+    await expect(statusLine(page)).not.toHaveText(initial ?? '')
   })
 
   test('unit conversion updates labels', async ({ page }) => {
     await page.goto('/')
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    await openSection(page, 'Судно')
     // Immediately after navigation the Radix toggle can be visible before its
     // click handler is hydrated — a single click can land as a no-op. Retry
     // the click+assert pair instead of a single fixed wait.
     await expect(async () => {
-      await page.getByText('см').first().click()
-      await expect(page.getByText('Размеры в см.')).toBeVisible({ timeout: 1000 })
+      await page.getByRole('radio', { name: 'см' }).click()
+      await expect(page.getByLabel('Ширина')).toHaveValue('2000', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
+    await openSection(page, 'Грузы')
+    await expect(page.getByText(/размеры в см/)).toBeVisible()
   })
 })

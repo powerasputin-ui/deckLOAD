@@ -259,7 +259,7 @@ test.describe('Restriction (obstacle) zones', () => {
     if (!before) throw new Error('zone polygon not found')
 
     const widthField = page.getByTitle(/^Ширина/)
-    await widthField.fill('3')
+    await widthField.fill('1')
     await widthField.blur()
     await expect(async () => {
       const after = await zonePolygon.boundingBox()

@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, setNumber } from './helpers'
+import { clearCalculation, setNumber, unitsCount, openSection } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 // A pipe stamped onto the deck stands where the user put it (locked), so
@@ -32,9 +33,11 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // Generous clearance so 16 layers of a 0.25m-tall pipe (4m) fit well
     // under the physical height cap — this test is about the merge
     // mechanism itself, not the height-cap rejection path.
+    await openSection(page, 'Судно')
     const clearanceInput = page.locator('label', { hasText: 'Предельная высота штабеля' }).locator('..').locator('input')
     await clearanceInput.fill('10')
     await clearanceInput.blur()
+    await openSection(page, 'Грузы')
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Смешанный' }).click()
@@ -51,7 +54,9 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await returnStampedPipeToAuto(page)
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
+    await openSection(page, 'Размещение')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
+    await openSection(page, 'Грузы')
     // A stacked pipe pyramid now draws as several <rect> capsule segments
     // sharing the same fill (see DeckVisualization's per-row pipe render) —
     // count placements via the g[data-cargo-placement] wrapper, not raw
@@ -144,7 +149,9 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     // The duplicate needs its own click-placement (manual mode never
     // auto-places a freshly duplicated item onto the deck).
     await page.getByRole('button', { name: /^\d+\s*Контейнер 20ft \(копия\) 6\.06×2/ }).click()
-    await background.click({ position: { x: 260, y: 60 }, force: true })
+    const deckBox = await background.boundingBox()
+    if (!deckBox) throw new Error('deck background not found')
+    await background.click({ position: { x: deckBox.width * 0.55, y: 60 }, force: true })
 
     await page.keyboard.press('Escape')
 
@@ -176,7 +183,9 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await clearCalculation(page)
+    await openSection(page, 'Судно')
     await setNumber(page.locator('label', { hasText: 'Предельная высота штабеля' }).locator('..').locator('input'), clearance)
+    await openSection(page, 'Грузы')
 
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Смешанный' }).click()
@@ -186,7 +195,9 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await returnStampedPipeToAuto(page)
     const originalCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Обсадная труба' }).first()
     await setNumber(originalCard.locator('label:has-text("Кол-во") + input'), '8')
+    await openSection(page, 'Размещение')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
+    await openSection(page, 'Грузы')
     const pipePlacements = page.locator('svg g[data-cargo-name^="Обсадная труба"]')
     await expect(pipePlacements).toHaveCount(1)
 

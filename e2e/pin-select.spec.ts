@@ -1,12 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, unitsCount } from './helpers'
 
-// Placed/total + utilization text lives in the deck card's footer (e.g.
-// "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
-// that was removed as redundant clutter.
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 // Pins stored for trip 1 of the active calculation, read from the autosave
@@ -164,7 +162,7 @@ test.describe('Manual-mode selection (consistent with auto mode)', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await page.getByText('Ручной').first().click()
-    await expect(page.getByText('ручной режим', { exact: true })).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
 
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     await expect(async () => {

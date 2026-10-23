@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { sectionBar } from './helpers'
 
 // The suite seeds both "seen" flags (playwright.config.ts) so ordinary specs
 // open straight on the calculator. These cover the gate itself.
@@ -10,7 +11,7 @@ test.describe('First-run gate', () => {
     })
 
     await page.goto('/')
-    await expect(page.getByRole('button', { name: 'Очистить' })).toBeVisible()
+    await expect(sectionBar(page)).toBeVisible()
     // Give any late preload a chance to fire before concluding there was none.
     await page.waitForTimeout(1500)
 
@@ -35,20 +36,20 @@ test.describe('First-run gate', () => {
       // but still time out on its acknowledgement — the retry must then see
       // "already inside" instead of waiting for a button that is gone.
       await expect(async () => {
-        if (await page.getByRole('button', { name: 'Очистить' }).isVisible()) return
+        if (await sectionBar(page).isVisible()) return
         const enter = page.getByRole('button', { name: 'Войти на сайт' })
         if (await enter.isVisible()) await enter.click({ force: true, timeout: 5000 })
         else await page.getByRole('button', { name: 'Пропустить', exact: true }).click({ force: true, timeout: 5000 })
       }).toPass({ timeout: 40_000 })
 
-      await expect(page.getByRole('button', { name: 'Очистить' })).toBeVisible()
+      await expect(sectionBar(page)).toBeVisible()
       const skipTour = page.getByRole('button', { name: 'Пропустить тур' })
       await expect(skipTour).toBeVisible()
       await skipTour.click()
       await expect(skipTour).toBeHidden()
 
       await page.reload()
-      await expect(page.getByRole('button', { name: 'Очистить' })).toBeVisible()
+      await expect(sectionBar(page)).toBeVisible()
       await expect(page.getByRole('button', { name: 'Пропустить', exact: true })).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Пропустить тур' })).toHaveCount(0)
     })

@@ -4,35 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import dynamic from 'next/dynamic'
 import { v4 as uuid } from 'uuid'
 import {
-  Ship,
-  Wand2,
-  MousePointerClick,
-  Download,
-  Upload,
-  Save,
   AlertTriangle,
-  HelpCircle,
 } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Button } from '@/components/ui/button'
 import { pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card'
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@/components/ui/toggle-group'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, DEMO_DECK, createDemoItems, autoPlacementKey } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, roundForDisplay, PALETTE, autoPlacementKey } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
-import { VESSEL_TEMPLATES, vesselTemplateById, type VesselTemplate } from '@/lib/vesselTemplates'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { vesselTemplateById, type VesselTemplate } from '@/lib/vesselTemplates'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,12 +66,21 @@ const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
     </div>
   ),
 })
-import { ItemList } from '@/components/calculator/ItemList'
-import { StatsPanel } from '@/components/calculator/StatsPanel'
-import { StabilityPanel } from '@/components/calculator/StabilityPanel'
-import { PlacementPanel } from '@/components/calculator/PlacementPanel'
-import { Sidebar } from '@/components/calculator/Sidebar'
-import { PresetsBar } from '@/components/calculator/PresetsBar'
+import { TopBar } from '@/components/shell/TopBar'
+import { ProjectMenu } from '@/components/shell/ProjectMenu'
+import { HelpMenu } from '@/components/shell/HelpMenu'
+import { SectionPanel } from '@/components/shell/SectionPanel'
+import { StatusLine } from '@/components/shell/StatusLine'
+import { TripTabs } from '@/components/shell/TripTabs'
+import { ViewMenu } from '@/components/shell/ViewMenu'
+import { VesselSection } from '@/components/sections/VesselSection'
+import { CargoSection } from '@/components/sections/CargoSection'
+import { PlacementSection } from '@/components/sections/PlacementSection'
+import { ChecksSection } from '@/components/sections/ChecksSection'
+import { ReportSection } from '@/components/sections/ReportSection'
+import { sectionMarks, type SectionId } from '@/lib/workflow'
+import type { StatusLineInput } from '@/lib/statusLine'
+import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, type DeckShipFrame } from '@/lib/stability'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf, buildLashingRequirementRows, lashingPlacementsForPlan } from '@/lib/exportPdf'
@@ -127,89 +117,70 @@ function writeSeenFlag(key: string): void {
   }
 }
 
+// The left panel's open section and whether it's collapsed are kept in this
+// browser, not in the calculation (spec 8.7) — same guarded storage as above.
+const PANEL_SECTION_KEY = 'deckload-panel-section'
+const PANEL_COLLAPSED_KEY = 'deckload-panel-collapsed'
+const PANEL_SECTIONS: SectionId[] = ['vessel', 'cargo', 'placement', 'checks', 'report']
+function readPanelSection(): SectionId {
+  try {
+    const v = window.localStorage.getItem(PANEL_SECTION_KEY)
+    return PANEL_SECTIONS.includes(v as SectionId) ? (v as SectionId) : 'cargo'
+  } catch {
+    return 'cargo'
+  }
+}
+function readPanelCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(PANEL_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function writePanelSetting(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // not remembered across visits
+  }
+}
+
 const getTourSeenSnapshot = () => readSeenFlag(TOUR_SEEN_KEY)
 const getTourSeenServerSnapshot = () => false
 
-// Each `selector` targets a `data-tour="..."` attribute placed directly on
-// the real element elsewhere in the app (Sidebar's "Палуба" Section,
-// DeckVisualization's card, PlacementPanel's auto-redistribute button,
-// StatsPanel/StabilityPanel's own Card, the header's library/export
-// buttons) — the tour never needs its own copy of those elements, just a
-// stable hook into the ones that already exist. Order and wording were
-// approved as a first pass; both are easy to revise here without touching
-// ProductTour.tsx itself.
+// The five-step tour (spec 10.2). Each `selector` targets a `data-tour`
+// attribute on the real element in the frame — the tour never needs its own
+// copy of what it points at.
 const TOUR_STEPS: TourStep[] = [
   {
-    id: 'vessel-library',
-    selector: '[data-tour="vessel-library"]',
-    title: 'Библиотека судов',
-    body: 'Начните с реального судна из библиотеки или используйте демо-палубу по умолчанию.',
+    id: 'vessel',
+    selector: '[data-tour="section-vessel"]',
+    title: 'Судно',
+    body: 'Выберите судно из библиотеки или задайте свою палубу.',
   },
   {
-    id: 'deck-settings',
-    selector: '[data-tour="deck-settings"]',
-    title: 'Параметры палубы',
-    body: 'Здесь задаётся ширина и длина палубы — в метрах, сантиметрах или футах.',
+    id: 'cargo',
+    selector: '[data-tour="section-cargo"]',
+    title: 'Грузы',
+    body: 'Добавьте груз. Номер груза один и тот же на палубе, в списке и в PDF.',
   },
   {
-    id: 'load-zones',
-    selector: '[data-tour="load-zones"]',
-    title: 'Зоны нагрузки',
-    body: 'Если на палубе есть места с ограничением нагрузки на м² (например, над топливными танками) — задайте их здесь. Система не даст превысить лимит при расстановке груза.',
-  },
-  {
-    id: 'separation',
-    selector: '[data-tour="separation"]',
-    title: 'Сепарация груза',
-    body: 'Некоторые грузы нельзя ставить рядом друг с другом (например, опасные вещества и продукты питания). Здесь задаются минимальные дистанции между категориями груза.',
-  },
-  {
-    id: 'lashing',
-    selector: '[data-tour="lashing"]',
-    title: 'Крепление груза',
-    body: 'Формула РД 31.11.21.23-96 точна для категории «Металлопродукция»; для остального груза — ориентировочная оценка. Для опасных грузов (химикаты, взрывоопасное) вместо числа показывается предупреждение — здесь нужен отдельный расчёт по IMDG Code.',
-  },
-  {
-    id: 'cargo-list',
-    selector: '[data-tour="cargo-list"]',
-    title: 'Список груза',
-    body: 'Добавьте свой груз или используйте один из демо-предметов.',
-  },
-  {
-    id: 'view-mode',
-    selector: '[data-tour="view-mode"]',
-    title: 'Вид 2D / 3D',
-    body: 'Переключайтесь между видом сверху (2D — здесь расставляется и двигается груз) и объёмным 3D-видом (для наглядной проверки — только просмотр, камера вращается и приближается).',
-  },
-  {
-    id: 'deck-view',
+    id: 'deck',
     selector: '[data-tour="deck-view"]',
-    title: 'Схема палубы',
-    body: 'Выберите груз справа в «Выбор груза для размещения», затем кликните по палубе — груз встанет на это место. В авто-режиме грузы расставляются сами.',
+    title: 'Палуба',
+    body: 'Грузы расставляются сами. Перетащите штабель, чтобы закрепить его, или выделите и правьте.',
   },
   {
-    id: 'auto-redistribute',
-    selector: '[data-tour="auto-redistribute"]',
-    title: 'Автораспределение',
-    body: 'Нажмите — система предложит несколько готовых вариантов расстановки груза на выбор, вместо расстановки вручную.',
+    id: 'status',
+    selector: '[data-tour="status-line"]',
+    title: 'Итог и проверки',
+    body: 'Здесь вес, рейсы, остойчивость и всё, что требует внимания. Подробности — в разделе «Проверки».',
   },
   {
-    id: 'stats',
-    selector: '[data-tour="stats"]',
-    title: 'Статистика загрузки',
-    body: 'Видно, сколько груза уместилось и сколько свободного места осталось.',
-  },
-  {
-    id: 'stability',
-    selector: '[data-tour="stability"]',
-    title: 'Остойчивость судна',
-    body: 'Если выбрано судно с реальными данными — здесь считаются крен, дифферент и метацентрическая высота.',
-  },
-  {
-    id: 'export',
-    selector: '[data-tour="export"]',
-    title: 'Файл проекта и PDF',
-    body: '«Сохранить файл проекта» — чтобы позже открыть расчёт снова или отправить коллегам. Рядом «Скачать PDF» — план для печати.',
+    id: 'pdf',
+    selector: '[data-tour="export-pdf"]',
+    title: 'Скачать PDF',
+    body: 'План погрузки для передачи на судно.',
   },
 ]
 
@@ -288,7 +259,6 @@ export default function Home() {
   }
   const handleShowTour = () => setTourActive(true)
   const deckSvgRef = useRef<SVGSVGElement>(null)
-  const mainRef = useRef<HTMLElement>(null)
   const canUndo = useStore(useCalculator.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useCalculator.temporal, (s) => s.futureStates.length > 0)
   const deck = useCalculator((s) => s.deck)
@@ -443,7 +413,21 @@ export default function Home() {
       if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current)
     }
   }, [])
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // The row above the deck that holds the canvas tools (spec 6.10).
+  const [canvasToolsEl, setCanvasToolsEl] = useState<HTMLDivElement | null>(null)
+  const [activeSection, setActiveSection] = useState<SectionId>(() => (typeof window === 'undefined' ? 'cargo' : readPanelSection()))
+  const [panelCollapsed, setPanelCollapsed] = useState(() => typeof window !== 'undefined' && readPanelCollapsed())
+  // A section opens in the panel, which unfolds if it was collapsed (spec 5.4).
+  const openSection = useCallback((id: SectionId) => {
+    setActiveSection(id)
+    setPanelCollapsed(false)
+    writePanelSetting(PANEL_SECTION_KEY, id)
+    writePanelSetting(PANEL_COLLAPSED_KEY, '0')
+  }, [])
+  const changePanelCollapsed = useCallback((collapsed: boolean) => {
+    setPanelCollapsed(collapsed)
+    writePanelSetting(PANEL_COLLAPSED_KEY, collapsed ? '1' : '0')
+  }, [])
   // 3D is a read-only camera-orbit snapshot of the same layout — no
   // drag/pin/zone editing there, that stays exclusively in the 2D view.
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
@@ -456,7 +440,6 @@ export default function Home() {
     list: [],
     builtFor: [],
   })
-  const [vesselLibraryOpen, setVesselLibraryOpen] = useState(false)
   // A mode switch that would quietly change saved data asks first (Phase 0,
   // L5/L21) — see handleModeChange.
   const [modeSwitchPrompt, setModeSwitchPrompt] = useState<
@@ -895,6 +878,14 @@ export default function Home() {
       poll()
     })
 
+  // «Отчёт» is ticked while the PDF downloaded in this tab still matches the
+  // calculation (spec 5.3). The store replaces a slice whenever it changes, so
+  // the references a download was made from tell whether anything changed since.
+  const calculation = { items, deck, manualPlacements, pinnedPlacementsByTrip, separationRules, mode, sortStrategy, globalRotation }
+  const [pdfMadeFrom, setPdfMadeFrom] = useState<typeof calculation | null>(null)
+  const pdfUpToDate =
+    pdfMadeFrom !== null && (Object.keys(calculation) as (keyof typeof calculation)[]).every((k) => pdfMadeFrom[k] === calculation[k])
+
   const handleExportPdf = async () => {
     // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D —
     // exporting from 3D used to fail with «Схема палубы ещё не готова».
@@ -921,6 +912,7 @@ export default function Home() {
     const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
     try {
       await exportDeckPlanToPdf({ svgEl, deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, cargoNumberByItemId })
+      setPdfMadeFrom(calculation)
       toast.success('PDF скачан')
     } catch {
       toast.error('Не удалось собрать PDF')
@@ -948,26 +940,6 @@ export default function Home() {
     clearCalculatorHistory()
     prevOverloadedZoneCountRef.current = 0
     toast.success('Текущий расчёт очищен')
-  }
-
-  const handleResetCurrent = () => {
-    useCalculator.setState({
-      deck: { ...DEMO_DECK },
-      items: createDemoItems(() => crypto.randomUUID()),
-      manualPlacements: [],
-      pinnedPlacementsByTrip: {},
-      separationRules: [],
-      selectedPinIds: [],
-      selectedAutoKeys: [],
-      selectedManualIds: [],
-      mode: 'auto',
-      activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
-    })
-    clearCalculatorHistory()
-    prevOverloadedZoneCountRef.current = 0
-    toast.info('Восстановлен демонстрационный пример')
   }
 
   // "Судно" header button — creates a fresh calculation with a real
@@ -2454,12 +2426,42 @@ export default function Home() {
     toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
   }
 
+  // Initial stability of the open trip for the status line (spec 8.3) — the
+  // same calculation StabilityPanel shows in «Проверки».
+  const statusGm = useMemo(() => {
+    const vessel = deck.vessel
+    if (!vessel) return undefined
+    const frame: DeckShipFrame = deck.shipFrame ?? { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
+    const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deck.width, length: deck.length }, deck.deckForwardIsPositiveY ?? true, result.placed, deck.unit, items)
+    const stability = computeStabilityResult(vessel, loading)
+    if (!stability) return undefined
+    const limit = vessel.particulars.minGM ?? G_METACENTRIC_MIN_SAFE
+    return { valueM: stability.GM_fluid, ok: stability.GM_fluid >= limit, estimated: stability.extrapolated }
+  }, [deck.vessel, deck.shipFrame, deck.width, deck.length, deck.deckForwardIsPositiveY, deck.unit, result.placed, items])
+
+  const statusInput: StatusLineInput = {
+    utilization: result.utilization,
+    weightKg: result.totalWeight,
+    maxDeckCargoT: deck.maxDeckCargoT,
+    placedUnits: placedAcrossTrips.reduce((sum, p) => sum + p.stackedCount, 0),
+    totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
+    tripCount: shownTrips.length,
+    gm: statusGm,
+  }
+  const marks = sectionMarks({
+    vesselTemplateId: deck.vesselTemplateId,
+    deck: { width: deck.width, length: deck.length, unit: deck.unit },
+    items,
+    placedUnits: statusInput.placedUnits,
+    pdfUpToDate,
+  })
+
   // Until the visitor's real flags are readable, show neither the intro nor
   // the app: a plain surface in the app's own background colour, so a
   // returning visitor goes straight into the calculator without ever
   // requesting the intro video.
   if (!clientReady) {
-    return <div className="h-screen bg-muted/30" aria-hidden />
+    return <div className="h-screen bg-paper" aria-hidden />
   }
 
   if (!entered) {
@@ -2467,124 +2469,26 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-muted/30 overflow-hidden">
-      {/* Top bar */}
-      <header className="shrink-0 border-b bg-background/95 backdrop-blur z-30">
-        <div className="flex items-center gap-3 px-4 py-2.5">
-          <div className="flex items-center gap-2.5">
-            <div className="leading-tight">
-              <button
-                type="button"
-                onClick={handleReplayIntro}
-                title="Показать вступительный ролик ещё раз"
-                className="text-sm font-bold cursor-pointer hover:opacity-70"
-              >
-                DeckLoad
-              </button>
-              <div className="text-xs text-muted-foreground hidden sm:block">
-                Загрузка палубы
-              </div>
-            </div>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={handleShowTour}
-              title="Показать обучение"
-              aria-label="Показать обучение"
-            >
-              <HelpCircle className="h-4 w-4" />
-            </Button>
-            <Popover open={vesselLibraryOpen} onOpenChange={setVesselLibraryOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8" data-tour="vessel-library">
-                  <Ship className="h-3.5 w-3.5 sm:mr-1" />
-                  <span className="hidden sm:inline">Библиотека судов</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 p-1.5" align="end">
-                <p className="px-1.5 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Библиотека судов
-                </p>
-                {VESSEL_TEMPLATES.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    onClick={() => {
-                      setVesselLibraryOpen(false)
-                      handleApplyVesselTemplate(tpl)
-                    }}
-                    className="w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
-                  >
-                    <span className="block">{tpl.label}</span>
-                  </button>
-                ))}
-                <p className="px-1.5 pt-1 text-xs text-muted-foreground">
-                  Создаёт новый расчёт с палубой и данными судна; груз остаётся пустым.
-                </p>
-              </PopoverContent>
-            </Popover>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={handleExportJson}
-              data-tour="export"
-              aria-label="Сохранить файл проекта"
-              title="Сохранить расчёт в файл, чтобы открыть его позже или на другом компьютере"
-            >
-              <Save className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Сохранить файл проекта</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={() => importInputRef.current?.click()}
-              aria-label="Открыть файл проекта"
-              title="Открыть сохранённый файл — он станет новым расчётом, текущие не меняются"
-            >
-              <Upload className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Открыть файл проекта</span>
-            </Button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={handleImportFile}
-            />
-
-            <Button variant="outline" size="sm" className="h-8" onClick={handleExportPdf}>
-              <Download className="h-3.5 w-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Скачать PDF</span>
-            </Button>
-
-            {/* Mode toggle */}
-            <ToggleGroup
-              type="single"
-              value={mode}
-              onValueChange={(v) => {
-                if (v) handleModeChange(v as 'auto' | 'manual')
-              }}
-              className="rounded-lg border bg-card"
-            >
-              <ToggleGroupItem value="auto" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                <Wand2 className="h-3.5 w-3.5 mr-1" />
-                <span className="text-xs font-medium hidden sm:inline">Авто</span>
-              </ToggleGroupItem>
-              <ToggleGroupItem value="manual" className="px-2.5 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                <MousePointerClick className="h-3.5 w-3.5 mr-1" />
-                <span className="text-xs font-medium hidden sm:inline">Ручной</span>
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-        </div>
-      </header>
+    <div className="h-screen flex flex-col bg-paper overflow-hidden">
+      <TopBar
+        projectMenu={
+          <ProjectMenu onOpenFile={() => importInputRef.current?.click()} onSaveFile={handleExportJson} onClear={handleNewCalculation} />
+        }
+        helpMenu={<HelpMenu onStartTour={handleShowTour} onShowIntro={handleReplayIntro} />}
+        activeSection={activeSection}
+        marks={marks}
+        onSelectSection={openSection}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undoCalculator}
+        onRedo={redoCalculator}
+        mode={mode}
+        onModeChange={handleModeChange}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        onExportPdf={handleExportPdf}
+      />
+      <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportFile} />
 
       {/* Unplaced-cargo banner — sits outside the scrollable <main> (like the
           header) so it's visible the instant something doesn't fit, instead
@@ -2652,407 +2556,349 @@ export default function Home() {
         </div>
       )}
 
-      {/* Workspace */}
       <div className="flex-1 flex min-h-0">
-        <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed((v) => !v)}
-          onNewCalculation={handleNewCalculation}
-          onResetCurrent={handleResetCurrent}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          zoneLoads={zoneLoads}
-          onUndo={undoCalculator}
-          onRedo={redoCalculator}
-          selectedAutoStack={selectedAutoStack}
-          onPatchAutoStack={patchAutoStack}
-        />
-
-        {/* Main content */}
-        <main ref={mainRef} className="flex-1 min-w-0 overflow-auto">
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
-            {/* Visualization */}
-            <div className="xl:col-span-8" data-tour="deck-view">
-              <Card className="h-full">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Ship className="h-4 w-4 text-primary" />
-                        Схема палубы
-                        {mode === 'manual' && (
-                          <Badge variant="secondary" className="text-xs">ручной режим</Badge>
-                        )}
-                      </CardTitle>
-                      <CardDescription className="mt-0.5">
-                        {viewMode === '3d' ? (
-                          <>Вращение/приближение камеры · клик по грузу — выбрать (двигать и вращать — в 2D)</>
-                        ) : (
-                          <>
-                            Вид сверху
-                            {deck.gap > 0 && ` · отступ ${roundForDisplay(deck.gap)} ${UNIT_LABEL[deck.unit]}`}
-                            {' · выбрали груз? стрелки/Пробел тоже работают'}
-                          </>
-                        )}
-                      </CardDescription>
-                    </div>
-                    {viewMode === '2d' && (
-                      <div className="flex items-center gap-2 text-xs flex-wrap">
-                        <LegendDot hatch label="Свободно" />
-                        <LegendDot icon="↻" label="Повернут" />
-                        {mode === 'auto' && (
-                          <LegendDot badge="🔒" badgeColor="#7c3aed" label="Закреплён" />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {shownTrips.length > 1 && (
-                    <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                      {shownTrips.map((t, i) => (
-                        <Button
-                          key={i}
-                          size="sm"
-                          variant={i === clampedTripIndex ? 'default' : 'outline'}
-                          className="h-7 px-2.5 text-xs"
-                          onClick={() => { setActiveTripIndex(i); clearSelection() }}
-                        >
-                          Рейс {i + 1} · {t.placedCount} ед.
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                  {carriedToNextTrip > 0 && (
-                    <p className="mb-3 text-xs text-muted-foreground" data-testid="trip-carry-over">
-                      {carriedToNextTrip} ед. {pluralRu(carriedToNextTrip, 'уходит', 'уходят', 'уходят')} в рейс {clampedTripIndex + 2}
-                      {carryReasons.length > 0 &&
-                        ` — ${carryReasons.map((u) => `${u.name}: ${u.reason}`).join('; ')}`}
-                    </p>
-                  )}
-                  {viewMode === '3d' ? (
-                    <Deck3DView
-                      result={result}
-                      cargoNumberByItemId={cargoNumberByItemId}
-                      deckWidth={result.deckWidth}
-                      deckLength={result.deckLength}
-                      deckOutline={deck.outline}
-                      mode={mode}
-                      manualPlacements={manualPlacements}
-                      pinnedPlacements={pinnedPlacements}
-                      onSelectManual={toggleManualSelection}
-                      onSelectPin={togglePinSelection}
-                      onSelectAuto={(p, additive) => toggleAutoSelection(autoPlacementKey(p), additive)}
-                    />
-                  ) : (
-                  <DeckVisualization
-                    ref={deckSvgRef}
-                    result={result}
-                    unit={deck.unit}
-                    gap={deck.gap}
-                    boardOffset={deck.boardOffset}
-                    showFreeSpace={showFreeSpace}
-                    showGrid={showGrid}
-                    showLabels={showLabels}
-                    showCargoContents={showCargoContents}
-                    backgroundImage={deck.backgroundImage}
-                    backgroundImageOpacity={deck.backgroundImageOpacity}
-                    backgroundImageRect={deck.backgroundImageRect}
-                    onSetBackgroundImage={setDeckBackgroundImage}
-                    onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
-                    onSetBackgroundImageRect={setDeckBackgroundImageRect}
-                    deckOutline={deck.outline}
-                    editingDeckOutline={editingDeckOutline}
-                    onSetDeckOutline={(outline) => setDeck({ outline })}
-                    onSetEditingDeckOutline={setEditingDeckOutline}
-                    hoveredItemId={hoveredItemId}
-                    onHover={handleHover}
-                    mode={mode}
-                    activeStamp={activeStamp}
-                    stampRotated={stampRotated}
-                    drawingCustomShape={drawingCustomShape}
-                    onFinishDrawing={handleFinishDrawing}
-                    onPlace={(p) => {
-                      // A preset catalog item being placed for the first time — the
-                      // click itself is what creates the CargoItem (quantity 1) and
-                      // defines it as "wanted", so the aggregate quantity cap below
-                      // doesn't apply here; resolve the real item id first.
-                      let itemId = p.itemId
-                      const wasPendingPreset = !!pendingPresetStamp
-                      if (pendingPresetStamp) {
-                        // A preset stamp skips the quantity guard below on
-                        // purpose (see the comment further down where it
-                        // stays armed) — but that's not license to skip the
-                        // capacity guard too. It was, until now: this branch
-                        // never called wouldExceedMaxDeckCargo at all, in
-                        // either mode, so repeatedly clicking an armed preset
-                        // could blow past maxDeckCargoT with zero pushback.
-                        const presetWeight = pendingPresetStamp.weight
-                        if (wouldExceedMaxDeckCargo(presetWeight ?? 0)) {
-                          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-                          return
-                        }
-                        itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
-                      } else {
-                        // Scoped to THIS item, not a global sum across every
-                        // cargo type — an aggregate check let a fully-placed
-                        // item keep being over-placed by clicking its own
-                        // stamp, as long as some OTHER item's quantity still
-                        // had "room" in the total (e.g. item A qty 1 already
-                        // placed, item B qty 1 still unplaced: clicking A's
-                        // stamp again passed 1 >= 2 = false and placed a
-                        // second A anyway).
-                        const item = items.find((it) => it.id === p.itemId)
-                        const itemRequested = item?.quantity ?? 0
-                        // Round 23: composition-aware — placementLayersOfItem
-                        // (already the canonical primitive checkLayerChange
-                        // uses, see its own layersOfIdIn helper above) counts
-                        // only THIS itemId's own layers within each
-                        // placement, not the placement's flat total. A plain
-                        // `pin.itemId === p.itemId` filter-and-sum-whole-
-                        // layers (the pre-fix code) both MISSES a non-nominal
-                        // constituent (e.g. B inside a composed [A2,B3]
-                        // reports 0 here, letting the user silently
-                        // over-place B past its declared quantity) and
-                        // OVER-counts the nominal one (A would report the
-                        // full 5, wrongly blocking a legitimate further A
-                        // placement). For an uncomposed placement this keeps
-                        // the exact same `Math.max(1, layers)` defensive
-                        // floor the pre-fix code had (segmentsOf itself
-                        // applies no floor) — same branching idiom as
-                        // checkLayerChange's own layersOfIdIn, so the
-                        // uncomposed result is byte-identical to before.
-                        //
-                        // Round 29 corrective pass: same Tier-2 exclusion as
-                        // checkLayerChange's own layersOfIdIn — a malformed
-                        // placement's raw layers must never phantom-count
-                        // toward this gate either.
-                        const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
-                          pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
-                        const itemPlaced =
-                          mode === 'manual'
-                            ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
-                            : Object.values(pinnedPlacementsByTrip)
-                                .flat()
-                                .reduce((s, pin) => s + layersOfIdIn(pin), 0)
-                        if (itemPlaced >= itemRequested) {
-                          toast.warning(
-                            `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
-                          )
-                          return
-                        }
-                        if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
-                          toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-                          return
-                        }
-                      }
-                      const placement = { ...p, itemId }
-                      if (mode === 'manual') {
-                        useCalculator.getState().addManualPlacement(placement)
-                      } else {
-                        pinFromPlaced(clampedTripIndex, { ...placement, locked: true })
-                      }
-                      // Deliberately NOT calling setActiveStamp(itemId) here.
-                      // pendingPresetStamp stays armed after this first
-                      // placement, so the next click keeps going through the
-                      // uncapped addOrIncrementCargoFromTemplate branch above
-                      // instead of falling into the aggregate-quantity cap —
-                      // that cap makes sense for a pre-declared "Грузы" item
-                      // (its quantity was set on purpose), but a preset has
-                      // no quantity yet; it's only ever defined by how many
-                      // times the user clicks. Switching to the capped
-                      // activeStampId after one click used to leave a stamp
-                      // that still looked armed but silently refused every
-                      // further click ("Все грузы уже размещены") until the
-                      // user went and manually raised the quantity in
-                      // "Грузы" — this keeps placing for as long as the
-                      // preset stamp stays armed (toggle it off, Escape, or
-                      // arm something else to stop).
-                      if (wasPendingPreset) {
-                        useCalculator.getState().setActivePresetCategory(null)
-                      }
-                    }}
-                    onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
-                    onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}
-                    onRemoveManual={removeManualPlacement}
-                    onMergeManual={handleMergeManual}
-                    manualPlacements={manualPlacements}
-                    pinnedPlacements={pinnedPlacements}
-                    selectedPinIds={selectedPinIds}
-                    selectedAutoKeys={selectedAutoKeys}
-                    onToggleAutoSelection={toggleAutoSelection}
-                    onAutoStackAction={actOnAutoStack}
-                    onUnpin={(id) => removePinned(clampedTripIndex, id)}
-                    onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
-                    onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
-                    onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
-                    onMergePinned={handleMergePinned}
-                    onRemovePinned={handleRemovePinned}
-                    onTogglePinLock={handleTogglePinLock}
-                    onRotatePinned={handleRotatePinned}
-                    onTogglePinSelection={togglePinSelection}
-                    onClearSelection={clearSelection}
-                    onRotateManual={handleRotateManual}
-                    onLayerChangePinned={handleLayerChangePinned}
-                    onLayerChangeManual={handleLayerChangeManual}
-                    getLayerInfo={(itemId, currentLayers) => {
-                      const item = items.find((it) => it.id === itemId)
-                      const maxPhys = item ? maxLayersFor(item, deck.clearance, deck.unit) : 1
-                      // Stays clickable even when currently blocked by height/quantity —
-                      // clicking always explains why via a toast (handleLayerChangePinned/
-                      // Manual), rather than presenting a permanently greyed-out button.
-                      const canInc = !!item && item.height > 0
-                      return {
-                        maxPhys,
-                        canIncrease: canInc,
-                        canDecrease: currentLayers > 1,
-                        blockReason: canInc ? undefined : 'У груза не задана высота',
-                      }
-                    }}
-                    selectedManualIds={selectedManualIds}
-                    onToggleManualSelection={toggleManualSelection}
-                    onClearManualSelection={clearManualSelection}
-                    loadZones={deck.loadZones}
-                    lashingPoints={deck.lashingPoints}
-                    categoryByItemId={categoryByItemId}
-                    cargoNumberByItemId={cargoNumberByItemId}
-                    separationRules={separationRulesInUnit}
-                    placingLashingPoint={placingLashingPoint}
-                    onPlaceLashingPoint={(x, y, corner) => {
-                      const count = (deck.lashingPoints?.length ?? 0) + 1
-                      addLashingPoint({
-                        x,
-                        y,
-                        label: `Точка ${count}`,
-                        placementId: corner?.placementId,
-                        itemId: corner ? placementItemId(corner.placementId) : undefined,
-                        cornerX: corner?.cornerX,
-                        cornerY: corner?.cornerY,
-                        verticalAngleDeg: corner ? 45 : undefined,
-                        mslKg: corner ? LASHING_DEVICES.chain_g80_10.mslKg : undefined,
-                        deviceType: corner ? 'chain_g80_10' : undefined,
-                      })
-                      if (corner) toast.success('Крепление добавлено')
-                    }}
-                    onUpdateLashingPoint={updateLashingPoint}
-                    vesselMotion={deck.vesselMotion}
-                    onUpdateLoadZone={updateLoadZone}
-                    powerSockets={deck.powerSockets}
-                    placingPowerSocket={placingPowerSocket}
-                    onPlacePowerSocket={(x, y) => {
-                      const count = (deck.powerSockets?.length ?? 0) + 1
-                      addPowerSocket({ x, y, label: `Розетка ${count}` })
-                    }}
-                    onUpdatePowerSocket={updatePowerSocket}
-                    annotations={deck.annotations}
-                    placingAnnotation={placingAnnotation}
-                    onPlaceAnnotation={(x, y, leader) => {
-                      if (!placingAnnotation) return
-                      const defaultText: Record<typeof placingAnnotation.kind, string> = {
-                        bow: 'Нос',
-                        stern: 'Корма',
-                        port: 'Лево борт',
-                        starboard: 'Право борт',
-                        note: '',
-                      }
-                      addAnnotation({
-                        x,
-                        y,
-                        text: defaultText[placingAnnotation.kind],
-                        kind: placingAnnotation.kind,
-                        leaderX: leader?.x,
-                        leaderY: leader?.y,
-                      })
-                      // The four orientation stamps are normally placed
-                      // once each — auto-disarm so a second stray click
-                      // doesn't drop a duplicate. A free "Заметка" stays
-                      // armed so the user can drop several notes in a row,
-                      // same as placingLashingPoint's "Готово" pattern.
-                      if (placingAnnotation.kind !== 'note') setPlacingAnnotation(null)
-                    }}
-                    onUpdateAnnotation={updateAnnotation}
-                    restrictionZones={deck.restrictionZones}
-                    drawingRestrictionShape={drawingRestrictionShape}
-                    onAddRestrictionZone={addRestrictionZone}
-                    onUpdateRestrictionZone={updateRestrictionZone}
-                    onRemoveRestrictionZone={removeRestrictionZone}
-                    drawingRestrictionZoneFreeform={drawingRestrictionZoneFreeform}
-                    onSetDrawingRestrictionShape={setDrawingRestrictionShape}
-                    onSetDrawingRestrictionZoneFreeform={setDrawingRestrictionZoneFreeform}
-                  />
-                  )}
-                  <div className="mt-3 text-xs text-muted-foreground">
-                    {result.placedCount}/{result.requestedCount} ед. · Загрузка:{' '}
-                    <span className="font-semibold text-foreground">
-                      {Math.round(result.utilization * 100)}%
-                    </span>
-                  </div>
-                  <PresetsBar onPlaceCustomShape={handlePlaceCustomShape} />
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Right panel row 1: placement */}
-            <div className="xl:col-span-4">
-              <PlacementPanel
-                mode={mode}
-                tripIndex={clampedTripIndex}
-                result={result}
-                onAutoRedistribute={handleAutoRedistribute}
-                variants={variants}
-                onSelectVariant={handleSelectVariant}
-                placedAcrossTrips={placedAcrossTrips}
-              />
-            </div>
-
-            {/* Row 2: stats + items, mirrors row 1's 8/4 split. Natural
-                height on both — Статистика grows with its content (no
-                internal scroll), Грузы keeps its own fixed-height scroll
-                list as before. Not height-matched to each other. */}
-            <div className="xl:col-span-8 self-start space-y-4">
-              <StatsPanel
-                result={result}
-                unit={deck.unit}
-                loadZones={deck.loadZones}
-                deckOutline={deck.outline}
-                maxDeckCargoT={deck.maxDeckCargoT}
-                tenFootContainerCapacity={deck.tenFootContainerCapacity}
-                deckStrengthPending={deckStrengthPending}
-                cargoNumberByItemId={cargoNumberByItemId}
-                unplaced={
+        <SectionPanel active={activeSection} collapsed={panelCollapsed} onCollapsedChange={changePanelCollapsed} onSelect={openSection}>
+          {activeSection === 'vessel' && <VesselSection onApplyVesselTemplate={handleApplyVesselTemplate} zoneLoads={zoneLoads} />}
+          {activeSection === 'cargo' && (
+            <CargoSection
+              result={result}
+              placedAcrossTrips={placedAcrossTrips}
+              unit={deck.unit}
+              hoveredItemId={hoveredItemId}
+              onHover={handleHover}
+              onPlaceCustomShape={handlePlaceCustomShape}
+            />
+          )}
+          {activeSection === 'placement' && (
+            <PlacementSection
+              mode={mode}
+              tripIndex={clampedTripIndex}
+              result={result}
+              trips={shownTrips}
+              onAutoRedistribute={handleAutoRedistribute}
+              variants={variants}
+              onSelectVariant={handleSelectVariant}
+            />
+          )}
+          {activeSection === 'checks' && (
+            <ChecksSection
+              stats={{
+                result,
+                unit: deck.unit,
+                loadZones: deck.loadZones,
+                deckOutline: deck.outline,
+                maxDeckCargoT: deck.maxDeckCargoT,
+                tenFootContainerCapacity: deck.tenFootContainerCapacity,
+                deckStrengthPending,
+                cargoNumberByItemId,
+                unplaced:
                   mode === 'auto'
                     ? {
                         count: unfitUnits,
                         label: 'Не влезло',
                         note: carriedToNextTrip > 0 ? `ещё ${carriedToNextTrip} в рейс ${clampedTripIndex + 2}` : undefined,
                       }
-                    : { count: Math.max(0, result.requestedCount - result.placedCount), label: 'Не размещено' }
-                }
-              />
-              <StabilityPanel
-                result={result}
-                deckWidth={deck.width}
-                deckLength={deck.length}
-                unit={deck.unit}
-                vessel={deck.vessel}
-                shipFrame={deck.shipFrame}
-                deckForwardIsPositiveY={deck.deckForwardIsPositiveY}
-                items={items}
-              />
-            </div>
-            <div className="xl:col-span-4 self-start" data-tour="cargo-list">
-              <ItemList
-                result={result}
-                placedAcrossTrips={placedAcrossTrips}
-                unit={deck.unit}
-                hoveredItemId={hoveredItemId}
-                onHover={handleHover}
-                onScrollPageToTop={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-              />
+                    : { count: Math.max(0, result.requestedCount - result.placedCount), label: 'Не размещено' },
+              }}
+              stability={{
+                result,
+                deckWidth: deck.width,
+                deckLength: deck.length,
+                unit: deck.unit,
+                vessel: deck.vessel,
+                shipFrame: deck.shipFrame,
+                deckForwardIsPositiveY: deck.deckForwardIsPositiveY,
+                items,
+              }}
+              lashing={{ autoStack: selectedAutoStack, onPatchAutoStack: patchAutoStack }}
+            />
+          )}
+          {activeSection === 'report' && (
+            <ReportSection hasCargo={items.some((it) => it.quantity >= 1)} onExportPdf={handleExportPdf} onSaveFile={handleExportJson} />
+          )}
+        </SectionPanel>
+
+        <main className="flex-1 min-w-0 flex flex-col">
+          <div className="flex min-h-11 items-center gap-2 px-4 pt-3">
+            <TripTabs
+              trips={shownTrips}
+              activeIndex={clampedTripIndex}
+              onSelect={(i) => {
+                setActiveTripIndex(i)
+                clearSelection()
+              }}
+            />
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {/* DeckVisualization puts its canvas tools here (spec 6.10). */}
+              <div ref={setCanvasToolsEl} className="flex items-center" />
+              <ViewMenu />
             </div>
           </div>
+          {carriedToNextTrip > 0 && (
+            <p className="px-4 pt-2 text-sm text-ink-2" data-testid="trip-carry-over">
+              {carriedToNextTrip} ед. {pluralRu(carriedToNextTrip, 'уходит', 'уходят', 'уходят')} в рейс {clampedTripIndex + 2}
+              {carryReasons.length > 0 && ` — ${carryReasons.map((u) => `${u.name}: ${u.reason}`).join('; ')}`}
+            </p>
+          )}
+          {/* The deck sits in the middle of the area while it fits, and scrolls
+              from the top when it doesn't (auto margins, not justify-center). */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
+            <div className="my-auto w-full">
+              {viewMode === '3d' ? (
+                <Deck3DView
+                  result={result}
+                  cargoNumberByItemId={cargoNumberByItemId}
+                  deckWidth={result.deckWidth}
+                  deckLength={result.deckLength}
+                  deckOutline={deck.outline}
+                  mode={mode}
+                  manualPlacements={manualPlacements}
+                  pinnedPlacements={pinnedPlacements}
+                  onSelectManual={toggleManualSelection}
+                  onSelectPin={togglePinSelection}
+                  onSelectAuto={(p, additive) => toggleAutoSelection(autoPlacementKey(p), additive)}
+                />
+              ) : (
+              <DeckVisualization
+                ref={deckSvgRef}
+                toolbarContainer={canvasToolsEl}
+                result={result}
+                unit={deck.unit}
+                gap={deck.gap}
+                boardOffset={deck.boardOffset}
+                showFreeSpace={showFreeSpace}
+                showGrid={showGrid}
+                showLabels={showLabels}
+                showCargoContents={showCargoContents}
+                backgroundImage={deck.backgroundImage}
+                backgroundImageOpacity={deck.backgroundImageOpacity}
+                backgroundImageRect={deck.backgroundImageRect}
+                onSetBackgroundImage={setDeckBackgroundImage}
+                onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
+                onSetBackgroundImageRect={setDeckBackgroundImageRect}
+                deckOutline={deck.outline}
+                editingDeckOutline={editingDeckOutline}
+                onSetDeckOutline={(outline) => setDeck({ outline })}
+                onSetEditingDeckOutline={setEditingDeckOutline}
+                hoveredItemId={hoveredItemId}
+                onHover={handleHover}
+                mode={mode}
+                activeStamp={activeStamp}
+                stampRotated={stampRotated}
+                drawingCustomShape={drawingCustomShape}
+                onFinishDrawing={handleFinishDrawing}
+                onPlace={(p) => {
+                  // A preset catalog item being placed for the first time — the
+                  // click itself is what creates the CargoItem (quantity 1) and
+                  // defines it as "wanted", so the aggregate quantity cap below
+                  // doesn't apply here; resolve the real item id first.
+                  let itemId = p.itemId
+                  const wasPendingPreset = !!pendingPresetStamp
+                  if (pendingPresetStamp) {
+                    // A preset stamp skips the quantity guard below on
+                    // purpose (see the comment further down where it
+                    // stays armed) — but that's not license to skip the
+                    // capacity guard too. It was, until now: this branch
+                    // never called wouldExceedMaxDeckCargo at all, in
+                    // either mode, so repeatedly clicking an armed preset
+                    // could blow past maxDeckCargoT with zero pushback.
+                    const presetWeight = pendingPresetStamp.weight
+                    if (wouldExceedMaxDeckCargo(presetWeight ?? 0)) {
+                      toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+                      return
+                    }
+                    itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
+                  } else {
+                    // Scoped to THIS item, not a global sum across every
+                    // cargo type — an aggregate check let a fully-placed
+                    // item keep being over-placed by clicking its own
+                    // stamp, as long as some OTHER item's quantity still
+                    // had "room" in the total (e.g. item A qty 1 already
+                    // placed, item B qty 1 still unplaced: clicking A's
+                    // stamp again passed 1 >= 2 = false and placed a
+                    // second A anyway).
+                    const item = items.find((it) => it.id === p.itemId)
+                    const itemRequested = item?.quantity ?? 0
+                    // Round 23: composition-aware — placementLayersOfItem
+                    // (already the canonical primitive checkLayerChange
+                    // uses, see its own layersOfIdIn helper above) counts
+                    // only THIS itemId's own layers within each
+                    // placement, not the placement's flat total. A plain
+                    // `pin.itemId === p.itemId` filter-and-sum-whole-
+                    // layers (the pre-fix code) both MISSES a non-nominal
+                    // constituent (e.g. B inside a composed [A2,B3]
+                    // reports 0 here, letting the user silently
+                    // over-place B past its declared quantity) and
+                    // OVER-counts the nominal one (A would report the
+                    // full 5, wrongly blocking a legitimate further A
+                    // placement). For an uncomposed placement this keeps
+                    // the exact same `Math.max(1, layers)` defensive
+                    // floor the pre-fix code had (segmentsOf itself
+                    // applies no floor) — same branching idiom as
+                    // checkLayerChange's own layersOfIdIn, so the
+                    // uncomposed result is byte-identical to before.
+                    //
+                    // Round 29 corrective pass: same Tier-2 exclusion as
+                    // checkLayerChange's own layersOfIdIn — a malformed
+                    // placement's raw layers must never phantom-count
+                    // toward this gate either.
+                    const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+                      pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
+                    const itemPlaced =
+                      mode === 'manual'
+                        ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
+                        : Object.values(pinnedPlacementsByTrip)
+                            .flat()
+                            .reduce((s, pin) => s + layersOfIdIn(pin), 0)
+                    if (itemPlaced >= itemRequested) {
+                      toast.warning(
+                        `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
+                      )
+                      return
+                    }
+                    if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
+                      toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+                      return
+                    }
+                  }
+                  const placement = { ...p, itemId }
+                  if (mode === 'manual') {
+                    useCalculator.getState().addManualPlacement(placement)
+                  } else {
+                    pinFromPlaced(clampedTripIndex, { ...placement, locked: true })
+                  }
+                  // Deliberately NOT calling setActiveStamp(itemId) here.
+                  // pendingPresetStamp stays armed after this first
+                  // placement, so the next click keeps going through the
+                  // uncapped addOrIncrementCargoFromTemplate branch above
+                  // instead of falling into the aggregate-quantity cap —
+                  // that cap makes sense for a pre-declared "Грузы" item
+                  // (its quantity was set on purpose), but a preset has
+                  // no quantity yet; it's only ever defined by how many
+                  // times the user clicks. Switching to the capped
+                  // activeStampId after one click used to leave a stamp
+                  // that still looked armed but silently refused every
+                  // further click ("Все грузы уже размещены") until the
+                  // user went and manually raised the quantity in
+                  // "Грузы" — this keeps placing for as long as the
+                  // preset stamp stays armed (toggle it off, Escape, or
+                  // arm something else to stop).
+                  if (wasPendingPreset) {
+                    useCalculator.getState().setActivePresetCategory(null)
+                  }
+                }}
+                onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
+                onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}
+                onRemoveManual={removeManualPlacement}
+                onMergeManual={handleMergeManual}
+                manualPlacements={manualPlacements}
+                pinnedPlacements={pinnedPlacements}
+                selectedPinIds={selectedPinIds}
+                selectedAutoKeys={selectedAutoKeys}
+                onToggleAutoSelection={toggleAutoSelection}
+                onAutoStackAction={actOnAutoStack}
+                onUnpin={(id) => removePinned(clampedTripIndex, id)}
+                onPinPlaced={(p) => pinFromPlaced(clampedTripIndex, p)}
+                onUpdatePinned={(id, x, y) => updatePinned(clampedTripIndex, id, { x, y })}
+                onUpdatePinnedClearance={(id, margin) => updatePinned(clampedTripIndex, id, { clearanceMargin: margin })}
+                onMergePinned={handleMergePinned}
+                onRemovePinned={handleRemovePinned}
+                onTogglePinLock={handleTogglePinLock}
+                onRotatePinned={handleRotatePinned}
+                onTogglePinSelection={togglePinSelection}
+                onClearSelection={clearSelection}
+                onRotateManual={handleRotateManual}
+                onLayerChangePinned={handleLayerChangePinned}
+                onLayerChangeManual={handleLayerChangeManual}
+                getLayerInfo={(itemId, currentLayers) => {
+                  const item = items.find((it) => it.id === itemId)
+                  const maxPhys = item ? maxLayersFor(item, deck.clearance, deck.unit) : 1
+                  // Stays clickable even when currently blocked by height/quantity —
+                  // clicking always explains why via a toast (handleLayerChangePinned/
+                  // Manual), rather than presenting a permanently greyed-out button.
+                  const canInc = !!item && item.height > 0
+                  return {
+                    maxPhys,
+                    canIncrease: canInc,
+                    canDecrease: currentLayers > 1,
+                    blockReason: canInc ? undefined : 'У груза не задана высота',
+                  }
+                }}
+                selectedManualIds={selectedManualIds}
+                onToggleManualSelection={toggleManualSelection}
+                onClearManualSelection={clearManualSelection}
+                loadZones={deck.loadZones}
+                lashingPoints={deck.lashingPoints}
+                categoryByItemId={categoryByItemId}
+                cargoNumberByItemId={cargoNumberByItemId}
+                separationRules={separationRulesInUnit}
+                placingLashingPoint={placingLashingPoint}
+                onPlaceLashingPoint={(x, y, corner) => {
+                  const count = (deck.lashingPoints?.length ?? 0) + 1
+                  addLashingPoint({
+                    x,
+                    y,
+                    label: `Точка ${count}`,
+                    placementId: corner?.placementId,
+                    itemId: corner ? placementItemId(corner.placementId) : undefined,
+                    cornerX: corner?.cornerX,
+                    cornerY: corner?.cornerY,
+                    verticalAngleDeg: corner ? 45 : undefined,
+                    mslKg: corner ? LASHING_DEVICES.chain_g80_10.mslKg : undefined,
+                    deviceType: corner ? 'chain_g80_10' : undefined,
+                  })
+                  if (corner) toast.success('Крепление добавлено')
+                }}
+                onUpdateLashingPoint={updateLashingPoint}
+                vesselMotion={deck.vesselMotion}
+                onUpdateLoadZone={updateLoadZone}
+                powerSockets={deck.powerSockets}
+                placingPowerSocket={placingPowerSocket}
+                onPlacePowerSocket={(x, y) => {
+                  const count = (deck.powerSockets?.length ?? 0) + 1
+                  addPowerSocket({ x, y, label: `Розетка ${count}` })
+                }}
+                onUpdatePowerSocket={updatePowerSocket}
+                annotations={deck.annotations}
+                placingAnnotation={placingAnnotation}
+                onPlaceAnnotation={(x, y, leader) => {
+                  if (!placingAnnotation) return
+                  const defaultText: Record<typeof placingAnnotation.kind, string> = {
+                    bow: 'Нос',
+                    stern: 'Корма',
+                    port: 'Лево борт',
+                    starboard: 'Право борт',
+                    note: '',
+                  }
+                  addAnnotation({
+                    x,
+                    y,
+                    text: defaultText[placingAnnotation.kind],
+                    kind: placingAnnotation.kind,
+                    leaderX: leader?.x,
+                    leaderY: leader?.y,
+                  })
+                  // The four orientation stamps are normally placed
+                  // once each — auto-disarm so a second stray click
+                  // doesn't drop a duplicate. A free "Заметка" stays
+                  // armed so the user can drop several notes in a row,
+                  // same as placingLashingPoint's "Готово" pattern.
+                  if (placingAnnotation.kind !== 'note') setPlacingAnnotation(null)
+                }}
+                onUpdateAnnotation={updateAnnotation}
+                restrictionZones={deck.restrictionZones}
+                drawingRestrictionShape={drawingRestrictionShape}
+                onAddRestrictionZone={addRestrictionZone}
+                onUpdateRestrictionZone={updateRestrictionZone}
+                onRemoveRestrictionZone={removeRestrictionZone}
+                drawingRestrictionZoneFreeform={drawingRestrictionZoneFreeform}
+                onSetDrawingRestrictionShape={setDrawingRestrictionShape}
+                onSetDrawingRestrictionZoneFreeform={setDrawingRestrictionZoneFreeform}
+              />
+              )}
+            </div>
+          </div>
+          <StatusLine input={statusInput} onOpenSection={openSection} />
         </main>
       </div>
       <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />
@@ -3098,58 +2944,5 @@ export default function Home() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  )
-}
-
-function LegendDot({
-  color,
-  label,
-  hatch,
-  icon,
-  badge,
-  badgeColor,
-}: {
-  color?: string
-  label: string
-  hatch?: boolean
-  icon?: string
-  // A tiny emoji-on-color-chip swatch, matching the actual corner badge
-  // rendered on a locked/pinned item on the deck (see the `locked` branch
-  // in FootprintShape) — distinct from `color`, a plain solid square, so
-  // this entry can't be mistaken for the selection outline, which uses the
-  // same purple (#7c3aed) for a completely different meaning.
-  badge?: string
-  badgeColor?: string
-}) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      {hatch ? (
-        <span
-          className="h-3 w-3 rounded-sm border border-emerald-500/50"
-          style={{
-            backgroundImage:
-              'repeating-linear-gradient(45deg, rgba(16,185,129,0.35) 0 2px, transparent 2px 5px)',
-          }}
-        />
-      ) : icon ? (
-        <span aria-hidden className="grid h-4 w-4 place-items-center text-xs font-bold text-primary">
-          {icon}
-        </span>
-      ) : badge ? (
-        <span
-          aria-hidden
-          className="grid h-4 w-4 place-items-center rounded-sm text-xs"
-          style={{ backgroundColor: badgeColor }}
-        >
-          {badge}
-        </span>
-      ) : (
-        <span
-          className="h-3 w-3 rounded-sm border border-black/10"
-          style={{ backgroundColor: color }}
-        />
-      )}
-      {label}
-    </span>
   )
 }

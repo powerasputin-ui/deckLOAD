@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, setNumber } from './helpers'
+import { clearCalculation, openSection, setNumber } from './helpers'
 
 // MiniNumField renders a text input right after its <label>text</label> —
 // same locator pattern already established in deck-outline-load-zones.spec.ts
@@ -8,7 +8,9 @@ function fieldByLabel(page: Page, labelText: string) {
   return page.locator(`label:has-text("${labelText}") + input, label:has-text("${labelText}") ~ input`).first()
 }
 
+// The vessel's data is in «Судно»; the result it gives is in «Проверки».
 async function fillVesselParticulars(page: Page) {
+  await openSection(page, 'Судно')
   await page.getByRole('button', { name: 'Остойчивость судна' }).click()
   await fieldByLabel(page, 'Длина LBP').fill('80')
   await fieldByLabel(page, 'Ширина (м)').fill('18')
@@ -25,6 +27,7 @@ test.describe('Ship stability calculator', () => {
     await page.goto('/')
     await clearCalculation(page)
     await fillVesselParticulars(page)
+    await openSection(page, 'Проверки')
 
     // GM = KM(7.2) - KG(5.5, no cargo yet) = 1.70. No variable weights are
     // entered in this test, so GM_fluid == GM_solid == 1.70 м, and BOTH the
@@ -42,15 +45,18 @@ test.describe('Ship stability calculator', () => {
     await fillVesselParticulars(page)
 
     // With no cargo, list must read 0deg (perfectly centered — nothing placed).
+    await openSection(page, 'Проверки')
     await expect(page.getByText('0°', { exact: true })).toBeVisible()
 
+    await openSection(page, 'Грузы')
     await page.getByRole('button', { name: 'Добавить груз' }).click()
-    const weightField = page.locator('label:has-text("Вес, кг за ед.") + input, label:has-text("Вес, кг за ед.") ~ input').first()
+    const weightField = page.locator('label:has-text("Вес ед., кг") + input, label:has-text("Вес ед., кг") ~ input').first()
     await setNumber(weightField, '100000')
 
     // Auto-mode places the fresh item hard against the board offset near
     // (0,0) — far from the deck's transverse centerline — so a large,
     // clearly non-zero list angle must appear once the item carries weight.
+    await openSection(page, 'Проверки')
     await expect(page.getByText(/\d+([.,]\d+)?°\s*на (левый|правый) борт/)).toBeVisible()
   })
 
@@ -59,13 +65,16 @@ test.describe('Ship stability calculator', () => {
     await clearCalculation(page)
     await fillVesselParticulars(page)
 
+    await openSection(page, 'Проверки')
     await expect(page.getByText('Доступна только начальная GM/крен.', { exact: false })).toBeVisible()
 
+    await openSection(page, 'Судно')
     await page.getByPlaceholder(/0,10,20,30,40/).fill(
       '0,10,20,30,40\n2000000,0,1.2,2.3,3.1,3.6'
     )
     await page.getByRole('button', { name: 'Применить кривые KN' }).click()
 
+    await openSection(page, 'Проверки')
     await expect(page.getByText('Критерии IMO IS Code 2008, Часть A')).toBeVisible()
     // The initial-GM criterion row must show the real GM value computed above.
     await expect(page.getByText(/Начальная GM/)).toBeVisible()
@@ -81,6 +90,7 @@ test.describe('Ship stability calculator', () => {
     await fillVesselParticulars(page)
     await page.getByPlaceholder(/0,10,20,30,40/).fill('0,10,20,30,40\n2000000,0,1.2,2.3,3.1,3.6')
     await page.getByRole('button', { name: 'Применить кривые KN' }).click()
+    await openSection(page, 'Проверки')
     await expect(page.getByText('Критерии IMO IS Code 2008, Часть A')).toBeVisible()
 
     // Autosave is debounced 400ms (page.tsx) after the last store change —
@@ -89,8 +99,10 @@ test.describe('Ship stability calculator', () => {
     await page.waitForTimeout(700)
     await page.reload()
 
+    // The open section («Проверки») is remembered in this browser.
     await expect(page.getByText(/1[.,]70\s*м/).first()).toBeVisible()
     await expect(page.getByText('Критерии IMO IS Code 2008, Часть A')).toBeVisible()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: 'Остойчивость судна' }).click()
     await expect(fieldByLabel(page, 'Длина LBP')).toHaveValue('80')
     await expect(page.getByText('5 углов × 1 точек водоизмещения', { exact: false })).toBeVisible()

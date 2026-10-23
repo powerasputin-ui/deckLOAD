@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, setNumber } from './helpers'
+import { clearCalculation, setNumber, openSection } from './helpers'
 
 test.describe('Non-rectangular deck outline', () => {
   test('right-click menu edits the deck outline, cargo is blocked from the cut corner, and 3D floor matches', async ({ page }) => {
@@ -25,8 +25,11 @@ test.describe('Non-rectangular deck outline', () => {
 
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
-    // Deck area shrinks below the plain-rectangle 160 m^2 once the corner is cut.
+    // Deck area shrinks below the plain-rectangle 160 m^2 once the corner is
+    // cut — said in the load statistics («Проверки»).
+    await openSection(page, 'Проверки')
     await expect(page.getByText(/^\d+\.\d\d м²$/).first()).toBeVisible()
+    await openSection(page, 'Грузы')
 
     // Manual mode first, so adding cargo doesn't auto-place it via packDeck.
     await page.getByText('Ручной').first().click()
@@ -58,7 +61,9 @@ test.describe('Non-rectangular deck outline', () => {
     await page.goto('/')
     await clearCalculation(page)
 
+    await openSection(page, 'Судно')
     await setNumber(page.getByLabel('Отступ от борта'), '1') // board offset = 1m
+    await openSection(page, 'Грузы')
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 400, y: 200 }, button: 'right', force: true })
@@ -130,6 +135,8 @@ test.describe('Non-rectangular deck outline', () => {
     await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '2')
     await setNumber(itemCard.locator('label:has-text("Шир. (м)") + input'), '6')
     await setNumber(itemCard.locator('label:has-text("Длин. (м)") + input'), '2.4')
+
+    await openSection(page, 'Размещение')
 
     await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
     await page.getByText(/Вариант 1/).click()

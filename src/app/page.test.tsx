@@ -44,6 +44,30 @@ function svgTextContents(): string[] {
   return Array.from(document.querySelectorAll('svg text')).map((el) => el.textContent ?? '')
 }
 
+// The frame's sections (spec 5.3): the left panel shows one at a time.
+function openSection(title: 'Судно' | 'Грузы' | 'Размещение' | 'Проверки' | 'Отчёт') {
+  const nav = screen.getByRole('navigation', { name: 'Разделы' })
+  fireEvent.click(within(nav).getByRole('button', { name: new RegExp(`^${title}`) }))
+}
+
+// An item of the calculation's menu, top left.
+function projectMenuItem(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: /^Меню расчёта/ }))
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
+// «Автораспределение (варианты)» sits in «Размещение».
+function clickAutoRedistribute() {
+  openSection('Размещение')
+  fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+}
+
+// The deck's width field, in «Судно».
+function deckWidthInput(): HTMLInputElement {
+  openSection('Судно')
+  return screen.getByLabelText('Ширина') as HTMLInputElement
+}
+
 function stubLocalStorage() {
   const storage: Record<string, string> = {}
   vi.stubGlobal('localStorage', {
@@ -77,7 +101,7 @@ describe('Home (page.tsx)', () => {
     vi.stubGlobal('localStorage', { getItem: denied, setItem: denied, removeItem: denied } as unknown as Storage)
 
     render(<Home />)
-    expect(screen.getByRole('button', { name: 'Очистить' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Разделы' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Пропустить тур' }))
     expect(screen.queryByRole('button', { name: 'Пропустить тур' })).toBeNull()
   })
@@ -86,36 +110,43 @@ describe('Home (page.tsx)', () => {
   // while the rest of the app says «м»; the clearance field was called
   // «Высота над палубой (зазор)»; the project file buttons said «Скачать JSON»
   // and «Импортировать».
-  it('labels use Russian unit symbols and the new names for the stack height limit and project file buttons', () => {
+  it('labels use Russian unit symbols and the new names for the stack height limit and project file items', () => {
     render(<Home />)
-    expect(screen.getByRole('button', { name: 'Сохранить файл проекта' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Открыть файл проекта' })).toBeTruthy()
+    const cargoText = document.body.textContent ?? ''
+    expect(cargoText).not.toMatch(/\((m|cm|ft)\)/)
+    expect(cargoText).toMatch(/Шир\. \(м\)/)
+
+    fireEvent.click(screen.getByRole('button', { name: /^Меню расчёта/ }))
+    expect(screen.getByRole('button', { name: 'Сохранить файл…' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Открыть файл…' })).toBeTruthy()
     expect(screen.queryByText('Скачать JSON')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Все расчёты…' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent(/20×8 м/)
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    openSection('Судно')
     expect(screen.getByText('Предельная высота штабеля')).toBeTruthy()
-    const body = document.body.textContent ?? ''
-    expect(body).not.toMatch(/\((m|cm|ft)\)/)
-    expect(body).toMatch(/Шир\. \(м\)/)
-    expect(body).toMatch(/20×8 м/)
+    expect(document.body.textContent ?? '').not.toMatch(/\((m|cm|ft)\)/)
   })
 
-  // Phase 0, L10: the vessel library stayed open over the deck after a vessel
-  // had already been applied.
-  it('closes the vessel library once a vessel is applied and confirms the new calculation', () => {
+  // Phase 0, L10: applying a vessel said nothing. Stage 2: the library is a
+  // list in «Судно», which marks the vessel applied.
+  it('applying a library vessel confirms the new calculation and marks the vessel', () => {
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    openSection('Судно')
     fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
-    expect(screen.queryByText(/Создаёт новый расчёт с палубой/)).toBeNull()
     expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
+    expect(screen.getByText('применено')).toBeTruthy()
   })
 
   // Stage 1 (m6): there was no dark theme.
-  it('the theme picked in «Настройки» applies to the page and is remembered in this browser', () => {
+  it('the theme picked in «Вид» applies to the page and is remembered in this browser', () => {
     render(
       <ThemeProvider>
         <Home />
       </ThemeProvider>
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Вид' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Тёмная' }))
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(localStorage.getItem('deckload-theme')).toBe('dark')
@@ -143,6 +174,7 @@ describe('Home (page.tsx)', () => {
     expect(document.querySelector('svg rect[fill="#00ff00"]')).toBeNull()
     expect(screen.getAllByTitle('Груз № 2').length).toBeGreaterThan(0)
 
+    openSection('Проверки')
     const table = screen.getByText('Учёт по грузам').parentElement!.parentElement!.querySelector('table')!
     const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')]
     expect(rows.map((r) => [r.cells[0].textContent, r.cells[1].textContent])).toEqual([
@@ -164,24 +196,27 @@ describe('Home (page.tsx)', () => {
   it('a library vessel keeps asking for its deck-strength limit until one is picked', () => {
     const custom = vi.spyOn(toast, 'custom').mockImplementation(() => '')
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    openSection('Судно')
     fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
     expect(custom).not.toHaveBeenCalled()
     expect(useCalculator.getState().deck.vesselTemplateId).toBe('aleksey-kuznetsov')
-    expect(screen.getByText('лимит не выбран')).toBeTruthy()
     // «Зоны нагрузки» opened by itself, with the choice on top.
     expect(screen.getByText('Лимит прочности палубы не выбран')).toBeTruthy()
+    openSection('Проверки')
+    expect(screen.getByText('лимит не выбран')).toBeTruthy()
+    openSection('Судно')
     fireEvent.click(screen.getByRole('button', { name: '5 т/м²' }))
     const deck = useCalculator.getState().deck
     expect(deck.deckStrengthChoiceTPerM2).toBe(5)
     expect(deck.loadZones).toEqual([{ id: expect.any(String), x: 0, y: 0, width: deck.width, length: deck.length, maxLoadPerArea: 5 }])
-    expect(screen.queryByText('лимит не выбран')).toBeNull()
     expect(screen.getByText('Прочность палубы: 5 т/м²')).toBeTruthy()
+    openSection('Проверки')
+    expect(screen.queryByText('лимит не выбран')).toBeNull()
   })
 
   it('a library vessel with no disputed deck strength asks for nothing', () => {
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: /Библиотека судов/ }))
+    openSection('Судно')
     fireEvent.click(screen.getByText('Коммандер (IMO 9340609)'))
     expect(useCalculator.getState().deck.vesselTemplateId).toBe('olympic-commander')
     expect(screen.queryByText('лимит не выбран')).toBeNull()
@@ -193,7 +228,7 @@ describe('Home (page.tsx)', () => {
   // layout over the current one.
   it('drops the variants list once the cargo changes', () => {
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
     expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
     act(() => {
       const first = useCalculator.getState().items[0]
@@ -204,12 +239,133 @@ describe('Home (page.tsx)', () => {
 
   it('drops the variants list when another calculation becomes active', () => {
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
     expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
     act(() => {
       useProjects.getState().createProject()
     })
     expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
+  })
+
+  // Stage 2 (spec 5): the frame — five sections in the top bar, the open one
+  // in the left panel, the deck in the rest, the status line under it.
+  describe('the frame', () => {
+    const sectionButton = (title: string) =>
+      within(screen.getByRole('navigation', { name: 'Разделы' })).getByRole('button', { name: new RegExp(`^${title}`) })
+
+    it('opens one section at a time in the left panel', () => {
+      render(<Home />)
+      expect(screen.getByRole('heading', { name: 'Грузы' })).toBeTruthy()
+      expect(sectionButton('Грузы').getAttribute('aria-current')).toBe('page')
+      openSection('Судно')
+      expect(screen.getByRole('heading', { name: 'Судно' })).toBeTruthy()
+      expect(screen.getByText('Судно из библиотеки')).toBeTruthy()
+      expect(screen.queryByText('Выбор груза для размещения')).toBeNull()
+      expect(localStorage.getItem('deckload-panel-section')).toBe('vessel')
+    })
+
+    it('collapses the panel to a strip of icons, remembers it, and unfolds when a section is picked', () => {
+      render(<Home />)
+      fireEvent.click(screen.getByRole('button', { name: 'Свернуть панель' }))
+      expect(screen.queryByRole('heading', { name: 'Грузы' })).toBeNull()
+      expect(localStorage.getItem('deckload-panel-collapsed')).toBe('1')
+      const strip = screen.getByRole('complementary', { name: 'Панель разделов' })
+      fireEvent.click(within(strip).getByRole('button', { name: 'Проверки' }))
+      expect(screen.getByRole('heading', { name: 'Проверки' })).toBeTruthy()
+      expect(localStorage.getItem('deckload-panel-collapsed')).toBe('0')
+    })
+
+    it('ticks the steps that are done and never locks the others', () => {
+      render(<Home />)
+      clearDemoCargo()
+      expect(sectionButton('Грузы').textContent).not.toMatch(/готово/)
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Ящик', width: 1, length: 1, quantity: 2, height: 1 })
+      })
+      expect(sectionButton('Грузы').textContent).toMatch(/готово/)
+      expect(sectionButton('Размещение').textContent).toMatch(/готово/)
+      // Cargo on the deck counts as the vessel step being done.
+      expect(sectionButton('Судно').textContent).toMatch(/готово/)
+      openSection('Отчёт')
+      expect(screen.getByRole('heading', { name: 'Отчёт' })).toBeTruthy()
+    })
+
+    it('ticks «Отчёт» after a PDF is downloaded, until the calculation changes', async () => {
+      render(<Home />)
+      expect(sectionButton('Отчёт').textContent).not.toMatch(/готово/)
+      fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
+      await waitFor(() => expect(sectionButton('Отчёт').textContent).toMatch(/готово/))
+      act(() => {
+        const first = useCalculator.getState().items[0]
+        useCalculator.getState().updateItem(first.id, { quantity: first.quantity + 1 })
+      })
+      expect(sectionButton('Отчёт').textContent).not.toMatch(/готово/)
+    })
+
+    it('the status line sums the trip up and each number opens its section', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Ящик', width: 1, length: 1, quantity: 3, height: 1, weight: 1500 })
+      })
+      const status = screen.getByRole('status', { name: 'Итог расчёта' })
+      expect(status.textContent).toMatch(/3\/3 ед\./)
+      expect(status.textContent).toMatch(/4\.5 т/)
+      openSection('Судно')
+      fireEvent.click(within(status).getByRole('button', { name: '3/3 ед.' }))
+      expect(screen.getByRole('heading', { name: 'Грузы' })).toBeTruthy()
+    })
+
+    it('the calculation menu creates, renames, duplicates and deletes calculations', () => {
+      render(<Home />)
+      const count = () => useProjects.getState().projects.length
+      const before = count()
+      projectMenuItem('Новый расчёт')
+      expect(count()).toBe(before + 1)
+
+      projectMenuItem('Переименовать…')
+      const field = screen.getByRole('textbox', { name: 'Название расчёта' })
+      fireEvent.change(field, { target: { value: 'Рейс 12' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+      expect(screen.getByRole('button', { name: 'Меню расчёта «Рейс 12»' })).toBeTruthy()
+
+      projectMenuItem('Дублировать')
+      expect(count()).toBe(before + 2)
+      expect(screen.getByRole('button', { name: 'Меню расчёта «Рейс 12 (копия)»' })).toBeTruthy()
+
+      projectMenuItem('Удалить расчёт…')
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('Удалить «Рейс 12 (копия)»?')
+      fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Удалить' }))
+      expect(count()).toBe(before + 1)
+    })
+
+    it('«Все расчёты…» finds a calculation and opens it', () => {
+      render(<Home />)
+      act(() => {
+        useProjects.getState().createProject('Баржа 7')
+      })
+      projectMenuItem('Все расчёты…')
+      const dialog = screen.getByRole('dialog')
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Найти расчёт' }), { target: { value: 'демо' } })
+      expect(within(dialog).queryByText('Баржа 7')).toBeNull()
+      fireEvent.click(within(dialog).getByText('Демо-расчёт'))
+      expect(useProjects.getState().projects.find((p) => p.id === useProjects.getState().activeId)!.name).toBe('Демо-расчёт')
+    })
+
+    it('the tour has five steps that point at the frame, and goes back', () => {
+      render(<Home />)
+      expect(screen.getByText('Шаг 1 из 5')).toBeTruthy()
+      expect(document.querySelector('[data-tour="section-vessel"]')).toBeTruthy()
+      for (const target of ['section-cargo', 'deck-view', 'status-line', 'export-pdf']) {
+        expect(document.querySelector(`[data-tour="${target}"]`)).toBeTruthy()
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Далее' }))
+      expect(screen.getByText('Шаг 2 из 5')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Назад' }))
+      expect(screen.getByText('Шаг 1 из 5')).toBeTruthy()
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByText(/Шаг \d из 5/)).toBeNull()
+    })
   })
 
   // Phase 0, L1: units carried on to trip 2 sat in trip 1's red «Не
@@ -222,8 +378,8 @@ describe('Home (page.tsx)', () => {
       useCalculator.getState().setDeck({ width: 3, length: 1, gap: 0, boardOffset: 0 })
       useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
     })
-    expect(screen.getByRole('button', { name: /Рейс 1 · 1 ед\./ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Рейс 2 · 1 ед\./ })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /Рейс 1 · 1 ед\./ })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /Рейс 2 · 1 ед\./ })).toBeTruthy()
     expect(screen.queryByText(/Не поместилось/)).toBeNull()
     expect(screen.getByTestId('trip-carry-over').textContent).toMatch(/^1 ед\. уходит в рейс 2/)
     expect(document.body.textContent).toMatch(/2\/2 разм\./)
@@ -1810,7 +1966,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     // Keep the demo cargo (~22 units across 3 item types) so packDeckVariants
     // has enough to produce multiple genuinely distinct layouts.
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
 
     const variantButtons = screen.getAllByText(/^Вариант \d/)
     expect(variantButtons.length).toBeGreaterThanOrEqual(2)
@@ -2140,7 +2296,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
 
     // applyVariant assigns a brand-new id to every placed item (including
     // the frozen one), so match by the frozen/locked position instead —
@@ -2176,7 +2332,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
 
     const survivor = useCalculator.getState().manualPlacements.find((p) => Math.abs(p.x - 1) < 0.01 && Math.abs(p.y - 1) < 0.01)
     expect(survivor?.composition).toEqual([
@@ -2231,7 +2387,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ manualPlacements: [ghostPlacement(itemA.id)] })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+    clickAutoRedistribute()
 
     expect(useCalculator.getState().manualPlacements.filter((m) => m.malformed)).toHaveLength(1)
   })
@@ -2392,6 +2548,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
+    openSection('Проверки')
     fireEvent.click(screen.getByText('Крепление груза'))
 
     // Both segment labels appear (2 ед./3 ед. — the segment's own layers,
@@ -2427,6 +2584,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
+    openSection('Проверки')
     fireEvent.click(screen.getByText('Крепление груза'))
 
     expect(screen.getAllByText(/IMDG Code/).length).toBeGreaterThan(0) // dangerous segment's own not-applicable notice
@@ -2930,7 +3088,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const weightInput = findItemNumInput('B', 'Вес, кг за ед.')
+    const weightInput = findItemNumInput('B', 'Вес ед., кг')
     fireEvent.change(weightInput, { target: { value: '1000' } }) // true new total would be 3200kg
     fireEvent.blur(weightInput) // NumberField applies the edit on blur/Enter, not per keystroke
 
@@ -2987,7 +3145,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const widthInput = screen.getByLabelText('Ширина') as HTMLInputElement
+    const widthInput = deckWidthInput()
     fireEvent.change(widthInput, { target: { value: '' } })
     fireEvent.change(widthInput, { target: { value: '2' } })
     // Half-typed: the store (and the placement at x=15) must be untouched.
@@ -3016,7 +3174,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const itemCount = useCalculator.getState().items.length
     expect(itemCount).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
+    projectMenuItem('Очистить расчёт…')
     const dialog = screen.getByRole('alertdialog')
     expect(dialog).toHaveTextContent('Очистить текущий расчёт?')
     expect(dialog).toHaveTextContent('фото палубы')
@@ -3027,7 +3185,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().items).toHaveLength(itemCount)
     expect(useCalculator.getState().deck.width).toBe(33)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
+    projectMenuItem('Очистить расчёт…')
     fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Очистить' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(useCalculator.getState().items).toEqual([])
@@ -3035,23 +3193,31 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(useCalculator.getState().deck.width).toBe(20)
   })
 
-  it('Round 31: "Сбросить к примеру" asks first too — it also replaces the whole calculation', () => {
+  // Spec 5.2: «Открыть пример» used to be «Сбросить к примеру», which replaced
+  // the current calculation (behind a confirmation). It now opens the example
+  // as a new calculation and leaves the current one as it was.
+  it('«Открыть пример» opens the example as a new calculation and keeps the current one', () => {
     render(<Home />)
     act(() => {
       useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 33 } })
       useCalculator.getState().addItem({ name: 'Мой груз', width: 1, length: 1, quantity: 1 })
     })
+    const before = useProjects.getState().activeId
 
-    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Сбросить к примеру' }))
-    const dialog = screen.getByRole('alertdialog')
-    expect(dialog).toHaveTextContent('Заменить расчёт демонстрационным примером?')
+    projectMenuItem('Открыть пример')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    const { projects, activeId } = useProjects.getState()
+    expect(activeId).not.toBe(before)
+    expect(projects.find((p) => p.id === activeId)!.name).toBe('Демо-расчёт')
+    expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(false)
+    expect(useCalculator.getState().items.length).toBeGreaterThan(0)
+    expect(useCalculator.getState().deck.width).toBe(20)
+
+    act(() => {
+      useProjects.getState().switchTo(before!)
+    })
     expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(true)
     expect(useCalculator.getState().deck.width).toBe(33)
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Заменить на пример' }))
-    expect(useCalculator.getState().items.some((it) => it.name === 'Мой груз')).toBe(false)
-    expect(useCalculator.getState().deck.width).toBe(20)
   })
 
   // Round 31: the 2D keyboard handler (arrows nudge / Space rotates the
@@ -3100,7 +3266,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
       useCalculator.setState({ selectedManualIds: ['m1'] })
     })
-    const toolbarButton = screen.getByRole('button', { name: 'Очистить' })
+    const toolbarButton = screen.getByRole('button', { name: 'Вид' })
     expect(fireEvent.keyDown(toolbarButton, { key: ' ', code: 'Space' })).toBe(true)
     expect(useCalculator.getState().manualPlacements[0].rotated).toBe(false)
 
@@ -3110,14 +3276,14 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
 
   it('Round 31: Space works on the buttons inside a dialog', () => {
     render(<Home />)
-    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }))
+    projectMenuItem('Очистить расчёт…')
     const cancel = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Отмена' })
     expect(fireEvent.keyDown(cancel, { key: ' ', code: 'Space' })).toBe(true)
   })
 
   it('Round 31: an emptied deck field is restored on blur instead of snapping to the minimum', () => {
     render(<Home />)
-    const widthInput = screen.getByLabelText('Ширина') as HTMLInputElement
+    const widthInput = deckWidthInput()
     const before = useCalculator.getState().deck.width
 
     fireEvent.change(widthInput, { target: { value: '' } })
@@ -3721,6 +3887,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
         fireEvent.pointerUp(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
       })
+      openSection('Проверки')
       fireEvent.click(screen.getByRole('button', { name: /^Крепление груза/ }))
       expect(screen.getByText('Режим для «BoxA»')).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Точки крепления' }))
@@ -3740,11 +3907,11 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       const clock = vi.spyOn(Date, 'now')
       try {
         clock.mockReturnValue(1_000_000)
-        fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+        clickAutoRedistribute()
         expect(pins().length).toBeGreaterThan(0)
         expect(pins().every((p) => !p.locked)).toBe(true)
         clock.mockReturnValue(1_002_000)
-        fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+        clickAutoRedistribute()
         expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('будут переставлены'))
       } finally {
         clock.mockRestore()
@@ -3764,7 +3931,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
           manualPlacements: [{ ...base, id: 'm1', x: 1 }, { ...base, id: 'm2', x: 4 }],
         })
       })
-      fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+      clickAutoRedistribute()
       expect(toast.warning).toHaveBeenCalledWith('Ручные размещения (2) будут переставлены заново')
     })
 

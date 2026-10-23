@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, openSection } from './helpers'
 
 test.describe('Lashing points (securing-force check)', () => {
   test('attaching a point to a cargo corner shows a pass/fail marker computed by checkLashingBalance', async ({ page }) => {
@@ -14,6 +14,8 @@ test.describe('Lashing points (securing-force check)', () => {
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 100, y: 100 }, force: true })
     await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
+
+    await openSection(page, 'Проверки')
 
     await page.getByRole('button', { name: /Крепление груза/ }).click()
     await page.getByRole('button', { name: 'Добавить крепление' }).click()

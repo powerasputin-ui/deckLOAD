@@ -2,9 +2,8 @@
 
 // First-time-user product tour: a full-screen spotlight overlay that walks
 // through the app's own real DOM elements (found via `data-tour="..."`
-// attributes sprinkled through Sidebar/DeckVisualization/PlacementPanel/
-// StatsPanel/StabilityPanel/page.tsx's header), one step at a time — "show
-// and explain, click Далее" throughout (confirmed with the user: no
+// attributes on the frame — sections, deck, status line, «Скачать PDF»),
+// one step at a time — "show and explain, click Далее" throughout (confirmed with the user: no
 // forced "perform this action to continue" steps, to keep the state
 // machine simple and predictable). See src/app/page.tsx for the step list,
 // the localStorage "seen" flag, and how this is wired to both the
@@ -83,10 +82,21 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
     }
   }, [step])
 
+  // Esc closes the tour (spec 10.2).
+  useEffect(() => {
+    if (!active) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [active, onClose])
+
   if (!step) return null
 
   const isLast = index === steps.length - 1
   const goNext = () => (isLast ? onClose() : setIndex((i) => i + 1))
+  const goBack = () => setIndex((i) => Math.max(0, i - 1))
 
   // Simple placement heuristic: prefer below the target, then above, then
   // beside it, then just centered — good enough for a handful of fixed
@@ -163,12 +173,19 @@ export function ProductTour({ steps, active, onClose }: ProductTourProps) {
           <p className="text-xs text-muted-foreground leading-relaxed">{step.body}</p>
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClose}>
+          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={onClose}>
             Пропустить тур
           </Button>
-          <Button size="sm" className="h-7 text-xs" onClick={goNext}>
-            {isLast ? 'Готово' : 'Далее'}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {index > 0 && (
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={goBack}>
+                Назад
+              </Button>
+            )}
+            <Button size="sm" className="h-8 text-xs" onClick={goNext}>
+              {isLast ? 'Готово' : 'Далее'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

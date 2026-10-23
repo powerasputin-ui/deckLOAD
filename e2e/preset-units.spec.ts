@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { openSection, unitsCount } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Preset dimensions follow the current unit', () => {
@@ -14,10 +16,12 @@ test.describe('Preset dimensions follow the current unit', () => {
     // silently reject/ignore a click over already-occupied space).
     await page.getByRole('radio', { name: 'Ручной' }).click()
 
-    // Switch to feet before opening the preset catalog.
+    // Switch to feet («Судно») before opening the preset catalog («Грузы»).
+    await openSection(page, 'Судно')
     await page.getByRole('radio', { name: 'фт' }).click()
     await expect(page.getByText('20 м')).not.toBeVisible()
 
+    await openSection(page, 'Грузы')
     await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Контейнеры' }).click()
 

@@ -41,7 +41,7 @@ import { NumberField } from '@/components/calculator/NumberField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import type { CargoItem, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
-import { cn, fmtNumber } from '@/lib/utils'
+import { cn, fmtNumber, pluralRu } from '@/lib/utils'
 import { toast } from 'sonner'
 
 interface ItemListProps {
@@ -53,11 +53,14 @@ interface ItemListProps {
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   onScrollPageToTop?: () => void
+  // In the left panel (stage 2): no card of its own and no scroll of its own —
+  // the panel already has a heading and scrolls.
+  embedded?: boolean
 }
 
 export const DEFAULT_CATEGORIES = ['Обычный', 'Металлопродукция', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
 
-export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHover, onScrollPageToTop }: ItemListProps) {
+export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHover, onScrollPageToTop, embedded }: ItemListProps) {
   const items = useCalculator((s) => s.items)
   const addItem = useCalculator((s) => s.addItem)
   const updateItem = useCalculator((s) => s.updateItem)
@@ -112,6 +115,91 @@ export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHov
     }
   }
 
+  const addButton = (
+    <Button size="sm" onClick={() => { addItem(); toast.success('Груз добавлен') }}>
+      <Plus className="h-4 w-4 mr-1" />
+      Добавить
+    </Button>
+  )
+  const bulkBar = selectedIds.size > 0 && (
+    <div className="mb-2.5 rounded-lg border border-primary/40 bg-primary/5 p-2.5 space-y-1.5">
+      <div className="flex items-center justify-between text-xs font-medium">
+        <span>Выбрано грузов: {selectedIds.size}</span>
+        <button onClick={clearSelection} className="text-muted-foreground hover:text-foreground underline">
+          Снять выделение
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Input
+          list={bulkCategoryListId}
+          value={bulkCategory}
+          onChange={(e) => setBulkCategory(e.target.value)}
+          placeholder="Категория (напр. Опасный груз)"
+          className="h-7 text-xs flex-1"
+        />
+        <datalist id={bulkCategoryListId}>
+          {categoryOptions.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+        <Button size="sm" className="h-7 text-xs shrink-0" onClick={applyBulkCategory}>
+          Присвоить
+        </Button>
+      </div>
+    </div>
+  )
+  const emptyState = (
+    <div className={cn('flex flex-col items-center justify-center text-center text-muted-foreground py-10 gap-3', !embedded && 'h-[460px]')}>
+      <Package className="h-10 w-10 opacity-40" />
+      <div>
+        <p className="font-medium">Список грузов пуст</p>
+        <p className="text-sm">Добавьте груз или выберите пресет</p>
+      </div>
+      <Button size="sm" variant="outline" onClick={() => addItem()}>
+        <Plus className="h-4 w-4 mr-1" />
+        Добавить груз
+      </Button>
+    </div>
+  )
+  const rows = (
+    <div className="space-y-2.5">
+      {items.map((item, index) => (
+        <ItemRow
+          key={item.id}
+          item={item}
+          number={index + 1}
+          unit={unit}
+          placed={placedCount.get(item.id) ?? 0}
+          globalRotation={globalRotation}
+          categoryOptions={categoryOptions}
+          selected={selectedIds.has(item.id)}
+          onToggleSelect={() => toggleSelected(item.id)}
+          hovered={hoveredItemId === item.id}
+          onHover={onHover}
+          onUpdate={(patch) => updateItem(item.id, patch)}
+          onRemove={() => { removeItem(item.id); toast.info('Груз удалён') }}
+          onDuplicate={() => { duplicateItem(item.id); toast.success('Груз дублирован') }}
+          onSetStabilityOverride={(patch) => setItemStabilityOverride(item.id, patch)}
+        />
+      ))}
+    </div>
+  )
+
+  if (embedded) {
+    return (
+      <section className="space-y-3 px-4 py-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm text-ink-2">
+            {items.length} {pluralRu(items.length, 'груз', 'груза', 'грузов')} · размеры в {UNIT_LABEL[unit]}
+          </p>
+          {addButton}
+        </div>
+        {bulkBar}
+        {items.length === 0 ? emptyState : rows}
+      </section>
+    )
+  }
+
   return (
     <div className="space-y-2">
     <Card className="flex flex-col">
@@ -127,79 +215,20 @@ export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHov
               Размеры в {UNIT_LABEL[unit]}. Настройте вращение каждого груза.
             </CardDescription>
           </div>
-          <Button size="sm" onClick={() => { addItem(); toast.success('Груз добавлен') }}>
-            <Plus className="h-4 w-4 mr-1" />
-            Добавить
-          </Button>
+          {addButton}
         </div>
       </CardHeader>
       <CardContent className="p-3">
-        {selectedIds.size > 0 && (
-          <div className="mb-2.5 rounded-lg border border-primary/40 bg-primary/5 p-2.5 space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-medium">
-              <span>Выбрано грузов: {selectedIds.size}</span>
-              <button onClick={clearSelection} className="text-muted-foreground hover:text-foreground underline">
-                Снять выделение
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Input
-                list={bulkCategoryListId}
-                value={bulkCategory}
-                onChange={(e) => setBulkCategory(e.target.value)}
-                placeholder="Категория (напр. Опасный груз)"
-                className="h-7 text-xs flex-1"
-              />
-              <datalist id={bulkCategoryListId}>
-                {categoryOptions.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-              <Button size="sm" className="h-7 text-xs shrink-0" onClick={applyBulkCategory}>
-                Присвоить
-              </Button>
-            </div>
-          </div>
-        )}
+        {bulkBar}
         {items.length === 0 ? (
-          <div className="h-[460px] flex flex-col items-center justify-center text-center text-muted-foreground py-10 gap-3">
-            <Package className="h-10 w-10 opacity-40" />
-            <div>
-              <p className="font-medium">Список грузов пуст</p>
-              <p className="text-sm">Добавьте груз или выберите пресет</p>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => addItem()}>
-              <Plus className="h-4 w-4 mr-1" />
-              Добавить груз
-            </Button>
-          </div>
+          emptyState
         ) : (
           <ScrollArea
             className="h-[460px] pr-3"
             viewportRef={listViewportRef}
             onViewportScroll={(e) => setShowBackToTop(e.currentTarget.scrollTop > 150)}
           >
-            <div className="space-y-2.5">
-              {items.map((item, index) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  number={index + 1}
-                  unit={unit}
-                  placed={placedCount.get(item.id) ?? 0}
-                  globalRotation={globalRotation}
-                  categoryOptions={categoryOptions}
-                  selected={selectedIds.has(item.id)}
-                  onToggleSelect={() => toggleSelected(item.id)}
-                  hovered={hoveredItemId === item.id}
-                  onHover={onHover}
-                  onUpdate={(patch) => updateItem(item.id, patch)}
-                  onRemove={() => { removeItem(item.id); toast.info('Груз удалён') }}
-                  onDuplicate={() => { duplicateItem(item.id); toast.success('Груз дублирован') }}
-                  onSetStabilityOverride={(patch) => setItemStabilityOverride(item.id, patch)}
-                />
-              ))}
-            </div>
+            {rows}
           </ScrollArea>
         )}
       </CardContent>
@@ -360,7 +389,7 @@ function ItemRow({
                 <TooltipTrigger asChild>
                   <div>
                     <NumField
-                      label="Вес, кг за ед."
+                      label="Вес ед., кг"
                       value={item.weight ?? 0}
                       onChange={(v) => onUpdate({ weight: v || undefined })}
                       unit=""
@@ -409,8 +438,8 @@ function ItemRow({
             </datalist>
           </div>
 
-          <div className="flex items-center justify-between mt-2 gap-2">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+            <div className="flex min-w-48 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span>
                 S = {formatNum(area)} {UNIT_LABEL[unit]}²
               </span>
@@ -449,7 +478,7 @@ function ItemRow({
                       ? item.allowRotation
                         ? 'Авто-поворот разрешён — алгоритм может вращать этот груз'
                         : 'Авто-поворот запрещён — нажмите для разрешения'
-                      : 'Включите «Разрешить вращение» в «Настройки» → «Отображение»'}
+                      : 'Включите «Разрешить поворот на 90°» в разделе «Размещение»'}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -475,7 +504,7 @@ function ItemRow({
                     className="min-h-[80px] text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Показывается при наведении на груз на палубе (можно отключить в «Настройки»)
+                    Показывается при наведении на груз на палубе (можно отключить в «Вид»)
                   </p>
                 </PopoverContent>
               </Popover>

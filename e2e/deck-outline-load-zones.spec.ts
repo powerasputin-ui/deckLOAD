@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, openSection } from './helpers'
 
 async function cutTopRightCorner(page: import('@playwright/test').Page) {
   const background = page.locator('svg [data-deck-background="true"]').first()
@@ -24,6 +24,8 @@ test.describe('Load zones on a non-rectangular deck', () => {
     await clearCalculation(page)
     await cutTopRightCorner(page)
 
+    await openSection(page, 'Судно')
+
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()
 
@@ -38,6 +40,8 @@ test.describe('Load zones on a non-rectangular deck', () => {
     await page.goto('/')
     await clearCalculation(page)
     await cutTopRightCorner(page)
+
+    await openSection(page, 'Судно')
 
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()
@@ -60,6 +64,8 @@ test.describe('Load zones on a non-rectangular deck', () => {
     await page.goto('/')
     await clearCalculation(page)
     await cutTopRightCorner(page)
+
+    await openSection(page, 'Судно')
 
     await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()

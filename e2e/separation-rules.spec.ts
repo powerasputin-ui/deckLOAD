@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, setNumber } from './helpers'
+import { clearCalculation, setNumber, unitsCount, openSection } from './helpers'
 
+// «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return unitsCount(page)
 }
 
 test.describe('Category separation rules', () => {
@@ -22,6 +23,7 @@ test.describe('Category separation rules', () => {
 
     // Open "Сепарация груза" (collapsed by default) and add a rule with a
     // large minimum distance so any placement close together violates it.
+    await openSection(page, 'Проверки')
     await page.getByRole('button', { name: /Сепарация груза/ }).click()
     await page.getByText('Категория A', { exact: true }).click()
     await page.getByRole('option', { name: 'СепА' }).click()
@@ -34,6 +36,7 @@ test.describe('Category separation rules', () => {
     const background = page.locator('svg [data-deck-background="true"]').first()
 
     await expect(headerBadge(page)).toHaveText(/^0\/2 /)
+    await openSection(page, 'Грузы')
     await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
     await background.click({ position: { x: 30, y: 30 }, force: true })
     await expect(headerBadge(page)).toHaveText(/^1\/2 /)
@@ -80,6 +83,8 @@ test.describe('Category separation rules', () => {
     await cards.nth(0).locator('label:has-text("Категория") + input').fill('СепА')
     await cards.nth(1).locator('label:has-text("Категория") + input').fill('СепБ')
 
+    await openSection(page, 'Проверки')
+
     await page.getByRole('button', { name: /Сепарация груза/ }).click()
     await page.getByText('Категория A', { exact: true }).click()
     await page.getByRole('option', { name: 'СепА' }).click()
@@ -94,6 +99,8 @@ test.describe('Category separation rules', () => {
     await page.getByRole('button', { name: 'Добавить правило' }).click()
     await expect(page.getByText('Правило добавлено')).toBeVisible()
 
+    await openSection(page, 'Размещение')
+
     await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
 
     const badge = headerBadge(page)
@@ -105,26 +112,37 @@ test.describe('Category separation rules', () => {
     const total = Number(match[2])
     expect(total).toBe(2)
     if (placed === 2) {
-      // Both accepted — verify the algorithm actually kept them apart rather
-      // than silently ignoring the rule. Read straight from localStorage
-      // (same pattern as preset-units.spec.ts) since converting pixel
-      // distance back to real-world meters is unnecessary indirection here.
-      const positions = await page.evaluate(() => {
-        const raw = window.localStorage.getItem('deckload-projects')
-        if (!raw) return null
-        const data = JSON.parse(raw)
-        const projects: any[] = Array.isArray(data.projects) ? data.projects : []
-        const active = projects.find((p: any) => p.id === data.activeId) ?? projects[0]
-        return active?.pinnedPlacementsByTrip?.['0'] ?? null
-      })
-      expect(positions).not.toBeNull()
-      const [a, b] = positions as { x: number; y: number; width: number; length: number }[]
-      const gapX = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width), 0)
-      const gapY = Math.max(a.y - (b.y + b.length), b.y - (a.y + a.length), 0)
-      const centerDist = Math.hypot((a.x + a.width / 2) - (b.x + b.width / 2), (a.y + a.length / 2) - (b.y + b.length / 2))
-      // Either genuinely separated by ≥15m, or edge-to-edge gap covers it —
-      // whichever measure the packer's own AABB check effectively used.
-      expect(Math.max(gapX, gapY, centerDist)).toBeGreaterThanOrEqual(14)
+      // Both placed (the count covers every trip, spec 8.3). Either they share
+      // a trip and the packer kept them apart, or it put them on separate
+      // trips — separation is checked within a trip (L17). Read straight
+      // from localStorage (same pattern as preset-units.spec.ts) since
+      // converting pixel distance back to real-world meters is unnecessary
+      // indirection here.
+      const readPinsByTrip = () =>
+        page.evaluate(() => {
+          const raw = window.localStorage.getItem('deckload-projects')
+          if (!raw) return null
+          const data = JSON.parse(raw)
+          const projects: any[] = Array.isArray(data.projects) ? data.projects : []
+          const active = projects.find((p: any) => p.id === data.activeId) ?? projects[0]
+          return (active?.pinnedPlacementsByTrip ?? null) as Record<string, { x: number; y: number; width: number; length: number }[]> | null
+        })
+      // The applied variant pins trip 1's layout; cargo it leaves out goes on
+      // to the next trip, placed by the packer. The autosave is debounced
+      // (page.tsx) — wait for trip 1's pins to land.
+      await expect.poll(async () => (await readPinsByTrip())?.['0']?.length ?? 0).toBeGreaterThan(0)
+      const trip1 = (await readPinsByTrip())?.['0'] ?? []
+      if (trip1.length === 2) {
+        const [a, b] = trip1
+        const gapX = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width), 0)
+        const gapY = Math.max(a.y - (b.y + b.length), b.y - (a.y + a.length), 0)
+        const centerDist = Math.hypot((a.x + a.width / 2) - (b.x + b.width / 2), (a.y + a.length / 2) - (b.y + b.length / 2))
+        // Either genuinely separated by ≥15m, or edge-to-edge gap covers it —
+        // whichever measure the packer's own AABB check effectively used.
+        expect(Math.max(gapX, gapY, centerDist)).toBeGreaterThanOrEqual(14)
+      } else {
+        await expect(page.getByRole('tab', { name: /Рейс 2 · 1 ед\./ })).toBeVisible()
+      }
     } else {
       // Rejected — the "Не поместилось" banner must name separation as why.
       expect(placed).toBeLessThan(2)

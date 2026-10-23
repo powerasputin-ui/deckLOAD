@@ -1,11 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { statusLine, openSection } from './helpers'
 
-// Placed/total + utilization text lives in the deck card's footer (e.g.
-// "12/22 ед. · Загрузка: 54%") — previously duplicated in a header badge
-// that was removed as redundant clutter.
+// The status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
-  return page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()
+  return statusLine(page)
 }
 
 test.describe('Auto / manual modes', () => {
@@ -15,12 +14,14 @@ test.describe('Auto / manual modes', () => {
     await expect(headerBadge(page)).toContainText('%')
 
     await page.getByText('Ручной').first().click()
-    await expect(page.getByText('ручной режим', { exact: true })).toBeVisible()
-    await expect(page.getByText('Ручная расстановка')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
+    await openSection(page, 'Размещение')
+    await expect(page.getByRole('heading', { name: 'Ручной режим' })).toBeVisible()
   })
 
   test('auto redistribute generates variants', async ({ page }) => {
     await page.goto('/')
+    await openSection(page, 'Размещение')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
   })
@@ -32,7 +33,8 @@ test.describe('Auto / manual modes', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toContainText('%')
     await page.getByText('Ручной').first().click()
-    await expect(page.getByText('ручной режим', { exact: true })).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
+    await openSection(page, 'Размещение')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     await expect(page.getByText(/Ручные размещения \(\d+\) будут переставлены заново/)).toBeVisible()
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
@@ -50,6 +52,7 @@ test.describe('Auto / manual modes', () => {
     await expect(page.locator('svg text:text-is("🔒")')).toHaveCount(1)
 
     const before = await placedRect.getAttribute('x')
+    await openSection(page, 'Размещение')
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     await expect(page.getByText(/Закреплённый груз.*останутся на месте/)).toBeVisible()
     await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
@@ -78,10 +81,13 @@ test.describe('Auto / manual modes', () => {
     }).toPass({ timeout: 10000 })
 
     // Give it a clearance zone via the "Крепление груза" sidebar section.
+    await openSection(page, 'Проверки')
     await page.getByRole('button', { name: /^Крепление груза/ }).click()
     await page.getByRole('button', { name: 'Зона отступа' }).click()
 
     const before = await placedRect.getAttribute('x')
+
+    await openSection(page, 'Размещение')
 
     await page.getByRole('button', { name: 'Автораспределение' }).click()
     await expect(page.getByText(/зоны отступа.*останутся на месте/)).toBeVisible()

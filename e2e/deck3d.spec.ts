@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { unitsCount } from './helpers'
 
 test.describe('3D deck view', () => {
   test('mounts without console errors, orbits without crashing, and clicking a mesh selects it (visible back in 2D)', async ({ page }) => {
@@ -6,7 +7,7 @@ test.describe('3D deck view', () => {
     page.on('pageerror', (err) => pageErrors.push(String(err)))
 
     await page.goto('/')
-    await expect(page.locator('main').locator('text=/\\d+\\/\\d+ ед\\. · Загрузка: \\d+%/').first()).toHaveText(/\/22 ед\./)
+    await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
 
     await page.getByRole('radio', { name: '3D' }).click()
     const canvas = page.locator('canvas')

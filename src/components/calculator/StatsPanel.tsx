@@ -291,7 +291,7 @@ export function StatsPanel({ result, unit, loadZones, deckOutline, maxDeckCargoT
               <Package className="h-4 w-4 text-primary" />
               Учёт по грузам
             </div>
-            <div className="rounded-lg border overflow-hidden">
+            <div className="thin-scrollbar overflow-x-auto rounded-lg border">
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
