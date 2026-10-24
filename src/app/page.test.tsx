@@ -599,6 +599,39 @@ describe('Home (page.tsx)', () => {
       expect(within(shownState()).getByText('Вода в трубах')).toBeTruthy()
     })
 
+    it('opens from the GM in the status line and from «Проверки», which lists the reasons', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      const gmItem = within(screen.getByRole('status', { name: 'Итог расчёта' })).getByText(/^GM 4\.33 м \(отход\) ⚠$/)
+      fireEvent.click(gmItem)
+      expect(screen.getByTestId('stability-workspace')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'К палубе' }))
+
+      openSection('Проверки')
+      const reasons = screen.getByRole('list', { name: 'Остойчивость: причины' })
+      expect(within(reasons).getByText('Предел по формуляру не задан')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Остойчивость: открыть панель остойчивости' }))
+      expect(screen.getByTestId('stability-workspace')).toBeTruthy()
+    })
+
+    it('puts the open trip\'s stability in the PDF, exported from the workspace, and comes back to it', async () => {
+      vi.mocked(exportDeckPlanToPdf).mockClear()
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      openWorkspace()
+      fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
+      await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
+      const block = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].stability!
+      expect(block.title).toBe('Остойчивость')
+      expect(block.rows.map((r) => [r[0], r[5], r.at(-1)])).toEqual([
+        ['Отход', '4.33', 'нужна проверка'],
+        ['Приход', '4.33', 'нужна проверка'],
+      ])
+      await waitFor(() => expect(screen.getByTestId('stability-workspace')).toBeTruthy())
+    })
+
     it('keeps arrival\'s tanks apart from departure\'s once arrival is edited', () => {
       render(<Home />)
       clearDemoCargo()

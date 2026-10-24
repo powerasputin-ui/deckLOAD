@@ -4,7 +4,17 @@ import type { ManualPlacement, PackingResult, PinnedPlacement } from './packing'
 import { assessLashingRequirement, DEFAULT_WIRE_ROPE_TYPE, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
 import type { DeckConfig, Unit } from '@/store/calculator'
 import { UNIT_LABEL } from '@/store/calculator'
-import { fmtNumber, pluralRu } from './utils'
+import { fmtNumber, fmtTonnes, pluralRu } from './utils'
+import { G_METACENTRIC_MIN_SAFE, type VesselStabilityData } from './stability'
+import {
+  NOT_CHECKED,
+  prefixedReason,
+  STABILITY_DISCLAIMER,
+  STATE_LABEL,
+  type StabilityVerdict,
+  type StateStability,
+  type TripStabilityResult,
+} from './stabilityConditions'
 import { sortByCargoNumber } from './cargoPalette'
 import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
 
@@ -228,15 +238,85 @@ export function cargoTableRows(
 export function pdfSectionTitles(trip?: { index: number; count: number }): {
   scheme: string
   cargo: string
+  stability: string
   lashing: string
 } {
-  if (!trip || trip.count <= 1) return { scheme: 'Схема палубы', cargo: 'Учёт по грузам', lashing: 'Крепление груза' }
+  if (!trip || trip.count <= 1) return { scheme: 'Схема палубы', cargo: 'Учёт по грузам', stability: 'Остойчивость', lashing: 'Крепление груза' }
   const which = `рейс ${trip.index + 1} из ${trip.count}`
   return {
     scheme: `Схема палубы — ${which}`,
     cargo: `Учёт по грузам — ${which}`,
+    stability: `Остойчивость — ${which}`,
     lashing: `Крепление груза — вся операция, ${trip.count} ${pluralRu(trip.count, 'рейс', 'рейса', 'рейсов')}`,
   }
+}
+
+// The PDF's «Остойчивость» block (spec 2026-10-24, 7): the open trip at
+// departure and at arrival, then the limit, the reasons, the disclaimer and
+// what isn't checked. The verdict goes in words — the PDF's font may lack
+// ✓ ⚠ ✕ — and the KN reference stays out. Without the vessel's data the
+// block is one line.
+export interface StabilityPdfBlock {
+  title: string
+  only?: string
+  head: string[]
+  rows: string[][]
+  // The verdict of each row, for its colour.
+  verdicts: StabilityVerdict[]
+  notes: string[]
+}
+
+const STABILITY_HEAD = ['Состояние', 'Водоизм., т', 'Осадка ср. / нос / корма, м', 'Крен, °', 'Дифферент, м', 'GM, м', 'Предел GM, м', 'Вода в трубах, т', 'Лёд, т', 'Итог']
+const VERDICT_IN_WORDS: Record<StabilityVerdict, string> = { ok: 'выполнено', warn: 'нужна проверка', error: 'не выполнено' }
+
+export function buildStabilityPdfBlock(
+  evaluation: TripStabilityResult | undefined,
+  vessel: VesselStabilityData | undefined,
+  trip?: { index: number; count: number }
+): StabilityPdfBlock {
+  const title = pdfSectionTitles(trip).stability
+  const empty = (only: string): StabilityPdfBlock => ({ title, only, head: STABILITY_HEAD, rows: [], verdicts: [], notes: [] })
+  if (!vessel) return empty('Остойчивость: данные судна не заданы')
+  if (!evaluation) return empty('Остойчивость: гидростатика судна не задана')
+  const m2 = (v: number) => v.toFixed(2)
+  // Numbers read off the edge of the hydrostatic table carry a star.
+  const row = (s: StateStability): string[] => {
+    const r = s.stability
+    const star = r.extrapolated ? '*' : ''
+    const draughts = [s.draughts.meanM, s.draughts.foreM, s.draughts.aftM].map((v) => (v === null ? '—' : m2(v))).join(' / ')
+    const list = r.listSide === 'none' ? '0' : `${r.listDeg.toFixed(1)} на ${r.listSide === 'starboard' ? 'пр.' : 'лев.'} борт`
+    const trim = r.trimM === null ? '—' : r.trimDirection === 'even' ? '0' : `${m2(Math.abs(r.trimM))} на ${r.trimDirection === 'by-head' ? 'нос' : 'корму'}`
+    const limit = !s.limit ? '—' : s.limit.inRange ? m2(s.limit.gmMinM) : 'вне таблицы'
+    return [
+      STATE_LABEL[s.state],
+      `${star}${Math.round(r.displacementKg / 1000)}`,
+      `${star}${draughts}`,
+      `${star}${list}`,
+      `${star}${trim}`,
+      `${star}${m2(r.GM_fluid)}`,
+      limit,
+      fmtTonnes(s.waterKg),
+      s.iceKg > 0 ? fmtTonnes(s.iceKg) : '—',
+      VERDICT_IN_WORDS[s.verdict],
+    ]
+  }
+  const states = [evaluation.departure, evaluation.arrival]
+  const limit = vessel.limit && vessel.limit.rows.length > 0 ? vessel.limit : undefined
+  const notes = [
+    limit
+      ? `Предел по формуляру: ${limit.kind === 'min-gm-by-draft' ? 'мин. GM по осадке' : 'макс. KG по водоизмещению, в таблице пересчитан в GM как KM − KG предельный'}, ${limit.rows.length} ${pluralRu(limit.rows.length, 'строка', 'строки', 'строк')}${limit.source ? `. Источник: ${limit.source}` : ''}.`
+      : `Предел по формуляру не задан — проверено только по общему минимуму GM ${G_METACENTRIC_MIN_SAFE} м.`,
+    ...(states.some((s) => s.stability.extrapolated) ? ['* Водоизмещение вне таблицы гидростатики: число взято по её крайней строке, это оценка.'] : []),
+    // «Не выполнено (приход): GM 3.17 м ниже предела…», «Нужна проверка: …».
+    ...evaluation.reasons.map((r) => {
+      const word = VERDICT_IN_WORDS[r.status]
+      const state = r.states.length === 1 ? ` (${STATE_LABEL[r.states[0]].toLowerCase()})` : ''
+      return `${prefixedReason(word[0].toUpperCase() + word.slice(1) + state, r.text)}.`
+    }),
+    STABILITY_DISCLAIMER,
+    `Не проверяется: ${NOT_CHECKED.join('; ')}.`,
+  ]
+  return { title, head: STABILITY_HEAD, rows: states.map(row), verdicts: states.map((s) => s.verdict), notes }
 }
 
 interface ExportDeckPlanToPdfOptions {
@@ -253,6 +333,8 @@ interface ExportDeckPlanToPdfOptions {
   dangerousGoodsNames?: string[]
   // The trip `result` and the deck image belong to, when there are several.
   trip?: { index: number; count: number }
+  // That trip's stability block (buildStabilityPdfBlock).
+  stability?: StabilityPdfBlock
   // Cargo id → number in the list, for the «№» column.
   cargoNumberByItemId?: Map<string, number>
 }
@@ -266,6 +348,7 @@ export async function exportDeckPlanToPdf({
   lashingRequirements,
   dangerousGoodsNames,
   trip,
+  stability,
   cargoNumberByItemId = new Map(),
 }: ExportDeckPlanToPdfOptions): Promise<void> {
   const titles = pdfSectionTitles(trip)
@@ -277,8 +360,17 @@ export async function exportDeckPlanToPdf({
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerFonts(pdf)
   const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
   const margin = 32
   const contentWidth = pageWidth - margin * 2
+  // A new page when what's next doesn't fit above the footer.
+  const makeRoom = (height: number) => {
+    if (y + height > pageHeight - 36) {
+      pdf.addPage()
+      y = 40
+    }
+  }
+  const lastTableEnd = () => (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY
 
   // --- Header band ---
   const headerHeight = 56
@@ -384,6 +476,51 @@ export async function exportDeckPlanToPdf({
     },
   })
 
+  y = lastTableEnd() + 22
+
+  // --- Stability of the open trip (spec 2026-10-24, 7) ---
+  if (stability) {
+    pdf.setFont(FONT_FAMILY, 'bold')
+    pdf.setFontSize(10)
+    pdf.setTextColor(...INK)
+    if (stability.only) {
+      makeRoom(14)
+      pdf.text(stability.only, margin, y)
+      y += 22
+    } else {
+      makeRoom(80)
+      pdf.text(stability.title, margin, y)
+      y += 8
+      autoTable(pdf, {
+        startY: y,
+        margin: { left: margin, right: margin, bottom: 36 },
+        head: [stability.head],
+        body: stability.rows,
+        theme: 'grid',
+        styles: { font: FONT_FAMILY, fontSize: 8.5, cellPadding: 5, lineColor: BORDER, lineWidth: 0.5, textColor: INK },
+        headStyles: { font: FONT_FAMILY, fillColor: INK, textColor: 255, fontStyle: 'bold', halign: 'left' },
+        columnStyles: { 0: { fontStyle: 'bold' }, 9: { fontStyle: 'bold' } },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 9) {
+            const verdict = stability.verdicts[data.row.index]
+            data.cell.styles.textColor = verdict === 'error' ? DANGER : verdict === 'warn' ? WARN : GOOD
+          }
+        },
+      })
+      y = lastTableEnd() + 12
+      pdf.setFont(FONT_FAMILY, 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(...INK)
+      for (const note of stability.notes) {
+        const lines = pdf.splitTextToSize(note, contentWidth) as string[]
+        makeRoom(lines.length * 10)
+        pdf.text(lines, margin, y)
+        y += lines.length * 10 + 3
+      }
+      y += 16
+    }
+  }
+
   // --- Lashing count table + dangerous-goods notice. Runs whenever there's
   // something to report — a calculated row, a dangerous-goods cargo name,
   // or both — so a project with ONLY dangerous-goods cargo (no calculable
@@ -391,7 +528,7 @@ export async function exportDeckPlanToPdf({
   const hasLashingRows = !!lashingRequirements && lashingRequirements.length > 0
   const hasDangerousGoods = !!dangerousGoodsNames && dangerousGoodsNames.length > 0
   if (hasLashingRows || hasDangerousGoods) {
-    y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 22
+    makeRoom(40)
     pdf.setFont(FONT_FAMILY, 'bold')
     pdf.setFontSize(10)
     pdf.setTextColor(...INK)
@@ -446,7 +583,7 @@ export async function exportDeckPlanToPdf({
         },
       })
 
-      y = (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14
+      y = lastTableEnd() + 14
       pdf.setFont(FONT_FAMILY, 'normal')
       pdf.setFontSize(7.5)
       pdf.setTextColor(...MUTED)
@@ -475,7 +612,6 @@ export async function exportDeckPlanToPdf({
   const pageCount = pdf.getNumberOfPages()
   for (let i = 1; i <= pageCount; i++) {
     pdf.setPage(i)
-    const pageHeight = pdf.internal.pageSize.getHeight()
     pdf.setDrawColor(...BORDER)
     pdf.line(margin, pageHeight - 24, pageWidth - margin, pageHeight - 24)
     pdf.setFont(FONT_FAMILY, 'normal')

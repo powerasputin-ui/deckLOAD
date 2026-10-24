@@ -8,6 +8,8 @@
 // The checks cover the whole plan, every trip: an overloaded zone on trip 2
 // is the plan's problem while trip 1 is on screen. A detail names the trips
 // when there is more than one.
+import type { LoadingState } from './stability'
+import { prefixedReason } from './stabilityConditions'
 import { fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
@@ -21,17 +23,20 @@ export interface Check {
   status: CheckStatus
   // What it found, in one line.
   detail: string
-  // Where its settings are (8.4, «Где настройки»).
-  target: SectionId
+  // Every reason, one line each, when there are several to list (the
+  // stability check's, by trips and states — spec 2026-10-24, 5).
+  lines?: { status: 'warn' | 'error'; text: string }[]
+  // Where its settings are (8.4, «Где настройки»): a section, or the
+  // stability workspace in the deck's place.
+  target: SectionId | 'stability'
 }
 
 // One trip's stability by the booklet check (stabilityConditions.ts); a
 // trip has none when the vessel's data can't give it (no hydrostatics).
 export interface TripStability {
   verdict: 'ok' | 'warn' | 'error'
-  // The reasons for ✕ and ⚠, one line each: «Приход: …» when only one of the
-  // two states has it.
-  reasons: { status: 'warn' | 'error'; text: string }[]
+  // The reasons for ✕ and ⚠, each with the states it holds in.
+  reasons: { status: 'warn' | 'error'; text: string; states: LoadingState[] }[]
 }
 
 export interface TripFacts {
@@ -163,19 +168,20 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // Остойчивость.
   {
-    const base = { id: 'stability' as const, title: 'Остойчивость', target: 'checks' as const }
+    const base = { id: 'stability' as const, title: 'Остойчивость', target: 'stability' as const }
     const judged = f.trips.filter((t) => t.stability)
     const worst = judged.some((t) => t.stability!.verdict === 'error') ? 'error' : judged.some((t) => t.stability!.verdict === 'warn') ? 'warn' : 'ok'
     if (!f.hasVessel) checks.push({ ...base, status: 'none', detail: 'Нет данных судна' })
     else if (judged.length === 0) checks.push({ ...base, status: 'none', detail: 'Нет гидростатики судна' })
     else if (worst === 'ok') checks.push({ ...base, status: 'ok', detail: 'Выполнено по формуляру' })
     else {
-      // The same reason on several trips once, with the trips it's on.
-      const onWhich = new Map<string, number[]>()
-      f.trips.forEach((t, i) => {
-        for (const r of t.stability?.reasons ?? []) if (r.status === worst) onWhich.set(r.text, [...(onWhich.get(r.text) ?? []), i + 1])
+      const lines = stabilityLines(f.trips, multiTrip)
+      checks.push({
+        ...base,
+        status: worst,
+        detail: lines.filter((l) => l.status === worst).map((l) => l.text).join(' · '),
+        lines,
       })
-      checks.push({ ...base, status: worst, detail: [...onWhich].map(([text, trips]) => `${text}${onTrips(trips)}`).join(' · ') })
     }
   }
 
@@ -193,6 +199,33 @@ export function buildChecks(f: PlanFacts): Check[] {
   }
 
   return checks
+}
+
+// The stability reasons of the plan, errors first, by trips and states:
+// «Рейс 2, приход: GM 1.12 м ниже предела…». A reason the same on several
+// trips is one line naming them; the trips are named only when there is
+// more than one, the state only when the reason holds in one of the two.
+function stabilityLines(trips: TripFacts[], multiTrip: boolean): NonNullable<Check['lines']> {
+  const STATE: Record<LoadingState, string> = { departure: 'отход', arrival: 'приход' }
+  const grouped = new Map<string, { status: 'warn' | 'error'; text: string; states: LoadingState[]; trips: number[] }>()
+  trips.forEach((t, i) => {
+    for (const r of t.stability?.reasons ?? []) {
+      const key = `${r.status}|${r.states.join(',')}|${r.text}`
+      const g = grouped.get(key)
+      if (g) g.trips.push(i + 1)
+      else grouped.set(key, { ...r, trips: [i + 1] })
+    }
+  })
+  return [...grouped.values()]
+    .sort((a, b) => (a.status === b.status ? 0 : a.status === 'error' ? -1 : 1))
+    .map((g) => {
+      const where = [
+        multiTrip && `${g.trips.length === 1 ? 'Рейс' : 'Рейсы'} ${g.trips.join(', ')}`,
+        g.states.length === 1 && STATE[g.states[0]],
+      ].filter((p): p is string => !!p)
+      const prefix = where.join(', ')
+      return { status: g.status, text: prefixedReason(prefix && prefix[0].toUpperCase() + prefix.slice(1), g.text) }
+    })
 }
 
 // ✕ and ⚠ in the list; «—» counts as neither (8.4).

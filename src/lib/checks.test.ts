@@ -142,8 +142,9 @@ describe('buildChecks', () => {
   })
 
   describe('stability', () => {
+    const both: ('departure' | 'arrival')[] = ['departure', 'arrival']
     const fine = { verdict: 'ok' as const, reasons: [] }
-    const noLimit = { verdict: 'warn' as const, reasons: [{ status: 'warn' as const, text: 'Предел по формуляру не задан' }] }
+    const noLimit = { verdict: 'warn' as const, reasons: [{ status: 'warn' as const, text: 'Предел по формуляру не задан', states: both }] }
 
     it('needs the vessel\'s data and its hydrostatics', () => {
       expect(check(facts({ hasVessel: true }), 'stability')).toMatchObject({ status: 'none', detail: 'Нет гидростатики судна' })
@@ -153,25 +154,39 @@ describe('buildChecks', () => {
       })
     })
 
-    it('is an error when any trip fails the booklet check, naming why and where', () => {
-      const low = {
-        verdict: 'error' as const,
-        reasons: [
-          { status: 'error' as const, text: 'Приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м' },
-          { status: 'warn' as const, text: 'Танки и запасы не заданы' },
-        ],
-      }
+    // Spec 2026-10-24, 5: «Рейс 2, приход: GM 1.12 м ниже предела…».
+    const low = {
+      verdict: 'error' as const,
+      reasons: [
+        { status: 'error' as const, text: 'GM 1.12 м ниже предела 1.30 м при осадке 5.90 м', states: ['arrival' as const] },
+        { status: 'warn' as const, text: 'Танки и запасы не заданы', states: both },
+      ],
+    }
+
+    it('is an error when any trip fails the booklet check, naming why, on which trip and in which state', () => {
       expect(check(facts({ hasVessel: true, trips: [trip({ stability: fine }), trip({ stability: low })] }), 'stability')).toMatchObject({
         status: 'error',
-        detail: 'Приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м (рейс 2)',
+        detail: 'Рейс 2, приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м',
+        lines: [
+          { status: 'error', text: 'Рейс 2, приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м' },
+          { status: 'warn', text: 'Рейс 2: танки и запасы не заданы' },
+        ],
+        target: 'stability',
       })
+    })
+
+    it('names no trip when there is one, and the state only when the reason holds in one', () => {
+      expect(check(facts({ hasVessel: true, trips: [trip({ stability: low })] }), 'stability')?.lines).toEqual([
+        { status: 'error', text: 'Приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м' },
+        { status: 'warn', text: 'Танки и запасы не заданы' },
+      ])
     })
 
     it('warns once for a reason every trip shares, with the trips', () => {
       const trips = [trip({ stability: noLimit }), trip({ stability: noLimit })]
       expect(check(facts({ hasVessel: true, trips }), 'stability')).toMatchObject({
         status: 'warn',
-        detail: 'Предел по формуляру не задан (рейсы 1, 2)',
+        detail: 'Рейсы 1, 2: предел по формуляру не задан',
       })
     })
   })

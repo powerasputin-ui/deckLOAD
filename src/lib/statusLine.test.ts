@@ -59,6 +59,6 @@ describe('status line', () => {
     const targets = Object.fromEntries(
       statusItems({ ...base, tripCount: 2, gm: { valueM: 1, status: 'ok', estimated: false, state: 'departure' } }).map((i) => [i.id, i.target])
     )
-    expect(targets).toEqual({ load: 'placement', weight: 'vessel', units: 'cargo', trips: 'placement', gm: 'checks' })
+    expect(targets).toEqual({ load: 'placement', weight: 'vessel', units: 'cargo', trips: 'placement', gm: 'stability' })
   })
 })

@@ -141,7 +141,7 @@ describe('gatherPlanFacts', () => {
       // even though the draught (held at that point's) meets its one-row
       // limit.
       expect(s.verdict).toBe('warn')
-      expect(s.reasons).toEqual([{ status: 'warn', text: 'Водоизмещение 5200 т вне таблицы гидростатики — числа оценочные' }])
+      expect(s.reasons).toEqual([{ status: 'warn', text: 'Водоизмещение 5200 т вне таблицы гидростатики — числа оценочные', states: ['departure', 'arrival'] }])
     })
 
     it('has nothing to read without the vessel\'s data', () => {

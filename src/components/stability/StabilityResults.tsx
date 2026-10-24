@@ -8,6 +8,8 @@ import { G_METACENTRIC_MIN_SAFE, type LoadingState } from '@/lib/stability'
 import {
   gmMargin,
   knReference,
+  NOT_CHECKED,
+  STABILITY_DISCLAIMER,
   STATE_LABEL,
   type StabilityVerdict,
   type StateStability,
@@ -35,19 +37,6 @@ export function VerdictIcon({ verdict, className }: { verdict: StabilityVerdict;
   )
 }
 
-// What the check doesn't cover (spec 2026-10-24, section 9) — said here and
-// in the PDF.
-export const NOT_CHECKED = [
-  'критерий погоды и, для судов снабжения, альтернативные критерии администрации — учтены, только если учтены в введённом пределе',
-  'аварийная остойчивость',
-  'общая прочность корпуса',
-  'плотность забортной воды, отличная от 1,025 т/м³',
-  'пределы по нескольким дифферентам — вводится один столбец',
-  'угол заливания по осадке — вводится одно число',
-]
-
-export const DISCLAIMER = 'Оценка по введённым данным. Не заменяет одобренную Информацию об остойчивости и прибор загрузки судна.'
-
 // The right column of the stability workspace (spec 2026-10-24, 6.1): the
 // open trip at departure and at arrival, each judged against the booklet.
 export function StabilityResults({ evaluation, hasVessel }: { evaluation: TripStabilityResult | undefined; hasVessel: boolean }) {
@@ -58,7 +47,7 @@ export function StabilityResults({ evaluation, hasVessel }: { evaluation: TripSt
     <div className="space-y-4">
       <p className="flex gap-2 rounded-md border border-line bg-surface px-3 py-2 text-xs text-ink-2">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        {DISCLAIMER}
+        {STABILITY_DISCLAIMER}
       </p>
       {!evaluation ? (
         <p className="text-sm text-ink-2">

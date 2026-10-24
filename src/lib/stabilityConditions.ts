@@ -501,10 +501,28 @@ export function knReference(s: StateStability): { gz: GZCurveResult; criteria: S
 
 export const STATE_LABEL: Record<LoadingState, string> = { departure: 'Отход', arrival: 'Приход' }
 
-// A reason as one line: «Приход: …» when only one state has it. The
-// reason's first word goes lower case unless it's an abbreviation (GM).
+// Said beside every result, in the workspace and in the PDF (spec 6.1, 7).
+export const STABILITY_DISCLAIMER = 'Оценка по введённым данным. Не заменяет одобренную Информацию об остойчивости и прибор загрузки судна.'
+
+// What the check doesn't cover (spec section 9).
+export const NOT_CHECKED = [
+  'критерий погоды и, для судов снабжения, альтернативные критерии администрации — учтены, только если учтены в введённом пределе',
+  'аварийная остойчивость',
+  'общая прочность корпуса',
+  'плотность забортной воды, отличная от 1,025 т/м³',
+  'пределы по нескольким дифферентам — вводится один столбец',
+  'угол заливания по осадке — вводится одно число',
+]
+
+// A reason after what it's about — «Приход: …», «Рейс 2, приход: …». Its
+// first word goes lower case unless it's an abbreviation (GM).
+export function prefixedReason(prefix: string, text: string): string {
+  if (!prefix) return text
+  const abbreviation = text.length > 1 && text[1] !== text[1].toLowerCase()
+  return `${prefix}: ${abbreviation ? text : text[0].toLowerCase() + text.slice(1)}`
+}
+
+// A reason as one line: «Приход: …» when only one state has it.
 export function reasonText(r: { text: string; states: LoadingState[] }): string {
-  if (r.states.length !== 1) return r.text
-  const abbreviation = r.text.length > 1 && r.text[1] !== r.text[1].toLowerCase()
-  return `${STATE_LABEL[r.states[0]]}: ${abbreviation ? r.text : r.text[0].toLowerCase() + r.text.slice(1)}`
+  return prefixedReason(r.states.length === 1 ? STATE_LABEL[r.states[0]] : '', r.text)
 }

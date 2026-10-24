@@ -16,11 +16,13 @@ import { cn } from '@/lib/utils'
 export function ChecksSection({
   checks,
   onOpenSection,
+  onOpenStability,
   stats,
   lashing,
 }: {
   checks: readonly Check[]
   onOpenSection: (id: SectionId) => void
+  onOpenStability: () => void
   stats: React.ComponentProps<typeof StatsPanel>
   lashing: React.ComponentProps<typeof LashingPointsSection>
 }) {
@@ -33,19 +35,20 @@ export function ChecksSection({
               <StatusIcon status={c.status} />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{c.title}</div>
-                <div className={cn('text-xs', c.status === 'error' ? 'text-danger' : 'text-ink-2')}>{c.detail}</div>
+                {c.lines ? (
+                  <ul className="mt-0.5 space-y-0.5" aria-label={`${c.title}: причины`}>
+                    {c.lines.map((line) => (
+                      <li key={line.text} className={cn('flex items-start gap-1 text-xs', line.status === 'error' ? 'text-danger' : 'text-ink-2')}>
+                        <StatusIcon status={line.status} small />
+                        <span>{line.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className={cn('text-xs', c.status === 'error' ? 'text-danger' : 'text-ink-2')}>{c.detail}</div>
+                )}
               </div>
-              {c.target !== 'checks' && (
-                <button
-                  type="button"
-                  onClick={() => onOpenSection(c.target)}
-                  aria-label={`${c.title}: открыть раздел «${SECTION_TITLE[c.target]}»`}
-                  className="flex shrink-0 items-center gap-0.5 rounded px-1 text-xs text-ink-2 hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {SECTION_TITLE[c.target]}
-                  <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              )}
+              <TargetLink check={c} onOpenSection={onOpenSection} onOpenStability={onOpenStability} />
             </li>
           ))}
         </ul>
@@ -61,6 +64,28 @@ export function ChecksSection({
   )
 }
 
+// Where a check's settings are: another section, or the stability
+// workspace. None for the checks whose settings are here.
+function TargetLink({ check, onOpenSection, onOpenStability }: { check: Check; onOpenSection: (id: SectionId) => void; onOpenStability: () => void }) {
+  const { target } = check
+  if (target === 'checks') return null
+  const [label, text, open] =
+    target === 'stability'
+      ? [`${check.title}: открыть панель остойчивости`, 'Открыть', onOpenStability]
+      : [`${check.title}: открыть раздел «${SECTION_TITLE[target]}»`, SECTION_TITLE[target], () => onOpenSection(target)]
+  return (
+    <button
+      type="button"
+      onClick={open}
+      aria-label={label}
+      className="flex shrink-0 items-center gap-0.5 rounded px-1 text-xs text-ink-2 hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {text}
+      <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+    </button>
+  )
+}
+
 const STATUS_WORD: Record<CheckStatus, string> = {
   ok: 'норма',
   warn: 'предупреждение',
@@ -68,19 +93,20 @@ const STATUS_WORD: Record<CheckStatus, string> = {
   none: 'не проверяется',
 }
 
-function StatusIcon({ status }: { status: CheckStatus }) {
+function StatusIcon({ status, small }: { status: CheckStatus; small?: boolean }) {
+  const size = small ? 'h-3.5 w-3.5' : 'h-4 w-4'
   const icon =
     status === 'ok' ? (
-      <CircleCheck className="h-4 w-4 text-ok" />
+      <CircleCheck className={cn(size, 'text-ok')} />
     ) : status === 'warn' ? (
-      <TriangleAlert className="h-4 w-4 text-warn" />
+      <TriangleAlert className={cn(size, 'text-warn')} />
     ) : status === 'error' ? (
-      <CircleX className="h-4 w-4 text-danger" />
+      <CircleX className={cn(size, 'text-danger')} />
     ) : (
-      <Minus className="h-4 w-4 text-ink-2" />
+      <Minus className={cn(size, 'text-ink-2')} />
     )
   return (
-    <span className="mt-0.5 shrink-0">
+    <span className={cn('shrink-0', small ? 'mt-px' : 'mt-0.5')}>
       <span aria-hidden="true">{icon}</span>
       <span className="sr-only">{STATUS_WORD[status]}: </span>
     </span>

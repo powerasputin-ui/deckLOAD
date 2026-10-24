@@ -5,8 +5,16 @@ import type { SectionId } from '@/lib/workflow'
 import { cn } from '@/lib/utils'
 
 // The line under the deck (spec 8.3). Each number opens the section where it
-// is set or explained.
-export function StatusLine({ input, onOpenSection }: { input: StatusLineInput; onOpenSection: (id: SectionId) => void }) {
+// is set or explained; GM opens the stability workspace.
+export function StatusLine({
+  input,
+  onOpenSection,
+  onOpenStability,
+}: {
+  input: StatusLineInput
+  onOpenSection: (id: SectionId) => void
+  onOpenStability: () => void
+}) {
   const items = statusItems(input)
   return (
     <div
@@ -26,7 +34,7 @@ export function StatusLine({ input, onOpenSection }: { input: StatusLineInput; o
             type="button"
             title={item.title}
             aria-label={item.label}
-            onClick={() => onOpenSection(item.target)}
+            onClick={() => (item.target === 'stability' ? onOpenStability() : onOpenSection(item.target))}
             data-status-item={item.id}
             className={cn(
               'whitespace-nowrap rounded px-1.5 py-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

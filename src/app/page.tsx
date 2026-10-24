@@ -75,7 +75,7 @@ import { usePlacementActions } from '@/hooks/usePlacementActions'
 import { useMergeActions } from '@/hooks/useMergeActions'
 import { isQuarantined, matchLashingCarryover } from '@/store/placementCarryover'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
-import { exportDeckPlanToPdf, buildLashingRequirementRows, lashingPlacementsForPlan } from '@/lib/exportPdf'
+import { exportDeckPlanToPdf, buildLashingRequirementRows, buildStabilityPdfBlock, lashingPlacementsForPlan } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { toast } from 'sonner'
 
@@ -648,6 +648,16 @@ export default function Home() {
   // user-chosen position as possible instead of discarding them. `setDeck`
   // is now the single source of truth for this; see calculator.ts.
 
+  // The open trip by the booklet check, at departure and at arrival: the
+  // stability workspace shows it, the status line (spec 8.3) and «Судно»
+  // take its worse state, as «Проверки» judges it.
+  const tripStability = useMemo(() => evaluateDeckTripStability(deck, result, items), [deck, result, items])
+  const statusGm = useMemo(() => {
+    if (!tripStability) return undefined
+    const { worst } = tripStability
+    return { valueM: worst.stability.GM_fluid, status: tripStability.verdict, estimated: worst.stability.extrapolated, state: worst.state }
+  }, [tripStability])
+
   // The 2D deck's <svg>, once mounted — right away when it already is, a few
   // frames after leaving 3D otherwise. Gives up after ~3 s so a deck that
   // never mounts can't hang the export.
@@ -715,7 +725,8 @@ export default function Home() {
     const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
     const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
     try {
-      await exportDeckPlanToPdf({ svgEl: copyDeckForPrint(svgEl), deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, cargoNumberByItemId })
+      const stability = buildStabilityPdfBlock(tripStability, deck.vessel, trip)
+      await exportDeckPlanToPdf({ svgEl: copyDeckForPrint(svgEl), deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, stability, cargoNumberByItemId })
       setPdfMadeFrom(calculation)
       toast.success('PDF скачан')
     } catch {
@@ -1040,16 +1051,6 @@ export default function Home() {
     applyVariant(variant)
     toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
   }
-
-  // The open trip by the booklet check, at departure and at arrival: the
-  // stability workspace shows it, the status line (spec 8.3) and «Судно»
-  // take its worse state, as «Проверки» judges it.
-  const tripStability = useMemo(() => evaluateDeckTripStability(deck, result, items), [deck, result, items])
-  const statusGm = useMemo(() => {
-    if (!tripStability) return undefined
-    const { worst } = tripStability
-    return { valueM: worst.stability.GM_fluid, status: tripStability.verdict, estimated: worst.stability.extrapolated, state: worst.state }
-  }, [tripStability])
 
   // Esc goes back from the stability workspace to the deck, unless a field,
   // a dialog or a menu takes it.
@@ -1415,6 +1416,7 @@ export default function Home() {
             <ChecksSection
               checks={planChecks}
               onOpenSection={openSection}
+              onOpenStability={() => setWorkspace('stability')}
               stats={{
                 result,
                 unit: deck.unit,
@@ -1739,7 +1741,7 @@ export default function Home() {
           )}
           </div>
           )}
-          <StatusLine input={statusInput} onOpenSection={openSection} />
+          <StatusLine input={statusInput} onOpenSection={openSection} onOpenStability={() => setWorkspace('stability')} />
         </main>
       </div>
       <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />

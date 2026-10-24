@@ -25,7 +25,7 @@ import {
 } from './packing'
 import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
 import type { DeckShipFrame } from './stability'
-import { evaluateTripStability, reasonText, type TripStabilityResult } from './stabilityConditions'
+import { evaluateTripStability, type TripStabilityResult } from './stabilityConditions'
 import { vesselTemplateById } from './vesselTemplates'
 import { UNIT_LABEL } from './units'
 import { fmtNumber } from './utils'
@@ -115,7 +115,7 @@ function tripStability(t: PackingResult, deck: DeckConfig, items: CargoItem[]): 
   if (!evaluation) return undefined
   return {
     verdict: evaluation.verdict,
-    reasons: evaluation.reasons.map((r) => ({ status: r.status, text: reasonText(r) })),
+    reasons: evaluation.reasons.map((r) => ({ status: r.status, text: r.text, states: r.states })),
   }
 }
 

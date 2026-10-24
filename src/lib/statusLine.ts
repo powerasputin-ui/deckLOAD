@@ -29,7 +29,8 @@ export interface StatusItem {
   title: string
   // For a screen reader, when the text alone is a symbol.
   label?: string
-  target: SectionId
+  // The section it opens, or the stability workspace in the deck's place.
+  target: SectionId | 'stability'
   tone?: 'danger' | 'warn'
 }
 
@@ -78,7 +79,7 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
       id: 'gm',
       text: `GM ${s.gm.estimated ? '≈' : ''}${metres(s.gm.valueM)} м (${s.gm.state === 'arrival' ? 'приход' : 'отход'}) ${mark}`,
       title: `Начальная остойчивость текущего рейса, худшее из отхода и прихода${s.gm.estimated ? ' — оценка: числа вне таблиц судна' : ''}`,
-      target: 'checks',
+      target: 'stability',
       tone: s.gm.status === 'error' ? 'danger' : s.gm.status === 'warn' ? 'warn' : undefined,
     })
   }
