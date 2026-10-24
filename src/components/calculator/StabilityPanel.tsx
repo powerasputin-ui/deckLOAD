@@ -16,6 +16,7 @@ import {
   checkIMOCriteria,
   countMissingWeightPlacements,
   G_METACENTRIC_MIN_SAFE,
+  singleFigureMinGM,
   type VesselStabilityData,
   type DeckShipFrame,
 } from '@/lib/stability'
@@ -133,7 +134,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   const stability = computeStabilityResult(vessel, loading)
   const gz = stability ? computeGZCurve(vessel, loading) : null
   const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg
-  const minGM = vessel.particulars.minGM
+  const minGM = singleFigureMinGM(vessel)
   const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : null
   const hasFreeSurfaceData = vessel.variableWeights.some((w) => (w.freeSurfaceMomentTm ?? 0) !== 0)
   const missingWeightCount = countMissingWeightPlacements(result.placed)

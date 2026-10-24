@@ -30,6 +30,7 @@ import {
   computeGZCurve,
   computeStabilityResult,
   G_METACENTRIC_MIN_SAFE,
+  singleFigureMinGM,
   type DeckShipFrame,
 } from './stability'
 import { vesselTemplateById } from './vesselTemplates'
@@ -131,7 +132,8 @@ function tripStability(t: PackingResult, deck: DeckConfig, items: CargoItem[]): 
   const stability = computeStabilityResult(vessel, loading)
   if (!stability) return undefined
   const gz = computeGZCurve(vessel, loading)
-  const { minGM, downfloodingAngleDeg } = vessel.particulars
+  const { downfloodingAngleDeg } = vessel.particulars
+  const minGM = singleFigureMinGM(vessel)
   const criteria = gz ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : []
   return {
     gmOk: stability.GM_fluid >= (minGM ?? G_METACENTRIC_MIN_SAFE),

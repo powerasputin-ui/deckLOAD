@@ -114,16 +114,12 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
         // silently erases the vessel's own built-in list bias to port.
         lightshipTCG: -0.02,
         longitudinalOrigin: 'aft-perpendicular',
-        // Real — the vessel's OWN approved minimum for this load case,
-        // interpolated from the Min GM table in Final Stability Calculation
-        // No. 4749-152-006 and quoted in the project document as
-        // "Допустимая GMmin = 1,220 м". Over 8x the app's generic 0.15 m
-        // reference, so without this the app would show a comfortable green
-        // PASS at, say, GM = 1.0 m where the real approved criterion FAILS.
-        minGM: 1.22,
         // Real — Приложение Г, п. Г.3.3: "Av = 854,4 м² - парусность" and
         // "zv = 10,347 м – плечо парусности, измеренное от центра
-        // парусности до площади действующей ватерлинии".
+        // парусности до площади действующей ватерлинии". Worked out for the
+        // pipe-carriage case, so it likely includes that deck cargo — the
+        // icing allowance then counts the cargo's side twice, on the safe
+        // side (see `note`).
         windageAreaM2: 854.4,
         windageLeverM: 10.347,
         // Real — FEMCO technical specification, "Block Coefficient 0.814".
@@ -138,6 +134,17 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
         ],
       },
       variableWeights: kuznetsovVariableWeights,
+      // Real — the vessel's OWN approved minimum for this load case,
+      // interpolated from the Min GM table in Final Stability Calculation
+      // No. 4749-152-006 and quoted in the project document as
+      // "Допустимая GMmin = 1,220 м" at the case's draught. Over 8x the
+      // generic 0.15 m. The table itself isn't in the document, so this is
+      // one row: at any other draught the check says the limit is unknown.
+      limit: {
+        kind: 'min-gm-by-draft',
+        rows: [{ arg: 5.873, value: 1.22 }],
+        source: 'Проект ДВТК/638.362241.034, случай LC51 — одно значение из Final Stability Calculation № 4749-152-006',
+      },
       // knCurves intentionally omitted — the source document does not
       // include a KN cross-curve table (it references one only as an
       // external, unprovided source, [4] "Final Stability Calculation").
@@ -178,7 +185,10 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
       'но перевод шпангоутов в метры (шпация) нигде не указан текстом ни в одном документе на руках. Из-за этого LCG груза, ' +
       'размещённого через собственную геометрию приложения, может отличаться от документа на метры — нужен чертёж общего ' +
       'расположения (MW628A-100-02, источник [6] в списке литературы) или прямое указание шпации, чтобы это закрыть. ' +
-      'Остальное (лёгкое судно, танки, расходники, допустимая GMmin 1,220 м) — из реального утверждённого проекта ДВТК/638.362241.034.',
+      'Остальное (лёгкое судно, танки, расходники, допустимая GMmin 1,220 м) — из реального утверждённого проекта ДВТК/638.362241.034. ' +
+      'ПРЕДЕЛ ПО ФОРМУЛЯРУ — одно значение (GMmin 1,220 м при осадке 5,873 м, случай LC51): таблицы минимальной GM по осадкам в документе нет, ' +
+      'поэтому при другой осадке проверка сообщает, что предел неизвестен. Танки — состояние «приход» этого случая. ' +
+      'Парусность 854,4 м² посчитана для перевозки труб и, вероятно, уже включает груз — лёд на боковой площади груза тогда учитывается дважды, в запас.',
   },
   {
     id: 'olympic-commander',

@@ -43,12 +43,21 @@ import {
   type HydrostaticPoint,
   type KNCrossCurves,
   type VariableWeightItem,
+  type LoadingState,
+  type StabilityLimit,
+  weightsInState,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
   return { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
+}
+
+const stateWeights = weightsInState
+
+function withStateWeights(vessel: VesselStabilityData, state: LoadingState, weights: VariableWeightItem[]): VesselStabilityData {
+  return state === 'arrival' ? { ...vessel, arrivalWeights: weights } : { ...vessel, variableWeights: weights }
 }
 
 export type { Unit }
@@ -146,6 +155,11 @@ export interface DeckConfig {
   // disagree. Undefined = not chosen yet, which the sidebar and the stats
   // keep saying — the choice used to live only in a 20-second toast.
   deckStrengthChoiceTPerM2?: number
+  // The voyage is planned for icing conditions: the arrival state carries
+  // the ice allowance (src/lib/stabilityConditions.ts). One switch for the
+  // whole calculation, like its tanks — its trips are repeats of one
+  // passage, and they come and go as cargo changes.
+  icing?: boolean
 }
 
 const PALETTE = [
@@ -345,9 +359,15 @@ interface CalculatorState {
   updateHydrostaticPoint: (index: number, patch: Partial<HydrostaticPoint>) => void
   removeHydrostaticPoint: (index: number) => void
   setKNCrossCurves: (curves: KNCrossCurves | undefined) => void
-  addVariableWeight: (item?: Partial<VariableWeightItem>) => void
-  updateVariableWeight: (id: string, patch: Partial<VariableWeightItem>) => void
-  removeVariableWeight: (id: string) => void
+  // Tanks of one state: departure (`variableWeights`, the default) or
+  // arrival (`arrivalWeights`). The first change to arrival starts it from
+  // a copy of departure — until then the two are the same.
+  addVariableWeight: (item?: Partial<VariableWeightItem>, state?: LoadingState) => void
+  updateVariableWeight: (id: string, patch: Partial<VariableWeightItem>, state?: LoadingState) => void
+  removeVariableWeight: (id: string, state?: LoadingState) => void
+  copyDepartureToArrival: () => void
+  setStabilityLimit: (limit: StabilityLimit | undefined) => void
+  setIcing: (v: boolean) => void
   setShipFrame: (patch: Partial<DeckShipFrame>) => void
   setDeckForwardIsPositiveY: (v: boolean) => void
   setItemStabilityOverride: (itemId: string, override: StabilityOverride | undefined) => void
@@ -489,6 +509,8 @@ function makeItem(items: CargoItem[], partial?: Partial<CargoItem>): CargoItem {
     contents: partial?.contents,
     stabilityOverride: partial?.stabilityOverride,
     nest: partial?.nest,
+    pipeInnerDiameterMm: partial?.pipeInnerDiameterMm,
+    trappedWaterT: partial?.trappedWaterT,
   }
 }
 
@@ -780,27 +802,30 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   // stays correct and enabled for the two GENERIC loose-pipe presets in
   // `mixed` below (drill pipe / casing — a free pile, not a specific
   // vessel's real stowage method), which is why they're not capped here.
+  // pipeInnerDiameterMm is the steel pipe's: the name's diameter less two
+  // walls (Ø813×30,2 → 813 − 2 × 30,2 = 752,6 мм), for the water trapped in
+  // pipes on deck.
   pipes: {
     label: 'Трубы',
     items: [
       // Ø813 × 30.2 SAWL 450 IFD, concrete-coated (НУБП-NN-СК)
-      { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
-      { name: 'Труба Ø813×30,2 НУБП-90', width: 12.38, length: 0.993, height: 0.993, allowRotation: true, weight: 17000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
-      { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
-      { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
-      { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба Ø813×30,2 НУБП-130', width: 12.38, length: 1.073, height: 1.073, allowRotation: true, weight: 22000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
+      { name: 'Труба Ø813×30,2 НУБП-90', width: 12.38, length: 0.993, height: 0.993, allowRotation: true, weight: 17000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
+      { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
+      { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
+      { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 748.6 },
       // Ø219.1, bare (без покрытия) — OD is the steel diameter itself
-      { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155', maxLayers: 1 },
-      { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155', maxLayers: 1 },
+      { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155', maxLayers: 1, pipeInnerDiameterMm: 190.5 },
+      { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155', maxLayers: 1, pipeInnerDiameterMm: 193.7 },
       // ТШ406.4 × 22.2 with 45 mm concrete → OD 406.4 + 2×45 = 496.4 mm
-      { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e', maxLayers: 1 },
+      { name: 'Труба ТШ406,4×22,2 (бетон 45)', width: 12.38, length: 0.496, height: 0.496, allowRotation: true, weight: 6000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 362.0 },
       // ОШ-D-1220 × 13, 3 mm coating → OD 1220 + 2×3 = 1226 mm
-      { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c', maxLayers: 1 },
+      { name: 'Труба ОШ-D-1220×13 К60', width: 12.38, length: 1.226, height: 1.226, allowRotation: true, weight: 5000, shape: 'cylinder', color: '#44403c', maxLayers: 1, pipeInnerDiameterMm: 1194 },
       // Real — «Схема Укладки ТП 2026.pdf», flexible flowline pipe. The
       // source table gives its diameter (617 mm) but leaves weight blank
       // ("Вес— 0000 m") — no real per-metre weight figure exists in any
       // document on file, so `weight` is left unset rather than guessed.
-      { name: 'Труба шлейф D=617 мм (514×27 НУБП-51)', width: 12.38, length: 0.617, height: 0.617, allowRotation: true, shape: 'cylinder', color: '#78716c', maxLayers: 1 },
+      { name: 'Труба шлейф D=617 мм (514×27 НУБП-51)', width: 12.38, length: 0.617, height: 0.617, allowRotation: true, shape: 'cylinder', color: '#78716c', maxLayers: 1, pipeInnerDiameterMm: 460 },
     ],
   },
   // Real cargo with a non-rectangular footprint — 2D/3D actually draw its
@@ -2060,26 +2085,38 @@ export const useCalculator = create<CalculatorState>()(
       const vessel = s.deck.vessel ?? emptyVessel()
       return { deck: { ...s.deck, vessel: { ...vessel, knCurves: curves } } }
     }),
-  addVariableWeight: (item) =>
+  addVariableWeight: (item, state = 'departure') =>
     set((s) => {
       const vessel = s.deck.vessel ?? emptyVessel()
       const newItem: VariableWeightItem = { id: uuid(), name: 'Танк', weightKg: 0, vcgM: 0, tcgM: 0, lcgM: 0, ...item }
-      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights: [...vessel.variableWeights, newItem] } } }
+      return { deck: { ...s.deck, vessel: withStateWeights(vessel, state, [...stateWeights(vessel, state), newItem]) } }
     }),
-  updateVariableWeight: (id, patch) =>
+  updateVariableWeight: (id, patch, state = 'departure') =>
     set((s) => {
       const vessel = s.deck.vessel
       if (!vessel) return s
-      const variableWeights = vessel.variableWeights.map((w) => (w.id === id ? { ...w, ...patch } : w))
-      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights } } }
+      const weights = stateWeights(vessel, state).map((w) => (w.id === id ? { ...w, ...patch } : w))
+      return { deck: { ...s.deck, vessel: withStateWeights(vessel, state, weights) } }
     }),
-  removeVariableWeight: (id) =>
+  removeVariableWeight: (id, state = 'departure') =>
     set((s) => {
       const vessel = s.deck.vessel
       if (!vessel) return s
-      const variableWeights = vessel.variableWeights.filter((w) => w.id !== id)
-      return { deck: { ...s.deck, vessel: { ...vessel, variableWeights } } }
+      const weights = stateWeights(vessel, state).filter((w) => w.id !== id)
+      return { deck: { ...s.deck, vessel: withStateWeights(vessel, state, weights) } }
     }),
+  copyDepartureToArrival: () =>
+    set((s) => {
+      const vessel = s.deck.vessel
+      if (!vessel) return s
+      return { deck: { ...s.deck, vessel: { ...vessel, arrivalWeights: vessel.variableWeights.map((w) => ({ ...w })) } } }
+    }),
+  setStabilityLimit: (limit) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? emptyVessel()
+      return { deck: { ...s.deck, vessel: { ...vessel, limit } } }
+    }),
+  setIcing: (v) => set((s) => ({ deck: { ...s.deck, icing: v } })),
   setShipFrame: (patch) =>
     set((s) => ({
       deck: {

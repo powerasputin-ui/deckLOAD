@@ -64,7 +64,7 @@ import { buildChecks, checkCounts } from '@/lib/checks'
 import { gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
-import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, type DeckShipFrame } from '@/lib/stability'
+import { buildLoadingConditionFromPlacements, computeStabilityResult, G_METACENTRIC_MIN_SAFE, singleFigureMinGM, type DeckShipFrame } from '@/lib/stability'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { useFirstRun } from '@/hooks/useFirstRun'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
@@ -1040,7 +1040,7 @@ export default function Home() {
     const loading = buildLoadingConditionFromPlacements(vessel, frame, { width: deck.width, length: deck.length }, deck.deckForwardIsPositiveY ?? true, result.placed, deck.unit, items)
     const stability = computeStabilityResult(vessel, loading)
     if (!stability) return undefined
-    const limit = vessel.particulars.minGM ?? G_METACENTRIC_MIN_SAFE
+    const limit = singleFigureMinGM(vessel) ?? G_METACENTRIC_MIN_SAFE
     return { valueM: stability.GM_fluid, ok: stability.GM_fluid >= limit, estimated: stability.extrapolated }
   }, [deck.vessel, deck.shipFrame, deck.width, deck.length, deck.deckForwardIsPositiveY, deck.unit, result.placed, items])
 

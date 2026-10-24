@@ -86,6 +86,15 @@ export interface CargoItem {
   // computeItemVCG (via the copy on PlacedItem, see nestVcgByItemId below)
   // and the 2D/3D renderers need it.
   nest?: PipeNestSpec
+  // Pipe cargo only (isPipeShape, or shape 'pipe-nest'): the steel pipe's
+  // inside diameter, for the water trapped in and between pipes on deck
+  // (IS Code B 2.4). The outer diameter the deck works with includes any
+  // coating, so the inside one can't be derived from it.
+  pipeInnerDiameterMm?: number
+  // Water trapped in the pipes, in tonnes per unit (a pipe, or a whole
+  // nest), when the transport project states it. Replaces the IS Code
+  // estimate for this cargo.
+  trappedWaterT?: number
 }
 
 // Overrides the stability calculator's geometric default for a cargo unit's

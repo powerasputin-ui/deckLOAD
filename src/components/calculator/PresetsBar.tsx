@@ -709,14 +709,12 @@ function PipeNestBuilder() {
   // the geometry call — computePipeNest works in real metres throughout.
   const [widthText, setWidthText] = useState(() => fmtNumber(deckWidth))
   const [countText, setCountText] = useState('')
-  // Optional cargo-in-cargo weight (e.g. water left in pipes during
-  // transport — a real line item for some projects, ~4% of stack weight in
-  // the one source document seen so far). Left EMPTY by default, never 0 —
-  // an empty field means "not accounted for", a 0 would falsely claim it
-  // was checked and found to be none. Added to the stack's total weight;
-  // the water is assumed to ride at the same VCG as the pipes themselves
-  // (it's distributed along their full length), so no separate VCG term is
-  // needed — computePipeNest's own geometric VCG already covers it.
+  // Water trapped in the stack, when the transport project states it (a
+  // real line item for some projects, ~4% of stack weight in the one source
+  // document seen so far). Left EMPTY by default: then the stability check
+  // estimates it by the IS Code rule. Kept apart from the pipes' weight
+  // (CargoItem.trappedWaterT), at the stack's own VCG — it's spread along
+  // the pipes' full length.
   const [waterText, setWaterText] = useState('')
   const [prevDeckWidth, setPrevDeckWidth] = useState(deckWidth)
   if (deckWidth !== prevDeckWidth) {
@@ -745,16 +743,14 @@ function PipeNestBuilder() {
   const handleAdd = () => {
     if (!nest || nest.pipeCount <= 0) return
     const pipesWeightKg = pipeWeightKg !== undefined ? nest.pipeCount * pipeWeightKg : undefined
-    const totalWeightKg =
-      pipesWeightKg !== undefined || waterWeightKg !== undefined
-        ? (pipesWeightKg ?? 0) + (waterWeightKg ?? 0)
-        : undefined
     addOrIncrementCargoFromTemplate({
       name: `${tpl.name} — штабель ${nest.pipeCount} шт`,
       width: nest.usableWidthM,
       length: nest.pipeLengthM,
       height: nest.heightM,
-      weight: totalWeightKg,
+      weight: pipesWeightKg,
+      pipeInnerDiameterMm: tpl.pipeInnerDiameterMm,
+      trappedWaterT: waterWeightKg !== undefined ? waterWeightKg / 1000 : undefined,
       allowRotation: false,
       shape: 'pipe-nest',
       // A штабель already IS every tier of the nest (nest.tierCounts has
@@ -769,10 +765,7 @@ function PipeNestBuilder() {
       // did not.
       maxLayers: 1,
       color,
-      nest:
-        waterWeightKg !== undefined
-          ? { ...nest, sourceNote: `${nest.sourceNote ? nest.sourceNote + ' ' : ''}Вода в трубах: ${fmtNumber(waterWeightKg / 1000)} т добавлена к весу штабеля (VCG принят равным VCG труб).` }
-          : nest,
+      nest,
     })
   }
 

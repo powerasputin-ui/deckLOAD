@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind, LashingDeviceType, CompositionSegment } from '@/lib/packing'
 import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
-import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem } from '@/lib/stability'
+import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
 import {
   sanitizeCargoWidth,
   sanitizeCargoLength,
@@ -15,7 +15,7 @@ import {
   sanitizeCargoMaxStackHeightM,
 } from '@/lib/cargoValidation'
 import type { DeckConfig, Mode, Unit } from './calculator'
-import { DEMO_DECK, createDemoItems } from './calculator'
+import { DEMO_DECK, createDemoItems, PRESETS } from './calculator'
 
 export interface Project {
   id: string
@@ -154,6 +154,10 @@ function toOptionalPositive(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+function toOptionalNonNegative(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
 const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom', 'pipe-nest'])
 function normalizeShape(value: unknown): CargoShape | undefined {
   return typeof value === 'string' && VALID_SHAPES.has(value as CargoShape) ? (value as CargoShape) : undefined
@@ -284,7 +288,29 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     windageAreaM2: typeof p.windageAreaM2 === 'number' && Number.isFinite(p.windageAreaM2) ? p.windageAreaM2 : undefined,
     windageLeverM: typeof p.windageLeverM === 'number' && Number.isFinite(p.windageLeverM) ? p.windageLeverM : undefined,
     blockCoefficient: typeof p.blockCoefficient === 'number' && Number.isFinite(p.blockCoefficient) ? p.blockCoefficient : undefined,
+    maxDraftM: toOptionalPositive(p.maxDraftM),
+    loadLineLengthM: toOptionalPositive(p.loadLineLengthM),
+    criteriaSet: p.criteriaSet === 'is-code-a' || p.criteriaSet === 'osv-b245' ? p.criteriaSet : undefined,
+    otherExposedDeckAreaM2: toOptionalNonNegative(p.otherExposedDeckAreaM2),
+    otherExposedDeckVcgM: toOptionalNonNegative(p.otherExposedDeckVcgM),
   }
+}
+
+// A row with a negative or non-finite number is dropped, not clamped: a
+// limit is read straight off the booklet, and a mistyped row must not turn
+// into a plausible-looking one. A table with no rows left is no limit.
+function normalizeStabilityLimit(value: unknown): StabilityLimit | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const l = value as Record<string, unknown>
+  if (l.kind !== 'min-gm-by-draft' && l.kind !== 'max-kg-by-displacement') return undefined
+  const rows = Array.isArray(l.rows)
+    ? l.rows
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+        .map((r) => ({ arg: toOptionalNonNegative(r.arg), value: toOptionalNonNegative(r.value) }))
+        .filter((r): r is { arg: number; value: number } => r.arg !== undefined && r.value !== undefined)
+    : []
+  if (rows.length === 0) return undefined
+  return { kind: l.kind, rows, source: toOptionalString(l.source) }
 }
 
 function normalizeVariableWeights(value: unknown): VariableWeightItem[] {
@@ -382,11 +408,27 @@ function normalizeVessel(value: unknown): VesselStabilityData | undefined {
   const v = value as Record<string, unknown>
   const particulars = normalizeVesselParticulars(v.particulars)
   if (!particulars) return undefined
+  const hydrostatics = normalizeHydrostaticTable((v.hydrostatics as Record<string, unknown> | undefined)?.points)
+  let limit = normalizeStabilityLimit(v.limit)
+  // The single minGM figure is a booklet minimum for one loading case. It
+  // becomes a one-row table at that case's draught — known only when the
+  // vessel has a single hydrostatic point, which is how library vessels
+  // carry one case. Otherwise it stays a hint and judges nothing.
+  if (!limit && particulars.minGM !== undefined && hydrostatics.points.length === 1) {
+    limit = {
+      kind: 'min-gm-by-draft',
+      rows: [{ arg: hydrostatics.points[0].draftM, value: particulars.minGM }],
+      source: 'Перенесено из «Мин. GM» — одно значение для одного случая загрузки',
+    }
+    particulars.minGM = undefined
+  }
   return {
     particulars,
-    hydrostatics: normalizeHydrostaticTable((v.hydrostatics as Record<string, unknown> | undefined)?.points),
+    hydrostatics,
     knCurves: normalizeKNCrossCurves(v.knCurves),
     variableWeights: normalizeVariableWeights(v.variableWeights),
+    arrivalWeights: Array.isArray(v.arrivalWeights) ? normalizeVariableWeights(v.arrivalWeights) : undefined,
+    limit,
   }
 }
 
@@ -807,6 +849,56 @@ function freshProject(name: string, withDemo = false): Project {
 // Exported for cargoValidation.test.ts, which checks that this and
 // updateItem's own sanitization (calculator.ts) agree on the same garbage
 // input now that both delegate to src/lib/cargoValidation.ts.
+// A pipe nest built with «Вода в трубах» carried that water inside its
+// weight, where the stability check can't tell it from steel and would
+// add its own estimate on top. The difference from the nest's own pipe
+// weight moves to trappedWaterT (per nest, like weight). Returns the
+// items whose unit weight changed, so their placements follow.
+function moveNestWaterOutOfWeight(items: CargoItem[]): Map<string, { from: number; to: number }> {
+  const moved = new Map<string, { from: number; to: number }>()
+  for (const it of items) {
+    if (it.shape !== 'pipe-nest' || !it.nest || it.weight === undefined || it.trappedWaterT !== undefined) continue
+    if (!(it.nest.pipeWeightKg > 0)) continue
+    const pipesKg = it.nest.pipeCount * it.nest.pipeWeightKg
+    const waterKg = it.weight - pipesKg
+    if (waterKg < 1) continue
+    moved.set(it.id, { from: it.weight, to: pipesKg })
+    it.trappedWaterT = waterKg / 1000
+    it.weight = pipesKg
+  }
+  return moved
+}
+
+// An uncomposed placement carries its own copy of the unit weight; one
+// that still matches the item's old weight takes the new one, or loading
+// it would read as a stack of unknown makeup (detectLegacyUnknownComposition).
+function withMovedNestWater(value: unknown, moved: Map<string, { from: number; to: number }>): unknown {
+  if (moved.size === 0 || !Array.isArray(value)) return value
+  return value.map((raw) => {
+    if (!raw || typeof raw !== 'object') return raw
+    const pl = raw as Record<string, unknown>
+    const change = typeof pl.itemId === 'string' ? moved.get(pl.itemId) : undefined
+    if (!change || pl.composition !== undefined || typeof pl.weight !== 'number' || Math.abs(pl.weight - change.from) >= 1) return raw
+    return { ...pl, weight: change.to }
+  })
+}
+
+function withMovedNestWaterByTrip(value: unknown, moved: Map<string, { from: number; to: number }>): unknown {
+  if (moved.size === 0 || !value || typeof value !== 'object' || Array.isArray(value)) return value
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([trip, list]) => [trip, withMovedNestWater(list, moved)]))
+}
+
+// Pipe cargo added from a preset before presets carried an inside diameter:
+// its name still starts with the preset's.
+function fillPresetPipeInnerDiameters(items: CargoItem[]): void {
+  const presets = (PRESETS.pipes?.items ?? []).filter((t) => t.name && t.pipeInnerDiameterMm)
+  for (const it of items) {
+    if (it.pipeInnerDiameterMm !== undefined || (it.shape !== 'cylinder' && it.shape !== 'pipe-nest')) continue
+    const preset = presets.find((t) => it.name.startsWith(t.name!))
+    if (preset) it.pipeInnerDiameterMm = preset.pipeInnerDiameterMm
+  }
+}
+
 export function normalizeProject(p: Partial<Project>): Project {
   const now = Date.now()
   const rawUnit = p.deck?.unit ?? 'm'
@@ -846,8 +938,17 @@ export function normalizeProject(p: Partial<Project>): Project {
         contents: toOptionalString(it.contents),
         stabilityOverride: normalizeStabilityOverride(it.stabilityOverride),
         nest: normalizeNestSpec((it as { nest?: unknown }).nest),
+        pipeInnerDiameterMm: toOptionalPositive((it as { pipeInnerDiameterMm?: unknown }).pipeInnerDiameterMm),
+        trappedWaterT: toOptionalNonNegative((it as { trappedWaterT?: unknown }).trappedWaterT),
       }))
     : []
+  const nestWater = moveNestWaterOutOfWeight(items)
+  fillPresetPipeInnerDiameters(items)
+  const raw = {
+    manualPlacements: withMovedNestWater(p.manualPlacements, nestWater),
+    pinnedPlacementsByTrip: withMovedNestWaterByTrip((p as { pinnedPlacementsByTrip?: unknown }).pinnedPlacementsByTrip, nestWater),
+    pinnedPlacements: withMovedNestWater((p as { pinnedPlacements?: unknown }).pinnedPlacements, nestWater),
+  }
   return {
     id: typeof p.id === 'string' && p.id ? p.id : uuid(),
     name: typeof p.name === 'string' ? p.name : 'Без названия',
@@ -877,14 +978,11 @@ export function normalizeProject(p: Partial<Project>): Project {
       deckForwardIsPositiveY: toBool(p.deck?.deckForwardIsPositiveY, true),
       vesselTemplateId: toOptionalString(p.deck?.vesselTemplateId),
       deckStrengthChoiceTPerM2: toOptionalPositive(p.deck?.deckStrengthChoiceTPerM2),
+      icing: typeof p.deck?.icing === 'boolean' ? p.deck.icing : undefined,
     },
     items,
-    manualPlacements: normalizeManualPlacements(p.manualPlacements, items),
-    pinnedPlacementsByTrip: normalizePinnedPlacementsByTrip(
-      (p as { pinnedPlacementsByTrip?: unknown }).pinnedPlacementsByTrip,
-      (p as { pinnedPlacements?: unknown }).pinnedPlacements,
-      items
-    ),
+    manualPlacements: normalizeManualPlacements(raw.manualPlacements, items),
+    pinnedPlacementsByTrip: normalizePinnedPlacementsByTrip(raw.pinnedPlacementsByTrip, raw.pinnedPlacements, items),
     separationRules: normalizeSeparationRules(p.separationRules),
     mode,
     sortStrategy,

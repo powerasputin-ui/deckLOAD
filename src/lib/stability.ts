@@ -49,23 +49,31 @@ export interface VesselParticulars {
   // this for the standard 30°/40° area boundaries when it is smaller.
   // undefined = not known — standard 30°/40° boundaries are used as-is.
   downfloodingAngleDeg?: number
-  // THIS vessel's own approved minimum GM for the load case at hand, read
-  // off the Min GM table in its class-approved stability booklet. Offshore
-  // vessels carrying tall deck cargo routinely require far more than the
-  // generic G_METACENTRIC_MIN_SAFE below — the real А. Кузнецов figure is
-  // 1.220 m, over eight times it — so a green "PASS" against the generic
-  // number can badly mislead. Whenever this is set it REPLACES the generic
-  // constant everywhere the criteria and UI are checked.
-  // undefined = not known; the generic reference is used and labelled as such.
+  // The single minimum GM figure calculations carried before `limit`
+  // (VesselStabilityData) existed. A booklet gives its minimum GM as a
+  // curve by draught, not one number — so a figure that couldn't be moved
+  // into `limit` on load (see normalizeVessel in store/projects.ts) is
+  // kept only to be shown as a hint.
   minGM?: number
-  // Windage ("парусность") — the lateral area the wind acts on, and the
-  // height of its centre above the waterline. Together with a navigation
-  // area's wind pressure they give the wind heeling arm used by the
-  // РД 31.11.21.23-96 cargo non-shift criterion. Both come from the
-  // vessel's own approved calculation; neither is derivable from anything
-  // else the app knows, so undefined means "not available", never zero.
+  // Summer load line draught, from the load line certificate.
+  maxDraftM?: number
+  // Length L as the load line convention defines it. The trapped-water
+  // rule (IS Code B 2.4) sets its freeboard limits as fractions of it;
+  // LBP stands in when this is unset, which understates the water.
+  loadLineLengthM?: number
+  // The criteria the KN-curve reference is checked against — a marked
+  // estimate, never the verdict. Unset = IS Code part A 2.2.
+  criteriaSet?: 'is-code-a' | 'osv-b245'
+  // Lateral area of the hull and superstructure above the waterline,
+  // without deck cargo, and the height of its centre above the waterline
+  // ("парусность"). The icing allowance (7.5 kg/m² a side) uses them.
   windageAreaM2?: number
   windageLeverM?: number
+  // Exposed decks other than the cargo deck (forecastle, bridge deck…):
+  // their horizontal area and its height above the baseline, for the
+  // icing allowance (30 kg/m²). 0 is a real answer — none — not "unknown".
+  otherExposedDeckAreaM2?: number
+  otherExposedDeckVcgM?: number
   // Block coefficient Cb — needed for the roll-amplitude multiplier X2 in
   // РД 31.11.21.16-2003 Приложение 5, табл. 5.3.
   blockCoefficient?: number
@@ -112,11 +120,47 @@ export interface KNCrossCurves {
   points: { displacementKg: number; KNByAngle: number[] }[] // KNByAngle aligned index-for-index with headingAngles
 }
 
+// The vessel's own stability limit from its approved booklet: minimum GM
+// by draught, or maximum KG by displacement — whichever form the booklet
+// gives. Linear between rows; outside them there is no limit to judge by,
+// and the check says so rather than extrapolating.
+export interface StabilityLimit {
+  kind: 'min-gm-by-draft' | 'max-kg-by-displacement'
+  // `arg` is a draught in metres (min-gm-by-draft) or a displacement in kg
+  // (max-kg-by-displacement, the same unit as HydrostaticPoint); `value`
+  // is a GM or a KG in metres.
+  rows: { arg: number; value: number }[]
+  source?: string
+}
+
 export interface VesselStabilityData {
   particulars: VesselParticulars
   hydrostatics: HydrostaticTable
   knCurves?: KNCrossCurves // absent = Phase 1 only (GM/list/trim, no GZ curve)
-  variableWeights: VariableWeightItem[] // tanks/ballast/fuel/water/stores — see VariableWeightItem
+  // Tanks, ballast, fuel, water and stores at DEPARTURE — see VariableWeightItem.
+  variableWeights: VariableWeightItem[]
+  // The same at ARRIVAL. Unset = as at departure: an old calculation, or
+  // one where arrival hasn't been entered yet.
+  arrivalWeights?: VariableWeightItem[]
+  limit?: StabilityLimit
+}
+
+// The two states each trip is checked in: leaving port, and arriving with
+// consumables used.
+export type LoadingState = 'departure' | 'arrival'
+
+// A state's tanks. Arrival falls back to departure until it's entered.
+export function weightsInState(vessel: VesselStabilityData, state: LoadingState): VariableWeightItem[] {
+  return state === 'arrival' ? (vessel.arrivalWeights ?? vessel.variableWeights) : vessel.variableWeights
+}
+
+// The one minimum GM figure the checks judge by until the limit table is
+// looked up by draught: the old minGM, or a limit of a single minimum GM
+// row moved from it.
+export function singleFigureMinGM(vessel: VesselStabilityData): number | undefined {
+  const { limit } = vessel
+  if (limit?.kind === 'min-gm-by-draft' && limit.rows.length === 1) return limit.rows[0].value
+  return vessel.particulars.minGM
 }
 
 // How the deck's own local (x,y) frame sits relative to the ship's own
