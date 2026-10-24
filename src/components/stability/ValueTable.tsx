@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { Check, ClipboardPaste, Plus, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/calculator/NumberField'
+import { TextField } from '@/components/calculator/TextField'
 import { parsePastedTable, type PasteColumn } from '@/lib/tablePaste'
 
 export interface ValueColumn {
@@ -88,7 +88,7 @@ export function ValueTable({
   // again, and the first takes the focus when it opens.
   const cell = (c: ValueColumn, name: string, value: CellValue, commit: (v: CellValue) => void, draftCell?: { first: boolean }) =>
     c.kind === 'text' ? (
-      <TextCell value={typeof value === 'string' ? value : ''} label={name} onCommit={commit} autoFocus={draftCell?.first} />
+      <TextField value={typeof value === 'string' ? value : ''} label={name} onCommit={commit} autoFocus={draftCell?.first} />
     ) : (
       <NumberField
         aria-label={name}
@@ -219,53 +219,5 @@ export function ValueTable({
         </div>
       )}
     </div>
-  )
-}
-
-// A text cell committing on Enter or leaving it, like the number cells.
-export function TextCell({
-  id,
-  value,
-  label,
-  onCommit,
-  autoFocus,
-  className,
-  placeholder,
-}: {
-  id?: string
-  value: string
-  // Its accessible name, when no <label> points at `id`.
-  label?: string
-  onCommit: (v: string) => void
-  autoFocus?: boolean
-  className?: string
-  placeholder?: string
-}) {
-  const [draft, setDraft] = useState<string | null>(null)
-  const commit = () => {
-    if (draft !== null && draft !== value) onCommit(draft)
-    setDraft(null)
-  }
-  return (
-    <Input
-      id={id}
-      aria-label={label}
-      autoFocus={autoFocus}
-      placeholder={placeholder}
-      className={className ?? 'h-7 min-w-28 px-1.5 text-xs'}
-      value={draft ?? value}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          commit()
-        } else if (e.key === 'Escape' && draft !== null) {
-          e.preventDefault()
-          e.stopPropagation()
-          setDraft(null)
-        }
-      }}
-    />
   )
 }

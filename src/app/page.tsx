@@ -58,6 +58,8 @@ import { CargoSection } from '@/components/sections/CargoSection'
 import { PlacementSection } from '@/components/sections/PlacementSection'
 import { ChecksSection } from '@/components/sections/ChecksSection'
 import { StabilityWorkspace } from '@/components/stability/StabilityWorkspace'
+import { CargoDrawer } from '@/components/cargo/CargoDrawer'
+import { CargoTable } from '@/components/cargo/CargoTable'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
@@ -276,6 +278,8 @@ export default function Home() {
   // What the middle of the screen shows: the deck, or the stability
   // workspace in its place (spec 2026-10-24, 6.1).
   const [workspace, setWorkspace] = useState<'deck' | 'stability'>('deck')
+  // The cargo table across the bottom (spec 5.4), closed at first.
+  const [cargoTableOpen, setCargoTableOpen] = useState(false)
   // Variants are a snapshot of one project's cargo on one trip. Applying one
   // after switching project or trip, or after editing the cargo or the deck,
   // used to write a stale layout over the current one — so they're kept
@@ -1393,6 +1397,7 @@ export default function Home() {
           )}
           {activeSection === 'cargo' && (
             <CargoSection
+              onOpenTable={() => setCargoTableOpen(true)}
               result={result}
               placedAcrossTrips={placedAcrossTrips}
               unit={deck.unit}
@@ -1741,9 +1746,19 @@ export default function Home() {
           )}
           </div>
           )}
-          <StatusLine input={statusInput} onOpenSection={openSection} onOpenStability={() => setWorkspace('stability')} />
+          <StatusLine
+            input={statusInput}
+            onOpenSection={openSection}
+            onOpenStability={() => setWorkspace('stability')}
+            cargoTable={{ open: cargoTableOpen, onToggle: () => setCargoTableOpen((v) => !v) }}
+          />
         </main>
       </div>
+      {cargoTableOpen && (
+        <CargoDrawer title="Таблица грузов" onClose={() => setCargoTableOpen(false)}>
+          <CargoTable placedAcrossTrips={placedAcrossTrips} unit={deck.unit} hoveredItemId={hoveredItemId} onHover={handleHover} />
+        </CargoDrawer>
+      )}
       <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />
       <AlertDialog open={modeSwitchPrompt !== null} onOpenChange={(open) => { if (!open) setModeSwitchPrompt(null) }}>
         <AlertDialogContent>

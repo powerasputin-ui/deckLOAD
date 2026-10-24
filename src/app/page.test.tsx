@@ -454,6 +454,125 @@ describe('Home (page.tsx)', () => {
     expect(panel.queryByText(/не разрешает поворот/)).toBeNull()
   })
 
+  // Stage 3, group A (spec 7.4, 5.4): the cargo table across the bottom,
+  // edited like a spreadsheet.
+  describe('the cargo table', () => {
+    const openTable = () => {
+      openSection('Грузы')
+      fireEvent.click(screen.getByRole('button', { name: 'Таблица' }))
+      return within(screen.getByRole('region', { name: 'Таблица грузов' }))
+    }
+    const type = (input: HTMLElement, value: string, key = 'Enter') => {
+      fireEvent.change(input, { target: { value } })
+      fireEvent.keyDown(input, { key })
+    }
+    const seed = () =>
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Ящик', width: 2, length: 3, height: 1, quantity: 4, weight: 1000 })
+        useCalculator.getState().addItem({ name: 'Бочка', width: 1, length: 1, height: 1, quantity: 2, weight: 500 })
+      })
+
+    it('opens from «Грузы» and from the status line, and Esc in it closes it', () => {
+      render(<Home />)
+      const table = openTable()
+      expect(table.getByRole('table', { name: 'Таблица грузов' })).toBeTruthy()
+      fireEvent.keyDown(table.getByRole('button', { name: 'Свернуть таблицу грузов' }), { key: 'Escape' })
+      expect(screen.queryByRole('region', { name: 'Таблица грузов' })).toBeNull()
+      const handle = within(screen.getByRole('status', { name: 'Итог расчёта' })).getByRole('button', { name: /Таблица грузов/ })
+      fireEvent.click(handle)
+      expect(screen.getByRole('region', { name: 'Таблица грузов' })).toBeTruthy()
+      expect(handle.getAttribute('aria-expanded')).toBe('true')
+    })
+
+    it('edits a cell with Enter, which moves to the same cell of the next row', async () => {
+      render(<Home />)
+      clearDemoCargo()
+      seed()
+      const table = openTable()
+      expect(table.getAllByTestId('cargo-placed')[0].textContent).toMatch(/^4 из 4\d+ штабел/)
+      const first = table.getByLabelText('Количество, Ящик')
+      first.focus()
+      type(first, '6')
+      expect(useCalculator.getState().items[0].quantity).toBe(6)
+      expect(table.getAllByTestId('cargo-placed')[0].textContent).toMatch(/^6 из 6/)
+      await waitFor(() => expect(document.activeElement).toBe(table.getByLabelText('Количество, Бочка')))
+    })
+
+    it('lets height and weight be emptied — «not given» — and says why a value was pulled back', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seed()
+      const table = openTable()
+      type(table.getByLabelText('Вес единицы, т, Ящик'), '')
+      expect(useCalculator.getState().items[0].weight).toBeUndefined()
+      type(table.getByLabelText('Высота, Ящик'), '')
+      expect(useCalculator.getState().items[0].height).toBe(0)
+      type(table.getByLabelText('Вес единицы, т, Бочка'), '1,5')
+      expect(useCalculator.getState().items[1].weight).toBe(1500)
+      type(table.getByLabelText('Количество, Бочка'), '0')
+      expect(useCalculator.getState().items[1].quantity).toBe(1)
+      expect(table.getByRole('alert').textContent).toBe('Не меньше 1')
+    })
+
+    it('selects a range with Shift, gives it one category, and deletes it with «Отменить» in the notice', async () => {
+      render(<Home />)
+      clearDemoCargo()
+      seed()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Паллета', width: 1.2, length: 0.8, height: 1, quantity: 1, weight: 400 })
+      })
+      // Edits within 400 ms are one step of the history: let the seeding
+      // settle into a step of its own.
+      await act(() => new Promise((r) => setTimeout(r, 450)))
+      const table = openTable()
+      fireEvent.click(table.getByLabelText('Выбрать «Ящик»'))
+      fireEvent.click(table.getByLabelText('Выбрать «Паллета»'), { shiftKey: true })
+      const selection = within(table.getByRole('group', { name: 'Выбранные грузы' }))
+      expect(selection.getByText('Выбрано: 3')).toBeTruthy()
+      fireEvent.change(selection.getByLabelText('Новая категория выбранных грузов'), { target: { value: 'Опасный груз' } })
+      fireEvent.click(selection.getByRole('button', { name: 'Сменить категорию' }))
+      expect(useCalculator.getState().items.map((it) => it.category)).toEqual(['Опасный груз', 'Опасный груз', 'Опасный груз'])
+      await act(() => new Promise((r) => setTimeout(r, 450)))
+
+      fireEvent.click(selection.getByRole('button', { name: 'Удалить' }))
+      expect(useCalculator.getState().items).toEqual([])
+      expect(toast.info).toHaveBeenCalledWith('Удалено грузов: 3', expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) }))
+      const undo = vi.mocked(toast.info).mock.calls.at(-1)![1] as unknown as { action: { onClick: () => void } }
+      act(() => undo.action.onClick())
+      expect(useCalculator.getState().items.map((it) => it.name)).toEqual(['Ящик', 'Бочка', 'Паллета'])
+    })
+
+    it('opens «Дополнительно» with the centre-of-gravity corrections, the stack height and, for pipes, the water', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Труба', width: 12, length: 0.5, height: 0.5, quantity: 3, weight: 2000, shape: 'cylinder' })
+      })
+      const table = openTable()
+      fireEvent.click(table.getByRole('button', { name: 'Дополнительно: Труба' }))
+      type(table.getByLabelText('VCG над палубой, м'), '1,2')
+      expect(useCalculator.getState().items[0].stabilityOverride).toEqual({ vcgAboveDeckM: 1.2 })
+      type(table.getByLabelText('Предельная высота штабеля, м'), '2')
+      expect(useCalculator.getState().items[0].maxStackHeightM).toBe(2)
+      expect(table.getByText('Без внутреннего диаметра вода в трубах не считается')).toBeTruthy()
+      type(table.getByLabelText('Вода в трубах, т (на 1 шт.)'), '0,4')
+      expect(table.getByText('Вода: 0.40 × 3 = 1.20 т — вместо расчёта')).toBeTruthy()
+      fireEvent.click(table.getByRole('button', { name: 'Сбросить поправки' }))
+      expect(useCalculator.getState().items[0].stabilityOverride).toBeUndefined()
+    })
+
+    it('sums the units, the weight and the area, and says what has no weight', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seed()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Без веса', width: 1, length: 1, height: 1, quantity: 1 })
+      })
+      const table = openTable()
+      expect(table.getByTestId('cargo-totals').textContent).toBe('Итого: 7 единиц · 5 т (без веса: 1) · 27 м²')
+    })
+  })
+
   // Stage 2a (spec 2026-10-24, 6.1, 6.2, 8): the stability workspace opens
   // in the deck's place from «Судно», edits the vessel's data and shows the
   // open trip judged against the booklet at departure and at arrival.

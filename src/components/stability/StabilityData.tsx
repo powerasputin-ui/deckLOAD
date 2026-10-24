@@ -8,7 +8,8 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { NumberField } from '@/components/calculator/NumberField'
-import { ValueTable, TextCell, type CellValue, type ValueColumn } from '@/components/stability/ValueTable'
+import { ValueTable, type CellValue, type ValueColumn } from '@/components/stability/ValueTable'
+import { TextField } from '@/components/calculator/TextField'
 import { useCalculator } from '@/store/calculator'
 import {
   DEFAULT_SHIP_FRAME,
@@ -153,7 +154,7 @@ function VesselGroup({ particulars: p, open }: { particulars: VesselParticulars;
         <label htmlFor={nameId} className="block text-xs text-ink-2">
           Название
         </label>
-        <TextCell id={nameId} value={p.name ?? ''} onCommit={(v) => set({ name: v.trim() || undefined })} className="h-8 text-sm" />
+        <TextField id={nameId} value={p.name ?? ''} onCommit={(v) => set({ name: v.trim() || undefined })} className="h-8 text-sm" />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <NumberInput label="Длина LBP" unit="м" value={p.lengthBpp} min={0} onCommit={(v) => set({ lengthBpp: v })} />
@@ -286,7 +287,7 @@ function LimitGroup({ vessel, open }: { vessel: VesselStabilityData; open: boole
         <label htmlFor={sourceId} className="block text-xs text-ink-2">
           Источник
         </label>
-        <TextCell
+        <TextField
           id={sourceId}
           value={limit?.source ?? ''}
           placeholder="Информация об остойчивости, табл. …"
@@ -560,7 +561,7 @@ function KnGroup({ curves, open }: { curves: KNCrossCurves | undefined; open: bo
         <label htmlFor={anglesId} className="block text-xs text-ink-2">
           Углы крена, °
         </label>
-        <TextCell
+        <TextField
           id={anglesId}
           value={angles.map(fmtNumber).join('; ')}
           placeholder="0; 10; 20; 30; 40; 50; 60"

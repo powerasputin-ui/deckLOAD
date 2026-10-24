@@ -48,6 +48,13 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
   expect(await textBelow12px(page)).toEqual([])
   await workspace.getByRole('button', { name: 'К палубе' }).click()
 
+  // The cargo table across the bottom, with a row's «Дополнительно» open.
+  await openSection(page, 'Грузы')
+  await page.getByRole('button', { name: 'Таблица', exact: true }).click()
+  await page.getByRole('button', { name: 'Дополнительно: Ящик' }).click()
+  expect(await textBelow12px(page)).toEqual([])
+  await page.getByRole('button', { name: 'Свернуть таблицу грузов' }).click()
+
   await openSection(page, 'Размещение')
   expect(await textBelow12px(page)).toEqual([])
 

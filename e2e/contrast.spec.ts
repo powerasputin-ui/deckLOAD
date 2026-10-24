@@ -109,6 +109,18 @@ for (const colorScheme of ['light', 'dark'] as const) {
       expect(await contrastViolations(page)).toEqual([])
     })
 
+    // Stage 3 (spec 7.4): the cargo table across the bottom, a row open on
+    // its «Дополнительно» and one selected.
+    test('the cargo table reads at AA contrast', async ({ page }) => {
+      await page.goto('/')
+      await openSection(page, 'Грузы')
+      await page.getByRole('button', { name: 'Таблица', exact: true }).click()
+      await page.getByRole('button', { name: 'Дополнительно: Ящик' }).click()
+      await page.getByLabel('Выбрать «Контейнер 20ft»').click()
+      await expect(page.getByRole('group', { name: 'Выбранные грузы' })).toBeVisible()
+      expect(await contrastViolations(page)).toEqual([])
+    })
+
     test('the inspector of a selected stack reads at AA contrast', async ({ page }) => {
       await page.goto('/')
       const stack = page.locator('svg g[data-cargo-placement]').first()

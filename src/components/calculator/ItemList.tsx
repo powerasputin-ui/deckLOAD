@@ -41,6 +41,7 @@ import { NumberField } from '@/components/calculator/NumberField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import type { CargoItem, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
+import { DEFAULT_CATEGORIES } from '@/lib/cargoTable'
 import { isPipeCargo } from '@/lib/stabilityConditions'
 import { cn, fmtNumber, pluralRu } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -59,7 +60,6 @@ interface ItemListProps {
   embedded?: boolean
 }
 
-export const DEFAULT_CATEGORIES = ['Обычный', 'Металлопродукция', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
 
 export function ItemList({ result, placedAcrossTrips, unit, hoveredItemId, onHover, onScrollPageToTop, embedded }: ItemListProps) {
   const items = useCalculator((s) => s.items)

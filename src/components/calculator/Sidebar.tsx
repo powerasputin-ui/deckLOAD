@@ -42,7 +42,7 @@ import {
 } from '@/lib/packing'
 import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
-import { DEFAULT_CATEGORIES } from '@/components/calculator/ItemList'
+import { DEFAULT_CATEGORIES } from '@/lib/cargoTable'
 import { BlockOpenState } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'

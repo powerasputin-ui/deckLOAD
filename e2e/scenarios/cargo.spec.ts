@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, unitsCount } from '../helpers'
+import { clearCalculation, openSection, unitsCount } from '../helpers'
 
-// Appendix C, scenarios 7–8, from the entry points of stage 2. Stage 3
-// rewrites them for the catalog, the custom cargo form and the table.
+// Appendix C, scenarios 7–8. Scenario 8 is in its full version (stage 3);
+// scenario 7 still goes through the presets until the catalogue replaces
+// them in group C.
 
 const card = (page: Page, name: string) => page.locator('.rounded-lg.border.bg-card').filter({ hasText: name }).first()
 
@@ -25,23 +26,45 @@ test('Сценарий 7: добавить груз', async ({ page }) => {
   await expect(unitsCount(page)).toHaveText(/2\/2 ед\./)
 })
 
+// Full version (stage 3): the cargo table, edited from the keyboard, with
+// every column in sight at 1280 px.
 test('Сценарий 8: изменить груз', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
-  const quantity = card(page, 'Паллета EUR').locator('label:has-text("Кол-во") + input')
+  await openSection(page, 'Грузы')
+  await page.getByRole('button', { name: 'Таблица', exact: true }).click()
+  const table = page.getByRole('table', { name: 'Таблица грузов' })
+  const quantity = table.getByLabel('Количество, Контейнер 20ft')
+  const placed = table.getByTestId('cargo-row').filter({ has: page.getByLabel('Количество, Контейнер 20ft') }).getByTestId('cargo-placed')
+  await expect(placed).toHaveText(/^4 из 4/)
 
-  // Tab and Enter both commit the new quantity, and all of it is placed.
+  // Tab commits the cell…
   await quantity.click()
   await quantity.press('Control+A')
-  await quantity.pressSequentially('14')
+  await quantity.pressSequentially('5')
   await quantity.press('Tab')
-  await expect(card(page, 'Паллета EUR').getByText('14/14 разм.')).toBeVisible()
+  await expect(placed).toHaveText(/^5 из 5/)
+  // …and so does Enter, moving to the same cell of the next row.
+  await quantity.click()
+  await quantity.press('Control+A')
+  await quantity.pressSequentially('6')
+  await quantity.press('Enter')
+  await expect(placed).toHaveText(/^6 из 6/)
+  await expect(table.getByLabel('Количество, Паллета EUR')).toBeFocused()
   await expect(unitsCount(page)).toHaveText(/24\/24 ед\./)
 
-  await quantity.click()
-  await quantity.press('Control+A')
-  await quantity.pressSequentially('12')
-  await quantity.press('Enter')
-  await expect(card(page, 'Паллета EUR').getByText('12/12 разм.')).toBeVisible()
-  await expect(unitsCount(page)).toHaveText(/22\/22 ед\./)
+  // Every column is in sight: nothing scrolls sideways, no header is cut.
+  const hidden = await table.evaluate((el) => {
+    const scroller = el.parentElement!
+    const box = scroller.getBoundingClientRect()
+    const out: string[] = []
+    if (scroller.scrollWidth > scroller.clientWidth + 1) out.push(`scrolls sideways by ${scroller.scrollWidth - scroller.clientWidth} px`)
+    for (const th of el.querySelectorAll('thead th')) {
+      const r = th.getBoundingClientRect()
+      if (r.left < box.left - 0.5 || r.right > box.right + 0.5) out.push(`«${th.textContent}» out of sight`)
+    }
+    return out
+  })
+  expect(hidden).toEqual([])
 })
