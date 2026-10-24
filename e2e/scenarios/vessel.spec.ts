@@ -147,10 +147,9 @@ test('Сценарий 5: препятствия', async ({ page }) => {
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
 
-  // A rectangle zone named «Кран».
-  await page.getByRole('button', { name: 'Пресеты' }).click()
-  await page.getByRole('button', { name: 'Зоны ограничений' }).click()
-  await page.getByRole('button', { name: 'Прямоугольник' }).click()
+  // «Судно» → «Препятствия» → a rectangle named «Кран» (stage 3, spec 7.5).
+  await openSection(page, 'Судно')
+  await page.getByRole('group', { name: 'Нарисовать препятствие' }).getByRole('button', { name: 'Прямоугольник' }).click()
   const box = (await background(page).boundingBox())!
   await page.mouse.move(box.x + 40, box.y + 40)
   await page.mouse.down()
@@ -162,11 +161,16 @@ test('Сценарий 5: препятствия', async ({ page }) => {
   await form.getByRole('button', { name: 'Добавить' }).click()
   await expect(name).toBeHidden()
 
-  // Cargo doesn't go into it, and goes beside it.
+  await expect(page.getByRole('list', { name: 'Препятствия на палубе' })).toContainText('Кран')
+
+  // Cargo doesn't go into it — saying why — and goes beside it.
+  await openSection(page, 'Грузы')
+  await page.getByRole('button', { name: 'Пресеты' }).click()
   await page.getByRole('button', { name: 'Контейнеры' }).click()
   await page.getByRole('button', { name: /Паллета EUR/ }).click()
   const zone = (await deck(page).locator('polygon[data-restriction-zone]').first().boundingBox())!
   await page.mouse.click(zone.x + zone.width / 2, zone.y + zone.height / 2)
+  await expect(page.getByText('Здесь нельзя — зона ограничения «Кран»')).toBeVisible()
   await expect(unitsCount(page)).toHaveText(/0\/0 ед\./)
   const after = (await background(page).boundingBox())!
   await background(page).click({ position: { x: after.width - 60, y: after.height - 40 }, force: true })

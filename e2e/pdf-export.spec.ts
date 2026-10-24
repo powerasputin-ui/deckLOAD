@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, openSection } from './helpers'
 
 test.describe('PDF export', () => {
   test('downloading the deck plan produces a deckload-*.pdf file', async ({ page }) => {
@@ -40,9 +40,8 @@ test.describe('PDF export', () => {
   test('exporting with a power-socket marker on the deck still works (regression: foreignObject tainted the rasterization canvas)', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Объекты' }).click()
-    await page.getByRole('button', { name: /Розетка/ }).click()
+    await openSection(page, 'Судно')
+    await page.getByRole('button', { name: 'Поставить розетку' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.scrollIntoViewIfNeeded()

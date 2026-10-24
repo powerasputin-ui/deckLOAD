@@ -454,6 +454,49 @@ describe('Home (page.tsx)', () => {
     expect(panel.queryByText(/не разрешает поворот/)).toBeNull()
   })
 
+  // Stage 3, group B (spec 7.5): what isn't cargo moved from «Пресеты» to
+  // «Судно» — obstacles, sockets and marks.
+  it('keeps the obstacles, sockets and marks in «Судно», each tool on until pressed again', () => {
+    render(<Home />)
+    act(() => {
+      useCalculator.setState({
+        deck: {
+          ...useCalculator.getState().deck,
+          restrictionZones: [{ id: 'z', name: 'Кран', shapeType: 'rect', x: 1, y: 1, width: 2, length: 3 }],
+          powerSockets: [{ id: 's', x: 0, y: 5 }],
+          annotations: [{ id: 'a', x: 4, y: 4, text: 'Трап', leaderX: 2, leaderY: 2 }],
+        },
+      })
+    })
+    openSection('Судно')
+    const obstacles = within(screen.getByRole('list', { name: 'Препятствия на палубе' }))
+    fireEvent.change(obstacles.getByLabelText('Ширина «Кран», м'), { target: { value: '2,5' } })
+    fireEvent.keyDown(obstacles.getByLabelText('Ширина «Кран», м'), { key: 'Enter' })
+    expect(useCalculator.getState().deck.restrictionZones![0].width).toBe(2.5)
+    const rect = within(screen.getByRole('group', { name: 'Нарисовать препятствие' })).getByRole('button', { name: 'Прямоугольник' })
+    fireEvent.click(rect)
+    expect(useCalculator.getState().drawingRestrictionShape).toBe('rect')
+    expect(rect.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(rect)
+    expect(useCalculator.getState().drawingRestrictionShape).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Поставить розетку' }))
+    expect(useCalculator.getState().placingPowerSocket).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить розетку 1' }))
+    expect(useCalculator.getState().deck.powerSockets).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Со сноской' }))
+    expect(useCalculator.getState().placingAnnotation).toEqual({ kind: 'note', withLeader: true })
+    const text = screen.getByLabelText('Текст метки 1')
+    fireEvent.change(text, { target: { value: 'Трап к шлюпке' } })
+    fireEvent.keyDown(text, { key: 'Enter' })
+    expect(useCalculator.getState().deck.annotations![0].text).toBe('Трап к шлюпке')
+    fireEvent.click(screen.getByRole('button', { name: 'Без сноски' }))
+    expect(useCalculator.getState().deck.annotations![0].leaderX).toBeUndefined()
+    fireEvent.click(obstacles.getByRole('button', { name: 'Удалить препятствие «Кран»' }))
+    expect(useCalculator.getState().deck.restrictionZones).toEqual([])
+  })
+
   // Stage 3, group A (spec 7.4, 5.4): the cargo table across the bottom,
   // edited like a spreadsheet.
   describe('the cargo table', () => {

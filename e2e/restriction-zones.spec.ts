@@ -1,13 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation } from './helpers'
+import { clearCalculation, openSection } from './helpers'
 
 test.describe('Restriction (obstacle) zones', () => {
   test('drag-to-create a zone hard-blocks placement inside it and allows placement outside it', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
 
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: 'Прямоугольник' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
@@ -40,6 +39,8 @@ test.describe('Restriction (obstacle) zones', () => {
     await expect(zoneNameInput).toBeHidden()
 
     // Arm a small cargo item and try to place it inside the zone.
+    await openSection(page, 'Грузы')
+    await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Контейнеры' }).click()
     await page.getByRole('button', { name: /Паллета EUR/ }).click()
 
@@ -62,8 +63,7 @@ test.describe('Restriction (obstacle) zones', () => {
   test('the drawn shape stays visible on the deck between drag-release and confirming the name (regression)', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: 'Прямоугольник' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
@@ -85,9 +85,8 @@ test.describe('Restriction (obstacle) zones', () => {
   test('freeform point-by-point drawing produces a zone that also hard-blocks placement', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
-    await page.getByRole('button', { name: /произвольная область/ }).click()
+    await openSection(page, 'Судно')
+    await page.getByRole('group', { name: 'Нарисовать препятствие' }).getByRole('button', { name: 'Нарисовать' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.scrollIntoViewIfNeeded()
@@ -110,6 +109,8 @@ test.describe('Restriction (obstacle) zones', () => {
     await zoneForm.getByRole('button', { name: 'Добавить' }).click()
     await expect(zoneNameInput).toBeHidden()
 
+    await openSection(page, 'Грузы')
+    await page.getByRole('button', { name: 'Пресеты' }).click()
     await page.getByRole('button', { name: 'Контейнеры' }).click()
     await page.getByRole('button', { name: /Паллета EUR/ }).click()
     const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
@@ -122,9 +123,8 @@ test.describe('Restriction (obstacle) zones', () => {
   test('a freeform zone gets corner resize handles that scale its outline, and the delete button does not overlap them (regression)', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
-    await page.getByRole('button', { name: /произвольная область/ }).click()
+    await openSection(page, 'Судно')
+    await page.getByRole('group', { name: 'Нарисовать препятствие' }).getByRole('button', { name: 'Нарисовать' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.scrollIntoViewIfNeeded()
@@ -185,9 +185,8 @@ test.describe('Restriction (obstacle) zones', () => {
   test('dragging a freeform zone across many pointer-move steps keeps its outline in sync with its position (regression: used to drift off the deck)', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
-    await page.getByRole('button', { name: /произвольная область/ }).click()
+    await openSection(page, 'Судно')
+    await page.getByRole('group', { name: 'Нарисовать препятствие' }).getByRole('button', { name: 'Нарисовать' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.scrollIntoViewIfNeeded()
@@ -236,8 +235,7 @@ test.describe('Restriction (obstacle) zones', () => {
   test('zone chip width/length fields resize the zone, and the round delete button removes it', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await openSection(page, 'Судно')
     await page.getByRole('button', { name: 'Прямоугольник' }).click()
 
     const background = page.locator('svg [data-deck-background="true"]').first()
@@ -258,7 +256,7 @@ test.describe('Restriction (obstacle) zones', () => {
     const before = await zonePolygon.boundingBox()
     if (!before) throw new Error('zone polygon not found')
 
-    const widthField = page.getByTitle(/^Ширина/)
+    const widthField = page.getByLabel(/^Ширина «Кран»/)
     await widthField.fill('1')
     await widthField.blur()
     // «Ширина» runs across the ship: up and down on the drawing.
@@ -267,21 +265,19 @@ test.describe('Restriction (obstacle) zones', () => {
       expect(after?.height).toBeLessThan(before.height - 20)
     }).toPass()
 
-    // The round red delete button (matching the one used on placed cargo)
-    // removes the zone.
-    await page.getByTitle('Удалить зону').click()
+    // Its delete button in «Судно» → «Препятствия» removes the zone.
+    await page.getByRole('button', { name: 'Удалить препятствие «Кран»' }).click()
     await expect(page.locator('svg polygon[data-restriction-zone]')).toHaveCount(0)
   })
 
   test('the drawing tool disarms itself the moment a zone is finished, so a stray click does not start a second one (regression)', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Зоны ограничений' }).click()
+    await openSection(page, 'Судно')
 
     const rectButton = page.getByRole('button', { name: 'Прямоугольник' })
     await rectButton.click()
-    await expect(rectButton).toHaveClass(/border-red-400/)
+    await expect(rectButton).toHaveAttribute('aria-pressed', 'true')
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.scrollIntoViewIfNeeded()
@@ -296,7 +292,7 @@ test.describe('Restriction (obstacle) zones', () => {
     // clicked, not only after — since the whole point is that a stray
     // click on the deck in between must not start drawing a second zone.
     await expect(page.getByPlaceholder('Название зоны')).toBeVisible()
-    await expect(rectButton).not.toHaveClass(/border-red-400/)
+    await expect(rectButton).toHaveAttribute('aria-pressed', 'false')
 
     // A click on empty deck while the name form is still open must not
     // start a second drag-to-create.

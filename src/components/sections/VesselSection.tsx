@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { DeckSettings, LoadZonesSection } from '@/components/calculator/Sidebar'
 import { VERDICT_WORD, VerdictIcon } from '@/components/stability/StabilityResults'
+import { MarksBlock, ObstaclesBlock, SocketsBlock } from '@/components/sections/vessel/DeckMarksBlocks'
 import { STATE_LABEL } from '@/lib/stabilityConditions'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { useCalculator } from '@/store/calculator'
@@ -12,9 +13,10 @@ import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import type { ZoneLoadCheck } from '@/lib/packing'
 import { cn, fmtNumber } from '@/lib/utils'
 
-// «Судно» (spec 13, stage 2): the vessel library, the deck, its shape and
-// load zones; the vessel's stability data opens in the stability workspace
-// (spec 2026-10-24, 6.2), with the open trip's verdict shown here.
+// «Судно» (spec 13, stage 2): the vessel library, the deck, its shape,
+// obstacles, load zones, sockets and marks (the last three from «Пресеты»,
+// stage 3, spec 7.5); the vessel's stability data opens in the stability
+// workspace (spec 2026-10-24, 6.2), with the open trip's verdict shown here.
 export function VesselSection({
   onApplyVesselTemplate,
   zoneLoads,
@@ -77,9 +79,12 @@ export function VesselSection({
           Форма палубы
         </Button>
       </div>
+      <ObstaclesBlock />
       <div className="px-4 py-3">
         <LoadZonesSection zoneLoads={zoneLoads} />
       </div>
+      <SocketsBlock />
+      <MarksBlock />
       <PanelBlock title="Остойчивость">
         {stability ? (
           <div className="flex items-start gap-2" data-testid="vessel-stability-summary">
