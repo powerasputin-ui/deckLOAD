@@ -30,7 +30,9 @@ test.describe('Deck settings', () => {
       await page.getByRole('radio', { name: 'см' }).click()
       await expect(page.getByLabel('Ширина')).toHaveValue('800', { timeout: 1000 })
     }).toPass({ timeout: 10000 })
+    // The catalogue gives the cargo's size in the new unit.
     await openSection(page, 'Грузы')
-    await expect(page.getByText(/размеры в см/)).toBeVisible()
+    await page.getByRole('button', { name: 'Каталог', exact: true }).click()
+    await expect(page.getByRole('region', { name: 'Каталог грузов' }).getByText('606×244×259 см · 2.2 т').first()).toBeVisible()
   })
 })

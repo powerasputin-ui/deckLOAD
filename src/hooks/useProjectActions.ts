@@ -80,8 +80,6 @@ export function useProjectActions({
       selectedManualIds: [],
       mode: 'auto',
       activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
       stampRotated: false,
     })
     clearCalculatorHistory()

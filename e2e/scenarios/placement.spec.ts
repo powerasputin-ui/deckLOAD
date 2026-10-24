@@ -1,8 +1,21 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { clearCalculation, inspector, openSection, sectionBar, stackTools, unitsCount } from '../helpers'
+import {
+  addOwnCargo,
+  armCargo,
+  clearCalculation,
+  closeCargoTable,
+  inspector,
+  openSection,
+  sectionBar,
+  setCargoCells,
+  setCargoTotal,
+  stackTools,
+  unitsCount,
+} from '../helpers'
 
 // Appendix C, scenarios 9–14, from the entry points of stage 2: buttons on
-// screen, the inspector and the mini-panel — never a right-click.
+// screen, the inspector and the mini-panel — never a right-click. Scenario 10
+// is in its full version (stage 3): «Поставить», R, a click.
 
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 const locks = (page: Page) => deck(page).locator('[data-mark="lock"]')
@@ -71,22 +84,16 @@ test('Сценарий 10: ручная расстановка', async ({ page }
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
 
-  // «Ручной», then a cargo of 3 × 1 m to place.
+  // «Ручной», then a cargo 3 m across and 1 m along the ship to place.
   await page.getByRole('radio', { name: 'Ручной' }).click()
   await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
-  await openSection(page, 'Грузы')
-  await page.getByRole('button', { name: 'Добавить', exact: true }).click()
-  const item = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз 1' }).first()
-  for (const [label, value] of [['Шир.', '3'], ['Длин.', '1']]) {
-    const input = item.locator(`label:has-text("${label}") + input`)
-    await input.fill(value)
-    await input.blur()
-  }
+  await addOwnCargo(page, { width: '3', length: '1' })
 
-  // Picked, turned for the next click, and put on the deck turned.
-  await page.getByRole('button', { name: /Груз 1.*3×1/ }).click()
-  await page.getByRole('button', { name: /^Ориентация нового груза/ }).click()
-  await expect(page.getByRole('button', { name: 'Ориентация нового груза: 90°' })).toBeVisible()
+  // «Поставить»; the line over the deck says what a click does; R turns
+  // the cargo for the click, and it goes on the deck turned.
+  await armCargo(page, 'Груз 1')
+  await expect(page.getByTestId('stamp-hint')).toHaveText('Кликните по палубе, чтобы поставить «Груз 1» · R — повернуть · Esc — отмена')
+  await page.keyboard.press('r')
   await deck(page).locator('[data-deck-background="true"]').first().click({ position: { x: 120, y: 120 }, force: true })
   await expect(unitsCount(page)).toHaveText(/1\/1 ед\./)
   const placed = (await saved(page)).manualPlacements[0]
@@ -100,13 +107,9 @@ test('Сценарий 11: переместить, повернуть, ярус�
   await clearCalculation(page)
   // Two 2 × 1.2 × 1 m units stacked 2 high, with the deck to themselves:
   // room to turn.
-  await page.getByRole('button', { name: 'Добавить', exact: true }).click()
-  const item = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз 1' }).first()
-  for (const [label, value] of [['Шир.', '2'], ['Длин.', '1.2'], ['Выс.', '1'], ['Ярусов', '2'], ['Кол-во', '2']]) {
-    const input = item.locator(`label:has-text("${label}") + input`)
-    await input.fill(value)
-    await input.blur()
-  }
+  await addOwnCargo(page, { width: '2', length: '1.2', height: '1', quantity: '2' })
+  await setCargoCells(page, 'Груз 1', { Ярусов: '2' })
+  await closeCargoTable(page)
   await expect(unitsCount(page)).toHaveText(/2\/2 ед\./)
   const box = deck(page).locator('g[data-cargo-name="Груз 1"]').first()
 
@@ -235,11 +238,7 @@ test('Сценарий 14: несколько рейсов', async ({ page }) =>
   await page.goto('/')
   await expect(sectionBar(page)).toBeVisible()
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
-  const quantity = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Паллета EUR' }).first().locator('label:has-text("Кол-во") + input')
-  await quantity.click()
-  await quantity.press('Control+A')
-  await quantity.pressSequentially('400')
-  await quantity.press('Enter')
+  await setCargoTotal(page, 'Паллета EUR', '400')
 
   // Two trips, each tab with what it carries; what goes to trip 2 is said,
   // and nothing is flagged as not fitting.

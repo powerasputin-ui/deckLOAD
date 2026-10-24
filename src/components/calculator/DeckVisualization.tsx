@@ -214,6 +214,9 @@ interface DeckVisualizationProps {
   // local-origin outline happens in page.tsx, keeping this component "dumb".
   drawingCustomShape?: boolean
   onFinishDrawing?: (points: { x: number; y: number }[]) => void
+  // A closed drawing waiting for its name (spec 7.2): its outline (local to
+  // x/y) stays drawn on the deck until it's placed or cancelled.
+  pendingCustomShape?: { outline: { x: number; y: number }[]; x: number; y: number } | null
   // Restriction (obstacle) zones — hard-blocked everywhere (manual + auto).
   // Drawn PPT-style: pick a shape, drag on the deck to size its bbox.
   restrictionZones?: RestrictionZone[]
@@ -306,6 +309,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onUpdateLoadZone,
   drawingCustomShape,
   onFinishDrawing,
+  pendingCustomShape,
   powerSockets,
   placingPowerSocket,
   onPlacePowerSocket,
@@ -3268,18 +3272,36 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               strokeWidth={1.5}
             />
             {drawHoverPos && (() => {
-              const last = deckToScreen(drawingPoints[drawingPoints.length - 1].x, drawingPoints[drawingPoints.length - 1].y)
+              const lastPt = drawingPoints[drawingPoints.length - 1]
+              const last = deckToScreen(lastPt.x, lastPt.y)
               const hover = deckToScreen(drawHoverPos.x, drawHoverPos.y)
+              // The segment's length and the outline's area so far, as the
+              // obstacle drawing shows them (spec 7.2).
+              const segmentLen = Math.hypot(drawHoverPos.x - lastPt.x, drawHoverPos.y - lastPt.y)
+              const previewArea = drawingPoints.length >= 2 ? polygonArea([...drawingPoints, drawHoverPos]) : 0
               return (
-                <line
-                  x1={last.sx}
-                  y1={last.sy}
-                  x2={hover.sx}
-                  y2={hover.sy}
-                  stroke="rgba(37,99,235,0.9)"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
+                <>
+                  <line
+                    x1={last.sx}
+                    y1={last.sy}
+                    x2={hover.sx}
+                    y2={hover.sy}
+                    stroke="rgba(37,99,235,0.9)"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                  />
+                  <text
+                    x={hover.sx + 10}
+                    y={hover.sy - 10}
+                    fontSize={11}
+                    fill="rgba(29,78,216,1)"
+                    style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+                    data-testid="shape-drawing-measure"
+                  >
+                    {fmtNumber(segmentLen)} {UNIT_LABEL[unit]}
+                    {drawingPoints.length >= 2 && ` · S ${fmtNumber(previewArea)} ${UNIT_LABEL[unit]}²`}
+                  </text>
+                </>
               )
             })()}
             {drawingPoints.map((p, i) => { const { sx, sy } = deckToScreen(p.x, p.y); return (
@@ -3295,6 +3317,36 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             )})}
           </g>
         )}
+
+        {/* The closed outline waits for its name in «Каталог» → «Фигуры»:
+            it stays on the deck, where it will be placed (spec 7.2). */}
+        {pendingCustomShape && pendingCustomShape.outline.length >= 3 && (() => {
+          const pts = pendingCustomShape.outline.map((p) => deckToScreen(pendingCustomShape.x + p.x, pendingCustomShape.y + p.y))
+          const cx = pts.reduce((sum, p) => sum + p.sx, 0) / pts.length
+          const cy = pts.reduce((sum, p) => sum + p.sy, 0) / pts.length
+          return (
+            <g className="pointer-events-none" data-testid="pending-custom-shape">
+              <polygon
+                points={pts.map((p) => `${p.sx},${p.sy}`).join(' ')}
+                fill="rgba(37,99,235,0.12)"
+                stroke="rgba(37,99,235,0.9)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />
+              <text
+                x={cx}
+                y={cy}
+                fontSize={11}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="rgba(29,78,216,1)"
+                style={{ paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }}
+              >
+                S {fmtNumber(polygonArea(pendingCustomShape.outline))} {UNIT_LABEL[unit]}²
+              </text>
+            </g>
+          )
+        })()}
 
         {/* Background-photo position/scale editor: dashed bounding box + 4
             corner handles (uniform-scale resize, see handlePointerMove's

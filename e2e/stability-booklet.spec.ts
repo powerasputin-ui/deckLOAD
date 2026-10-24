@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { openSection, setNumber, statusLine } from './helpers'
+import { addOwnCargo, openCargoTable, openSection, setNumber, statusLine } from './helpers'
 
 // Stage 2a (spec 2026-10-24, section 8): the booklet check end to end — the
 // ways into the stability workspace, a pasted limit passing and then failing
@@ -116,10 +116,7 @@ test('a pasted limit passes the trip, and heavy cargo high up fails it', async (
 
   // 500 t, 4 m tall: its centre 8 m above the keel. KG (5500 + 4000)/2000
   // = 4.75 — GM 3.25, under the 3.5 m the booklet asks for.
-  await openSection(page, 'Грузы')
-  await page.getByRole('button', { name: 'Добавить груз' }).click()
-  await setNumber(page.locator('label:has-text("Вес ед., кг") + input, label:has-text("Вес ед., кг") ~ input').first(), '500000')
-  await setNumber(page.locator('label:has-text("Выс.") + input').first(), '4')
+  await addOwnCargo(page, { weightT: '500', height: '4' })
   await expect(ws.getByTestId('stability-state')).toHaveAttribute('data-verdict', 'error')
   await expect(ws.getByTestId('stability-gm')).toHaveText('3.25 м')
   await expect(statusLine(page).locator('[data-status-item="gm"]')).toContainText('✕')
@@ -146,7 +143,9 @@ test('pipes without an inside diameter give a warning, and with one their water 
   await expect(ws.getByText('Вода в трубах «Труба 530» не учтена: нет внутреннего диаметра')).toBeVisible()
   await expect(ws.getByText('Вода в трубах', { exact: true })).toBeHidden()
 
-  await openSection(page, 'Грузы')
+  // The inside diameter is in the cargo table's «Дополнительно».
+  const table = await openCargoTable(page)
+  await table.getByRole('button', { name: 'Дополнительно: Труба 530' }).click()
   await setNumber(page.getByLabel('Внутренний диаметр, мм'), '500')
   await expect(ws.getByText('Вода в трубах', { exact: true })).toBeVisible()
   await expect(ws.getByText(/не учтена: нет внутреннего диаметра/)).toBeHidden()

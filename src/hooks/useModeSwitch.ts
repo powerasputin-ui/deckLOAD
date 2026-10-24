@@ -86,8 +86,6 @@ export function useModeSwitch({
       selectedPinIds: [],
       selectedAutoKeys: [],
       activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
     })
     useCalculator.getState().remapLashingPointsForRedistribute(matches)
     toast.info('Ручной режим — размещения сохранены')
@@ -107,8 +105,6 @@ export function useModeSwitch({
         selectedAutoKeys: [],
         selectedManualIds: [],
         activeStampId: null,
-        pendingPresetStamp: null,
-        activePresetCategory: null,
       })
       useCalculator.getState().pruneStaleLashingPoints()
       toast.info('Авто-режим — груз расставлен заново')
@@ -157,8 +153,6 @@ export function useModeSwitch({
       selectedPinIds: [],
       selectedAutoKeys: [],
       activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
     })
     useCalculator.getState().remapLashingPointsForRedistribute(matches)
     toast.info('Авто-режим — размещения сохранены как закреплённые')

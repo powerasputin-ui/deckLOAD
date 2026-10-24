@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { unitsCount } from './helpers'
+import { addOwnCargo, unitsCount } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -17,7 +17,7 @@ test.describe('Undo/redo', () => {
     await expect(undoBtn).toBeDisabled()
     await expect(redoBtn).toBeDisabled()
 
-    await page.getByRole('button', { name: 'Добавить' }).click()
+    await addOwnCargo(page)
     await expect(headerBadge(page)).toHaveText(/\/23 ед\./)
     await expect(undoBtn).toBeEnabled()
 
@@ -34,11 +34,11 @@ test.describe('Undo/redo', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
     const undoBtn = page.getByRole('button', { name: 'Отменить (Ctrl+Z)' })
-    await page.getByRole('button', { name: 'Добавить' }).click()
+    await addOwnCargo(page)
     await expect(headerBadge(page)).toHaveText(/\/23 ед\./)
 
-    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    const qtyInput = itemCard.locator('label:has-text("Кол-во") + input')
+    // The new cargo's «всего» in the list.
+    const qtyInput = page.getByLabel('Всего, Груз 4', { exact: true })
     await qtyInput.click()
     await qtyInput.fill('9')
     await page.keyboard.press('Control+z')

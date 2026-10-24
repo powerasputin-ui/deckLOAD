@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, openSection, setNumber, unitsCount } from '../helpers'
+import { chooseFromCatalog, clearCalculation, openCargoTable, openSection, setNumber, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 1–6, from the entry points of stage 2: what is on
 // screen, never a right-click. Stages 3 and 4 rewrite them into their full
@@ -58,13 +58,14 @@ test('Сценарий 2: размеры, отступы, предельная �
   await expect(page.getByRole('complementary', { name: 'Инспектор' }).getByText('макс. 7 по высоте')).toBeVisible()
   await page.keyboard.press('Escape')
 
-  // Feet convert the fields and the cargo list's sizes.
+  // Feet convert the fields and the cargo's sizes, in the cargo table.
   await expect(async () => {
     await page.getByRole('radio', { name: 'фт' }).click()
     await expect(page.getByLabel('Ширина')).toHaveValue(/^32\.8/, { timeout: 1000 })
   }).toPass({ timeout: 10000 })
-  await openSection(page, 'Грузы')
-  await expect(page.getByText(/размеры в фт/)).toBeVisible()
+  const table = await openCargoTable(page)
+  await expect(table.getByRole('columnheader', { name: /^Д×Ш×В, фт$/ })).toBeVisible()
+  await expect(table.getByLabel('Ширина, Контейнер 20ft', { exact: true })).toHaveValue(/^19\.88/)
 })
 
 // The outline's vertex handle at the top right of the drawing.
@@ -163,15 +164,14 @@ test('Сценарий 5: препятствия', async ({ page }) => {
 
   await expect(page.getByRole('list', { name: 'Препятствия на палубе' })).toContainText('Кран')
 
-  // Cargo doesn't go into it — saying why — and goes beside it.
-  await openSection(page, 'Грузы')
-  await page.getByRole('button', { name: 'Пресеты' }).click()
-  await page.getByRole('button', { name: 'Контейнеры' }).click()
-  await page.getByRole('button', { name: /Паллета EUR/ }).click()
+  // Cargo doesn't go into it — saying why — and goes beside it. In manual
+  // mode a pallet from the catalogue is armed for a click.
+  await page.getByRole('radio', { name: 'Ручной' }).click()
+  await chooseFromCatalog(page, 'Паллета EUR')
   const zone = (await deck(page).locator('polygon[data-restriction-zone]').first().boundingBox())!
   await page.mouse.click(zone.x + zone.width / 2, zone.y + zone.height / 2)
   await expect(page.getByText('Здесь нельзя — зона ограничения «Кран»')).toBeVisible()
-  await expect(unitsCount(page)).toHaveText(/0\/0 ед\./)
+  await expect(unitsCount(page)).toHaveText(/0\/1 ед\./)
   const after = (await background(page).boundingBox())!
   await background(page).click({ position: { x: after.width - 60, y: after.height - 40 }, force: true })
   await expect(unitsCount(page)).toHaveText(/1\/1 ед\./)

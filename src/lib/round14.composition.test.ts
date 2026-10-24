@@ -361,7 +361,9 @@ describe('Round 14 "no production writer" gate', () => {
       'src/components/stability/StabilityResults.tsx',
       'src/components/calculator/Deck3DView.tsx',
       'src/components/calculator/DeckVisualization.tsx',
-      'src/components/calculator/ItemList.tsx',
+      'src/components/cargo/CargoTable.tsx',
+      'src/components/cargo/CargoList.tsx',
+      'src/components/cargo/CargoCatalog.tsx',
     ]
     // Whitelisted files this test EXPECTS to contain a `composition:`
     // object-literal key — every occurrence in a NON-whitelisted file below

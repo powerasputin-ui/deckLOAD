@@ -160,9 +160,11 @@ describe('Home (page.tsx)', () => {
   // and «Импортировать».
   it('labels use Russian unit symbols and the new names for the stack height limit and project file items', () => {
     render(<Home />)
+    // The catalogue gives a cargo's size in the deck's unit, in Russian.
+    fireEvent.click(screen.getByRole('button', { name: 'Каталог' }))
     const cargoText = document.body.textContent ?? ''
     expect(cargoText).not.toMatch(/\((m|cm|ft)\)/)
-    expect(cargoText).toMatch(/Шир\. \(м\)/)
+    expect(cargoText).toMatch(/6\.06×2\.44×2\.59 м/)
 
     fireEvent.click(screen.getByRole('button', { name: /^Меню расчёта/ }))
     expect(screen.getByRole('button', { name: 'Сохранить файл…' })).toBeTruthy()
@@ -752,7 +754,10 @@ describe('Home (page.tsx)', () => {
       expect(within(shownState()).getByText('Вода в трубах «Труба 530» не учтена: нет внутреннего диаметра')).toBeTruthy()
       expect(within(shownState()).queryByText('Вода в трубах')).toBeNull()
 
+      // The inside diameter is in the cargo table's «Дополнительно».
       openSection('Грузы')
+      fireEvent.click(screen.getByRole('button', { name: 'Таблица' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Дополнительно: Труба 530' }))
       const inside = screen.getByLabelText('Внутренний диаметр, мм')
       fireEvent.change(inside, { target: { value: '500' } })
       fireEvent.keyDown(inside, { key: 'Enter' })
@@ -1001,7 +1006,7 @@ describe('Home (page.tsx)', () => {
       openSection('Судно')
       expect(screen.getByRole('heading', { name: 'Судно' })).toBeTruthy()
       expect(screen.getByText('Судно из библиотеки')).toBeTruthy()
-      expect(screen.queryByText('Выбор груза для размещения')).toBeNull()
+      expect(screen.queryByRole('list', { name: 'Список грузов' })).toBeNull()
       expect(localStorage.getItem('deckload-panel-section')).toBe('vessel')
     })
 
@@ -1150,6 +1155,56 @@ describe('Home (page.tsx)', () => {
   // Phase 0, L1: units carried on to trip 2 sat in trip 1's red «Не
   // поместилось» strip and its «Не влезло»/«N/M разм.» counters, as if they
   // had failed.
+  // Stage 3 (spec 7.1): «Поставить» arms a cargo; a line over the deck says
+  // what a click does, R and ↻ turn the cargo, ✕ and Esc cancel.
+  it('arming a cargo shows the line over the deck; R and ↻ turn it, ✕ cancels', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 2 })
+    })
+    openSection('Грузы')
+    fireEvent.click(screen.getByRole('button', { name: 'Поставить «Box»' }))
+    const hint = screen.getByTestId('stamp-hint')
+    expect(hint).toHaveTextContent('Кликните по палубе, чтобы поставить «Box» · R — повернуть · Esc — отмена')
+
+    const rotated = () => useCalculator.getState().stampRotated
+    const before = rotated()
+    fireEvent.keyDown(window, { key: 'r', code: 'KeyR' })
+    expect(rotated()).toBe(!before)
+    // The same key in the Russian layout; in a field it's just a letter.
+    fireEvent.keyDown(window, { key: 'к', code: 'KeyR' })
+    expect(rotated()).toBe(before)
+    fireEvent.keyDown(screen.getByLabelText('Всего, Box'), { key: 'к', code: 'KeyR' })
+    expect(rotated()).toBe(before)
+    fireEvent.click(within(hint).getByRole('button', { name: 'Повернуть груз' }))
+    expect(rotated()).toBe(!before)
+
+    fireEvent.click(within(hint).getByRole('button', { name: 'Отменить постановку' }))
+    expect(useCalculator.getState().activeStampId).toBeNull()
+    expect(screen.queryByTestId('stamp-hint')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Поставить «Box»' }))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('stamp-hint')).toBeNull()
+  })
+
+  // Spec 7.2: the drawn outline stays on the deck while its name is asked
+  // for, in «Грузы», whichever section was open.
+  it('a drawn cargo outline stays on the deck while its name is asked for', () => {
+    render(<Home />)
+    openSection('Судно')
+    act(() => {
+      useCalculator.getState().setPendingCustomShape({ outline: [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 2 }], width: 2, length: 2, x: 1, y: 1 })
+    })
+    expect(document.querySelector('[data-testid="pending-custom-shape"]')?.textContent).toBe('S 2 м²')
+    openSection('Грузы')
+    expect(screen.getByRole('form', { name: 'Своя форма' })).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('form', { name: 'Своя форма' })).getByRole('button', { name: 'Отмена' }))
+    expect(document.querySelector('[data-testid="pending-custom-shape"]')).toBeNull()
+  })
+
   it('cargo carried to the next trip is a calm note, not a red «Не поместилось»', () => {
     render(<Home />)
     clearDemoCargo()
@@ -1161,7 +1216,8 @@ describe('Home (page.tsx)', () => {
     expect(screen.getByRole('tab', { name: /Рейс 2 · 1 ед\./ })).toBeTruthy()
     expect(screen.queryByText(/Не поместилось/)).toBeNull()
     expect(screen.getByTestId('trip-carry-over').textContent).toMatch(/^1 ед\. уходит в рейс 2/)
-    expect(document.body.textContent).toMatch(/2\/2 разм\./)
+    // Both units count as placed: one on each trip.
+    expect(screen.getByTestId('cargo-list-row')).toHaveTextContent(/Размещено 2\s*из/)
   })
 
   it('cargo that fits in no trip stays red and gets no empty trip tab of its own', () => {
@@ -2517,12 +2573,18 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(document.querySelector(`svg [data-selection-halo] [stroke="${THEME_TOKENS.light.accent}"]`)).toBeTruthy()
   })
 
-  // Round 23 — composition-aware quantity attribution in ItemList,
-  // PlacementPanel, and onPlace's quantity gate. Before this round, all
-  // three independently grouped `result.placed`/store placements by
-  // nominal `itemId` alone, so a composed [A2,B3] (nominal itemId=A)
-  // showed "A: 5 placed, B: 0 placed" instead of "A: 2, B: 3".
-  it('ItemList: composed [A2,B3] shows 2/2 placed for A and 3/3 for B, not 5/2 and 0/3 (K#R23-itemlist)', () => {
+  // Round 23 — composition-aware quantity attribution in the cargo list
+  // and onPlace's quantity gate. Before this round, both independently
+  // grouped `result.placed`/store placements by nominal `itemId` alone, so
+  // a composed [A2,B3] (nominal itemId=A) showed "A: 5 placed, B: 0 placed"
+  // instead of "A: 2, B: 3".
+  const cargoRow = (name: string) => {
+    const row = screen.getAllByTestId('cargo-list-row').find((r) => within(r).queryByTitle(name))
+    if (!row) throw new Error(`no cargo list row for «${name}»`)
+    return row
+  }
+
+  it('cargo list: composed [A2,B3] shows 2 of 2 placed for A and 3 of 3 for B, not 5 and 0 (K#R23-itemlist)', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -2541,24 +2603,16 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    // ItemRow's name button carries `title={item.name}` — its parent flex
-    // container also holds the "N/M разм." badge, scoped this way since
-    // plain item names ("A"/"B") are not unique page-wide (PlacementPanel
-    // renders them too).
-    const aRow = screen.getByTitle('A')
-    const bRow = screen.getByTitle('B')
-    expect(aRow.parentElement?.textContent).toContain('2/2 разм.')
-    expect(bRow.parentElement?.textContent).toContain('3/3 разм.')
+    expect(cargoRow('A')).toHaveTextContent(/Размещено 2\s*из/)
+    expect(cargoRow('B')).toHaveTextContent(/Размещено 3\s*из/)
+    expect((within(cargoRow('B')).getByLabelText('Всего, B') as HTMLInputElement).value).toBe('3')
   })
 
-  it('PlacementPanel: composed [A2,B3] attributes remaining quantity per constituent, not to the nominal itemId alone (K#R23-placementpanel)', () => {
+  it('cargo list in manual mode: composed [A2,B3] credits each constituent with its own units (K#R23-placementpanel)', () => {
     render(<Home />)
     clearDemoCargo()
     // Manual mode — AUTO would auto-place A's 2 genuinely-remaining units
-    // somewhere else on the deck on its own (nothing wrong with that, but
-    // it would then make the true "remaining" legitimately 0, defeating
-    // the point of this test), so this needs a mode where nothing places
-    // itself without an explicit action.
+    // somewhere else on the deck on its own, so nothing would stay off it.
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
       // A: 2 used by the composition, 2 more genuinely available.
@@ -2575,18 +2629,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    // StampRow renders as a single <button> containing both the item name
-    // and "Не распределено" — scanning for a button whose text includes
-    // both disambiguates it from ItemList's own (differently-shaped) row.
-    const stampRowText = (name: string) =>
-      Array.from(document.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes(name) && btn.textContent?.includes('Не распределено')
-      )?.textContent
-    // Pre-fix, A would wrongly show 0 remaining (over-counted at 5 placed
-    // against quantity 4) and B would wrongly show 3 remaining (never
-    // credited with its 3 units at all).
-    expect(stampRowText('A')).toContain('Не распределено: 2')
-    expect(stampRowText('B')).toContain('Не распределено: 0')
+    // Pre-fix, A would wrongly show 5 placed (over its 4) and B would show
+    // 0 (never credited with its 3 units at all).
+    expect(cargoRow('A')).toHaveTextContent(/Размещено 2\s*из/)
+    expect(cargoRow('B')).toHaveTextContent(/Размещено 3\s*из/)
   })
 
   // onPlace's quantity gate (page.tsx) — functional, not just display: it
@@ -3310,7 +3356,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     const rafSpy = vi.spyOn(window, 'requestAnimationFrame')
-    const rows = document.querySelectorAll('.rounded-lg.border.bg-card.p-3')
+    const rows = screen.getAllByTestId('cargo-list-row')
     expect(rows.length).toBeGreaterThan(1)
     act(() => {
       rows.forEach((row) => {
@@ -3938,24 +3984,16 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   })
 
   // Round 27 (fixes R26-1/R26-2): both bugs originate in the ordinary
-  // "Грузы" list catalog-edit fields (ItemList.tsx's NumField), not a
-  // drag/drop path — these two tests drive that real DOM input, through
-  // onUpdate -> updateItem -> live store state, rather than calling the
-  // store action directly (already covered at the unit level in
-  // calculator.test.ts).
-  function findItemNumInput(itemName: string, labelPrefix: string): HTMLInputElement {
-    const nameBtn = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === itemName)
-    if (!nameBtn) throw new Error(`R27 test: item row not found for "${itemName}"`)
-    let row: HTMLElement | null = nameBtn.parentElement
-    while (row && !row.textContent?.includes(labelPrefix)) row = row.parentElement
-    if (!row) throw new Error(`R27 test: no ancestor row containing label "${labelPrefix}" found for "${itemName}"`)
-    const label = Array.from(row.querySelectorAll('label')).find((l) => l.textContent?.startsWith(labelPrefix))
-    const input = label?.parentElement?.querySelector('input')
-    if (!input) throw new Error(`R27 test: input not found for label "${labelPrefix}" on "${itemName}"`)
-    return input
+  // cargo edit fields — the cargo table's cells since stage 3 — not a
+  // drag/drop path. These two tests drive that real DOM input, through
+  // updateItem -> live store state, rather than calling the store action
+  // directly (already covered at the unit level in calculator.test.ts).
+  function findItemNumInput(itemName: string, label: string): HTMLInputElement {
+    if (!screen.queryByRole('table', { name: 'Таблица грузов' })) fireEvent.click(screen.getByRole('button', { name: 'Таблица' }))
+    return screen.getByLabelText(`${label}, ${itemName}`) as HTMLInputElement
   }
 
-  it('Round 27: editing a NON-NOMINAL composed constituent\'s weight through the real ItemList field is blocked when it would exceed maxDeckCargoT', () => {
+  it('Round 27: editing a NON-NOMINAL composed constituent\'s weight through the real cargo table cell is blocked when it would exceed maxDeckCargoT', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -3973,8 +4011,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       })
     })
 
-    const weightInput = findItemNumInput('B', 'Вес ед., кг')
-    fireEvent.change(weightInput, { target: { value: '1000' } }) // true new total would be 3200kg
+    const weightInput = findItemNumInput('B', 'Вес единицы, т')
+    fireEvent.change(weightInput, { target: { value: '1' } }) // 1 t a unit: the true new total would be 3200kg
     fireEvent.blur(weightInput) // NumberField applies the edit on blur/Enter, not per keystroke
 
     expect(toast.error).toHaveBeenCalled()
@@ -3985,7 +4023,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     ])
   })
 
-  it('Round 27: tightening a NON-NOMINAL composed constituent\'s "Ярусов" through the real ItemList field clamps only that constituent, keeping layers in sync with composition', () => {
+  it('Round 27: tightening a NON-NOMINAL composed constituent\'s "Ярусов" through the real cargo table cell clamps only that constituent, keeping layers in sync with composition', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {

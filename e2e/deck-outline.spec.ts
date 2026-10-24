@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, setNumber, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection } from './helpers'
 
 // The outline's vertex handle at the top right of the drawing. Which deck
 // corner that is depends on how the deck is drawn (long side horizontal, bow
@@ -51,12 +51,10 @@ test.describe('Non-rectangular deck outline', () => {
 
     // Manual mode first, so adding cargo doesn't auto-place it via packDeck.
     await page.getByText('Ручной').first().click()
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '5')
+    await addOwnCargo(page, { quantity: '5' })
 
     await expect(page.getByText(/0\/5 ед\./)).toBeVisible()
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await armCargo(page, 'Груз 1')
     const bgBox = await background.boundingBox()
     if (!bgBox) throw new Error('deck background not found')
     // Top-right corner of the background rect — inside the cut-off area.
@@ -99,10 +97,8 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
     await page.getByText('Ручной').first().click()
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '3')
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await addOwnCargo(page, { quantity: '3' })
+    await armCargo(page, 'Груз 1')
 
     const bgBox = await background.boundingBox()
     if (!bgBox) throw new Error('deck background not found')
@@ -150,11 +146,7 @@ test.describe('Non-rectangular deck outline', () => {
     // (matches the real user report: containers of this size, well under
     // what the deck can hold), so a "doesn't fit" report here can only mean
     // the outline-blind bug, not a genuine capacity shortfall.
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '2')
-    await setNumber(itemCard.locator('label:has-text("Шир. (м)") + input'), '6')
-    await setNumber(itemCard.locator('label:has-text("Длин. (м)") + input'), '2.4')
+    await addOwnCargo(page, { quantity: '2', width: '6', length: '2.4' })
 
     await openSection(page, 'Размещение')
 

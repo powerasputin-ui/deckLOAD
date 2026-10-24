@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, unitsCount, stackMenu, stackOf } from './helpers'
+import { armCargo, chooseFromCatalog, clearCalculation, clearDeckSpot, unitsCount, stackMenu, stackOf } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -53,23 +53,29 @@ test.describe('Auto-mode selection and pinning', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await clearCalculation(page)
 
-    // One container stamped onto an empty deck, so the drag has room to land.
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Контейнеры' }).click()
-    await page.getByText('Контейнер 20ft', { exact: true }).click()
-    await page.locator('svg [data-deck-background="true"]').first().click({ position: { x: 60, y: 60 }, force: true })
-    await page.keyboard.press('Escape')
+    // One container on an empty deck, so the drag has room to land: from
+    // the catalogue the packer puts it on the deck, «Поставить» and a click
+    // clear of it put it where the user clicked.
+    await chooseFromCatalog(page, 'Контейнер 20ft')
     const stack = page.locator('svg g[data-cargo-placement="true"]')
+    await expect(stack).toHaveCount(1)
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
+    await armCargo(page, 'Контейнер 20ft')
+    await page.locator('svg [data-deck-background="true"]').first().click({ position: await clearDeckSpot(page), force: true })
+    await page.keyboard.press('Escape')
     await expect(stack).toHaveCount(1)
     // A stamp puts the cargo exactly where the user clicked: locked.
     await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
 
     const before = (await storedPins(page))[0]
     const box = await stack.boundingBox()
-    if (!box) throw new Error('no bounding box')
+    const deckBox = await page.locator('svg [data-deck-background="true"]').first().boundingBox()
+    if (!box || !deckBox) throw new Error('no bounding box')
+    // Towards the middle of the deck, where there's room to land.
+    const dx = box.x + box.width / 2 > deckBox.x + deckBox.width / 2 ? -150 : 150
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 150, box.y + box.height / 2 + 40, { steps: 8 })
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + 40, { steps: 8 })
     await page.mouse.up()
     await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
     const moved = await storedPins(page)

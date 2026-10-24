@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { clearCalculation, openSection, setNumber } from './helpers'
+import { addOwnCargo, clearCalculation, openSection, setNumber } from './helpers'
 
 // The stability workspace (spec 2026-10-24, 6.1): opened from «Судно» in the
 // deck's place, the vessel's data on the left, the open trip's result on the
@@ -66,10 +66,7 @@ test.describe('Ship stability workspace', () => {
     await expect(ws.getByText('0°', { exact: true })).toBeVisible()
 
     // The workspace stays open while the cargo is edited in the left panel.
-    await openSection(page, 'Грузы')
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    const weightField = page.locator('label:has-text("Вес ед., кг") + input, label:has-text("Вес ед., кг") ~ input').first()
-    await setNumber(weightField, '100000')
+    await addOwnCargo(page, { weightT: '100' })
 
     // Auto mode puts the new cargo against the board offset near (0, 0) —
     // far off the centreline — so the ship lists.

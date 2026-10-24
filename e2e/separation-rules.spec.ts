@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { clearCalculation, setNumber, unitsCount, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, setNumber, unitsCount, openSection } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -13,13 +13,10 @@ test.describe('Category separation rules', () => {
     await clearCalculation(page)
     await page.getByRole('radio', { name: 'Ручной' }).click()
 
-    // Two fresh items, each assigned to a different category via the
-    // per-item "Категория" text field (datalist-backed, no fixed option set).
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    await page.getByRole('button', { name: 'Добавить' }).click()
-    const cards = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' })
-    await cards.nth(0).locator('label:has-text("Категория") + input').fill('СепА')
-    await cards.nth(1).locator('label:has-text("Категория") + input').fill('СепБ')
+    // Two fresh items, each of its own category, from «Свой груз»
+    // (the category field is datalist-backed, no fixed option set).
+    await addOwnCargo(page, { category: 'СепА' })
+    await addOwnCargo(page, { category: 'СепБ' })
 
     // Open "Сепарация груза" (collapsed by default) and add a rule with a
     // large minimum distance so any placement close together violates it.
@@ -36,18 +33,15 @@ test.describe('Category separation rules', () => {
     const background = page.locator('svg [data-deck-background="true"]').first()
 
     await expect(headerBadge(page)).toHaveText(/^0\/2 /)
-    await openSection(page, 'Грузы')
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await armCargo(page, 'Груз 1')
     await background.click({ position: { x: 30, y: 30 }, force: true })
     await expect(headerBadge(page)).toHaveText(/^1\/2 /)
 
     // Placing the other category right next to it violates the ≥3m rule —
-    // the count must not advance. Clicking the "Груз 2" stamp button can
-    // scroll the page (it's further down the sidebar list), so both
-    // boundingBox() calls used to compute the click offset are taken AFTER
-    // that click, back-to-back, to avoid stale coordinates from an earlier
-    // scroll position.
-    await page.getByRole('button', { name: /Груз 2.*2×1\.2/ }).click()
+    // the count must not advance. Arming "Груз 2" can scroll the panel, so
+    // both boundingBox() calls used to compute the click offset are taken
+    // AFTER it, back-to-back, to avoid stale coordinates.
+    await armCargo(page, 'Груз 2')
     const freshBg = await background.boundingBox()
     if (!freshBg) throw new Error('deck background not found')
     // First item added to a cleared project is always colored #0ea5e9 (same
@@ -77,11 +71,8 @@ test.describe('Category separation rules', () => {
     // exercises packDeck's own violatesSeparation checks (packing.ts
     // ~1251-1278), not the UI-level check in DeckVisualization's click
     // handler that the previous test already covers.
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    await page.getByRole('button', { name: 'Добавить' }).click()
-    const cards = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' })
-    await cards.nth(0).locator('label:has-text("Категория") + input').fill('СепА')
-    await cards.nth(1).locator('label:has-text("Категория") + input').fill('СепБ')
+    await addOwnCargo(page, { category: 'СепА' })
+    await addOwnCargo(page, { category: 'СепБ' })
 
     await openSection(page, 'Проверки')
 

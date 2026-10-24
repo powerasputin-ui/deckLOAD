@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, openSection } from './helpers'
+import { addOwnCargo, clearCalculation, openSection, unitsCount } from './helpers'
 
 // The numeric fields keep what you type as a draft and apply it on Enter/blur.
 // They used to be controlled type="number" inputs that pushed every keystroke
@@ -88,16 +88,16 @@ test.describe('Numeric fields', () => {
   test('a cargo quantity typed digit by digit is applied once, when finished', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Добавить', exact: true }).click()
+    await addOwnCargo(page)
 
-    const card = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    const quantity = card.locator('label:has-text("Кол-во") + input')
+    // «Всего» in the list: the click selects the number, typing replaces it.
+    const quantity = page.getByLabel('Всего, Груз 1', { exact: true })
     await quantity.click()
-    await quantity.press('Control+A')
     await quantity.pressSequentially('12')
-    await expect(card.getByText(/\/1 разм\./)).toBeVisible() // still the old quantity mid-edit
+    await expect(quantity).toHaveValue('12')
+    await expect(unitsCount(page)).toHaveText(/\/1 ед\./) // still the old quantity mid-edit
 
     await quantity.press('Enter')
-    await expect(card.getByText(/\/12 разм\./)).toBeVisible()
+    await expect(unitsCount(page)).toHaveText(/\/12 ед\./)
   })
 })

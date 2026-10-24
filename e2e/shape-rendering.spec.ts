@@ -1,32 +1,29 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, stackTools } from './helpers'
+import { chooseFromCatalog, clearCalculation, stackTools } from './helpers'
 
 test.describe('Non-rectangular cargo shape rendering', () => {
-  test('a preset circle keeps its shape (not a plain box) in manual mode', async ({ page }) => {
+  test('a circle from the catalogue keeps its shape (not a plain box) in manual mode', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
     await page.getByText('Ручной').first().click()
 
-    // Open the presets catalog and arm the "Круг" (circle) template from
-    // the "Объекты" category.
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Объекты' }).click()
-    await page.getByText('Круг', { exact: true }).click()
+    // «Каталог» → «Фигуры» → «Круг»: in manual mode it's armed for a click.
+    await chooseFromCatalog(page, 'Круг')
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 60, y: 60 }, force: true })
 
     // The regression: DeckVisualization used to hand-rebuild the manual-mode
     // render list from manualPlacements and drop the `shape` field, so every
-    // non-rectangular preset silently fell back to a plain <rect>.
-    await expect(page.locator('svg ellipse')).toHaveCount(1)
+    // non-rectangular template silently fell back to a plain <rect>.
+    await expect(page.locator('svg[data-deck-plan] ellipse')).toHaveCount(1)
 
     // Switching to auto mode and back must not regress it either. Manual →
     // Auto asks what to do with the hand-placed cargo; keep it in place.
     await page.getByText('Авто').first().click()
     await page.getByRole('button', { name: 'Оставить позиции' }).click()
     await page.getByText('Ручной').first().click()
-    await expect(page.locator('svg ellipse')).toHaveCount(1)
+    await expect(page.locator('svg[data-deck-plan] ellipse')).toHaveCount(1)
   })
 
   test('rotating a triangle actually turns it (not just squishes the same apex-up shape)', async ({ page }) => {
@@ -34,14 +31,12 @@ test.describe('Non-rectangular cargo shape rendering', () => {
     await clearCalculation(page)
     await page.getByText('Ручной').first().click()
 
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Объекты' }).click()
-    await page.getByText('Треугольник', { exact: true }).click()
+    await chooseFromCatalog(page, 'Треугольник')
 
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 100, y: 100 }, force: true })
 
-    const triangle = page.locator('svg polygon').first()
+    const triangle = page.locator('svg[data-deck-plan] g[data-cargo-placement] polygon').first()
     const parsePoints = (attr: string) =>
       attr.trim().split(/\s+/).map((pair) => pair.split(',').map(Number))
 

@@ -447,10 +447,10 @@ export function variableWeightsToMoments(items: VariableWeightItem[]): WeightMom
 }
 
 // stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are typed in metres
-// but actually stored in the deck's display unit (see ItemList.tsx's
-// StabilityOverrideField, which labels the input with `unit` and writes the
-// raw typed number with no conversion; setUnit converts them like any other
-// length) — on placements and catalog items alike.
+// but actually stored in the deck's display unit (the cargo table's
+// «Дополнительно» labels them with the unit and writes the typed number as
+// is; setUnit converts them like any other length) — on placements and
+// catalog items alike.
 function stabilityOverrideToMeters(o: StabilityOverride | undefined, unit: Unit): StabilityOverride | undefined {
   return (
     o && {

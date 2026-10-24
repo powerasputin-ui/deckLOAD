@@ -44,8 +44,8 @@ export function computeItemVCG(p: {
   const height = Number.isFinite(p.height) && p.height > 0 ? p.height : 0
   if (p.nestVcgAboveDeckM !== undefined) {
     // Defense in depth: a nest-shaped item is meant to always have
-    // `layers === 1` (PresetsBar.tsx pins `maxLayers: 1` on every штабель
-    // it creates), but if one somehow ends up stacked N-high anyway (a
+    // `layers === 1` (the catalogue's pipe-stack builder, CargoCatalog.tsx,
+    // pins `maxLayers: 1` on every штабель it creates), but if one somehow ends up stacked N-high anyway (a
     // hand-edited/imported project, a future caller that forgets the cap),
     // `nestVcgAboveDeckM` alone describes only ONE штабель's own internal
     // VCG — silently ignoring `layers` would apply the full N-tier weight

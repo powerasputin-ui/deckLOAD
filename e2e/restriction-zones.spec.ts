@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, openSection } from './helpers'
+import { chooseFromCatalog, clearCalculation, openSection, unitsCount } from './helpers'
 
 test.describe('Restriction (obstacle) zones', () => {
   test('drag-to-create a zone hard-blocks placement inside it and allows placement outside it', async ({ page }) => {
@@ -38,11 +38,10 @@ test.describe('Restriction (obstacle) zones', () => {
     // A hard-block zone renders as a polygon distinct from cargo footprints.
     await expect(zoneNameInput).toBeHidden()
 
-    // Arm a small cargo item and try to place it inside the zone.
-    await openSection(page, 'Грузы')
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Контейнеры' }).click()
-    await page.getByRole('button', { name: /Паллета EUR/ }).click()
+    // A small cargo, armed for a click (manual mode: the packer would put it
+    // on the deck by itself), and a try to place it inside the zone.
+    await page.getByRole('radio', { name: 'Ручной' }).click()
+    await chooseFromCatalog(page, 'Паллета EUR')
 
     // Click the actual rendered zone polygon's own screen-space centroid
     // (not a guessed offset from the drag gesture) — robust against any
@@ -51,13 +50,14 @@ test.describe('Restriction (obstacle) zones', () => {
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText(/0\/0 ед\./)).toBeVisible()
+    await expect(page.getByText('Здесь нельзя — зона ограничения «Кран»')).toBeVisible()
+    await expect(unitsCount(page)).toHaveText(/^0\/1 ед\./)
 
     // Placing well outside the zone succeeds.
     const box3 = await background.boundingBox()
     if (!box3) throw new Error('deck background not found (2)')
     await background.click({ position: { x: box3.width - 60, y: box3.height - 40 }, force: true })
-    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
+    await expect(unitsCount(page)).toHaveText(/^1\/1 ед\./)
   })
 
   test('the drawn shape stays visible on the deck between drag-release and confirming the name (regression)', async ({ page }) => {
@@ -109,15 +109,14 @@ test.describe('Restriction (obstacle) zones', () => {
     await zoneForm.getByRole('button', { name: 'Добавить' }).click()
     await expect(zoneNameInput).toBeHidden()
 
-    await openSection(page, 'Грузы')
-    await page.getByRole('button', { name: 'Пресеты' }).click()
-    await page.getByRole('button', { name: 'Контейнеры' }).click()
-    await page.getByRole('button', { name: /Паллета EUR/ }).click()
+    await page.getByRole('radio', { name: 'Ручной' }).click()
+    await chooseFromCatalog(page, 'Паллета EUR')
     const zonePolygon = page.locator('svg polygon[data-restriction-zone]').first()
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText(/0\/0 ед\./)).toBeVisible()
+    await expect(page.getByText('Здесь нельзя — зона ограничения «Фальшборт»')).toBeVisible()
+    await expect(unitsCount(page)).toHaveText(/^0\/1 ед\./)
   })
 
   test('a freeform zone gets corner resize handles that scale its outline, and the delete button does not overlap them (regression)', async ({ page }) => {

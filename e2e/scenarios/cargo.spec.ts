@@ -1,29 +1,28 @@
-import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, openSection, unitsCount } from '../helpers'
+import { test, expect } from '@playwright/test'
+import { addOwnCargo, cargoRow, clearCalculation, openSection, unitsCount } from '../helpers'
 
-// Appendix C, scenarios 7–8. Scenario 8 is in its full version (stage 3);
-// scenario 7 still goes through the presets until the catalogue replaces
-// them in group C.
-
-const card = (page: Page, name: string) => page.locator('.rounded-lg.border.bg-card').filter({ hasText: name }).first()
+// Appendix C, scenarios 7–8, in their full version (stage 3).
 
 test('Сценарий 7: добавить груз', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
+  await openSection(page, 'Грузы')
 
-  // A container from the presets, put on the deck with a click.
-  await page.getByRole('button', { name: 'Пресеты' }).click()
-  await page.getByRole('button', { name: 'Контейнеры' }).click()
-  await page.getByText('Контейнер 20ft', { exact: true }).click()
-  await page.locator('svg[data-deck-plan] [data-deck-background="true"]').first().click({ position: { x: 60, y: 60 }, force: true })
-  await page.keyboard.press('Escape')
+  // Two actions (spec 2.3): «Каталог», «Контейнер 20ft» — in auto mode it
+  // stands on the deck at once, and the list has it.
+  await page.getByRole('button', { name: 'Каталог', exact: true }).click()
+  await page.getByRole('region', { name: 'Каталог грузов' }).getByRole('button', { name: /^Контейнер 20ft,/ }).click()
   await expect(page.locator('svg[data-deck-plan] g[data-cargo-name="Контейнер 20ft"]')).toHaveCount(1)
+  await expect(cargoRow(page, 'Контейнер 20ft')).toContainText(/Размещено 1\s*из/)
+  await expect(page.getByTestId('cargo-summary')).toHaveText('1 тип · 1 ед. · 2.2 т')
 
-  // A cargo of its own goes to the list, and in auto mode onto the deck.
-  await page.getByRole('button', { name: 'Добавить', exact: true }).click()
-  await expect(card(page, 'Груз 2')).toBeVisible()
+  // A cargo of its own: the short form, then the list, and in auto mode
+  // the deck.
+  await addOwnCargo(page, { name: 'Ящик с запчастями', length: '1.5', width: '1', height: '1', weightT: '0.8' })
+  await expect(cargoRow(page, 'Ящик с запчастями')).toBeVisible()
   await expect(unitsCount(page)).toHaveText(/2\/2 ед\./)
+  await expect(page.getByTestId('cargo-summary')).toHaveText('2 типа · 2 ед. · 3 т')
 })
 
 // Full version (stage 3): the cargo table, edited from the keyboard, with

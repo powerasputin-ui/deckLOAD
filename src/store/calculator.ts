@@ -211,19 +211,9 @@ interface CalculatorState {
   // autoPlacementKey (item + position) instead. UI state only — never saved,
   // never part of undo.
   selectedAutoKeys: string[]
+  // The cargo placed by clicking the deck (spec 7.1, «Поставить»). A cargo
+  // from the catalogue joins the list first and is armed from there.
   activeStampId: string | null
-  // A preset catalog item armed for click-to-place, before it exists as a
-  // real CargoItem. Mutually exclusive with activeStampId — only one stamp
-  // source is ever active. Turned into a real item (see
-  // addOrIncrementCargoFromTemplate) only at the moment it's actually placed
-  // on the deck, not when picked from the catalog.
-  pendingPresetStamp: Partial<CargoItem> | null
-  // Which preset category is currently shown in the deck panel's stamp
-  // picker, replacing the normal "my cargo" list with that category's
-  // catalog. Cleared automatically once something is actually placed, so
-  // the panel snaps back to showing real cargo instead of staying stuck
-  // on the catalog view.
-  activePresetCategory: string | null
   stampRotated: boolean
   placingLashingPoint: boolean
   placingPowerSocket: boolean
@@ -236,8 +226,8 @@ interface CalculatorState {
   // DeckVisualization, same split as pendingLashingCorner.
   placingAnnotation: { kind: AnnotationKind; withLeader: boolean } | null
   // Armed "draw a custom cargo outline" mode — mutually exclusive with
-  // activeStampId/pendingPresetStamp/placingLashingPoint (arming any of the
-  // four disarms the other three). The in-progress point list itself is
+  // activeStampId/placingLashingPoint and the other tools (arming any of
+  // them disarms the rest). The in-progress point list itself is
   // local component state in DeckVisualization, same split as
   // placingLashingPoint/pendingLashingCorner.
   drawingCustomShape: boolean
@@ -247,7 +237,7 @@ interface CalculatorState {
   // finalize step can place an instance right there.
   pendingCustomShape: { outline: { x: number; y: number }[]; width: number; length: number; x: number; y: number } | null
   // Armed "edit the deck's own outline" mode — same mutual-exclusion web as
-  // drawingCustomShape/placingLashingPoint/activeStampId/pendingPresetStamp.
+  // drawingCustomShape/placingLashingPoint/activeStampId.
   // The in-progress point list is local component state in
   // DeckVisualization, same split as the other armed-drawing modes.
   editingDeckOutline: boolean
@@ -283,11 +273,9 @@ interface CalculatorState {
   setDeckBackgroundImageRect: (rect: { x: number; y: number; width: number; length: number }) => void
   setMode: (m: Mode) => void
   setActiveStamp: (id: string | null) => void
-  setPendingPresetStamp: (template: Partial<CargoItem> | null) => void
-  setActivePresetCategory: (key: string | null) => void
   // Finds a cargo item matching the template's name and bumps its quantity
-  // by 1, or creates a new one with quantity 1 — used only when a preset
-  // catalog item is actually placed on the deck, never at selection time.
+  // by 1, or creates a new one with quantity 1 — a choice in the catalogue
+  // (spec 7.2), a pipe stack from its builder, a drawn shape once named.
   addOrIncrementCargoFromTemplate: (template: Partial<CargoItem>) => string
   toggleStampRotation: () => void
   addManualPlacement: (p: ManualPlacement) => void
@@ -716,10 +704,9 @@ function reflowResizedItem<T extends { x: number; y: number; width: number; leng
   return { list: result, moved, stillColliding }
 }
 
-// Catalog of standard cargo types shown in the "Пресеты" picker, grouped by
-// category. Purely a picker source — selecting a category doesn't add
-// anything by itself; only actually placing one of its items on the deck
-// (see addOrIncrementCargoFromTemplate) creates a real CargoItem.
+// The cargo templates of «Каталог» (spec 7.2, CargoCatalog.tsx), grouped by
+// category and written in metres. Choosing one adds it to the cargo list,
+// or 1 more of the same (addOrIncrementCargoFromTemplate).
 export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[] }> = {
   containers: {
     label: 'Контейнеры',
@@ -765,7 +752,7 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
     ],
   },
   mixed: {
-    label: 'Смешанный',
+    label: 'Разное',
     items: [
       { name: 'Ящик L', width: 2.0, length: 1.5, height: 1.2, allowRotation: true, weight: 800 },
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
@@ -838,7 +825,7 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   // "standard" round/triangular/diamond deck cargo the way there is for a
   // container or pallet.
   objects: {
-    label: 'Объекты',
+    label: 'Фигуры',
     items: [
       { name: 'Круг', width: 1.2, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'circle' },
       { name: 'Треугольник', width: 1.4, length: 1.2, height: 0.8, allowRotation: true, weight: 200, shape: 'triangle' },
@@ -947,8 +934,6 @@ export const useCalculator = create<CalculatorState>()(
   selectedAutoKeys: [],
   selectedManualIds: [],
   activeStampId: null,
-  pendingPresetStamp: null,
-  activePresetCategory: null,
   stampRotated: false,
   placingLashingPoint: false,
   placingPowerSocket: false,
@@ -1611,8 +1596,6 @@ export const useCalculator = create<CalculatorState>()(
     set(() => ({
       mode: m,
       activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
       selectedPinIds: [],
       selectedAutoKeys: [],
       selectedManualIds: [],
@@ -1624,7 +1607,6 @@ export const useCalculator = create<CalculatorState>()(
   setActiveStamp: (id) =>
     set({
       activeStampId: id,
-      pendingPresetStamp: null,
       drawingCustomShape: false,
       editingDeckOutline: false,
       placingLashingPoint: false,
@@ -1633,19 +1615,6 @@ export const useCalculator = create<CalculatorState>()(
       drawingRestrictionShape: null,
       drawingRestrictionZoneFreeform: false,
     }),
-  setPendingPresetStamp: (template) =>
-    set({
-      pendingPresetStamp: template,
-      activeStampId: null,
-      drawingCustomShape: false,
-      editingDeckOutline: false,
-      placingLashingPoint: false,
-      placingPowerSocket: false,
-      placingAnnotation: null,
-      drawingRestrictionShape: null,
-      drawingRestrictionZoneFreeform: false,
-    }),
-  setActivePresetCategory: (key) => set({ activePresetCategory: key }),
   addOrIncrementCargoFromTemplate: (template) => {
     let id = ''
     set((s) => {
@@ -1656,9 +1625,8 @@ export const useCalculator = create<CalculatorState>()(
         id = items[idx].id
         return { items }
       }
-      // Use the template's exact preview color (PRESET_TEMPLATE_COLORS) —
-      // the real item must match what the picker row showed, not silently
-      // switch to a different nextColor pick after placement.
+      // The template's own color (PRESET_TEMPLATE_COLORS) when it has one;
+      // the deck draws the cargo in the tone of its number either way.
       const item = makeItem(s.items, { ...template, quantity: 1 })
       id = item.id
       return { items: [...s.items, item] }
@@ -1977,23 +1945,23 @@ export const useCalculator = create<CalculatorState>()(
   setPlacingLashingPoint: (v) =>
     set({
       placingLashingPoint: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+      ...(v ? { activeStampId: null, drawingCustomShape: false, editingDeckOutline: false, placingPowerSocket: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setPlacingPowerSocket: (v) =>
     set({
       placingPowerSocket: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+      ...(v ? { activeStampId: null, drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingAnnotation: null, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setPlacingAnnotation: (v) =>
     set({
       placingAnnotation: v,
-      ...(v ? { drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingPowerSocket: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
+      ...(v ? { activeStampId: null, drawingCustomShape: false, editingDeckOutline: false, placingLashingPoint: false, placingPowerSocket: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false } : {}),
     }),
   setDrawingCustomShape: (v) =>
     set({
       drawingCustomShape: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setPendingCustomShape: (v) => set({ pendingCustomShape: v }),
@@ -2001,7 +1969,7 @@ export const useCalculator = create<CalculatorState>()(
     set({
       editingDeckOutline: v,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setDrawingRestrictionShape: (shape) =>
@@ -2009,7 +1977,7 @@ export const useCalculator = create<CalculatorState>()(
       drawingRestrictionShape: shape,
       drawingRestrictionZoneFreeform: false,
       ...(shape
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
         : {}),
     }),
   setDrawingRestrictionZoneFreeform: (v) =>
@@ -2017,7 +1985,7 @@ export const useCalculator = create<CalculatorState>()(
       drawingRestrictionZoneFreeform: v,
       drawingRestrictionShape: null,
       ...(v
-        ? { activeStampId: null, pendingPresetStamp: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false }
         : {}),
     }),
   addRestrictionZone: (zone) =>

@@ -10,7 +10,7 @@ import { TextField } from '@/components/calculator/TextField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import { undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import type { CargoItem, PlacedItem } from '@/lib/packing'
-import { cargoTotals, DEFAULT_CATEGORIES, LAYERS_RULE, placedByItem, rangeOf } from '@/lib/cargoTable'
+import { cargoTotals, DEFAULT_CATEGORIES, LAYERS_RULE, placedByItem, rangeOf, SIZE_AXES } from '@/lib/cargoTable'
 import { isPipeCargo } from '@/lib/stabilityConditions'
 import { cn, fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 
@@ -25,9 +25,6 @@ type Column = 'name' | 'length' | 'width' | 'height' | 'weight' | 'quantity' | '
 
 const cellKey = (row: number, column: Column) => `${row}:${column}`
 
-// The cargo's sides name the deck's axes, as the deck's own «Длина» and
-// «Ширина (борт–борт)» do — the way it stands until it's turned.
-const SIZE_AXES = 'Длина — вдоль судна, ширина — от борта к борту, как у палубы; высота — над палубой. Так груз стоит, пока его не повернут.'
 
 export function CargoTable({
   placedAcrossTrips,
@@ -384,7 +381,7 @@ export function CargoTable({
                       <tr className="border-b border-line bg-paper">
                         <td />
                         <td colSpan={10} className="px-1 py-2">
-                          <MoreFields item={it} onUpdate={(patch) => updateItem(it.id, patch)} onSetOverride={(o) => setItemStabilityOverride(it.id, o)} />
+                          <MoreFields item={it} unitLabel={u} onUpdate={(patch) => updateItem(it.id, patch)} onSetOverride={(o) => setItemStabilityOverride(it.id, o)} />
                         </td>
                       </tr>
                     )}
@@ -440,13 +437,17 @@ function IconButton({
 // «Дополнительно» (spec 7.4): the centre-of-gravity corrections for the
 // stability, the cargo's own stack-height limit, and for pipes the inside
 // diameter and the water in them (stage 2a). All empty by default — empty
-// is «automatic», not 0.
+// is «automatic», not 0. The corrections are kept in the deck's unit, like
+// every other length of the cargo (stability.ts converts them to metres);
+// the stack-height limit alone is in metres whatever the unit.
 function MoreFields({
   item,
+  unitLabel,
   onUpdate,
   onSetOverride,
 }: {
   item: CargoItem
+  unitLabel: string
   onUpdate: (patch: Partial<CargoItem>) => void
   onSetOverride: (o: CargoItem['stabilityOverride']) => void
 }) {
@@ -460,9 +461,9 @@ function MoreFields({
   const pipe = isPipeCargo(item)
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <MoreNumber label="VCG над палубой, м" value={o?.vcgAboveDeckM} placeholder="авто" onChange={(v) => set({ vcgAboveDeckM: v })} />
-      <MoreNumber label="Сдвиг TCG, м (+ правый борт)" value={o?.tcgOffsetM} placeholder="0" signed onChange={(v) => set({ tcgOffsetM: v })} />
-      <MoreNumber label="Сдвиг LCG, м (+ к носу)" value={o?.lcgOffsetM} placeholder="0" signed onChange={(v) => set({ lcgOffsetM: v })} />
+      <MoreNumber label={`VCG над палубой, ${unitLabel}`} value={o?.vcgAboveDeckM} placeholder="авто" onChange={(v) => set({ vcgAboveDeckM: v })} />
+      <MoreNumber label={`Сдвиг TCG, ${unitLabel} (+ правый борт)`} value={o?.tcgOffsetM} placeholder="0" signed onChange={(v) => set({ tcgOffsetM: v })} />
+      <MoreNumber label={`Сдвиг LCG, ${unitLabel} (+ к носу)`} value={o?.lcgOffsetM} placeholder="0" signed onChange={(v) => set({ lcgOffsetM: v })} />
       <MoreNumber label="Предельная высота штабеля, м" value={item.maxStackHeightM} placeholder="как у палубы" onChange={(v) => onUpdate({ maxStackHeightM: v })} />
       {pipe && (
         <>

@@ -1,27 +1,19 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, setNumber } from './helpers'
+import { addOwnCargo, armCargo, cargoRow, clearCalculation, openSection } from './helpers'
 
 test.describe('Cargo management', () => {
   test('adding a cargo item increases requested count', async ({ page }) => {
     await page.goto('/')
     // Start with a clean project
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Добавить', exact: true }).click()
-    await expect(
-      page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз 1' }).first()
-    ).toBeVisible()
+    await addOwnCargo(page)
+    await expect(cargoRow(page, 'Груз 1')).toBeVisible()
   })
 
   test('cargo bigger than deck is reported as unplaced', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
-    await page.getByRole('button', { name: 'Добавить', exact: true }).click()
-
-    // Fill the new cargo dimensions via labelled inputs (first item card)
-    const itemCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Груз' }).first()
-    await setNumber(itemCard.locator('label:has-text("Шир.") + input'), '100')
-    await setNumber(itemCard.locator('label:has-text("Длин.") + input'), '100')
-    await setNumber(itemCard.locator('label:has-text("Кол-во") + input'), '1')
+    await addOwnCargo(page, { length: '100', width: '100', quantity: '1' })
 
     await expect(page.getByText('Превышает размеры палубы')).toBeVisible()
   })
@@ -31,16 +23,21 @@ test.describe('Cargo management', () => {
   // «Наверх» button, so every card is reached by scrolling the panel.
   test('the cargo list scrolls with the panel and has no scroll box of its own', async ({ page }) => {
     await page.goto('/')
+    // Fifteen more rows, from the cargo table's own «Добавить груз».
+    await openSection(page, 'Грузы')
+    await page.getByRole('button', { name: 'Таблица', exact: true }).click()
+    const drawer = page.getByRole('region', { name: 'Таблица грузов' })
     for (let i = 0; i < 15; i++) {
-      await page.getByRole('button', { name: 'Добавить', exact: true }).click()
+      await drawer.getByRole('button', { name: 'Добавить груз' }).click()
     }
-    const list = page.locator('[data-tour="cargo-list"]')
+    await drawer.getByRole('button', { name: 'Свернуть таблицу грузов' }).click()
+    const list = page.getByRole('list', { name: 'Список грузов' })
     await expect(list.locator('[data-slot="scroll-area-viewport"]')).toHaveCount(0)
     const panel = page.locator('.section-content')
     await expect.poll(() => panel.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
-    const lastCard = list.locator('.rounded-lg.border.bg-card').last()
-    await lastCard.scrollIntoViewIfNeeded()
-    await expect(lastCard).toBeInViewport()
+    const lastRow = page.getByTestId('cargo-list-row').last()
+    await lastRow.scrollIntoViewIfNeeded()
+    await expect(lastRow).toBeInViewport()
     await expect(page.getByRole('button', { name: 'Наверх' })).toHaveCount(0)
   })
 
@@ -56,9 +53,8 @@ test.describe('Cargo management', () => {
     await page.goto('/')
     await clearCalculation(page)
     await page.getByText('Ручной').first().click()
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await addOwnCargo(page)
+    await armCargo(page, 'Груз 1')
     const background = page.locator('svg [data-deck-background="true"]').first()
     const bgBox = await background.boundingBox()
     if (!bgBox) throw new Error('deck background not found')

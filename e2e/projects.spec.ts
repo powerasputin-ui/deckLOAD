@@ -15,7 +15,7 @@ test.describe('Projects', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await projectMenuItem(page, 'Новый расчёт')
     await expect(page.getByText('Создан новый расчёт')).toBeVisible()
-    await expect(page.getByText('Список грузов пуст')).toBeVisible()
+    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
   })
 
   test('switching between projects updates cargo list', async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe('Projects', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     const initial = await headerBadge(page).textContent()
     await projectMenuItem(page, 'Новый расчёт')
-    await expect(page.getByText('Список грузов пуст')).toBeVisible()
+    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
 
     await projectMenuItem(page, 'Все расчёты…')
     await page.getByRole('dialog').getByText('Демо-расчёт', { exact: true }).click()

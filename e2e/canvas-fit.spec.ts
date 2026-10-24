@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { clearCalculation, unitsCount } from './helpers'
+import { armCargo, chooseFromCatalog, clearCalculation, unitsCount } from './helpers'
 
 // Spec 5.4, 12.5: the deck takes the whole area. A 49×17 m deck at 1440×900
 // fills at least 90% of the central area's width, which itself is at least
@@ -77,11 +77,10 @@ test('a stamp lands where the deck is clicked and a drag moves it as far as the 
   await clearCalculation(page)
 
   for (const panel of ['open', 'closed'] as const) {
-    const containers = page.getByRole('button', { name: 'Контейнеры' })
-    if (!(await containers.isVisible())) await page.getByRole('button', { name: 'Пресеты' }).click()
-    const preset = page.getByText('Контейнер 20ft', { exact: true })
-    if (!(await preset.isVisible())) await containers.click()
-    await preset.click()
+    // From the catalogue the packer puts the container at the deck's start;
+    // «Поставить» arms it for a click.
+    await chooseFromCatalog(page, 'Контейнер 20ft')
+    await armCargo(page, 'Контейнер 20ft')
     // With the panel closed the canvas is wider; «Вписать» fits the deck to it.
     if (panel === 'closed') {
       const before = (await deckRect(page).boundingBox())!.width

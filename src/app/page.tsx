@@ -60,6 +60,7 @@ import { ChecksSection } from '@/components/sections/ChecksSection'
 import { StabilityWorkspace } from '@/components/stability/StabilityWorkspace'
 import { CargoDrawer } from '@/components/cargo/CargoDrawer'
 import { CargoTable } from '@/components/cargo/CargoTable'
+import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
@@ -171,7 +172,6 @@ export default function Home() {
   const removeManualPlacement = useCalculator((s) => s.removeManualPlacement)
   const activeStampId = useCalculator((s) => s.activeStampId)
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
-  const pendingPresetStamp = useCalculator((s) => s.pendingPresetStamp)
   const addOrIncrementCargoFromTemplate = useCalculator((s) => s.addOrIncrementCargoFromTemplate)
   const drawingCustomShape = useCalculator((s) => s.drawingCustomShape)
   const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
@@ -179,6 +179,7 @@ export default function Home() {
   const editingDeckOutline = useCalculator((s) => s.editingDeckOutline)
   const setEditingDeckOutline = useCalculator((s) => s.setEditingDeckOutline)
   const stampRotated = useCalculator((s) => s.stampRotated)
+  const toggleStampRotation = useCalculator((s) => s.toggleStampRotation)
   const pinnedPlacementsByTrip = useCalculator((s) => s.pinnedPlacementsByTrip)
   const selectedPinIds = useCalculator((s) => s.selectedPinIds)
   const selectedManualIds = useCalculator((s) => s.selectedManualIds)
@@ -307,14 +308,13 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !placingPowerSocket && !placingAnnotation && !activeStampId && !pendingPresetStamp && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
+    if (!placingLashingPoint && !placingPowerSocket && !placingAnnotation && !activeStampId && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (placingLashingPoint) setPlacingLashingPoint(false)
       if (placingPowerSocket) setPlacingPowerSocket(false)
       if (placingAnnotation) setPlacingAnnotation(null)
       if (activeStampId) setActiveStamp(null)
-      if (pendingPresetStamp) useCalculator.getState().setPendingPresetStamp(null)
       if (drawingCustomShape) useCalculator.getState().setDrawingCustomShape(false)
       if (pendingCustomShape) useCalculator.getState().setPendingCustomShape(null)
       if (editingDeckOutline) setEditingDeckOutline(false)
@@ -323,7 +323,22 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, placingAnnotation, setPlacingAnnotation, activeStampId, setActiveStamp, pendingPresetStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, placingAnnotation, setPlacingAnnotation, activeStampId, setActiveStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
+
+  // R turns the cargo armed for click placement, as ↻ in the line over the
+  // deck does (spec 7.1). KeyR is the same key in the Russian layout («К»).
+  useEffect(() => {
+    if (!activeStampId || workspace !== 'deck' || viewMode !== '2d') return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyR' || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return
+      e.preventDefault()
+      toggleStampRotation()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeStampId, workspace, viewMode, toggleStampRotation])
 
   // Hydrate projects from localStorage on mount (synchronous)
   useEffect(() => {
@@ -392,8 +407,6 @@ export default function Home() {
       showLabels: proj.showLabels,
       showCargoContents: proj.showCargoContents ?? true,
       activeStampId: null,
-      pendingPresetStamp: null,
-      activePresetCategory: null,
       stampRotated: false,
     })
     // A different project's undo history shouldn't leak into this one — an
@@ -625,25 +638,13 @@ export default function Home() {
   // tables and in the PDF; its tone follows from it (spec 6.2, 9.2).
   const cargoNumberByItemId = useMemo(() => cargoNumbers(items), [items])
 
+  // The cargo armed by «Поставить» or a choice in the catalogue (spec 7.1).
   const activeStamp = useMemo(() => {
-    if (pendingPresetStamp) {
-      return {
-        id: '__pending-preset__',
-        width: pendingPresetStamp.width ?? 2,
-        length: pendingPresetStamp.length ?? 1.2,
-        // Matches the color swatch shown on the preset row it was armed
-        // from — the real item keeps this same color when created.
-        color: pendingPresetStamp.color ?? PALETTE[items.length % PALETTE.length],
-        name: pendingPresetStamp.name ?? 'Груз',
-        weight: pendingPresetStamp.weight,
-        shape: pendingPresetStamp.shape,
-      }
-    }
     if (!activeStampId) return null
     const it = items.find((x) => x.id === activeStampId)
     if (!it) return null
-    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight, shape: it.shape }
-  }, [activeStampId, pendingPresetStamp, items])
+    return { id: it.id, width: it.width, length: it.length, color: it.color, name: it.name, weight: it.weight, shape: it.shape, outline: it.outline }
+  }, [activeStampId, items])
 
   // NOTE: deck-geometry changes (gap/boardOffset/width/length/clearance) no
   // longer trigger a repack here — that used to duplicate and silently
@@ -760,6 +761,8 @@ export default function Home() {
       x: minX,
       y: minY,
     })
+    // Its name form is in «Грузы» → «Каталог» → «Фигуры».
+    openSection('cargo')
   }
 
   // maxDeckCargoT is a hard limit in both AUTO and MANUAL (contract A). AUTO's
@@ -1097,7 +1100,6 @@ export default function Home() {
     placingPowerSocket ||
     placingAnnotation ||
     activeStampId ||
-    pendingPresetStamp ||
     drawingCustomShape ||
     pendingCustomShape ||
     editingDeckOutline ||
@@ -1398,9 +1400,7 @@ export default function Home() {
           {activeSection === 'cargo' && (
             <CargoSection
               onOpenTable={() => setCargoTableOpen(true)}
-              result={result}
               placedAcrossTrips={placedAcrossTrips}
-              unit={deck.unit}
               hoveredItemId={hoveredItemId}
               onHover={handleHover}
               onPlaceCustomShape={handlePlaceCustomShape}
@@ -1486,6 +1486,9 @@ export default function Home() {
             />
           ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
+          {activeStamp && viewMode === '2d' && (
+            <StampHint name={activeStamp.name} onRotate={toggleStampRotation} onCancel={() => setActiveStamp(null)} />
+          )}
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
             <div className={viewMode === '3d' ? 'my-auto w-full' : 'min-h-0 w-full flex-1'}>
               {viewMode === '3d' ? (
@@ -1540,104 +1543,63 @@ export default function Home() {
                 stampRotated={stampRotated}
                 drawingCustomShape={drawingCustomShape}
                 onFinishDrawing={handleFinishDrawing}
+                pendingCustomShape={pendingCustomShape}
                 onPlace={(p) => {
-                  // A preset catalog item being placed for the first time — the
-                  // click itself is what creates the CargoItem (quantity 1) and
-                  // defines it as "wanted", so the aggregate quantity cap below
-                  // doesn't apply here; resolve the real item id first.
-                  let itemId = p.itemId
-                  const wasPendingPreset = !!pendingPresetStamp
-                  if (pendingPresetStamp) {
-                    // A preset stamp skips the quantity guard below on
-                    // purpose (see the comment further down where it
-                    // stays armed) — but that's not license to skip the
-                    // capacity guard too. It was, until now: this branch
-                    // never called wouldExceedMaxDeckCargo at all, in
-                    // either mode, so repeatedly clicking an armed preset
-                    // could blow past maxDeckCargoT with zero pushback.
-                    const presetWeight = pendingPresetStamp.weight
-                    if (wouldExceedMaxDeckCargo(presetWeight ?? 0)) {
-                      toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-                      return
-                    }
-                    itemId = addOrIncrementCargoFromTemplate(pendingPresetStamp)
-                  } else {
-                    // Scoped to THIS item, not a global sum across every
-                    // cargo type — an aggregate check let a fully-placed
-                    // item keep being over-placed by clicking its own
-                    // stamp, as long as some OTHER item's quantity still
-                    // had "room" in the total (e.g. item A qty 1 already
-                    // placed, item B qty 1 still unplaced: clicking A's
-                    // stamp again passed 1 >= 2 = false and placed a
-                    // second A anyway).
-                    const item = items.find((it) => it.id === p.itemId)
-                    const itemRequested = item?.quantity ?? 0
-                    // Round 23: composition-aware — placementLayersOfItem
-                    // (already the canonical primitive checkLayerChange
-                    // uses, see its own layersOfIdIn helper above) counts
-                    // only THIS itemId's own layers within each
-                    // placement, not the placement's flat total. A plain
-                    // `pin.itemId === p.itemId` filter-and-sum-whole-
-                    // layers (the pre-fix code) both MISSES a non-nominal
-                    // constituent (e.g. B inside a composed [A2,B3]
-                    // reports 0 here, letting the user silently
-                    // over-place B past its declared quantity) and
-                    // OVER-counts the nominal one (A would report the
-                    // full 5, wrongly blocking a legitimate further A
-                    // placement). For an uncomposed placement this keeps
-                    // the exact same `Math.max(1, layers)` defensive
-                    // floor the pre-fix code had (segmentsOf itself
-                    // applies no floor) — same branching idiom as
-                    // checkLayerChange's own layersOfIdIn, so the
-                    // uncomposed result is byte-identical to before.
-                    //
-                    // Round 29 corrective pass: same Tier-2 exclusion as
-                    // checkLayerChange's own layersOfIdIn — a malformed
-                    // placement's raw layers must never phantom-count
-                    // toward this gate either.
-                    const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
-                      pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
-                    const itemPlaced =
-                      mode === 'manual'
-                        ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
-                        : Object.values(pinnedPlacementsByTrip)
-                            .flat()
-                            .reduce((s, pin) => s + layersOfIdIn(pin), 0)
-                    if (itemPlaced >= itemRequested) {
-                      toast.warning(
-                        `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
-                      )
-                      return
-                    }
-                    if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
-                      toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
-                      return
-                    }
+                  // Scoped to THIS item, not a global sum across every
+                  // cargo type — an aggregate check let a fully-placed
+                  // item keep being over-placed by clicking its own
+                  // stamp, as long as some OTHER item's quantity still
+                  // had "room" in the total (e.g. item A qty 1 already
+                  // placed, item B qty 1 still unplaced: clicking A's
+                  // stamp again passed 1 >= 2 = false and placed a
+                  // second A anyway).
+                  const item = items.find((it) => it.id === p.itemId)
+                  const itemRequested = item?.quantity ?? 0
+                  // Round 23: composition-aware — placementLayersOfItem
+                  // (already the canonical primitive checkLayerChange
+                  // uses, see its own layersOfIdIn helper above) counts
+                  // only THIS itemId's own layers within each
+                  // placement, not the placement's flat total. A plain
+                  // `pin.itemId === p.itemId` filter-and-sum-whole-
+                  // layers (the pre-fix code) both MISSES a non-nominal
+                  // constituent (e.g. B inside a composed [A2,B3]
+                  // reports 0 here, letting the user silently
+                  // over-place B past its declared quantity) and
+                  // OVER-counts the nominal one (A would report the
+                  // full 5, wrongly blocking a legitimate further A
+                  // placement). For an uncomposed placement this keeps
+                  // the exact same `Math.max(1, layers)` defensive
+                  // floor the pre-fix code had (segmentsOf itself
+                  // applies no floor) — same branching idiom as
+                  // checkLayerChange's own layersOfIdIn, so the
+                  // uncomposed result is byte-identical to before.
+                  //
+                  // Round 29 corrective pass: same Tier-2 exclusion as
+                  // checkLayerChange's own layersOfIdIn — a malformed
+                  // placement's raw layers must never phantom-count
+                  // toward this gate either.
+                  const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+                    pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
+                  const itemPlaced =
+                    mode === 'manual'
+                      ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
+                      : Object.values(pinnedPlacementsByTrip)
+                          .flat()
+                          .reduce((s, pin) => s + layersOfIdIn(pin), 0)
+                  if (itemPlaced >= itemRequested) {
+                    toast.warning(
+                      `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
+                    )
+                    return
                   }
-                  const placement = { ...p, itemId }
+                  if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
+                    toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+                    return
+                  }
                   if (mode === 'manual') {
-                    useCalculator.getState().addManualPlacement(placement)
+                    useCalculator.getState().addManualPlacement(p)
                   } else {
-                    pinFromPlaced(clampedTripIndex, { ...placement, locked: true })
-                  }
-                  // Deliberately NOT calling setActiveStamp(itemId) here.
-                  // pendingPresetStamp stays armed after this first
-                  // placement, so the next click keeps going through the
-                  // uncapped addOrIncrementCargoFromTemplate branch above
-                  // instead of falling into the aggregate-quantity cap —
-                  // that cap makes sense for a pre-declared "Грузы" item
-                  // (its quantity was set on purpose), but a preset has
-                  // no quantity yet; it's only ever defined by how many
-                  // times the user clicks. Switching to the capped
-                  // activeStampId after one click used to leave a stamp
-                  // that still looked armed but silently refused every
-                  // further click ("Все грузы уже размещены") until the
-                  // user went and manually raised the quantity in
-                  // "Грузы" — this keeps placing for as long as the
-                  // preset stamp stays armed (toggle it off, Escape, or
-                  // arm something else to stop).
-                  if (wasPendingPreset) {
-                    useCalculator.getState().setActivePresetCategory(null)
+                    pinFromPlaced(clampedTripIndex, { ...p, locked: true })
                   }
                 }}
                 onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}

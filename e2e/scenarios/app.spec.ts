@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { projectMenuItem, sectionBar, unitsCount } from '../helpers'
+import { projectMenuItem, sectionBar, setCargoTotal, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 17–22, from the entry points of stage 2. Stage 5
 // rewrites 19 and 22 for the report and the start screen.
@@ -44,7 +44,7 @@ test('Сценарий 18: проекты', async ({ page }) => {
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
 
   await projectMenuItem(page, 'Новый расчёт')
-  await expect(page.getByText('Список грузов пуст')).toBeVisible()
+  await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
   await projectMenuItem(page, 'Переименовать…')
   const name = page.getByRole('textbox', { name: 'Название расчёта' })
   await name.fill('Рейс на Сабетту')
@@ -103,9 +103,7 @@ test('Сценарий 19: PDF, сохранение и открытие фай�
 test('Сценарий 20: отменить и повторить', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/22\/22 ед\./)
-  const quantity = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Паллета EUR' }).first().locator('label:has-text("Кол-во") + input')
-  await quantity.fill('14')
-  await quantity.press('Enter')
+  await setCargoTotal(page, 'Паллета EUR', '14')
   await expect(unitsCount(page)).toHaveText(/24\/24 ед\./)
 
   // Ctrl+Z off the field takes it back; «Повторить» does it again.

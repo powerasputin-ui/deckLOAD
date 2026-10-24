@@ -33,7 +33,11 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
   await page.goto('/')
   await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
-  await page.getByRole('button', { name: 'Пресеты' }).click()
+  // «Грузы» with the catalogue open, then with the short form.
+  await openSection(page, 'Грузы')
+  await page.getByRole('button', { name: 'Каталог', exact: true }).click()
+  expect(await textBelow12px(page)).toEqual([])
+  await page.getByRole('button', { name: 'Свой груз' }).click()
   expect(await textBelow12px(page)).toEqual([])
 
   await openSection(page, 'Судно')

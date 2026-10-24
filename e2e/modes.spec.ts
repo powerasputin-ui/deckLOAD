@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { statusLine, openSection, stackMenu, stackTools, selectedStacks, inspector } from './helpers'
+import { cargoCell, closeCargoTable, statusLine, openSection, stackMenu, stackTools, selectedStacks, inspector } from './helpers'
 
 // The status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -98,12 +98,12 @@ test.describe('Auto / manual modes', () => {
 
   test('rotation is blocked when item disallows rotation', async ({ page }) => {
     await page.goto('/')
-    // Disable rotation for the first cargo item (retry: same post-navigation
-    // hydration race as the other tests in this file).
-    await expect(async () => {
-      await page.getByRole('button', { name: 'Авто-поворот' }).first().click()
-      await expect(page.getByRole('button', { name: 'Фиксация' }).first()).toBeVisible({ timeout: 1000 })
-    }).toPass({ timeout: 10000 })
+    await expect(headerBadge(page)).toContainText(/\/22 ед\./)
+    // Disable rotation for the first cargo item: the cargo table's «Поворот».
+    const rotation = await cargoCell(page, 'Поворот', 'Контейнер 20ft')
+    await rotation.uncheck()
+    await expect(rotation).not.toBeChecked()
+    await closeCargoTable(page)
     // Pin the first placed item by clicking its colored rect
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     // The selected stack (outlined with the accent band) — the selection

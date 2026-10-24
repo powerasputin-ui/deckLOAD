@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, openSection } from './helpers'
 
 test.describe('Lashing points (securing-force check)', () => {
   test('attaching a point to a cargo corner shows a pass/fail marker computed by checkLashingBalance', async ({ page }) => {
@@ -9,8 +9,8 @@ test.describe('Lashing points (securing-force check)', () => {
 
     // Manual mode + a freshly placed item gives a deterministic corner: the
     // stamp's top-left corner lands exactly at the clicked pixel.
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await addOwnCargo(page)
+    await armCargo(page, 'Груз 1')
     const background = page.locator('svg [data-deck-background="true"]').first()
     await background.click({ position: { x: 100, y: 100 }, force: true })
     await expect(page.getByText(/1\/1 ед\./)).toBeVisible()

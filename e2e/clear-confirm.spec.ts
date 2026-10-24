@@ -39,7 +39,7 @@ test.describe('Clearing the calculation', () => {
     await page.getByRole('alertdialog').getByRole('button', { name: 'Очистить' }).click()
 
     await expect(page.getByRole('alertdialog')).toBeHidden()
-    await expect(page.getByText('Список грузов пуст')).toBeVisible()
+    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
     await expect(page.getByText('Текущий расчёт очищен')).toBeVisible()
   })
 
@@ -51,7 +51,7 @@ test.describe('Clearing the calculation', () => {
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await projectMenuItem(page, 'Очистить расчёт…')
     await page.getByRole('alertdialog').getByRole('button', { name: 'Очистить' }).click()
-    await expect(page.getByText('Список грузов пуст')).toBeVisible()
+    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
 
     await projectMenuItem(page, 'Открыть пример')
     await expect(page.getByRole('alertdialog')).toHaveCount(0)

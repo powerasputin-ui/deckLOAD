@@ -69,3 +69,128 @@ export function selectedStacks(page: Page): Locator {
 export function stackOf(rect: Locator): Locator {
   return rect.locator('xpath=ancestor::*[@data-cargo-placement][1]')
 }
+
+// «Грузы» (spec 7.1–7.4, stage 3). The compact list, the catalogue, the
+// short form «Свой груз» and the cargo table.
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// A cargo's row in the compact list.
+export function cargoRow(page: Page, name: string): Locator {
+  return page.getByTestId('cargo-list-row').filter({ has: page.getByTitle(name, { exact: true }) })
+}
+
+// «Свой груз»: the short form. Sides in the deck's unit, the weight in
+// tonnes; what's left out keeps the form's own start.
+export async function addOwnCargo(
+  page: Page,
+  cargo: { name?: string; length?: string; width?: string; height?: string; weightT?: string; quantity?: string; category?: string } = {}
+) {
+  await openSection(page, 'Грузы')
+  const toggle = page.getByRole('button', { name: 'Свой груз', exact: true })
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  const form = page.getByRole('form', { name: 'Свой груз' })
+  const fields: [keyof typeof cargo, string][] = [
+    ['name', 'Название'],
+    ['length', 'Длина'],
+    ['width', 'Ширина'],
+    ['height', 'Высота'],
+    ['weightT', 'Вес единицы, т'],
+    ['quantity', 'Количество'],
+    ['category', 'Категория'],
+  ]
+  for (const [key, label] of fields) {
+    const value = cargo[key]
+    if (value !== undefined) await form.getByLabel(label, { exact: true }).fill(value)
+  }
+  await form.getByRole('button', { name: 'Добавить груз' }).click()
+  await expect(form).toBeHidden()
+}
+
+// «Каталог» → a template: the cargo joins the list, or one more of it does.
+export async function chooseFromCatalog(page: Page, name: string, times = 1) {
+  await openSection(page, 'Грузы')
+  const toggle = page.getByRole('button', { name: 'Каталог', exact: true })
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  const entry = page.getByRole('region', { name: 'Каталог грузов' }).getByRole('button', { name: new RegExp(`^${escapeRegExp(name)},`) }).first()
+  for (let i = 0; i < times; i++) await entry.click()
+}
+
+// «Поставить» on the cargo's row: armed for a click on the deck.
+export async function armCargo(page: Page, name: string) {
+  await openSection(page, 'Грузы')
+  const place = page.getByRole('button', { name: `Поставить «${name}»`, exact: true })
+  if ((await place.getAttribute('aria-pressed')) !== 'true') await place.click()
+  await expect(page.getByTestId('stamp-hint')).toContainText(`«${name}»`)
+}
+
+// «Всего» of a cargo in the list: the number, typed over, Enter.
+export async function setCargoTotal(page: Page, name: string, value: string) {
+  await openSection(page, 'Грузы')
+  const field = page.getByLabel(`Всего, ${name}`, { exact: true })
+  await field.fill(value)
+  await field.press('Enter')
+}
+
+// The cargo table across the bottom (spec 5.4), opened from «Грузы» if it
+// isn't open, and folded away again.
+export async function openCargoTable(page: Page): Promise<Locator> {
+  const table = page.getByRole('table', { name: 'Таблица грузов' })
+  if (!(await table.isVisible())) {
+    await openSection(page, 'Грузы')
+    await page.getByRole('button', { name: 'Таблица', exact: true }).click()
+  }
+  await expect(table).toBeVisible()
+  return table
+}
+
+export async function closeCargoTable(page: Page) {
+  const fold = page.getByRole('button', { name: 'Свернуть таблицу грузов' })
+  if (await fold.isVisible()) await fold.click()
+  await expect(page.getByRole('table', { name: 'Таблица грузов' })).toBeHidden()
+}
+
+// A cell of the cargo table — «Количество», «Длина», «Вес единицы, т»…
+export async function cargoCell(page: Page, label: string, name: string): Promise<Locator> {
+  return (await openCargoTable(page)).getByLabel(`${label}, ${name}`, { exact: true })
+}
+
+// «Дублировать» in the cargo table: «name (копия)» joins the list.
+export async function duplicateCargo(page: Page, name: string) {
+  const table = await openCargoTable(page)
+  await table.getByRole('button', { name: `Дублировать: ${name}`, exact: true }).click()
+  await expect(table.getByLabel(`Название, ${name} (копия)`, { exact: true })).toHaveCount(1)
+}
+
+// Several cells of one cargo, each committed.
+export async function setCargoCells(page: Page, name: string, values: Record<string, string>) {
+  for (const [label, value] of Object.entries(values)) await setNumber(await cargoCell(page, label, name), value)
+}
+
+// A point of the deck drawing, relative to its background, as far as can be
+// from every stack on it: where a stamp lands clear of the cargo the packer
+// already put on the deck.
+export async function clearDeckSpot(page: Page): Promise<{ x: number; y: number }> {
+  const deck = await page.locator('svg [data-deck-background="true"]').first().boundingBox()
+  if (!deck) throw new Error('deck background not found')
+  const centers = await page.locator('svg g[data-cargo-placement="true"]').evaluateAll((els) =>
+    els.map((e) => {
+      const r = e.getBoundingClientRect()
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    })
+  )
+  let best = { x: deck.width / 2, y: deck.height / 2 }
+  let bestDistance = -1
+  for (const fx of [0.1, 0.3, 0.5, 0.7, 0.85]) {
+    for (const fy of [0.15, 0.5, 0.85]) {
+      const x = deck.x + deck.width * fx
+      const y = deck.y + deck.height * fy
+      const distance = centers.length ? Math.min(...centers.map((c) => Math.hypot(c.x - x, c.y - y))) : 0
+      if (distance > bestDistance) {
+        bestDistance = distance
+        best = { x: deck.width * fx, y: deck.height * fy }
+      }
+    }
+  }
+  return best
+}

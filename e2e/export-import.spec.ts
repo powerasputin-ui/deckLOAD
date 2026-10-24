@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { projectMenuItem } from './helpers'
+import { cargoRow, projectMenuItem } from './helpers'
 
 test.describe('Project JSON export/import', () => {
   test('downloading the project produces a deckload-*.json file', async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe('Project JSON export/import', () => {
     await expect(page.getByText('Проект импортирован')).toBeVisible()
     // The imported project becomes the open one, and the demo stays.
     await expect(page.getByRole('button', { name: 'Меню расчёта «Импортированный расчёт»' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Тестовый груз', exact: true })).toBeVisible()
+    await expect(cargoRow(page, 'Тестовый груз')).toBeVisible()
     await projectMenuItem(page, 'Все расчёты…')
     const list = page.getByRole('dialog')
     await expect(list.getByText('Демо-расчёт', { exact: true })).toBeVisible()

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { clearCalculation, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, openSection } from './helpers'
 
 test.describe('Power socket markers', () => {
   test('placing a socket does not block cargo on top of it, and it can be removed', async ({ page }) => {
@@ -23,10 +23,9 @@ test.describe('Power socket markers', () => {
 
     // The socket is purely visual — placing cargo right at/near the exact
     // same spot must not be blocked.
-    await openSection(page, 'Грузы')
-    await page.getByRole('button', { name: 'Добавить груз' }).click()
+    await addOwnCargo(page)
     await expect(page.getByText(/0\/1 ед\./)).toBeVisible()
-    await page.getByRole('button', { name: /Груз 1.*2×1\.2/ }).click()
+    await armCargo(page, 'Груз 1')
     await background.click({ position: { x: 60, y: bgBox.height / 2 }, force: true })
     await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
 

@@ -354,17 +354,26 @@ describe('calculator store', () => {
     expect(totalLayers).toBe(3 + 2 + 4)
   })
 
-  it('arming a preset template clears an active item stamp and vice versa', () => {
+  it('drawing a cargo shape disarms the stamp, and arming the stamp stops the drawing', () => {
     const s = useCalculator.getState()
     s.addItem({ name: 'Box', width: 2, length: 1, quantity: 1 })
     const item = useCalculator.getState().items[0]
     s.setActiveStamp(item.id)
     expect(useCalculator.getState().activeStampId).toBe(item.id)
-    s.setPendingPresetStamp({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
+    s.setDrawingCustomShape(true)
     expect(useCalculator.getState().activeStampId).toBeNull()
-    expect(useCalculator.getState().pendingPresetStamp?.name).toBe('Контейнер 20ft')
     s.setActiveStamp(item.id)
-    expect(useCalculator.getState().pendingPresetStamp).toBeNull()
+    expect(useCalculator.getState().drawingCustomShape).toBe(false)
+  })
+
+  it('a template chosen twice is one cargo with quantity 2', () => {
+    const s = useCalculator.getState()
+    const first = s.addOrIncrementCargoFromTemplate({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
+    const second = useCalculator.getState().addOrIncrementCargoFromTemplate({ name: 'Контейнер 20ft', width: 6.06, length: 2.44 })
+    expect(second).toBe(first)
+    const items = useCalculator.getState().items.filter((it) => it.name === 'Контейнер 20ft')
+    expect(items).toHaveLength(1)
+    expect(items[0].quantity).toBe(2)
   })
 
   it('shifts existing manual placements inward when boardOffset increases', () => {
@@ -546,7 +555,7 @@ describe('calculator store', () => {
     expect(useCalculator.getState().deck.powerSockets).toHaveLength(0)
   })
 
-  it('arming a cargo stamp or preset disarms placingLashingPoint/placingPowerSocket, and vice versa', () => {
+  it('arming a cargo stamp disarms placingLashingPoint/placingPowerSocket/placingAnnotation, and vice versa', () => {
     const s = useCalculator.getState()
     s.setPlacingPowerSocket(true)
     expect(useCalculator.getState().placingPowerSocket).toBe(true)
@@ -555,9 +564,15 @@ describe('calculator store', () => {
     expect(useCalculator.getState().placingPowerSocket).toBe(false)
     s.setActiveStamp('some-id')
     expect(useCalculator.getState().placingLashingPoint).toBe(false)
+    // …and a tool from «Судно» disarms the stamp armed in «Грузы».
     s.setPlacingPowerSocket(true)
-    s.setPendingPresetStamp({ name: 'X' })
-    expect(useCalculator.getState().placingPowerSocket).toBe(false)
+    expect(useCalculator.getState().activeStampId).toBeNull()
+    s.setActiveStamp('some-id')
+    s.setPlacingLashingPoint(true)
+    expect(useCalculator.getState().activeStampId).toBeNull()
+    s.setActiveStamp('some-id')
+    s.setPlacingAnnotation({ kind: 'note', withLeader: false })
+    expect(useCalculator.getState().activeStampId).toBeNull()
   })
 
   it('adds, updates and removes an annotation', () => {

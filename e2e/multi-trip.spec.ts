@@ -1,16 +1,5 @@
 import { test, expect } from '@playwright/test'
-import type { Locator } from '@playwright/test'
-import { sectionBar, stackMenu, selectedStacks } from './helpers'
-
-// Playwright's .fill() does not reliably commit on this project's shadcn
-// number inputs (confirmed: value silently reverts, no console error) —
-// select-all + type + blur does.
-async function setNumberField(input: Locator, value: string) {
-  await input.click()
-  await input.press('Control+A')
-  await input.pressSequentially(value)
-  await input.blur()
-}
+import { sectionBar, setCargoTotal, stackMenu, selectedStacks } from './helpers'
 
 test.describe('Multi-trip voyages', () => {
   test('cargo that overflows one deck spills into additional trip tabs', async ({ page }) => {
@@ -18,8 +7,7 @@ test.describe('Multi-trip voyages', () => {
     // Wait for hydration before the first interaction — otherwise typing
     // right after goto() can land before React attaches its handlers.
     await expect(sectionBar(page)).toBeVisible()
-    const palletCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Паллета EUR' }).first()
-    await setNumberField(palletCard.locator('label:has-text("Кол-во") + input'), '400')
+    await setCargoTotal(page, 'Паллета EUR', '400')
 
     await expect(page.getByRole('tab', { name: /Рейс 1/ })).toBeVisible()
     await expect(page.getByRole('tab', { name: /Рейс 2/ })).toBeVisible()
@@ -28,8 +16,7 @@ test.describe('Multi-trip voyages', () => {
   test('pinning cargo on trip 2 does not affect trip 1', async ({ page }) => {
     await page.goto('/')
     await expect(sectionBar(page)).toBeVisible()
-    const palletCard = page.locator('.rounded-lg.border.bg-card').filter({ hasText: 'Паллета EUR' }).first()
-    await setNumberField(palletCard.locator('label:has-text("Кол-во") + input'), '400')
+    await setCargoTotal(page, 'Паллета EUR', '400')
     await expect(page.getByRole('tab', { name: /Рейс 2/ })).toBeVisible()
 
     const trip1Button = page.getByRole('tab', { name: /Рейс 1/ })

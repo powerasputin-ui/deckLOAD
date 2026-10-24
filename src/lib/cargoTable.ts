@@ -4,6 +4,10 @@
 import type { CargoItem, PlacedItem } from './packing'
 import { segmentsOf } from './placementComposition'
 
+// The cargo's sides name the deck's axes, as the deck's own «Длина» and
+// «Ширина (борт–борт)» do — the way it stands until it's turned.
+export const SIZE_AXES = 'Длина — вдоль судна, ширина — от борта к борту, как у палубы; высота — над палубой. Так груз стоит, пока его не повернут.'
+
 // The categories offered in every category field; the cargo's own ones are
 // added to them.
 export const DEFAULT_CATEGORIES = ['Обычный', 'Металлопродукция', 'Опасный груз', 'Химикаты', 'Взрывоопасный']
