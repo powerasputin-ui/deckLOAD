@@ -4,6 +4,7 @@ import {
   draughtsOf,
   evaluateTripStability,
   iceLoad,
+  knReference,
   limitAt,
   reasonText,
   stackWater,
@@ -218,9 +219,10 @@ describe('the verdict', () => {
         { displacementKg: 3_000_000, draftM: 6, KM: 8, LCB: 30, LCF: 30, MTC: 50 },
       ],
     },
-    // 500 t of ballast low down at departure; 100 t at arrival.
-    variableWeights: [{ id: 'b', name: 'Ballast', weightKg: 500_000, vcgM: 1, tcgM: 0, lcgM: 30 }],
-    arrivalWeights: [{ id: 'b', name: 'Ballast', weightKg: 100_000, vcgM: 1, tcgM: 0, lcgM: 30 }],
+    // 500 t of ballast low down at departure; 100 t at arrival. Pressed
+    // full both times: no free surface, and it says so with a 0.
+    variableWeights: [{ id: 'b', name: 'Ballast', weightKg: 500_000, vcgM: 1, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 0 }],
+    arrivalWeights: [{ id: 'b', name: 'Ballast', weightKg: 100_000, vcgM: 1, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 0 }],
     limit: { kind: 'min-gm-by-draft', rows: [{ arg: 2, value: 1 }, { arg: 6, value: 1 }] },
     ...over,
   })
@@ -294,6 +296,45 @@ describe('the verdict', () => {
     expect(r.arrivalSameAsDeparture).toBe(false)
   })
 
+  it('warns when no tank in a state has a free-surface moment, and about cargo it can\'t weigh', () => {
+    const texts = (i: TripStabilityInput) => evaluateTripStability(i)!.reasons.map(reasonText)
+    const unentered = vessel({ arrivalWeights: [{ id: 'b', name: 'Ballast', weightKg: 100_000, vcgM: 1, tcgM: 0, lcgM: 30 }] })
+    expect(texts(input({ vessel: unentered }))).toEqual(['Приход: ни у одного танка не задан момент свободной поверхности — GM может быть завышена'])
+
+    // A stack of 3 with no weight given, and a composed stack whose second
+    // cargo has none: 3 + 2 units.
+    const light: CargoItem = { ...box, id: 'light', name: 'Без веса', weight: undefined }
+    const placements: TripStabilityInput['placements'] = [
+      { itemId: 'light', x: 0, y: 0, width: 2, length: 2, height: 2, layers: 3 },
+      { itemId: 'box', x: 4, y: 9, width: 2, length: 2, height: 2, layers: 3, weight: 100_000, composition: [{ itemId: 'box', layers: 1 }, { itemId: 'light', layers: 2 }] },
+    ]
+    expect(texts(input({ items: [box, light], placements }))).toEqual(['Груз без веса не учтён: 5 ед.'])
+  })
+
+  it('gives the weight and height of the water and the ice', () => {
+    // The vessel's own areas set to none, so only the cargo deck ices:
+    // 30 kg/m² on its 200 m² — 5880 kg on the free deck 6 m above the keel,
+    // 120 kg on the box's 4 m² top at 8 m — and 7.5 kg/m² × 1.05 on both
+    // sides of the box's 2 × 2 m profile, 63 kg, its centre 1 m up with
+    // the moment +10 %: at 6 + 1.1/1.05.
+    const iced = vessel({ particulars: { ...vessel().particulars, windageAreaM2: 0, windageLeverM: 0, otherExposedDeckAreaM2: 0 } })
+    const r = evaluateTripStability(input({ vessel: iced, icing: true }))!
+    expect(r.arrival.iceKg).toBeCloseTo(6063, 6)
+    expect(r.arrival.iceVcgM).toBeCloseTo((5880 * 6 + 120 * 8 + 63 * (6 + 1.1 / 1.05)) / 6063, 9)
+    expect(r.departure.iceVcgM).toBeUndefined()
+    expect(r.departure.waterVcgM).toBeUndefined()
+
+    // Water rides at the centre of its stack: 3 pipes of 0.5 m piled 3 high
+    // on the deck at 6 m, VCG of the pile half its height of 1.5 m → 6.75 m.
+    const piped = evaluateTripStability(input({ items: [pipe({ id: 'box' })], placements: [{ itemId: 'box', x: 0, y: 5, width: 10, length: 0.5, height: 0.5, layers: 3, weight: 1000 }] }))!
+    expect(piped.departure.waterVcgM).toBeCloseTo(6.75, 9)
+  })
+
+  it('reads a limit table emptied while it is edited as no limit', () => {
+    const r = evaluateTripStability(input({ vessel: vessel({ limit: { kind: 'min-gm-by-draft', rows: [] } }) }))!
+    expect(r.reasons.map((x) => x.text)).toEqual(['Предел по формуляру не задан'])
+  })
+
   it('is the same at arrival as at departure when arrival has nothing of its own', () => {
     const r = evaluateTripStability(input({ vessel: vessel({ arrivalWeights: undefined }) }))!
     expect(r.arrivalSameAsDeparture).toBe(true)
@@ -335,6 +376,22 @@ describe('the KN reference', () => {
     const criterion = checkIMOCriteria(later, stability).find((c) => c.id === 'gz-max-at-30')!
     expect(criterion.actualValue).toBeCloseTo(0.25, 12)
     expect(criterion.pass).toBe(true)
+  })
+
+  it('is worked out per state from its own tanks and loading, and absent without KN curves', () => {
+    const shipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 30, heightAboveBaselineM: 6 }
+    // 1000 t lightship + 1000 t of ballast at departure, at KG 5 and 7: KG 6,
+    // the case of the test above. Arrival has no ballast.
+    const ballast = { id: 'b', name: 'Ballast', weightKg: 1_000_000, vcgM: 7, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 0 }
+    const v: VesselStabilityData = { ...vessel, variableWeights: [ballast], arrivalWeights: [] }
+    const base: TripStabilityInput = { vessel: v, shipFrame, deck: { width: 10, length: 20, unit: 'm' }, deckForwardIsPositiveY: true, placements: [], items: [], icing: false }
+    const r = evaluateTripStability(base)!
+    const ref = knReference(r.departure)!
+    // GZ at 30°: 3.2 − 6 × 0.5 = 0.2.
+    expect(ref.gz.curve.find((p) => p.heelDeg === 30)!.GZ).toBeCloseTo(0.2, 9)
+    expect(ref.criteria.map((c) => c.id)).toContain('area-0-30')
+    expect(knReference(r.arrival)!.gz.curve.find((p) => p.heelDeg === 30)!.GZ).toBeCloseTo(3.2 - 5 * 0.5, 9)
+    expect(knReference(evaluateTripStability({ ...base, vessel: { ...v, knCurves: undefined } })!.departure)).toBeNull()
   })
 
   it('checks a supply vessel by IS Code B 2.4.5 when asked', () => {

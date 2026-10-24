@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { normalizeProject, type Project } from './projects'
 import { useCalculator } from './calculator'
 import { VESSEL_TEMPLATES } from '@/lib/vesselTemplates'
-import { singleFigureMinGM, weightsInState, type VesselStabilityData } from '@/lib/stability'
+import { weightsInState, type VesselStabilityData } from '@/lib/stability'
 
 // Stage 2a, group A1: the stability data the booklet check needs, and how
 // calculations saved before it are carried over (spec 3.4).
@@ -36,7 +36,6 @@ describe('the limit from the booklet', () => {
       source: 'Перенесено из «Мин. GM» — одно значение для одного случая загрузки',
     })
     expect(p.deck.vessel?.particulars.minGM).toBeUndefined()
-    expect(singleFigureMinGM(p.deck.vessel!)).toBe(1.22)
   })
 
   it('keeps minGM as a hint when its draught is unknown', () => {

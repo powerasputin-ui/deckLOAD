@@ -154,13 +154,39 @@ export function weightsInState(vessel: VesselStabilityData, state: LoadingState)
   return state === 'arrival' ? (vessel.arrivalWeights ?? vessel.variableWeights) : vessel.variableWeights
 }
 
-// The one minimum GM figure the checks judge by until the limit table is
-// looked up by draught: the old minGM, or a limit of a single minimum GM
-// row moved from it.
-export function singleFigureMinGM(vessel: VesselStabilityData): number | undefined {
-  const { limit } = vessel
-  if (limit?.kind === 'min-gm-by-draft' && limit.rows.length === 1) return limit.rows[0].value
-  return vessel.particulars.minGM
+// A soft check that the lightship LCG fits the axis it's said to be on.
+// `longitudinalOrigin` is how the user reads their own booklet's numbers;
+// an LCG well outside what that axis can give for this hull (a tenth of LBP,
+// at least 5 m, past either end) most likely means the other axis is meant,
+// or the figure came from a source using it — and a confident wrong trim
+// and wrong draughts fore and aft follow.
+export function lightshipLcgHint(p: VesselParticulars): string | null {
+  const lbp = p.lengthBpp
+  const lcg = p.lightshipLCG
+  if (!(lbp > 0) || lcg === 0) return null
+  const margin = Math.max(5, lbp * 0.1)
+  const [lo, hi] = p.longitudinalOrigin === 'aft-perpendicular' ? [-margin, lbp + margin] : [-lbp / 2 - margin, lbp / 2 + margin]
+  if (lcg >= lo && lcg <= hi) return null
+  const axis = p.longitudinalOrigin === 'aft-perpendicular' ? 'от кормового перпендикуляра' : 'от миделя'
+  return `LCG порожнего ${fmtLength(lcg)} м не похож на «${axis}» при LBP ${fmtLength(lbp)} м — проверьте точку отсчёта`
+}
+
+function fmtLength(m: number): string {
+  return String(Math.round(m * 100) / 100)
+}
+
+// Why KN curves as entered give no GZ curve (computeGZCurve returns null on
+// these), in words for the table they were typed into.
+export function knCurvesProblem(kn: KNCrossCurves): string | null {
+  if (kn.headingAngles.length === 0) return 'Не заданы углы крена'
+  // Without a row every KN reads as 0: a curve of nothing but −KG·sin θ.
+  if (kn.points.length === 0) return 'Нет ни одной строки водоизмещения'
+  if (Math.abs(kn.headingAngles[0]) > 1e-6) return 'Углы крена должны начинаться с 0°'
+  for (let i = 1; i < kn.headingAngles.length; i++) {
+    if (!(kn.headingAngles[i] > kn.headingAngles[i - 1])) return 'Углы крена должны расти без повторов'
+  }
+  if (kn.points.some((pt) => Math.abs(pt.KNByAngle[0] ?? 0) > 1e-6)) return 'KN при 0° должно быть 0 в каждой строке'
+  return null
 }
 
 // How the deck's own local (x,y) frame sits relative to the ship's own

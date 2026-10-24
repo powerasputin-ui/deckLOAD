@@ -57,6 +57,7 @@ import { VesselSection } from '@/components/sections/VesselSection'
 import { CargoSection } from '@/components/sections/CargoSection'
 import { PlacementSection } from '@/components/sections/PlacementSection'
 import { ChecksSection } from '@/components/sections/ChecksSection'
+import { StabilityWorkspace } from '@/components/stability/StabilityWorkspace'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
@@ -272,6 +273,9 @@ export default function Home() {
   // 3D is a read-only camera-orbit snapshot of the same layout — no
   // drag/pin/zone editing there, that stays exclusively in the 2D view.
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d')
+  // What the middle of the screen shows: the deck, or the stability
+  // workspace in its place (spec 2026-10-24, 6.1).
+  const [workspace, setWorkspace] = useState<'deck' | 'stability'>('deck')
   // Variants are a snapshot of one project's cargo on one trip. Applying one
   // after switching project or trip, or after editing the cargo or the deck,
   // used to write a stale layout over the current one — so they're kept
@@ -680,14 +684,21 @@ export default function Home() {
   }
 
   const handleExportPdf = async () => {
-    // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D —
+    // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D
+    // or while the stability workspace stands in the deck's place —
     // exporting from 3D used to fail with «Схема палубы ещё не готова».
-    // Switch to 2D for the export and come back afterwards.
+    // Switch to the 2D deck for the export and come back afterwards.
     const from3d = viewMode === '3d'
+    const fromStability = workspace === 'stability'
+    const comeBack = () => {
+      if (from3d) setViewMode('3d')
+      if (fromStability) setWorkspace('stability')
+    }
     if (from3d) setViewMode('2d')
+    if (fromStability) setWorkspace('deck')
     const svgEl = await waitForDeckSvg()
     if (!svgEl) {
-      if (from3d) setViewMode('3d')
+      comeBack()
       toast.error('Схема палубы ещё не готова')
       return
     }
@@ -710,7 +721,7 @@ export default function Home() {
     } catch {
       toast.error('Не удалось собрать PDF')
     } finally {
-      if (from3d) setViewMode('3d')
+      comeBack()
     }
   }
 
@@ -819,7 +830,7 @@ export default function Home() {
     result,
     usableOutline,
     selectedAutoStack,
-    viewMode,
+    deckKeys: viewMode === '2d' && workspace === 'deck',
     wouldExceedMaxDeckCargo,
   })
   const { handleMergePinned, handleMergeManual, previewMerge } = useMergeActions({
@@ -1030,14 +1041,29 @@ export default function Home() {
     toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
   }
 
-  // Initial stability of the open trip for the status line (spec 8.3): the
-  // booklet check's worse state, as «Проверки» judges it.
+  // The open trip by the booklet check, at departure and at arrival: the
+  // stability workspace shows it, the status line (spec 8.3) and «Судно»
+  // take its worse state, as «Проверки» judges it.
+  const tripStability = useMemo(() => evaluateDeckTripStability(deck, result, items), [deck, result, items])
   const statusGm = useMemo(() => {
-    const evaluation = evaluateDeckTripStability(deck, result, items)
-    if (!evaluation) return undefined
-    const { worst } = evaluation
-    return { valueM: worst.stability.GM_fluid, status: evaluation.verdict, estimated: worst.stability.extrapolated, state: worst.state }
-  }, [deck, result, items])
+    if (!tripStability) return undefined
+    const { worst } = tripStability
+    return { valueM: worst.stability.GM_fluid, status: tripStability.verdict, estimated: worst.stability.extrapolated, state: worst.state }
+  }, [tripStability])
+
+  // Esc goes back from the stability workspace to the deck, unless a field,
+  // a dialog or a menu takes it.
+  useEffect(() => {
+    if (workspace !== 'stability') return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('input, textarea, select, [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]')) return
+      setWorkspace('deck')
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [workspace])
 
   // The whole plan's checks (spec 8.4), every trip: their ✕ and ⚠ in the
   // status line and on the «Проверки» tab, the list at the top of that
@@ -1074,7 +1100,7 @@ export default function Home() {
     drawingRestrictionZoneFreeform
   )
   useEffect(() => {
-    if (!hasSelection || toolArmed) return
+    if (!hasSelection || toolArmed || workspace !== 'deck') return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       const target = e.target instanceof Element ? e.target : null
@@ -1084,7 +1110,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hasSelection, toolArmed, clearSelection, clearManualSelection])
+  }, [hasSelection, toolArmed, workspace, clearSelection, clearManualSelection])
 
   // The selection for the inspector, the mini-panel and the right-click menu
   // (spec 6.5, 6.6): one stack with its details and actions, or several with
@@ -1355,7 +1381,15 @@ export default function Home() {
 
       <div className="flex-1 flex min-h-0">
         <SectionPanel active={activeSection} collapsed={panelCollapsed} onCollapsedChange={changePanelCollapsed} onSelect={openSection}>
-          {activeSection === 'vessel' && <VesselSection onApplyVesselTemplate={handleApplyVesselTemplate} zoneLoads={zoneLoads} />}
+          {activeSection === 'vessel' && (
+            <VesselSection
+              onApplyVesselTemplate={handleApplyVesselTemplate}
+              zoneLoads={zoneLoads}
+              stability={statusGm}
+              hasVessel={!!deck.vessel}
+              onOpenStability={() => setWorkspace('stability')}
+            />
+          )}
           {activeSection === 'cargo' && (
             <CargoSection
               result={result}
@@ -1399,16 +1433,6 @@ export default function Home() {
                       }
                     : { count: Math.max(0, result.requestedCount - result.placedCount), label: 'Не размещено' },
               }}
-              stability={{
-                result,
-                deckWidth: deck.width,
-                deckLength: deck.length,
-                unit: deck.unit,
-                vessel: deck.vessel,
-                shipFrame: deck.shipFrame,
-                deckForwardIsPositiveY: deck.deckForwardIsPositiveY,
-                items,
-              }}
               lashing={{ autoStack: selectedAutoStack, onPatchAutoStack: patchAutoStack }}
             />
           )}
@@ -1418,6 +1442,9 @@ export default function Home() {
         </SectionPanel>
 
         <main className="flex-1 min-w-0 flex flex-col">
+          {/* The trip tabs and the canvas tools; over the stability workspace
+              only the tabs, when there is more than one trip. */}
+          {(workspace === 'deck' || shownTrips.length > 1) && (
           <div className="flex min-h-11 items-center gap-2 px-4 pt-3">
             <TripTabs
               trips={shownTrips}
@@ -1430,9 +1457,10 @@ export default function Home() {
             <div className="ml-auto flex shrink-0 items-center gap-2">
               {/* DeckVisualization puts its canvas tools here (spec 6.10). */}
               <div ref={setCanvasToolsEl} className="flex items-center" />
-              <ViewMenu />
+              {workspace === 'deck' && <ViewMenu />}
             </div>
           </div>
+          )}
           {carriedToNextTrip > 0 && (
             <p className="px-4 pt-2 text-sm text-ink-2" data-testid="trip-carry-over">
               {carriedToNextTrip} ед. {pluralRu(carriedToNextTrip, 'уходит', 'уходят', 'уходят')} в рейс {clampedTripIndex + 2}
@@ -1441,7 +1469,15 @@ export default function Home() {
           )}
           {/* The 2D deck takes the whole area (spec 5.4). The 3D view sits in
               its middle while it fits, and scrolls from the top when it
-              doesn't (auto margins, not justify-center). */}
+              doesn't (auto margins, not justify-center). The stability
+              workspace takes the deck's place. */}
+          {workspace === 'stability' ? (
+            <StabilityWorkspace
+              evaluation={tripStability}
+              trip={shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined}
+              onClose={() => setWorkspace('deck')}
+            />
+          ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
             <div className={viewMode === '3d' ? 'my-auto w-full' : 'min-h-0 w-full flex-1'}>
@@ -1702,6 +1738,7 @@ export default function Home() {
             />
           )}
           </div>
+          )}
           <StatusLine input={statusInput} onOpenSection={openSection} />
         </main>
       </div>

@@ -16,15 +16,21 @@ import {
   buildCargoWeightMoments,
   cargoMomentArm,
   catalogInMeters,
+  checkIMOCriteria,
+  computeGZCurve,
   computeLoadingCondition,
   computeStabilityResult,
   G_METACENTRIC_MIN_SAFE,
+  knCurvesProblem,
   lightshipMoment,
   placementsInMeters,
   variableWeightsToMoments,
   weightsInState,
   type DeckShipFrame,
+  type GZCurveResult,
+  type LoadingCondition,
   type LoadingState,
+  type StabilityCriterion,
   type StabilityLimit,
   type StabilityPlacement,
   type StabilityResult,
@@ -273,10 +279,18 @@ export interface TripStabilityInput {
 
 export interface StateStability {
   state: LoadingState
+  // The vessel with this state's tanks, and the loading it came to — what
+  // the KN reference (computeGZCurve) reads.
+  vessel: VesselStabilityData
+  loading: LoadingCondition
   stability: StabilityResult
   draughts: Draughts
+  // The water trapped in pipe cargo and the ice, and the heights of their
+  // centres above the keel (unset when there is none).
   waterKg: number
+  waterVcgM?: number
   iceKg: number
+  iceVcgM?: number
   limit?: LimitAt
   verdict: StabilityVerdict
   reasons: StabilityReason[]
@@ -284,6 +298,21 @@ export interface StateStability {
 
 const m2 = (v: number) => v.toFixed(2)
 const tonnes = (kg: number) => String(Math.round(kg / 1000))
+
+// The height of the centre of a set of weights, when there is any weight.
+function vcgOf(moments: WeightMoment[]): number | undefined {
+  const weight = moments.reduce((sum, m) => sum + m.weightKg, 0)
+  return weight > 0 ? moments.reduce((sum, m) => sum + m.weightKg * m.vcgM, 0) / weight : undefined
+}
+
+// Units on the deck the stability arithmetic can't weigh: a stack whose
+// weight isn't given, or the layers of a composed stack whose cargo has none.
+function weightlessUnits(placements: TripStabilityInput['placements'], items: CargoItem[]): number {
+  return placements.reduce((n, p) => {
+    if (!p.composition) return n + ((p.weight ?? 0) > 0 ? 0 : p.layers)
+    return n + p.composition.filter((seg) => !((items.find((it) => it.id === seg.itemId)?.weight ?? 0) > 0)).reduce((sum, seg) => sum + seg.layers, 0)
+  }, 0)
+}
 
 function evaluateState(input: TripStabilityInput, state: LoadingState): StateStability | null {
   const vessel: VesselStabilityData = { ...input.vessel, variableWeights: weightsInState(input.vessel, state) }
@@ -296,7 +325,11 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
   const lightship = lightshipMoment(vessel)
   const variable = variableWeightsToMoments(vessel.variableWeights)
   const cargo = buildCargoWeightMoments(placementsM, deckW, deckL, frame, fwd, itemsM)
-  const load = (extra: WeightMoment[]) => computeStabilityResult(vessel, computeLoadingCondition(lightship, [...variable, ...cargo, ...extra]))
+  let loading: LoadingCondition = computeLoadingCondition(lightship, [...variable, ...cargo])
+  const load = (extra: WeightMoment[]) => {
+    loading = computeLoadingCondition(lightship, [...variable, ...cargo, ...extra])
+    return computeStabilityResult(vessel, loading)
+  }
 
   const stacks = input.placements.map((p, i) => {
     const pm = placementsM[i]
@@ -326,6 +359,7 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
   let waterKg = 0
   let iceKg = 0
   let ice: IceLoad | null = null
+  let waterMoments: WeightMoment[] = []
   for (let pass = 0; pass < 10; pass++) {
     const draft = draughtsOf(stability, vessel).midM ?? 0
     const share = trappedWaterShare(frame.heightAboveBaselineM - draft, length)
@@ -340,6 +374,7 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
     const next = load([...water, ...(ice?.moments ?? [])])
     if (!next) return null
     stability = next
+    waterMoments = water
     const settled = Math.abs(nextWater - waterKg) < 100 && Math.abs(nextIce - iceKg) < 100
     waterKg = nextWater
     iceKg = nextIce
@@ -352,7 +387,8 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
   const errors: string[] = []
   const warnings: string[] = []
   if (gm < G_METACENTRIC_MIN_SAFE) errors.push(`GM ${m2(gm)} м ниже общего минимума ${G_METACENTRIC_MIN_SAFE} м`)
-  const limit = vessel.limit ? limitAt(vessel.limit, draftAt, stability.displacementKg, stability.KM) : undefined
+  // A table emptied while it's being edited is no limit yet.
+  const limit = vessel.limit && vessel.limit.rows.length > 0 ? limitAt(vessel.limit, draftAt, stability.displacementKg, stability.KM) : undefined
   if (!limit) warnings.push('Предел по формуляру не задан')
   else if (!limit.inRange)
     warnings.push(
@@ -369,6 +405,13 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
     errors.push(`Осадка ${m2(draughts.midM)} м больше предельной ${m2(maxDraft)} м по грузовой марке`)
   if (stability.extrapolated) warnings.push(`Водоизмещение ${tonnes(stability.displacementKg)} т вне таблицы гидростатики — числа оценочные`)
   if (input.vessel.variableWeights.length === 0 && (input.vessel.arrivalWeights ?? []).length === 0) warnings.push('Танки и запасы не заданы')
+  // An empty free-surface moment means a pressed-full or empty tank, but a
+  // state with none on any tank is most likely one where they weren't
+  // entered — and every slack tank lowers GM. A 0 on one tank says it was.
+  if (vessel.variableWeights.length > 0 && vessel.variableWeights.every((w) => w.freeSurfaceMomentTm === undefined))
+    warnings.push('Ни у одного танка не задан момент свободной поверхности — GM может быть завышена')
+  const weightless = weightlessUnits(input.placements, input.items)
+  if (weightless > 0) warnings.push(`Груз без веса не учтён: ${weightless} ед.`)
   const missing = [...new Set(stacks.flatMap((s) => s.water.missing))]
   for (const name of missing) warnings.push(`Вода в трубах «${name}» не учтена: нет внутреннего диаметра`)
   if (vessel.particulars.loadLineLengthM === undefined && stacks.some((s) => s.water.netVolumeM3 > 0))
@@ -381,10 +424,14 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
   ]
   return {
     state,
+    vessel,
+    loading,
     stability,
     draughts,
     waterKg,
+    waterVcgM: vcgOf(waterMoments),
     iceKg,
+    iceVcgM: vcgOf(ice?.moments ?? []),
     limit,
     verdict: errors.length > 0 ? 'error' : warnings.length > 0 ? 'warn' : 'ok',
     reasons,
@@ -438,6 +485,18 @@ export function evaluateTripStability(input: TripStabilityInput): TripStabilityR
     reasons,
     arrivalSameAsDeparture: !input.vessel.arrivalWeights && !input.icing,
   }
+}
+
+// The KN-curve reference of one state: its GZ curve, and the criteria of the
+// set the vessel names. An estimate shown beside the verdict, never part of
+// it. Unset without usable KN curves.
+export function knReference(s: StateStability): { gz: GZCurveResult; criteria: StabilityCriterion[] } | null {
+  const kn = s.vessel.knCurves
+  if (!kn || knCurvesProblem(kn) !== null) return null
+  const gz = computeGZCurve(s.vessel, s.loading)
+  if (!gz) return null
+  const { downfloodingAngleDeg, criteriaSet } = s.vessel.particulars
+  return { gz, criteria: checkIMOCriteria(gz, s.stability, downfloodingAngleDeg, criteriaSet) }
 }
 
 export const STATE_LABEL: Record<LoadingState, string> = { departure: 'Отход', arrival: 'Приход' }

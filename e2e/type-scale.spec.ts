@@ -37,10 +37,16 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
   expect(await textBelow12px(page)).toEqual([])
 
   await openSection(page, 'Судно')
-  for (const title of ['Зоны нагрузки', 'Остойчивость судна']) {
-    await page.getByRole('button', { name: new RegExp(`^${title}`) }).click()
-  }
+  await page.getByRole('button', { name: /^Зоны нагрузки/ }).click()
   expect(await textBelow12px(page)).toEqual([])
+
+  // The stability workspace, in the deck's place, with all its groups open.
+  await page.getByRole('button', { name: 'Открыть остойчивость' }).click()
+  const workspace = page.getByTestId('stability-workspace')
+  const closed = workspace.locator('details:not([open]) > summary')
+  while ((await closed.count()) > 0) await closed.first().click()
+  expect(await textBelow12px(page)).toEqual([])
+  await workspace.getByRole('button', { name: 'К палубе' }).click()
 
   await openSection(page, 'Размещение')
   expect(await textBelow12px(page)).toEqual([])

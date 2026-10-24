@@ -45,7 +45,7 @@ export function usePlacementActions({
   result,
   usableOutline,
   selectedAutoStack,
-  viewMode,
+  deckKeys,
   wouldExceedMaxDeckCargo,
 }: {
   clampedTripIndex: number
@@ -56,7 +56,9 @@ export function usePlacementActions({
   usableOutline: { x: number; y: number }[] | undefined
   // The one purely auto-placed stack selected, if any.
   selectedAutoStack: PlacedItem | undefined
-  viewMode: '2d' | '3d'
+  // The 2D deck is on screen: the arrow keys and Space act on its selection.
+  // Not in 3D, and not while the stability workspace stands in its place.
+  deckKeys: boolean
   wouldExceedMaxDeckCargo: (addedWeightKg: number) => boolean
 }) {
   const deck = useCalculator((s) => s.deck)
@@ -400,11 +402,11 @@ export function usePlacementActions({
     }
   })
   useEffect(() => {
-    if (viewMode !== '2d') return
+    if (!deckKeys) return
     const onKeyDown = (e: KeyboardEvent) => deckKeyDownRef.current(e)
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [viewMode])
+  }, [deckKeys])
 
   // A composed stack is ONE physical column: its total height has to fit the
   // whole-column budget (stackHeightBudget — the deck clearance and each

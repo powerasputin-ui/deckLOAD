@@ -100,13 +100,11 @@ export const VESSEL_TEMPLATES: VesselTemplate[] = [
         lightshipWeightKg: 4_048_700, // real — "Водоизмещение порожнем Δ0"
         lightshipKG: 7.758, // real — "Ордината ЦТ от ОП zg"
         // Real — "Абсцисса ЦТ от КП xg" = 41.213 m, measured from the aft
-        // perpendicular. DeckLoad's longitudinalOrigin field does not
-        // actually affect any calculation (confirmed by reading
-        // src/lib/stability.ts — it is never read outside its own type
-        // declaration), so "from AP" is used here as the one consistent
-        // axis for lightshipLCG, the hydrostatic LCB, and shipFrame's own
-        // offset below — not because the app enforces that consistency,
-        // but because nothing else will.
+        // perpendicular. "From AP" is the one consistent axis for
+        // lightshipLCG, the hydrostatic LCB and shipFrame's own offset
+        // below — the app doesn't convert between axes, so they have to
+        // agree. longitudinalOrigin itself only places LCF for the
+        // draughts fore and aft (draughtsOf, stabilityConditions.ts).
         lightshipLCG: 41.213,
         // Real — Таблица 3 LIGHT SHIP row: "TCG от ДП = −0,020 м"
         // (MTCG = −81,0 т·м). Previously carried here as 0 on the mistaken

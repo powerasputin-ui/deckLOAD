@@ -1,22 +1,34 @@
 'use client'
 
-import { PenLine, Ship } from 'lucide-react'
+import { PenLine, Scale, Ship } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PanelBlock } from '@/components/shell/SectionPanel'
-import { DeckSettings, LoadZonesSection, VesselStabilitySection } from '@/components/calculator/Sidebar'
+import { DeckSettings, LoadZonesSection } from '@/components/calculator/Sidebar'
+import { VERDICT_WORD, VerdictIcon } from '@/components/stability/StabilityResults'
+import { STATE_LABEL } from '@/lib/stabilityConditions'
+import type { StatusLineInput } from '@/lib/statusLine'
 import { useCalculator } from '@/store/calculator'
 import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import type { ZoneLoadCheck } from '@/lib/packing'
 import { cn, fmtNumber } from '@/lib/utils'
 
-// «Судно» (spec 13, stage 2): the vessel library, the deck, its shape, load
-// zones and the vessel's stability data — today's content, moved here.
+// «Судно» (spec 13, stage 2): the vessel library, the deck, its shape and
+// load zones; the vessel's stability data opens in the stability workspace
+// (spec 2026-10-24, 6.2), with the open trip's verdict shown here.
 export function VesselSection({
   onApplyVesselTemplate,
   zoneLoads,
+  stability,
+  hasVessel,
+  onOpenStability,
 }: {
   onApplyVesselTemplate: (tpl: VesselTemplate) => void
   zoneLoads?: ZoneLoadCheck[]
+  // The open trip's worse state, as the status line shows it; unset
+  // without the vessel's data.
+  stability: StatusLineInput['gm']
+  hasVessel: boolean
+  onOpenStability: () => void
 }) {
   const vesselTemplateId = useCalculator((s) => s.deck.vesselTemplateId)
   const setEditingDeckOutline = useCalculator((s) => s.setEditingDeckOutline)
@@ -68,9 +80,28 @@ export function VesselSection({
       <div className="px-4 py-3">
         <LoadZonesSection zoneLoads={zoneLoads} />
       </div>
-      <div className="px-4 py-3">
-        <VesselStabilitySection />
-      </div>
+      <PanelBlock title="Остойчивость">
+        {stability ? (
+          <div className="flex items-start gap-2" data-testid="vessel-stability-summary">
+            <VerdictIcon verdict={stability.status} className="mt-0.5" />
+            <div className="min-w-0 text-sm">
+              <div className="font-medium tabular-nums">
+                GM {stability.estimated && '≈'}
+                {stability.valueM.toFixed(2)} м ({STATE_LABEL[stability.state].toLowerCase()})
+              </div>
+              <div className="text-xs text-ink-2">{VERDICT_WORD[stability.status]}</div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-2" data-testid="vessel-stability-summary">
+            {hasVessel ? 'Нет гидростатики судна' : 'Нет данных судна'}
+          </p>
+        )}
+        <Button variant="outline" size="sm" className="w-full" onClick={onOpenStability}>
+          <Scale className="mr-1.5 h-4 w-4" aria-hidden="true" />
+          Открыть остойчивость
+        </Button>
+      </PanelBlock>
     </>
   )
 }

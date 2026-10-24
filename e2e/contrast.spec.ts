@@ -88,6 +88,27 @@ for (const colorScheme of ['light', 'dark'] as const) {
       expect(await contrastViolations(page)).toEqual([])
     })
 
+    // Stage 2a (spec 2026-10-24, 6.1): the stability workspace in the deck's
+    // place — a library vessel's data, its estimate and warnings, and the KN
+    // reference with its chart and criteria.
+    test('the stability workspace reads at AA contrast', async ({ page }) => {
+      await page.goto('/')
+      await openSection(page, 'Судно')
+      await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
+      await page.getByRole('button', { name: 'Открыть остойчивость' }).click()
+      const workspace = page.getByTestId('stability-workspace')
+      await expect(workspace.getByText('Числа ниже — только оценка')).toBeVisible()
+      // A library vessel's groups come folded: open them all.
+      const closed = workspace.locator('details:not([open]) > summary')
+      while ((await closed.count()) > 0) await closed.first().click()
+      const kn = workspace.locator('details').filter({ has: page.locator('summary span', { hasText: /^KN-кривые$/ }) })
+      await kn.getByRole('button', { name: 'Вставить текстом' }).click()
+      await kn.getByLabel('KN-кривые: текст для вставки').fill('0;10;20;30;40\n5000;0;1,5;2,9;4,0;4,6')
+      await kn.getByRole('button', { name: 'Вставить', exact: true }).click()
+      await expect(workspace.getByRole('table', { name: 'Критерии справки по KN' })).toBeVisible()
+      expect(await contrastViolations(page)).toEqual([])
+    })
+
     test('the inspector of a selected stack reads at AA contrast', async ({ page }) => {
       await page.goto('/')
       const stack = page.locator('svg g[data-cargo-placement]').first()

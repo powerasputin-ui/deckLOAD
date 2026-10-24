@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/components/ThemeProvider'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import { SELECTION_HALO_WIDTH } from '@/components/calculator/deckMarks'
 import { THEME_TOKENS } from '@/lib/theme'
+import type { VesselStabilityData } from '@/lib/stability'
 
 // The PDF itself needs a real canvas; tests check what the page hands over.
 vi.mock('@/lib/exportPdf', async (importOriginal) => ({
@@ -453,6 +454,169 @@ describe('Home (page.tsx)', () => {
     expect(panel.queryByText(/не разрешает поворот/)).toBeNull()
   })
 
+  // Stage 2a (spec 2026-10-24, 6.1, 6.2, 8): the stability workspace opens
+  // in the deck's place from «Судно», edits the vessel's data and shows the
+  // open trip judged against the booklet at departure and at arrival.
+  describe('the stability workspace', () => {
+    // 1000 t lightship at KG 5 and 500 t of ballast at 1 m, pressed full:
+    // 1500 t, KG 3.667, KM 8 — GM 4.33 m, a draught of 3 m, no trim.
+    const vessel = (): VesselStabilityData => ({
+      particulars: {
+        name: 'Проба',
+        lengthBpp: 60,
+        breadth: 14,
+        lightshipWeightKg: 1_000_000,
+        lightshipKG: 5,
+        lightshipLCG: 30,
+        lightshipTCG: 0,
+        longitudinalOrigin: 'aft-perpendicular',
+        maxDraftM: 5,
+        loadLineLengthM: 60,
+        windageAreaM2: 1500,
+        windageLeverM: 8,
+        otherExposedDeckAreaM2: 0,
+      },
+      hydrostatics: {
+        points: [
+          { displacementKg: 1_000_000, draftM: 2, KM: 8, LCB: 30, LCF: 30, MTC: 50 },
+          { displacementKg: 3_000_000, draftM: 6, KM: 8, LCB: 30, LCF: 30, MTC: 50 },
+        ],
+      },
+      variableWeights: [{ id: 'b', name: 'Балласт', weightKg: 500_000, vcgM: 1, tcgM: 0, lcgM: 30, freeSurfaceMomentTm: 0 }],
+    })
+    const seedVessel = () =>
+      act(() => {
+        useCalculator.setState({
+          deck: {
+            ...useCalculator.getState().deck,
+            vessel: vessel(),
+            vesselTemplateId: undefined,
+            icing: false,
+            shipFrame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 30, heightAboveBaselineM: 6 },
+            deckForwardIsPositiveY: true,
+          },
+        })
+      })
+    const openWorkspace = () => {
+      openSection('Судно')
+      fireEvent.click(screen.getByRole('button', { name: 'Открыть остойчивость' }))
+      return screen.getByTestId('stability-workspace')
+    }
+    const shownState = () => screen.getByTestId('stability-state')
+    const gm = () => Number(screen.getByTestId('stability-gm').textContent!.replace(' м', ''))
+    const group = (title: string) => within(screen.getByText(title, { selector: 'summary span' }).closest('details')!)
+    const showState = (state: 'Отход' | 'Приход') =>
+      fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Результат для состояния' })).getByRole('radio', { name: new RegExp(`^${state}`) }))
+
+    it('opens from «Судно» in the deck\'s place and goes back with Esc or «К палубе»', () => {
+      render(<Home />)
+      openSection('Судно')
+      expect(screen.getByTestId('vessel-stability-summary').textContent).toBe('Нет данных судна')
+      const workspace = openWorkspace()
+      expect(document.querySelector('svg[data-deck-plan]')).toBeNull()
+      expect(within(workspace).getByRole('heading', { name: 'Остойчивость' })).toBeTruthy()
+      // The disclaimer is always there.
+      expect(screen.getByText('Оценка по введённым данным. Не заменяет одобренную Информацию об остойчивости и прибор загрузки судна.')).toBeTruthy()
+
+      // Esc in a field is the field's own; on the page it goes back.
+      const lbp = screen.getByLabelText('Длина LBP, м')
+      lbp.focus()
+      fireEvent.keyDown(lbp, { key: 'Escape' })
+      expect(screen.getByTestId('stability-workspace')).toBeTruthy()
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(screen.queryByTestId('stability-workspace')).toBeNull()
+      expect(document.querySelector('svg[data-deck-plan]')).toBeTruthy()
+
+      openWorkspace()
+      fireEvent.click(screen.getByRole('button', { name: 'К палубе' }))
+      expect(screen.queryByTestId('stability-workspace')).toBeNull()
+    })
+
+    it('passes once the booklet\'s limit is pasted, and fails when heavy cargo goes on high', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      openWorkspace()
+      expect(gm()).toBeCloseTo(4.33, 2)
+      expect(shownState().dataset.verdict).toBe('warn')
+      expect(within(shownState()).getByText('Предел по формуляру не задан')).toBeTruthy()
+
+      const limit = group('Предел по формуляру')
+      fireEvent.click(limit.getByRole('button', { name: 'Вставить текстом' }))
+      fireEvent.change(limit.getByLabelText('Предел по формуляру: текст для вставки'), { target: { value: '2;1\n6;1' } })
+      fireEvent.click(limit.getByRole('button', { name: 'Вставить' }))
+      expect(useCalculator.getState().deck.vessel!.limit).toEqual({ kind: 'min-gm-by-draft', rows: [{ arg: 2, value: 1 }, { arg: 6, value: 1 }], source: undefined })
+      expect(shownState().dataset.verdict).toBe('ok')
+      expect(within(shownState()).getByText('Предел по формуляру 1.00 м при осадке 3.00 м')).toBeTruthy()
+      openSection('Судно')
+      expect(screen.getByTestId('vessel-stability-summary').textContent).toContain('Выполнено по формуляру')
+
+      // 500 t with its centre 30 m above the keel: KG (5500 + 15000)/2000
+      // = 10.25 — GM under nought.
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Тяжёлый', width: 2, length: 2, height: 2, quantity: 1, weight: 500_000, stabilityOverride: { vcgAboveDeckM: 24 } })
+      })
+      expect(shownState().dataset.verdict).toBe('error')
+      expect(gm()).toBeCloseTo(-2.25, 2)
+    })
+
+    it('adds the ice to the arrival when icing is on: KG up, GM down', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      openWorkspace()
+      showState('Приход')
+      const before = gm()
+      expect(screen.getByText('Приход совпадает с отходом: своих танков у прихода нет, обледенение не учитывается.')).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('switch', { name: 'Учитывать обледенение' }))
+      expect(useCalculator.getState().deck.icing).toBe(true)
+      expect(gm()).toBeLessThan(before - 0.05)
+      expect(within(shownState()).getByText('Лёд')).toBeTruthy()
+      // The departure carries no ice.
+      showState('Отход')
+      expect(gm()).toBeCloseTo(before, 6)
+      expect(within(shownState()).queryByText('Лёд')).toBeNull()
+    })
+
+    it('warns about pipes without an inside diameter, and counts their water once it is given', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Труба 530', width: 12, length: 0.53, height: 0.53, quantity: 2, weight: 3000, shape: 'cylinder' })
+      })
+      openWorkspace()
+      expect(within(shownState()).getByText('Вода в трубах «Труба 530» не учтена: нет внутреннего диаметра')).toBeTruthy()
+      expect(within(shownState()).queryByText('Вода в трубах')).toBeNull()
+
+      openSection('Грузы')
+      const inside = screen.getByLabelText('Внутренний диаметр, мм')
+      fireEvent.change(inside, { target: { value: '500' } })
+      fireEvent.keyDown(inside, { key: 'Enter' })
+      expect(useCalculator.getState().items[0].pipeInnerDiameterMm).toBe(500)
+      expect(within(shownState()).queryByText(/не учтена: нет внутреннего диаметра/)).toBeNull()
+      expect(within(shownState()).getByText('Вода в трубах')).toBeTruthy()
+    })
+
+    it('keeps arrival\'s tanks apart from departure\'s once arrival is edited', () => {
+      render(<Home />)
+      clearDemoCargo()
+      seedVessel()
+      openWorkspace()
+      const tanks = group('Танки и запасы')
+      fireEvent.click(within(tanks.getByRole('radiogroup', { name: 'Танки для состояния' })).getByRole('radio', { name: 'Приход' }))
+      // Burn half the ballast by arrival.
+      const weight = tanks.getByLabelText('Вес, строка 1')
+      fireEvent.change(weight, { target: { value: '250' } })
+      fireEvent.keyDown(weight, { key: 'Enter' })
+      const v = useCalculator.getState().deck.vessel!
+      expect(v.variableWeights[0].weightKg).toBe(500_000)
+      expect(v.arrivalWeights![0].weightKg).toBe(250_000)
+      expect(screen.queryByText(/^Приход совпадает с отходом/)).toBeNull()
+    })
+  })
+
   // Stage 1 (spec 6.1, 9.5): the deck reads as a drawing — the sides of the
   // hull named around it, its overall dimensions and a scale bar — in the
   // theme's colours on screen and in light ones in the PDF.
@@ -472,11 +636,14 @@ describe('Home (page.tsx)', () => {
       // bow at +y — drawn lengthwise, bow at the right.
       expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'right', stern: 'left' })
       expect(bowLabel()).toBe('↓ НОС')
+      // The switch is in the stability workspace, which stands in the
+      // deck's place.
       openSection('Судно')
-      fireEvent.click(screen.getByRole('button', { name: /Остойчивость судна/ }))
+      fireEvent.click(screen.getByRole('button', { name: 'Открыть остойчивость' }))
       expect(screen.getByText('Нос на схеме: справа')).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
       expect(screen.getByText('Нос на схеме: слева')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'К палубе' }))
       expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'left', stern: 'right' })
       expect(bowLabel()).toBe('↑ НОС')
     })

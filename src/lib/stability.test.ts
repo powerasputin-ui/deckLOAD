@@ -11,6 +11,8 @@ import {
   checkIMOCriteria,
   computeFreeSurfaceCorrection,
   G_METACENTRIC_MIN_SAFE,
+  knCurvesProblem,
+  lightshipLcgHint,
   type VesselStabilityData,
   type DeckShipFrame,
   type HydrostaticTable,
@@ -222,6 +224,33 @@ describe('buildCargoWeightMoments — polygon centroid + TCG/LCG override', () =
 // green GM/PASS while real cargo on the deck contributed nothing to it.
 // Kept in sync with buildCargoWeightMoments' own filter condition
 // deliberately, so this test also pins that the two can't silently diverge.
+describe('lightshipLcgHint', () => {
+  const p = { lengthBpp: 80, breadth: 18, lightshipWeightKg: 1, lightshipKG: 6, lightshipLCG: 38, lightshipTCG: 0, longitudinalOrigin: 'aft-perpendicular' as const }
+  it('accepts an LCG the axis can give, up to a tenth of LBP past either end', () => {
+    expect(lightshipLcgHint(p)).toBeNull()
+    expect(lightshipLcgHint({ ...p, lightshipLCG: 87.9 })).toBeNull()
+    expect(lightshipLcgHint({ ...p, longitudinalOrigin: 'midships', lightshipLCG: -2.4 })).toBeNull()
+  })
+  it('names the axis when the LCG doesn\'t fit it', () => {
+    // From midships an 80 m hull reaches ±40 m, ±48 m with the margin.
+    expect(lightshipLcgHint({ ...p, longitudinalOrigin: 'midships', lightshipLCG: 55 })).toBe(
+      'LCG порожнего 55 м не похож на «от миделя» при LBP 80 м — проверьте точку отсчёта'
+    )
+    expect(lightshipLcgHint({ ...p, lightshipLCG: -9 })).toContain('«от кормового перпендикуляра»')
+  })
+})
+
+describe('knCurvesProblem', () => {
+  const kn = { headingAngles: [0, 10, 20], points: [{ displacementKg: 1_000_000, KNByAngle: [0, 1, 2] }] }
+  it('says why a table gives no GZ curve, and nothing for one that does', () => {
+    expect(knCurvesProblem(kn)).toBeNull()
+    expect(knCurvesProblem({ ...kn, headingAngles: [5, 10, 20] })).toBe('Углы крена должны начинаться с 0°')
+    expect(knCurvesProblem({ ...kn, headingAngles: [0, 20, 20] })).toBe('Углы крена должны расти без повторов')
+    expect(knCurvesProblem({ ...kn, points: [{ displacementKg: 1_000_000, KNByAngle: [0.1, 1, 2] }] })).toBe('KN при 0° должно быть 0 в каждой строке')
+    expect(knCurvesProblem({ ...kn, points: [] })).toBe('Нет ни одной строки водоизмещения')
+  })
+})
+
 describe('countMissingWeightPlacements', () => {
   it('counts placements with weight undefined, 0, or negative as missing', () => {
     expect(countMissingWeightPlacements([{ weight: undefined }, { weight: 0 }, { weight: -5 }])).toBe(3)

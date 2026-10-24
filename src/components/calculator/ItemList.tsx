@@ -41,6 +41,7 @@ import { NumberField } from '@/components/calculator/NumberField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import type { CargoItem, PackingResult, PlacedItem } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
+import { isPipeCargo } from '@/lib/stabilityConditions'
 import { cn, fmtNumber, pluralRu } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -438,6 +439,36 @@ function ItemRow({
             </datalist>
           </div>
 
+          {/* The water trapped in pipes (spec 2026-10-24, 3.3): counted from
+              the inside diameter of the steel pipe — the outer one here
+              carries the coating — unless the transport project gives the
+              figure. Moves into the cargo table at stage 3. */}
+          {isPipeCargo(item) && (
+            <div className="mt-2 space-y-1">
+              <div className="grid grid-cols-2 gap-1.5">
+                <OptionalNumField
+                  label="Внутренний диаметр, мм"
+                  value={item.pipeInnerDiameterMm}
+                  placeholder="не задан"
+                  onChange={(v) => onUpdate({ pipeInnerDiameterMm: v })}
+                />
+                <OptionalNumField
+                  label="Вода в трубах, т (на 1 шт.)"
+                  value={item.trappedWaterT}
+                  placeholder="по расчёту"
+                  onChange={(v) => onUpdate({ trappedWaterT: v })}
+                />
+              </div>
+              <p className={cn('text-xs', item.trappedWaterT === undefined && !item.pipeInnerDiameterMm ? 'text-warn' : 'text-muted-foreground')}>
+                {item.trappedWaterT !== undefined
+                  ? `Σ вода = ${formatNum(item.trappedWaterT)} × ${item.quantity} = ${formatNum(item.trappedWaterT * item.quantity)} т — вместо расчёта`
+                  : item.pipeInnerDiameterMm
+                    ? 'Вода считается по внутреннему диаметру и укладке'
+                    : 'Без внутреннего диаметра вода в трубах не считается'}
+              </p>
+            </div>
+          )}
+
           <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
             <div className="flex min-w-48 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span>
@@ -638,6 +669,39 @@ function StabilityOverrideField({
         id={id}
         value={value}
         placeholder="авто"
+        step={0.1}
+        onCommit={onChange}
+        onClear={() => onChange(undefined)}
+        className="h-7 text-xs px-1.5"
+      />
+    </div>
+  )
+}
+
+// An optional number of the cargo's own (not a deck length): empty is «not
+// given».
+function OptionalNumField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string
+  value: number | undefined
+  placeholder: string
+  onChange: (v: number | undefined) => void
+}) {
+  const id = useId()
+  return (
+    <div className="space-y-0.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground leading-none">
+        {label}
+      </Label>
+      <NumberField
+        id={id}
+        value={value}
+        min={0}
+        placeholder={placeholder}
         step={0.1}
         onCommit={onChange}
         onClear={() => onChange(undefined)}

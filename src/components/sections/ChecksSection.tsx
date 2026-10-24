@@ -2,7 +2,6 @@
 
 import { ChevronRight, CircleCheck, CircleX, Minus, TriangleAlert } from 'lucide-react'
 import { StatsPanel } from '@/components/calculator/StatsPanel'
-import { StabilityPanel } from '@/components/calculator/StabilityPanel'
 import { LashingPointsSection, SeparationRulesSection } from '@/components/calculator/Sidebar'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import type { Check, CheckStatus } from '@/lib/checks'
@@ -11,19 +10,18 @@ import { cn } from '@/lib/utils'
 
 // «Проверки» (spec 13, stage 2): the summary of the plan's checks (8.4) on
 // top — what the ✕ and ⚠ in the status line count — then today's load
-// statistics, the stability result, separation and lashing. Stage 4 turns
-// the whole section into the single list of checks.
+// statistics, separation and lashing. The stability result is in the
+// stability workspace (spec 2026-10-24, 6.1). Stage 4 turns the whole
+// section into the single list of checks.
 export function ChecksSection({
   checks,
   onOpenSection,
   stats,
-  stability,
   lashing,
 }: {
   checks: readonly Check[]
   onOpenSection: (id: SectionId) => void
   stats: React.ComponentProps<typeof StatsPanel>
-  stability: React.ComponentProps<typeof StabilityPanel>
   lashing: React.ComponentProps<typeof LashingPointsSection>
 }) {
   return (
@@ -53,7 +51,6 @@ export function ChecksSection({
         </ul>
       </PanelBlock>
       <StatsPanel {...stats} />
-      <StabilityPanel {...stability} />
       <div className="px-4 py-3">
         <SeparationRulesSection />
       </div>

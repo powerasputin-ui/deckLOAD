@@ -83,8 +83,18 @@ test('Сценарий 16: остойчивость', async ({ page }) => {
   await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
   await expect(deck(page).getByText('49.10 м')).toBeVisible()
 
-  // The library vessel brings its data: the result is in «Проверки».
+  // The library vessel brings its data: «Судно» sums up the open trip, and
+  // the stability workspace takes the deck's place with the whole of it
+  // (spec 2026-10-24, 6.1, 6.2).
+  await expect(page.getByTestId('vessel-stability-summary')).toContainText('Нужна проверка')
+  await page.getByRole('button', { name: 'Открыть остойчивость' }).click()
+  const workspace = page.getByTestId('stability-workspace')
+  await expect(workspace.getByText('GM с поправкой на свободную поверхность')).toBeVisible()
+  await expect(workspace.getByText('Данные из библиотеки:')).toBeVisible()
+  // One hydrostatic point: outside it the numbers are an estimate.
+  await expect(workspace.getByText('Числа ниже — только оценка')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(deck(page)).toBeVisible()
   await openSection(page, 'Проверки')
-  await expect(page.getByText('GM (с поправкой на своб. поверхность)')).toBeVisible()
-  await expect(page.locator('[data-check="stability"]')).not.toHaveAttribute('data-check-status', 'none')
+  await expect(page.locator('[data-check="stability"]')).toHaveAttribute('data-check-status', 'warn')
 })

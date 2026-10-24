@@ -358,6 +358,8 @@ interface CalculatorState {
   addHydrostaticPoint: (point?: Partial<HydrostaticPoint>) => void
   updateHydrostaticPoint: (index: number, patch: Partial<HydrostaticPoint>) => void
   removeHydrostaticPoint: (index: number) => void
+  // The whole table at once — a paste from the booklet.
+  setHydrostaticPoints: (points: HydrostaticPoint[]) => void
   setKNCrossCurves: (curves: KNCrossCurves | undefined) => void
   // Tanks of one state: departure (`variableWeights`, the default) or
   // arrival (`arrivalWeights`). The first change to arrival starts it from
@@ -366,6 +368,8 @@ interface CalculatorState {
   updateVariableWeight: (id: string, patch: Partial<VariableWeightItem>, state?: LoadingState) => void
   removeVariableWeight: (id: string, state?: LoadingState) => void
   copyDepartureToArrival: () => void
+  // A state's whole table at once — a paste from the booklet.
+  setVariableWeights: (weights: Omit<VariableWeightItem, 'id'>[], state: LoadingState) => void
   setStabilityLimit: (limit: StabilityLimit | undefined) => void
   setIcing: (v: boolean) => void
   setShipFrame: (patch: Partial<DeckShipFrame>) => void
@@ -2080,6 +2084,11 @@ export const useCalculator = create<CalculatorState>()(
       const points = vessel.hydrostatics.points.filter((_, i) => i !== index)
       return { deck: { ...s.deck, vessel: { ...vessel, hydrostatics: { points } } } }
     }),
+  setHydrostaticPoints: (points) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? emptyVessel()
+      return { deck: { ...s.deck, vessel: { ...vessel, hydrostatics: { points } } } }
+    }),
   setKNCrossCurves: (curves) =>
     set((s) => {
       const vessel = s.deck.vessel ?? emptyVessel()
@@ -2110,6 +2119,11 @@ export const useCalculator = create<CalculatorState>()(
       const vessel = s.deck.vessel
       if (!vessel) return s
       return { deck: { ...s.deck, vessel: { ...vessel, arrivalWeights: vessel.variableWeights.map((w) => ({ ...w })) } } }
+    }),
+  setVariableWeights: (weights, state) =>
+    set((s) => {
+      const vessel = s.deck.vessel ?? emptyVessel()
+      return { deck: { ...s.deck, vessel: withStateWeights(vessel, state, weights.map((w) => ({ ...w, id: uuid() }))) } }
     }),
   setStabilityLimit: (limit) =>
     set((s) => {
