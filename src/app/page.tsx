@@ -786,6 +786,61 @@ export default function Home() {
       items
     )
 
+  // Why a click can't put one more unit of this cargo on the deck at all —
+  // wherever it lands: all of it is placed, or the deck's cargo limit is
+  // reached. The click is refused with it, and the shadow under the cursor
+  // turns red with it (spec 7.1).
+  const stampRefusal = (itemId: string): { text: string; level: 'warning' | 'error' } | null => {
+    // Scoped to THIS item, not a global sum across every
+    // cargo type — an aggregate check let a fully-placed
+    // item keep being over-placed by clicking its own
+    // stamp, as long as some OTHER item's quantity still
+    // had "room" in the total (e.g. item A qty 1 already
+    // placed, item B qty 1 still unplaced: clicking A's
+    // stamp again passed 1 >= 2 = false and placed a
+    // second A anyway).
+    const item = items.find((it) => it.id === itemId)
+    const itemRequested = item?.quantity ?? 0
+    // Round 23: composition-aware — placementLayersOfItem
+    // (already the canonical primitive checkLayerChange
+    // uses, see its own layersOfIdIn helper above) counts
+    // only THIS itemId's own layers within each
+    // placement, not the placement's flat total. A plain
+    // `pin.itemId === itemId` filter-and-sum-whole-
+    // layers (the pre-fix code) both MISSES a non-nominal
+    // constituent (e.g. B inside a composed [A2,B3]
+    // reports 0 here, letting the user silently
+    // over-place B past its declared quantity) and
+    // OVER-counts the nominal one (A would report the
+    // full 5, wrongly blocking a legitimate further A
+    // placement). For an uncomposed placement this keeps
+    // the exact same `Math.max(1, layers)` defensive
+    // floor the pre-fix code had (segmentsOf itself
+    // applies no floor) — same branching idiom as
+    // checkLayerChange's own layersOfIdIn, so the
+    // uncomposed result is byte-identical to before.
+    //
+    // Round 29 corrective pass: same Tier-2 exclusion as
+    // checkLayerChange's own layersOfIdIn — a malformed
+    // placement's raw layers must never phantom-count
+    // toward this gate either.
+    const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
+      pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, itemId) : pl.itemId === itemId ? Math.max(1, pl.layers) : 0
+    const itemPlaced =
+      mode === 'manual'
+        ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
+        : Object.values(pinnedPlacementsByTrip)
+            .flat()
+            .reduce((s, pin) => s + layersOfIdIn(pin), 0)
+    if (itemPlaced >= itemRequested) {
+      return { text: `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте «всего» в списке`, level: 'warning' }
+    }
+    if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
+      return { text: `Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`, level: 'error' }
+    }
+    return null
+  }
+
   // Finalizes a drawn shape into a real CargoItem (reusing
   // addOrIncrementCargoFromTemplate, same as any other preset) and places one
   // instance right where it was drawn — mode-aware, mirroring onPlace's own
@@ -1541,59 +1596,15 @@ export default function Home() {
                 mode={mode}
                 activeStamp={activeStamp}
                 stampRotated={stampRotated}
+                stampBlocked={activeStamp ? (stampRefusal(activeStamp.id)?.text ?? null) : null}
                 drawingCustomShape={drawingCustomShape}
                 onFinishDrawing={handleFinishDrawing}
                 pendingCustomShape={pendingCustomShape}
                 onPlace={(p) => {
-                  // Scoped to THIS item, not a global sum across every
-                  // cargo type — an aggregate check let a fully-placed
-                  // item keep being over-placed by clicking its own
-                  // stamp, as long as some OTHER item's quantity still
-                  // had "room" in the total (e.g. item A qty 1 already
-                  // placed, item B qty 1 still unplaced: clicking A's
-                  // stamp again passed 1 >= 2 = false and placed a
-                  // second A anyway).
-                  const item = items.find((it) => it.id === p.itemId)
-                  const itemRequested = item?.quantity ?? 0
-                  // Round 23: composition-aware — placementLayersOfItem
-                  // (already the canonical primitive checkLayerChange
-                  // uses, see its own layersOfIdIn helper above) counts
-                  // only THIS itemId's own layers within each
-                  // placement, not the placement's flat total. A plain
-                  // `pin.itemId === p.itemId` filter-and-sum-whole-
-                  // layers (the pre-fix code) both MISSES a non-nominal
-                  // constituent (e.g. B inside a composed [A2,B3]
-                  // reports 0 here, letting the user silently
-                  // over-place B past its declared quantity) and
-                  // OVER-counts the nominal one (A would report the
-                  // full 5, wrongly blocking a legitimate further A
-                  // placement). For an uncomposed placement this keeps
-                  // the exact same `Math.max(1, layers)` defensive
-                  // floor the pre-fix code had (segmentsOf itself
-                  // applies no floor) — same branching idiom as
-                  // checkLayerChange's own layersOfIdIn, so the
-                  // uncomposed result is byte-identical to before.
-                  //
-                  // Round 29 corrective pass: same Tier-2 exclusion as
-                  // checkLayerChange's own layersOfIdIn — a malformed
-                  // placement's raw layers must never phantom-count
-                  // toward this gate either.
-                  const layersOfIdIn = (pl: { itemId: string; layers: number; composition?: CompositionSegment[]; malformed?: PinnedPlacement['malformed'] }) =>
-                    pl.malformed && !pl.composition ? 0 : pl.composition ? placementLayersOfItem(pl, p.itemId) : pl.itemId === p.itemId ? Math.max(1, pl.layers) : 0
-                  const itemPlaced =
-                    mode === 'manual'
-                      ? manualPlacements.reduce((s, m) => s + layersOfIdIn(m), 0)
-                      : Object.values(pinnedPlacementsByTrip)
-                          .flat()
-                          .reduce((s, pin) => s + layersOfIdIn(pin), 0)
-                  if (itemPlaced >= itemRequested) {
-                    toast.warning(
-                      `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте количество в списке грузов`
-                    )
-                    return
-                  }
-                  if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
-                    toast.error(`Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`)
+                  const refusal = stampRefusal(p.itemId)
+                  if (refusal) {
+                    if (refusal.level === 'error') toast.error(refusal.text)
+                    else toast.warning(refusal.text)
                     return
                   }
                   if (mode === 'manual') {

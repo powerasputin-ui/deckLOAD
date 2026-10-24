@@ -500,7 +500,7 @@ export function usePlacementActions({
     if (sumPlaced + newLayers > quantityBudget) {
       return {
         ok: false,
-        reason: `Все ${quantityBudget} ед. этого груза уже размещены — увеличьте количество в списке грузов`,
+        reason: `Все ${quantityBudget} ед. этого груза уже размещены — увеличьте «всего» в списке`,
         maxPhys,
       }
     }

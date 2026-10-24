@@ -50,7 +50,7 @@ test.describe('Restriction (obstacle) zones', () => {
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText('Здесь нельзя — зона ограничения «Кран»')).toBeVisible()
+    await expect(page.getByText('Здесь нельзя — препятствие «Кран»')).toBeVisible()
     await expect(unitsCount(page)).toHaveText(/^0\/1 ед\./)
 
     // Placing well outside the zone succeeds.
@@ -115,7 +115,7 @@ test.describe('Restriction (obstacle) zones', () => {
     const zoneBox = await zonePolygon.boundingBox()
     if (!zoneBox) throw new Error('zone polygon not found')
     await page.mouse.click(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2)
-    await expect(page.getByText('Здесь нельзя — зона ограничения «Фальшборт»')).toBeVisible()
+    await expect(page.getByText('Здесь нельзя — препятствие «Фальшборт»')).toBeVisible()
     await expect(unitsCount(page)).toHaveText(/^0\/1 ед\./)
   })
 

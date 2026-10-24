@@ -13,7 +13,6 @@ import { compressImageToDataUrl } from '@/lib/imageCompression'
 import {
   computeGridStep,
   clampToDeck,
-  collidesPrecisely,
   collidesWithClearance,
   rectInsidePolygon,
   erodePolygon,
@@ -25,7 +24,6 @@ import {
   zoneIdsOverlapping,
   checkLashingBalance,
   DEFAULT_VESSEL_MOTION,
-  violatesSeparation,
   violatesSeparationForCategories,
   pipePyramidSpreadMargin,
   decomposePipePyramid,
@@ -56,6 +54,7 @@ import {
 import { segmentsOf } from '@/lib/placementComposition'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { DRAG_THRESHOLD_PX } from '@/lib/stackSelection'
+import { capitalised, placementProblem, type PlacementSurroundings, type PlacementTarget } from '@/lib/placementProblem'
 import { NAME_FONT_SIZE, layoutStackLabels, measureTextWidth, ownLabelSize, type StackLabelPlan } from '@/lib/labelLayout'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import {
@@ -129,6 +128,10 @@ interface DeckVisualizationProps {
   mode: 'auto' | 'manual'
   activeStamp: { id: string; width: number; length: number; color: string; name: string; weight?: number; shape?: PlacedItem['shape']; outline?: { x: number; y: number }[] } | null
   stampRotated: boolean
+  // Why the armed cargo can't be put down anywhere — all of it is placed,
+  // or the deck's cargo limit is reached (the page decides; spec 7.1). The
+  // shadow turns red with it; a click still goes to onPlace, which refuses.
+  stampBlocked?: string | null
   onPlace?: (p: ManualPlacement) => void
   onMoveManual?: (id: string, x: number, y: number) => void
   onUpdateManualClearance?: (id: string, margin: ClearanceMargin) => void
@@ -274,6 +277,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   mode,
   activeStamp,
   stampRotated,
+  stampBlocked,
   onPlace,
   onMoveManual,
   onUpdateManualClearance,
@@ -1553,72 +1557,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       deckLength,
       edgePad
     )
-    // Check collision against whatever is currently rendered — manual
-    // placements in manual mode, algorithm-placed/pinned items in auto mode
-    // (renderedItems already resolves to the right source for either).
-    // Checked in two passes so a rejection caused specifically by someone
-    // else's clearance zone gets an explanation — plain overlap with a real
-    // footprint is self-evident on screen and stays a silent no-op, like it
-    // always has, but a click that's rejected only because of an invisible
-    // inflated margin looked like the click just did nothing.
-    const rawOthers = renderedItems.map((m) => ({ x: m.x, y: m.y, width: m.width, length: m.length, rotated: m.rotated, outline: m.outline }))
-    const target = { ...clamped, width: stampDims.w, length: stampDims.l, rotated: stampTurned, outline: activeStamp.outline }
-    if (collidesPrecisely(target, rawOthers, gap)) {
-      return // ignore overlapping placement
-    }
-    if (usableOutline && !rectInsidePolygon(target, usableOutline)) {
-      toast.warning('Здесь груз выходит за пределы палубы')
+    // The same question the shadow under the cursor asks (spec 7.1): a
+    // click is refused for exactly the reason the shadow shows in red.
+    const problem = placementProblem(stampTarget(clamped), stampSurroundings())
+    if (problem) {
+      toast.warning(`Здесь нельзя — ${problem}`)
       return
-    }
-    // withClearanceFootprint returns the placement UNCHANGED (outline
-    // intact) when it has no clearance margin, and a plain inflated
-    // rectangle (outline dropped) when it does — so collidesPrecisely here
-    // naturally does shape-accurate comparison in the common no-margin case
-    // and falls back to bbox-only for an actual clearance zone (which is
-    // inherently a padded rectangle, not a shape-precision concept). Plain
-    // collidesWith here would treat every custom-shaped neighbour's full
-    // bounding box as solid even with zero margin, falsely blocking clicks
-    // into its notch right after the precise pass above just allowed it.
-    if (collidesWithClearance(target, renderedItems, gap)) {
-      toast.warning('Здесь нельзя разместить — зона отступа другого груза')
-      return
-    }
-    // A lashing point's anchor needs rigging access — cargo can't be
-    // dropped directly on top of one.
-    if (lashingPoints && lashingPoints.length > 0) {
-      const lashingExclusions = lashingPointExclusionRects(lashingPoints, gap)
-      if (collidesPrecisely(target, lashingExclusions, gap)) {
-        toast.warning('Здесь нельзя разместить — рядом точка крепления')
-        return
-      }
-    }
-    if (restrictionZones && restrictionZones.length > 0) {
-      const zoneExclusions = restrictionZoneExclusions(restrictionZones)
-      const hit = zoneExclusions.find((z) => collidesPrecisely(target, [z], gap))
-      if (hit) {
-        toast.warning(`Здесь нельзя — зона ограничения «${hit.name}»`)
-        return
-      }
-    }
-    const category = categoryByItemId?.get(activeStamp.id)
-    if (category && separationRules && separationRules.length > 0) {
-      const othersWithCategory = renderedItems.map((m) => ({
-        x: m.x,
-        y: m.y,
-        width: m.width,
-        length: m.length,
-        category: categoryByItemId?.get(m.itemId),
-      }))
-      if (
-        violatesSeparation(
-          { ...clamped, width: stampDims.w, length: stampDims.l, category },
-          othersWithCategory,
-          separationRules
-        )
-      ) {
-        toast.warning(`Груз «${activeStamp.name}» нельзя разместить здесь — нарушена сепарация груза`)
-        return
-      }
     }
     onPlace({
       id: uuid(),
@@ -2380,6 +2324,40 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     mode === 'manual'
       ? result.placed.map((p) => ({ ...p, manualId: manualPlacements[p.index]?.id }))
       : result.placed
+
+  // The armed cargo where a click would put it, and what it would run into
+  // there (spec 7.1): the click and the shadow ask placementProblem the
+  // same question about the same stacks.
+  const stampTarget = (at: { x: number; y: number }): PlacementTarget => ({
+    x: at.x,
+    y: at.y,
+    width: stampDims?.w ?? 0,
+    length: stampDims?.l ?? 0,
+    rotated: stampTurned,
+    outline: activeStamp?.outline,
+    category: activeStamp ? categoryByItemId?.get(activeStamp.id) : undefined,
+  })
+  const stampSurroundings = (): PlacementSurroundings => ({
+    // In auto mode the packer moves the armed cargo's own stacks it placed
+    // itself out of the way of the new one, so they don't block it; a stack
+    // the user fixed (a pin) does.
+    others: renderedItems
+      .filter(
+        (m) =>
+          !(
+            mode === 'auto' &&
+            m.itemId === activeStamp?.id &&
+            !pinnedPlacements.some((pin) => pin.itemId === m.itemId && Math.abs(pin.x - m.x) < 0.01 && Math.abs(pin.y - m.y) < 0.01)
+          )
+      )
+      .map((m) => ({ ...m, category: categoryByItemId?.get(m.itemId) })),
+    gap,
+    usableOutline,
+    lashingPoints,
+    restrictionZones,
+    separationRules,
+    unitLabel: UNIT_LABEL[unit],
+  })
 
   // Aggregate weight per zone (every placement overlapping it, summed) —
   // NOT any single item's own footprint density. Computed once per render,
@@ -4025,27 +4003,48 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           )
         })()}
 
-        {/* Preview stamp at cursor (either mode, whenever a stamp is armed) */}
+        {/* The shadow of the armed cargo under the cursor (spec 7.1): red,
+            with the reason over it, where a click would be refused. */}
         {activeStamp && stampDims && hoverPos && !dragState && (() => {
           const clamped = clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad)
           const { sx: stampSx, sy: stampSy } = deckToScreen(clamped.x, clamped.y)
+          const tw = screenSpanW(stampDims.w, stampDims.l)
+          const th = screenSpanH(stampDims.w, stampDims.l)
+          const geometric = placementProblem(stampTarget(clamped), stampSurroundings())
+          const problem = stampBlocked ?? (geometric && capitalised(geometric))
+          // The reason in a pill above the shadow, or under it near the
+          // deck's top edge, kept within the drawing sideways.
+          const fontSize = 12 * labelPx
+          const pillH = fontSize + 10 * labelPx
+          const pillW = (problem?.length ?? 0) * fontSize * 0.56 + 16 * labelPx
+          const gapPx = 8 * labelPx
+          const top = stampSy - pillH - gapPx >= offY ? stampSy - pillH - gapPx : stampSy + th + gapPx
+          const left = Math.min(Math.max(stampSx + tw / 2 - pillW / 2, offX), Math.max(offX, offX + w - pillW))
           return (
-          <g pointerEvents="none">
+          <g pointerEvents="none" data-stamp-shadow={problem ? 'blocked' : 'ok'}>
             <FootprintShape
               shape={activeStamp.shape}
               x={stampSx}
               y={stampSy}
-              w={screenSpanW(stampDims.w, stampDims.l)}
-              h={screenSpanH(stampDims.w, stampDims.l)}
-              fill={toneFor(activeStamp.id, activeStamp.color)}
-              fillOpacity={0.5}
-              stroke={CARGO_INK}
+              w={tw}
+              h={th}
+              fill={problem ? palette.danger : toneFor(activeStamp.id, activeStamp.color)}
+              fillOpacity={problem ? 0.25 : 0.5}
+              stroke={problem ? palette.danger : CARGO_INK}
               strokeWidth={1.5}
               strokeDasharray="4 2"
               outline={activeStamp.outline}
               rotated={stampTurned}
               scale={scale}
             />
+            {problem && (
+              <g data-stamp-problem={problem}>
+                <rect x={left} y={top} width={pillW} height={pillH} rx={4 * labelPx} fill={palette.surface} stroke={palette.danger} strokeWidth={1.5 * labelPx} />
+                <text x={left + pillW / 2} y={top + pillH / 2 + fontSize * 0.35} textAnchor="middle" fontSize={fontSize} fontWeight={600} fill={palette.danger} className="select-none">
+                  {problem}
+                </text>
+              </g>
+            )}
           </g>
           )
         })()}

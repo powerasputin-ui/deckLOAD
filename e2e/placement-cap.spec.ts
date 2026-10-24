@@ -25,8 +25,12 @@ test.describe('Click-to-place quantity cap', () => {
 
     // Item 1's stamp stays armed — click empty deck elsewhere to try placing
     // a SECOND unit of item 1, whose own quantity (1) is already satisfied.
+    // The shadow already says so (spec 7.1), and the click is refused.
+    const bgBox = (await background.boundingBox())!
+    await page.mouse.move(bgBox.x + 300, bgBox.y + 200)
+    await expect(page.locator('[data-stamp-problem]')).toHaveAttribute('data-stamp-problem', 'Все 1 ед. груза «Груз 1» уже размещены — увеличьте «всего» в списке')
     await background.click({ position: { x: 300, y: 200 }, force: true })
-    await expect(page.getByText(/Все 1 ед\. груза «Груз 1» уже размещены/)).toBeVisible()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Все 1 ед\. груза «Груз 1» уже размещены/ })).toBeVisible()
     await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
     // Item 2 is unaffected — still places normally.

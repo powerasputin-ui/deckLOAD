@@ -163,6 +163,27 @@ test.describe('Auto-mode selection and pinning', () => {
     expect(pins).toHaveLength(1)
     expect(pins[0].locked).toBe(true)
   })
+
+  // Stage 3, group D: in auto mode the armed cargo's own stacks that the
+  // packer placed don't block it — the packer moves them out of its way —
+  // so «Поставить» can put a unit right where one of them stands.
+  test('«Поставить» in auto mode can put the cargo where the packer had put it', async ({ page }) => {
+    await page.goto('/')
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    await clearCalculation(page)
+    await chooseFromCatalog(page, 'Контейнер 20ft')
+    const stack = page.locator('svg g[data-cargo-placement="true"]')
+    await expect(stack).toHaveCount(1)
+    const auto = (await stack.boundingBox())!
+    await armCargo(page, 'Контейнер 20ft')
+    await page.mouse.move(auto.x + auto.width / 2, auto.y + auto.height / 2)
+    await expect(page.locator('[data-stamp-shadow="ok"]')).toHaveCount(1)
+    await page.mouse.click(auto.x + auto.width / 2, auto.y + auto.height / 2)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
+    await expect(stack).toHaveCount(1)
+    expect(await storedPins(page)).toHaveLength(1)
+  })
 })
 
 test.describe('Manual-mode selection (consistent with auto mode)', () => {

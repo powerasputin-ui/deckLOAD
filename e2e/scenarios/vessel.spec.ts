@@ -168,9 +168,13 @@ test('Сценарий 5: препятствия', async ({ page }) => {
   // mode a pallet from the catalogue is armed for a click.
   await page.getByRole('radio', { name: 'Ручной' }).click()
   await chooseFromCatalog(page, 'Паллета EUR')
+  // Over the zone the shadow is red and says why (spec 7.1); a click there
+  // is refused with the same words.
   const zone = (await deck(page).locator('polygon[data-restriction-zone]').first().boundingBox())!
+  await page.mouse.move(zone.x + zone.width / 2, zone.y + zone.height / 2)
+  await expect(deck(page).locator('[data-stamp-shadow="blocked"] [data-stamp-problem="Препятствие «Кран»"]')).toBeVisible()
   await page.mouse.click(zone.x + zone.width / 2, zone.y + zone.height / 2)
-  await expect(page.getByText('Здесь нельзя — зона ограничения «Кран»')).toBeVisible()
+  await expect(page.getByText('Здесь нельзя — препятствие «Кран»')).toBeVisible()
   await expect(unitsCount(page)).toHaveText(/0\/1 ед\./)
   const after = (await background(page).boundingBox())!
   await background(page).click({ position: { x: after.width - 60, y: after.height - 40 }, force: true })
