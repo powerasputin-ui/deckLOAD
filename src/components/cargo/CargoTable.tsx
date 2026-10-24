@@ -125,6 +125,7 @@ export function CargoTable({
           min={options.min}
           integer={options.integer}
           placeholder={options.placeholder}
+          selectOnFocus
           onClamp={clamped(cell)}
           onCommit={(v) => commit(cell, () => onCommit(v))}
           onClear={options.onClear && (() => commit(cell, options.onClear!))}

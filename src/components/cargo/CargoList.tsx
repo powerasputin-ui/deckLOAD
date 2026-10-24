@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import { NumberField } from '@/components/calculator/NumberField'
@@ -100,9 +100,6 @@ function PlacedCount({ item, units }: { item: CargoItem; units: number }) {
 // «Всего»: a small field — a click selects the number, so typing replaces
 // it, and Enter or leaving the field applies it (spec 2.3: two actions).
 function QuantityField({ item, onCommit }: { item: CargoItem; onCommit: (quantity: number) => void }) {
-  // The click that focused the field would put the caret in place of the
-  // selection on its way up; that one mouseup is skipped.
-  const justFocused = useRef(false)
   return (
     <NumberField
       aria-label={`Всего, ${item.name}`}
@@ -110,14 +107,7 @@ function QuantityField({ item, onCommit }: { item: CargoItem; onCommit: (quantit
       value={item.quantity}
       min={1}
       integer
-      onFocus={(e) => {
-        e.currentTarget.select()
-        justFocused.current = true
-      }}
-      onMouseUp={(e) => {
-        if (justFocused.current) e.preventDefault()
-        justFocused.current = false
-      }}
+      selectOnFocus
       onCommit={onCommit}
       className="h-6 w-12 px-1 text-right text-xs font-medium text-ink tabular-nums"
     />

@@ -223,6 +223,29 @@ describe('NumberField', () => {
     expect(field().value).toBe('')
   })
 
+  // Stage 3 (spec 2.3): a cell of the cargo table and «всего» in the list
+  // change in two actions — a click, then the new number typed over the old.
+  it('with selectOnFocus a click selects the number, and typing replaces it', async () => {
+    const user = userEvent.setup()
+    const commits: Array<number | undefined> = []
+    render(<Harness initial={4} commits={commits} integer min={1} selectOnFocus />)
+
+    await user.click(field())
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 1])
+    await user.keyboard('12{Enter}')
+    expect(commits).toEqual([12])
+  })
+
+  it('without it a click leaves the caret where it lands', async () => {
+    const user = userEvent.setup()
+    const commits: Array<number | undefined> = []
+    render(<Harness initial={4} commits={commits} integer min={1} />)
+
+    await user.click(field())
+    await user.keyboard('{End}2{Enter}')
+    expect(commits).toEqual([42])
+  })
+
   it('shows a value that changed from outside while not editing (undo/redo, reflow)', () => {
     const { rerender } = render(<NumberField aria-label="поле" value={5} onCommit={() => {}} />)
     expect(field().value).toBe('5')

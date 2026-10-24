@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ComponentProps } from 'react'
+import { useRef, useState, type ComponentProps } from 'react'
 import { Input } from '@/components/ui/input'
 import {
   cleanNumberInput,
@@ -27,6 +27,8 @@ export interface NumberFieldProps
   step?: number
   /** Fires when a committed value had to be pulled back to `min` or `max`. */
   onClamp?: (info: { bound: 'min' | 'max'; limit: number; typed: number }) => void
+  /** A click selects the whole number, so what's typed replaces it — a spreadsheet's cell, two actions to change it (spec 2.3). */
+  selectOnFocus?: boolean
 }
 
 // A text input with a draft buffer instead of a controlled `type="number"`.
@@ -44,7 +46,10 @@ export function NumberField({
   max,
   integer,
   step,
+  selectOnFocus,
   onBlur,
+  onFocus,
+  onMouseUp,
   onKeyDown,
   ...inputProps
 }: NumberFieldProps) {
@@ -52,6 +57,9 @@ export function NumberField({
   // changes it from outside is always reflected without any sync effect.
   const [draft, setDraft] = useState<string | null>(null)
   const bounds: NumberInputBounds = { min, max, integer }
+  // The click that focused the field would put the caret in place of the
+  // selection on its way up; with selectOnFocus that one mouseup is skipped.
+  const justFocused = useRef(false)
 
   const commit = () => {
     if (draft === null) return
@@ -84,6 +92,18 @@ export function NumberField({
       onBlur={(e) => {
         commit()
         onBlur?.(e)
+      }}
+      onFocus={(e) => {
+        if (selectOnFocus) {
+          e.currentTarget.select()
+          justFocused.current = true
+        }
+        onFocus?.(e)
+      }}
+      onMouseUp={(e) => {
+        if (justFocused.current) e.preventDefault()
+        justFocused.current = false
+        onMouseUp?.(e)
       }}
       onKeyDown={(e) => {
         onKeyDown?.(e)
