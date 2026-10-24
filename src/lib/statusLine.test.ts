@@ -28,9 +28,13 @@ describe('status line', () => {
     expect(texts({ ...base, tripCount: 5 })).toContain('5 рейсов')
   })
 
-  it('shows GM with its verdict, and marks an estimate', () => {
-    expect(texts({ ...base, gm: { valueM: 2.771, ok: true, estimated: false } })).toContain('GM 2.77 м ✓')
-    expect(texts({ ...base, gm: { valueM: 0.1, ok: false, estimated: true } })).toContain('GM ≈0.10 м ✕')
+  it('shows GM of the worse state with the booklet verdict, and marks an estimate', () => {
+    expect(texts({ ...base, gm: { valueM: 2.771, status: 'ok', estimated: false, state: 'departure' } })).toContain('GM 2.77 м (отход) ✓')
+    expect(texts({ ...base, gm: { valueM: 1.5, status: 'warn', estimated: false, state: 'arrival' } })).toContain('GM 1.50 м (приход) ⚠')
+    expect(texts({ ...base, gm: { valueM: 0.1, status: 'error', estimated: true, state: 'arrival' } })).toContain('GM ≈0.10 м (приход) ✕')
+    const tone = (status: 'ok' | 'warn' | 'error') =>
+      statusItems({ ...base, gm: { valueM: 1, status, estimated: false, state: 'arrival' } }).find((i) => i.id === 'gm')!.tone
+    expect([tone('ok'), tone('warn'), tone('error')]).toEqual([undefined, 'warn', 'danger'])
   })
 
   it('counts the plan\'s ✕ and ⚠, as far as there are any, and names them', () => {
@@ -53,7 +57,7 @@ describe('status line', () => {
 
   it('leads each item to its section', () => {
     const targets = Object.fromEntries(
-      statusItems({ ...base, tripCount: 2, gm: { valueM: 1, ok: true, estimated: false } }).map((i) => [i.id, i.target])
+      statusItems({ ...base, tripCount: 2, gm: { valueM: 1, status: 'ok', estimated: false, state: 'departure' } }).map((i) => [i.id, i.target])
     )
     expect(targets).toEqual({ load: 'placement', weight: 'vessel', units: 'cargo', trips: 'placement', gm: 'checks' })
   })

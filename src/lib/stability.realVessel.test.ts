@@ -28,6 +28,7 @@ import {
   type DeckShipFrame,
 } from './stability'
 import { VESSEL_TEMPLATES } from './vesselTemplates'
+import { limitAt } from './stabilityConditions'
 import { computePipeNest } from './pipeNest'
 
 const kuznetsov = VESSEL_TEMPLATES.find((t) => t.id === 'aleksey-kuznetsov')!
@@ -245,11 +246,12 @@ describe('a real pipe штабель feeds its true stack VCG into the stability
   })
 })
 
-describe('per-vessel minimum GM overrides the generic reference', () => {
-  // A GM of 0.9 m sits in the dangerous band: comfortably above the app's
-  // generic G_METACENTRIC_MIN_SAFE (0.15 m) but well below А. Кузнецов's
-  // real approved minimum (1.220 m). Before minGM existed the app showed a
-  // green PASS here; it must now fail.
+describe('the vessel\'s own minimum GM is the booklet check\'s, not the KN reference\'s', () => {
+  // A GM of 0.9 m sits in the dangerous band: comfortably above the IS
+  // Code's general 0.15 m but well below А. Кузнецов's approved 1.220 m.
+  // The KN reference used to be where that minimum was judged; now the
+  // booklet check judges it (stabilityConditions.ts), and the reference
+  // only ever says what the Code itself requires.
   const gz: GZCurveResult = {
     curve: [
       { heelDeg: 0, GZ: 0 },
@@ -266,17 +268,16 @@ describe('per-vessel minimum GM overrides the generic reference', () => {
   }
   const stability = { GM_fluid: 0.9 } as StabilityResult
 
-  it('PASSES against the generic 0.15 m reference when no vessel minimum is given', () => {
+  it('passes against the general 0.15 m in the KN reference', () => {
     const gm = checkIMOCriteria(gz, stability).find((c) => c.id === 'initial-gm')!
     expect(gm.requiredValue).toBe(G_METACENTRIC_MIN_SAFE)
     expect(gm.pass).toBe(true)
   })
 
-  it('FAILS the same GM once the vessel\'s own approved minimum (1.220 m) is supplied', () => {
-    const gm = checkIMOCriteria(gz, stability, undefined, 1.22).find((c) => c.id === 'initial-gm')!
-    expect(gm.requiredValue).toBe(1.22)
-    expect(gm.pass).toBe(false)
-    expect(gm.description).toContain('ФОРМУЛЯР')
+  it('falls short of the vessel\'s approved minimum at the case\'s draught', () => {
+    const limit = limitAt(kuznetsov.vessel!.limit!, 5.873, 7_456_680, 9.604)
+    expect(limit).toMatchObject({ inRange: true, gmMinM: 1.22 })
+    expect(stability.GM_fluid).toBeLessThan(limit.gmMinM)
   })
 })
 

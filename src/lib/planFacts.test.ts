@@ -131,14 +131,17 @@ describe('gatherPlanFacts', () => {
   describe('stability', () => {
     const kuznetsov = VESSEL_TEMPLATES.find((t) => t.id === 'aleksey-kuznetsov')!
 
-    it('reads each trip with the vessel\'s data', () => {
+    it('reads each trip with the vessel\'s data, by the booklet check', () => {
       const d = deck({ width: 16.9, length: 49.1, vessel: kuznetsov.vessel, shipFrame: kuznetsov.shipFrame })
       const facts = gatherPlanFacts(autoPlan(d, [item({ id: 'box', quantity: 4, weight: 20_000 })]))
       expect(facts.hasVessel).toBe(true)
       const s = facts.trips[0].stability!
-      expect(s.hasCrossCurves).toBe(!!kuznetsov.vessel!.knCurves)
-      expect(typeof s.gmOk).toBe('boolean')
-      expect(s.failedCriteria).toBeGreaterThanOrEqual(0)
+      // The library vessel's hydrostatics are one point, so any other
+      // displacement is read off it as an estimate: a warning, never a tick,
+      // even though the draught (held at that point's) meets its one-row
+      // limit.
+      expect(s.verdict).toBe('warn')
+      expect(s.reasons).toEqual([{ status: 'warn', text: 'Водоизмещение 5200 т вне таблицы гидростатики — числа оценочные' }])
     })
 
     it('has nothing to read without the vessel\'s data', () => {

@@ -1,0 +1,451 @@
+// The booklet check (docs/superpowers/specs/2026-10-24-stability-booklet-
+// check-design.md): every trip loaded at departure and at arrival — with
+// the water trapped in pipe cargo, and ice when the voyage is planned for
+// icing — and judged against the vessel's own limit from its approved
+// stability booklet. Pure functions over stability.ts; the UI computes none
+// of this itself.
+//
+// The verdict never shows a pass the booklet hasn't given: without a limit,
+// GM under the IS Code's general 0.15 m is an error and anything above it a
+// warning, not a tick. The KN-curve criteria (checkIMOCriteria) stay an
+// estimate shown beside it and never change it.
+
+import { isPipeShape, polygonArea, type CargoItem, type CompositionSegment } from './packing'
+import { segmentsOf, stackHeight } from './placementComposition'
+import {
+  buildCargoWeightMoments,
+  cargoMomentArm,
+  catalogInMeters,
+  computeLoadingCondition,
+  computeStabilityResult,
+  G_METACENTRIC_MIN_SAFE,
+  lightshipMoment,
+  placementsInMeters,
+  variableWeightsToMoments,
+  weightsInState,
+  type DeckShipFrame,
+  type LoadingState,
+  type StabilityLimit,
+  type StabilityPlacement,
+  type StabilityResult,
+  type VesselStabilityData,
+  type WeightMoment,
+} from './stability'
+import { toMeters, type Unit } from './units'
+
+export type StabilityVerdict = 'ok' | 'warn' | 'error'
+
+export interface StabilityReason {
+  status: 'warn' | 'error'
+  text: string
+}
+
+// ---- Water trapped in pipe cargo (IS Code B 2.4) ----
+
+export const SEAWATER_T_PER_M3 = 1.025
+
+// The share of a pipe deck cargo's net volume taken as trapped water: 30 %
+// with a freeboard amidships of 0.015 L or less, 10 % at 0.03 L or more,
+// linear between. Without a length there is nothing to scale by, and the
+// larger share stands.
+export function trappedWaterShare(freeboardM: number, lengthM: number): number {
+  if (!(lengthM > 0)) return 0.3
+  const low = 0.015 * lengthM
+  const high = 0.03 * lengthM
+  if (freeboardM <= low) return 0.3
+  if (freeboardM >= high) return 0.1
+  return 0.3 - (0.2 * (freeboardM - low)) / (high - low)
+}
+
+// The space between pipes, per pipe, as a share of OD² × length: the square
+// round each pipe in flat tiers (a nest — pipeNest.ts stacks tiers flat —
+// or one row), the triangle pitch of a pile whose rows sit in the gaps of
+// the row below. Voids at the stack's edges aren't counted.
+const BETWEEN_FLAT = 1 - Math.PI / 4
+const BETWEEN_NESTED = Math.sqrt(3) / 2 - Math.PI / 4
+
+export function isPipeCargo(item: CargoItem): boolean {
+  return (item.shape === 'pipe-nest' && !!item.nest) || isPipeShape(item)
+}
+
+// The water one stack carries: what the transport project states, plus the
+// net volume (inside the pipes and between them) of pipes whose inside
+// diameter is known. Pipe cargo with neither is named in `missing`.
+export interface StackWater {
+  statedKg: number
+  netVolumeM3: number
+  missing: string[]
+}
+
+export function stackWater(
+  p: { itemId: string; layers: number; composition?: CompositionSegment[] },
+  items: CargoItem[],
+  unit: Unit
+): StackWater {
+  const segs = segmentsOf(p)
+  const find = (id: string) => items.find((it) => it.id === id)
+  // A pile is nested only when it holds more than one loose pipe — one
+  // pipe has nothing beside it.
+  const loosePipes = segs.reduce((n, seg) => {
+    const it = find(seg.itemId)
+    return it && isPipeCargo(it) && it.shape !== 'pipe-nest' ? n + seg.layers : n
+  }, 0)
+  const water: StackWater = { statedKg: 0, netVolumeM3: 0, missing: [] }
+  for (const seg of segs) {
+    const it = find(seg.itemId)
+    if (!it || !isPipeCargo(it)) continue
+    if (it.trappedWaterT !== undefined) {
+      water.statedKg += it.trappedWaterT * 1000 * seg.layers
+      continue
+    }
+    if (!it.pipeInnerDiameterMm) {
+      if (!water.missing.includes(it.name)) water.missing.push(it.name)
+      continue
+    }
+    const inner = it.pipeInnerDiameterMm / 1000
+    const nest = it.shape === 'pipe-nest' ? it.nest : undefined
+    const pipes = nest ? nest.pipeCount * seg.layers : seg.layers
+    const od = nest ? nest.pipeOuterDiameterM : toMeters(Math.min(it.width, it.length), unit)
+    const length = nest ? nest.pipeLengthM : toMeters(Math.max(it.width, it.length), unit)
+    const between = nest ? (pipes > 1 ? BETWEEN_FLAT : 0) : loosePipes > 1 ? BETWEEN_NESTED : 0
+    water.netVolumeM3 += pipes * length * ((Math.PI / 4) * inner * inner + between * od * od)
+  }
+  return water
+}
+
+// ---- Ice (the 30 and 7.5 kg/m² allowances) ----
+
+export const ICE_DECK_KG_PER_M2 = 30
+export const ICE_SIDE_KG_PER_M2 = 7.5
+// Rails, booms and rigging: +5 % to the side area, +10 % to its moment.
+const ICE_SIDE_AREA_FACTOR = 1.05
+const ICE_SIDE_MOMENT_FACTOR = 1.1
+
+export interface IceStack {
+  areaM2: number // footprint on the deck
+  topM: number // height of its top above the deck
+  y0M: number // its extent along the deck
+  y1M: number
+  tcgM: number
+  lcgM: number
+}
+
+export interface IceLoad {
+  moments: WeightMoment[]
+  weightKg: number
+  // The vessel's side area or its other exposed decks aren't entered: only
+  // the ice on the cargo deck and the cargo is counted.
+  missingVesselAreas: boolean
+}
+
+export function iceLoad(args: {
+  vessel: VesselStabilityData
+  shipFrame: DeckShipFrame
+  deckForwardIsPositiveY: boolean
+  deckAreaM2: number
+  deckLengthM: number
+  stacks: IceStack[]
+  draftM: number
+}): IceLoad {
+  const { vessel, shipFrame: frame, stacks } = args
+  const p = vessel.particulars
+  const deckHeight = frame.heightAboveBaselineM
+  const moments: WeightMoment[] = []
+  const add = (weightKg: number, vcgM: number, tcgM: number, lcgM: number) => {
+    if (weightKg > 0) moments.push({ weightKg, vcgM, tcgM, lcgM })
+  }
+  // Cargo tops carry the deck's ice where they stand; the rest of the
+  // cargo deck carries it at deck level.
+  for (const s of stacks) add(ICE_DECK_KG_PER_M2 * s.areaM2, deckHeight + s.topM, s.tcgM, s.lcgM)
+  const covered = stacks.reduce((sum, s) => sum + s.areaM2, 0)
+  add(ICE_DECK_KG_PER_M2 * Math.max(0, args.deckAreaM2 - covered), deckHeight, frame.originOffsetFromCenterlineM, frame.originOffsetFromMidshipsM)
+
+  let missingVesselAreas = false
+  if (p.otherExposedDeckAreaM2 === undefined || (p.otherExposedDeckAreaM2 > 0 && p.otherExposedDeckVcgM === undefined)) {
+    missingVesselAreas = true
+  } else if (p.otherExposedDeckAreaM2 > 0) {
+    add(ICE_DECK_KG_PER_M2 * p.otherExposedDeckAreaM2, p.otherExposedDeckVcgM!, 0, p.lightshipLCG)
+  }
+  // Both sides ice up: the side allowance counts twice, symmetric about the
+  // centreline. Its centre's height is given above the waterline.
+  const side = (areaM2: number) => 2 * ICE_SIDE_KG_PER_M2 * ICE_SIDE_AREA_FACTOR * areaM2
+  const leverFactor = ICE_SIDE_MOMENT_FACTOR / ICE_SIDE_AREA_FACTOR
+  if (p.windageAreaM2 === undefined || p.windageLeverM === undefined) missingVesselAreas = true
+  else add(side(p.windageAreaM2), args.draftM + p.windageLeverM * leverFactor, 0, p.lightshipLCG)
+
+  // The cargo's own side: its profile along the deck, the tallest stack at
+  // each point.
+  const profile = cargoProfile(stacks)
+  if (profile.areaM2 > 0) {
+    const fromMid = profile.centroidYM - args.deckLengthM / 2
+    const lcg = frame.originOffsetFromMidshipsM + (args.deckForwardIsPositiveY ? fromMid : -fromMid)
+    add(side(profile.areaM2), deckHeight + profile.centroidZM * leverFactor, frame.originOffsetFromCenterlineM, lcg)
+  }
+  return { moments, weightKg: moments.reduce((sum, m) => sum + m.weightKg, 0), missingVesselAreas }
+}
+
+// Area of the cargo's side seen from abeam, and its centre: along the deck,
+// the height of the tallest stack covering each stretch.
+export function cargoProfile(stacks: { topM: number; y0M: number; y1M: number }[]): { areaM2: number; centroidYM: number; centroidZM: number } {
+  const edges = [...new Set(stacks.flatMap((s) => [s.y0M, s.y1M]))].sort((a, b) => a - b)
+  let area = 0
+  let momentY = 0
+  let momentZ = 0
+  for (let i = 0; i < edges.length - 1; i++) {
+    const a = edges[i]
+    const b = edges[i + 1]
+    const h = Math.max(0, ...stacks.filter((s) => s.y0M <= a && s.y1M >= b).map((s) => s.topM))
+    const strip = h * (b - a)
+    area += strip
+    momentY += strip * (a + b) / 2
+    momentZ += strip * h / 2
+  }
+  return area > 0 ? { areaM2: area, centroidYM: momentY / area, centroidZM: momentZ / area } : { areaM2: 0, centroidYM: 0, centroidZM: 0 }
+}
+
+// ---- Draughts ----
+
+export interface Draughts {
+  meanM: number | null // by the hydrostatic table, at LCF
+  midM: number | null // amidships: what the load line and freeboard are read at
+  foreM: number | null
+  aftM: number | null
+}
+
+// Fore and aft from the trim (fore minus aft, by the head positive — as
+// computeStabilityResult gives it) pivoting on LCF. Without LCF or LBP only
+// the table's draught is known.
+export function draughtsOf(stability: StabilityResult, vessel: VesselStabilityData): Draughts {
+  const mean = stability.draftM
+  const lbp = vessel.particulars.lengthBpp
+  if (mean === null) return { meanM: null, midM: null, foreM: null, aftM: null }
+  if (stability.trimM === null || stability.LCF === undefined || !(lbp > 0)) return { meanM: mean, midM: mean, foreM: null, aftM: null }
+  const lcfFromAft = vessel.particulars.longitudinalOrigin === 'aft-perpendicular' ? stability.LCF : lbp / 2 + stability.LCF
+  const aft = mean - (stability.trimM * lcfFromAft) / lbp
+  const fore = aft + stability.trimM
+  return { meanM: mean, midM: (fore + aft) / 2, foreM: fore, aftM: aft }
+}
+
+// ---- The booklet's limit ----
+
+export interface LimitAt {
+  kind: StabilityLimit['kind']
+  // The draught (m) or displacement (kg) the limit is read at, and the
+  // table's range of it.
+  arg: number
+  range: [number, number]
+  inRange: boolean
+  // The minimum GM it comes to: read off directly, or KM − maximum KG.
+  gmMinM: number
+}
+
+export function limitAt(limit: StabilityLimit, draftM: number, displacementKg: number, KM: number): LimitAt {
+  const rows = [...limit.rows].sort((a, b) => a.arg - b.arg)
+  const arg = limit.kind === 'min-gm-by-draft' ? draftM : displacementKg
+  const lo = rows[0].arg
+  const hi = rows[rows.length - 1].arg
+  const eps = 1e-9 * Math.max(1, Math.abs(arg))
+  const inRange = arg >= lo - eps && arg <= hi + eps
+  let value = arg <= lo ? rows[0].value : rows[rows.length - 1].value
+  for (let i = 0; i < rows.length - 1; i++) {
+    const a = rows[i]
+    const b = rows[i + 1]
+    if (arg >= a.arg && arg <= b.arg) {
+      const span = b.arg - a.arg
+      value = span > 0 ? a.value + ((b.value - a.value) * (arg - a.arg)) / span : a.value
+      break
+    }
+  }
+  return { kind: limit.kind, arg, range: [lo, hi], inRange, gmMinM: limit.kind === 'min-gm-by-draft' ? value : KM - value }
+}
+
+// ---- One state, one trip ----
+
+export interface TripStabilityInput {
+  vessel: VesselStabilityData
+  shipFrame: DeckShipFrame
+  deck: { width: number; length: number; unit: Unit; outline?: { x: number; y: number }[] }
+  deckForwardIsPositiveY: boolean
+  placements: (StabilityPlacement & { itemId: string })[]
+  items: CargoItem[]
+  icing: boolean
+}
+
+export interface StateStability {
+  state: LoadingState
+  stability: StabilityResult
+  draughts: Draughts
+  waterKg: number
+  iceKg: number
+  limit?: LimitAt
+  verdict: StabilityVerdict
+  reasons: StabilityReason[]
+}
+
+const m2 = (v: number) => v.toFixed(2)
+const tonnes = (kg: number) => String(Math.round(kg / 1000))
+
+function evaluateState(input: TripStabilityInput, state: LoadingState): StateStability | null {
+  const vessel: VesselStabilityData = { ...input.vessel, variableWeights: weightsInState(input.vessel, state) }
+  const { shipFrame: frame, deckForwardIsPositiveY: fwd } = input
+  const unit = input.deck.unit
+  const deckW = toMeters(input.deck.width, unit)
+  const deckL = toMeters(input.deck.length, unit)
+  const placementsM = placementsInMeters(input.placements, unit)
+  const itemsM = catalogInMeters(input.items, unit)
+  const lightship = lightshipMoment(vessel)
+  const variable = variableWeightsToMoments(vessel.variableWeights)
+  const cargo = buildCargoWeightMoments(placementsM, deckW, deckL, frame, fwd, itemsM)
+  const load = (extra: WeightMoment[]) => computeStabilityResult(vessel, computeLoadingCondition(lightship, [...variable, ...cargo, ...extra]))
+
+  const stacks = input.placements.map((p, i) => {
+    const pm = placementsM[i]
+    const arm = cargoMomentArm(pm, deckW, deckL, frame, fwd, itemsM)
+    return {
+      water: stackWater(p, input.items, unit),
+      arm,
+      ice: {
+        areaM2: pm.outline && pm.outline.length >= 3 ? polygonArea(pm.outline) : pm.width * pm.length,
+        topM: stackHeight(segmentsOf(pm as { itemId: string; layers: number; composition?: CompositionSegment[] }), itemsM),
+        y0M: pm.y,
+        y1M: pm.y + pm.length,
+        tcgM: arm.tcgM,
+        lcgM: arm.lcgM,
+      } satisfies IceStack,
+    }
+  })
+  const outlineM = input.deck.outline && input.deck.outline.length >= 3 ? input.deck.outline.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) })) : undefined
+  const deckAreaM2 = outlineM ? polygonArea(outlineM) : deckW * deckL
+  const length = vessel.particulars.loadLineLengthM ?? vessel.particulars.lengthBpp
+  const withIce = state === 'arrival' && input.icing
+
+  // The water's share hangs on the freeboard, and the water itself sinks
+  // the ship: repeat until its weight settles.
+  let stability = load([])
+  if (!stability) return null
+  let waterKg = 0
+  let iceKg = 0
+  let ice: IceLoad | null = null
+  for (let pass = 0; pass < 10; pass++) {
+    const draft = draughtsOf(stability, vessel).midM ?? 0
+    const share = trappedWaterShare(frame.heightAboveBaselineM - draft, length)
+    const water = stacks
+      .map((s) => ({ weightKg: s.water.statedKg + s.water.netVolumeM3 * share * SEAWATER_T_PER_M3 * 1000, ...s.arm }))
+      .filter((w) => w.weightKg > 0)
+    ice = withIce
+      ? iceLoad({ vessel, shipFrame: frame, deckForwardIsPositiveY: fwd, deckAreaM2, deckLengthM: deckL, stacks: stacks.map((s) => s.ice), draftM: draft })
+      : null
+    const nextWater = water.reduce((sum, w) => sum + w.weightKg, 0)
+    const nextIce = ice?.weightKg ?? 0
+    const next = load([...water, ...(ice?.moments ?? [])])
+    if (!next) return null
+    stability = next
+    const settled = Math.abs(nextWater - waterKg) < 100 && Math.abs(nextIce - iceKg) < 100
+    waterKg = nextWater
+    iceKg = nextIce
+    if (settled) break
+  }
+
+  const draughts = draughtsOf(stability, vessel)
+  const draftAt = draughts.midM ?? draughts.meanM ?? 0
+  const gm = stability.GM_fluid
+  const errors: string[] = []
+  const warnings: string[] = []
+  if (gm < G_METACENTRIC_MIN_SAFE) errors.push(`GM ${m2(gm)} м ниже общего минимума ${G_METACENTRIC_MIN_SAFE} м`)
+  const limit = vessel.limit ? limitAt(vessel.limit, draftAt, stability.displacementKg, stability.KM) : undefined
+  if (!limit) warnings.push('Предел по формуляру не задан')
+  else if (!limit.inRange)
+    warnings.push(
+      limit.kind === 'min-gm-by-draft'
+        ? `Осадка ${m2(limit.arg)} м вне таблицы предела (${m2(limit.range[0])}–${m2(limit.range[1])} м)`
+        : `Водоизмещение ${tonnes(limit.arg)} т вне таблицы предела (${tonnes(limit.range[0])}–${tonnes(limit.range[1])} т)`
+    )
+  else if (gm < limit.gmMinM)
+    errors.push(
+      `GM ${m2(gm)} м ниже предела ${m2(limit.gmMinM)} м при ${limit.kind === 'min-gm-by-draft' ? `осадке ${m2(limit.arg)} м` : `водоизмещении ${tonnes(limit.arg)} т`}`
+    )
+  const maxDraft = vessel.particulars.maxDraftM
+  if (maxDraft !== undefined && draughts.midM !== null && draughts.midM > maxDraft + 1e-9)
+    errors.push(`Осадка ${m2(draughts.midM)} м больше предельной ${m2(maxDraft)} м по грузовой марке`)
+  if (stability.extrapolated) warnings.push(`Водоизмещение ${tonnes(stability.displacementKg)} т вне таблицы гидростатики — числа оценочные`)
+  if (input.vessel.variableWeights.length === 0 && (input.vessel.arrivalWeights ?? []).length === 0) warnings.push('Танки и запасы не заданы')
+  const missing = [...new Set(stacks.flatMap((s) => s.water.missing))]
+  for (const name of missing) warnings.push(`Вода в трубах «${name}» не учтена: нет внутреннего диаметра`)
+  if (vessel.particulars.loadLineLengthM === undefined && stacks.some((s) => s.water.netVolumeM3 > 0))
+    warnings.push('Длина L по грузовой марке не задана — для воды в трубах взята LBP')
+  if (ice?.missingVesselAreas) warnings.push('Для обледенения не заданы боковая площадь судна или площадь прочих открытых палуб')
+
+  const reasons: StabilityReason[] = [
+    ...errors.map((text) => ({ status: 'error' as const, text })),
+    ...warnings.map((text) => ({ status: 'warn' as const, text })),
+  ]
+  return {
+    state,
+    stability,
+    draughts,
+    waterKg,
+    iceKg,
+    limit,
+    verdict: errors.length > 0 ? 'error' : warnings.length > 0 ? 'warn' : 'ok',
+    reasons,
+  }
+}
+
+export interface TripStabilityResult {
+  departure: StateStability
+  arrival: StateStability
+  verdict: StabilityVerdict
+  // The state the trip is judged by: the worse verdict, then the smaller
+  // margin of GM over its limit.
+  worst: StateStability
+  // Every reason once, with the states that have it.
+  reasons: (StabilityReason & { states: LoadingState[] })[]
+  // Arrival has no tanks of its own and no ice: it is departure again.
+  arrivalSameAsDeparture: boolean
+}
+
+const RANK: Record<StabilityVerdict, number> = { ok: 0, warn: 1, error: 2 }
+
+// GM over what it's judged against: the booklet's minimum where the table
+// covers the draught, the general 0.15 m otherwise.
+export function gmMargin(s: StateStability): number {
+  return s.stability.GM_fluid - (s.limit?.inRange ? s.limit.gmMinM : G_METACENTRIC_MIN_SAFE)
+}
+
+export function evaluateTripStability(input: TripStabilityInput): TripStabilityResult | undefined {
+  const departure = evaluateState(input, 'departure')
+  const arrival = evaluateState(input, 'arrival')
+  if (!departure || !arrival) return undefined
+  const worst =
+    RANK[arrival.verdict] > RANK[departure.verdict] ||
+    (RANK[arrival.verdict] === RANK[departure.verdict] && gmMargin(arrival) < gmMargin(departure))
+      ? arrival
+      : departure
+  const reasons: TripStabilityResult['reasons'] = []
+  for (const s of [departure, arrival]) {
+    for (const r of s.reasons) {
+      const same = reasons.find((x) => x.status === r.status && x.text === r.text)
+      if (same) same.states.push(s.state)
+      else reasons.push({ ...r, states: [s.state] })
+    }
+  }
+  reasons.sort((a, b) => RANK[b.status] - RANK[a.status])
+  return {
+    departure,
+    arrival,
+    verdict: worst.verdict,
+    worst,
+    reasons,
+    arrivalSameAsDeparture: !input.vessel.arrivalWeights && !input.icing,
+  }
+}
+
+export const STATE_LABEL: Record<LoadingState, string> = { departure: 'Отход', arrival: 'Приход' }
+
+// A reason as one line: «Приход: …» when only one state has it. The
+// reason's first word goes lower case unless it's an abbreviation (GM).
+export function reasonText(r: { text: string; states: LoadingState[] }): string {
+  if (r.states.length !== 1) return r.text
+  const abbreviation = r.text.length > 1 && r.text[1] !== r.text[1].toLowerCase()
+  return `${STATE_LABEL[r.states[0]]}: ${abbreviation ? r.text : r.text[0].toLowerCase() + r.text.slice(1)}`
+}

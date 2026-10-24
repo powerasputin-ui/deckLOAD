@@ -142,32 +142,36 @@ describe('buildChecks', () => {
   })
 
   describe('stability', () => {
-    const fine = { gmOk: true, failedCriteria: 0, estimated: false, hasCrossCurves: true }
+    const fine = { verdict: 'ok' as const, reasons: [] }
+    const noLimit = { verdict: 'warn' as const, reasons: [{ status: 'warn' as const, text: 'Предел по формуляру не задан' }] }
 
     it('needs the vessel\'s data and its hydrostatics', () => {
       expect(check(facts({ hasVessel: true }), 'stability')).toMatchObject({ status: 'none', detail: 'Нет гидростатики судна' })
       expect(check(facts({ hasVessel: true, trips: [trip({ stability: fine })] }), 'stability')).toMatchObject({
         status: 'ok',
-        detail: 'Критерии IMO выполнены',
+        detail: 'Выполнено по формуляру',
       })
     })
 
-    it('is an error when GM is below the minimum or a criterion fails on any trip', () => {
-      const trips = [trip({ stability: fine }), trip({ stability: { ...fine, gmOk: false, failedCriteria: 1 } })]
-      expect(check(facts({ hasVessel: true, trips }), 'stability')).toMatchObject({
+    it('is an error when any trip fails the booklet check, naming why and where', () => {
+      const low = {
+        verdict: 'error' as const,
+        reasons: [
+          { status: 'error' as const, text: 'Приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м' },
+          { status: 'warn' as const, text: 'Танки и запасы не заданы' },
+        ],
+      }
+      expect(check(facts({ hasVessel: true, trips: [trip({ stability: fine }), trip({ stability: low })] }), 'stability')).toMatchObject({
         status: 'error',
-        detail: 'GM ниже минимума (рейс 2)',
+        detail: 'Приход: GM 1.12 м ниже предела 1.30 м при осадке 5.90 м (рейс 2)',
       })
-      expect(
-        check(facts({ hasVessel: true, trips: [trip({ stability: { ...fine, failedCriteria: 2 } })] }), 'stability')
-      ).toMatchObject({ status: 'error', detail: 'Не выполнен критерий IMO' })
     })
 
-    it('warns when the numbers are an estimate or the KN curves are missing', () => {
-      const trips = [trip({ stability: { ...fine, estimated: true, hasCrossCurves: false } })]
+    it('warns once for a reason every trip shares, with the trips', () => {
+      const trips = [trip({ stability: noLimit }), trip({ stability: noLimit })]
       expect(check(facts({ hasVessel: true, trips }), 'stability')).toMatchObject({
         status: 'warn',
-        detail: 'Оценка: числа вне таблиц судна · Нет кривых KN — проверена только GM',
+        detail: 'Предел по формуляру не задан (рейсы 1, 2)',
       })
     })
   })

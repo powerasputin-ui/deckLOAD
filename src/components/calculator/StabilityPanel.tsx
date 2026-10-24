@@ -135,7 +135,7 @@ export function StabilityPanel({ result, deckWidth, deckLength, unit, vessel, sh
   const gz = stability ? computeGZCurve(vessel, loading) : null
   const downfloodingAngleDeg = vessel.particulars.downfloodingAngleDeg
   const minGM = singleFigureMinGM(vessel)
-  const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : null
+  const criteria = gz && stability ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, vessel.particulars.criteriaSet) : null
   const hasFreeSurfaceData = vessel.variableWeights.some((w) => (w.freeSurfaceMomentTm ?? 0) !== 0)
   const missingWeightCount = countMissingWeightPlacements(result.placed)
 

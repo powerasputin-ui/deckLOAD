@@ -25,16 +25,13 @@ export interface Check {
   target: SectionId
 }
 
-// One trip's stability; a trip has none when the vessel's data can't give it
-// (no hydrostatics).
+// One trip's stability by the booklet check (stabilityConditions.ts); a
+// trip has none when the vessel's data can't give it (no hydrostatics).
 export interface TripStability {
-  // GM with the free-surface correction is at least the vessel's minimum.
-  gmOk: boolean
-  // IMO IS Code 2008 criteria not met. Without KN curves only GM is judged.
-  failedCriteria: number
-  // Read outside the vessel's tables: the numbers are an estimate.
-  estimated: boolean
-  hasCrossCurves: boolean
+  verdict: 'ok' | 'warn' | 'error'
+  // The reasons for ✕ and ⚠, one line each: «Приход: …» when only one of the
+  // two states has it.
+  reasons: { status: 'warn' | 'error'; text: string }[]
 }
 
 export interface TripFacts {
@@ -168,26 +165,17 @@ export function buildChecks(f: PlanFacts): Check[] {
   {
     const base = { id: 'stability' as const, title: 'Остойчивость', target: 'checks' as const }
     const judged = f.trips.filter((t) => t.stability)
-    const lowGm = tripsWhere((t) => !!t.stability && !t.stability.gmOk)
-    const failed = tripsWhere((t) => !!t.stability && (!t.stability.gmOk || t.stability.failedCriteria > 0))
+    const worst = judged.some((t) => t.stability!.verdict === 'error') ? 'error' : judged.some((t) => t.stability!.verdict === 'warn') ? 'warn' : 'ok'
     if (!f.hasVessel) checks.push({ ...base, status: 'none', detail: 'Нет данных судна' })
     else if (judged.length === 0) checks.push({ ...base, status: 'none', detail: 'Нет гидростатики судна' })
-    else if (failed.length > 0)
-      checks.push({
-        ...base,
-        status: 'error',
-        detail: `${lowGm.length > 0 ? 'GM ниже минимума' : 'Не выполнен критерий IMO'}${onTrips(failed)}`,
-      })
+    else if (worst === 'ok') checks.push({ ...base, status: 'ok', detail: 'Выполнено по формуляру' })
     else {
-      const notes = [
-        judged.some((t) => t.stability!.estimated) && 'Оценка: числа вне таблиц судна',
-        judged.some((t) => !t.stability!.hasCrossCurves) && 'Нет кривых KN — проверена только GM',
-      ].filter((n): n is string => !!n)
-      checks.push(
-        notes.length > 0
-          ? { ...base, status: 'warn', detail: notes.join(' · ') }
-          : { ...base, status: 'ok', detail: 'Критерии IMO выполнены' }
-      )
+      // The same reason on several trips once, with the trips it's on.
+      const onWhich = new Map<string, number[]>()
+      f.trips.forEach((t, i) => {
+        for (const r of t.stability?.reasons ?? []) if (r.status === worst) onWhich.set(r.text, [...(onWhich.get(r.text) ?? []), i + 1])
+      })
+      checks.push({ ...base, status: worst, detail: [...onWhich].map(([text, trips]) => `${text}${onTrips(trips)}`).join(' · ') })
     }
   }
 

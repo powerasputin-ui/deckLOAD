@@ -297,35 +297,85 @@ function footprintCenter(p: {
   return { x: p.x + p.width / 2, y: p.y + p.length / 2 }
 }
 
+// What the stability arithmetic reads of a placement.
+export interface StabilityPlacement {
+  // Needed only to resolve a composed placement's segments (segmentsOf's
+  // implicit-singleton fallback, which never actually runs when
+  // `composition` is set — see the composablePlacement helper below).
+  // Optional so every pre-Round-14 test fixture (plain {x,y,...} objects
+  // with no itemId) keeps compiling unchanged.
+  itemId?: string
+  x: number
+  y: number
+  width: number
+  length: number
+  height: number
+  layers: number
+  weight?: number
+  rotated?: boolean
+  outline?: { x: number; y: number }[]
+  stabilityOverride?: StabilityOverride
+  // Structurally matches (but doesn't import) packing.ts's PipeNestSpec —
+  // only the one number this module actually needs.
+  nest?: { vcgAboveDeckM: number }
+  // Round 14: present ONLY on a placement produced by a cross-item merge
+  // (see CompositionSegment's own doc comment in packing.ts). When set,
+  // this placement's VCG/TCG/LCG/weight are derived per-segment via
+  // placementComposition.ts instead of this placement's own flat
+  // height/weight/stabilityOverride, which for a composed placement are
+  // only a backward-compatible AVERAGE (see PlacedItem.composition).
+  composition?: CompositionSegment[]
+}
+
+// `composition` is the only thing ever consulted for a composed
+// placement's arithmetic (segmentsOf ignores itemId/layers whenever
+// `composition` is set) — the `?? ''`/`?? 0` fallbacks below exist purely
+// to satisfy ComposablePlacement's required fields and are never actually
+// read in that branch.
+const composable = (p: { itemId?: string; layers: number; composition?: CompositionSegment[] }) => ({
+  itemId: p.itemId ?? '',
+  layers: p.layers,
+  composition: p.composition,
+})
+
+// Where a placement's weight acts on the ship, in metres: the arm alone,
+// so whatever rides with the stack (the water trapped in pipes) can act at
+// the same point.
+export function cargoMomentArm(
+  p: StabilityPlacement,
+  deckWidth: number,
+  deckLength: number,
+  shipFrame: DeckShipFrame,
+  deckForwardIsPositiveY: boolean,
+  items: CompositionCatalogItem[] = []
+): { vcgM: number; tcgM: number; lcgM: number } {
+  const center = footprintCenter(p)
+  const tcgAuto = shipFrame.originOffsetFromCenterlineM + (center.x - deckWidth / 2)
+  // Deck-local y grows "down" the deck rectangle (toward larger y); the
+  // ship's own +fwd direction is a separate, explicit choice, since
+  // there is no universal convention tying the two together.
+  const alongDeckFromMid = center.y - deckLength / 2
+  const lcgAuto = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
+  // Composed: per-segment weighted VCG/TCG/LCG-offset via
+  // placementComposition.ts (mathematically exact for ship-level moment
+  // summation — see placementTotalVCG's own doc comment, and the
+  // explicit user requirement to branch here rather than inject a fake
+  // stabilityOverride). Uncomposed: unchanged single computeItemVCG call.
+  const vcgM = shipFrame.heightAboveBaselineM + (p.composition
+    ? placementTotalVCG(composable(p), items)
+    : computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM }))
+  // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
+  // (position-derived) arm, not an absolute value — unlike
+  // vcgAboveDeckM, TCG/LCG move every time the item is dragged, so an
+  // absolute override would silently detach from the item on the next
+  // move. An offset stays correct relative to wherever the item is now.
+  const tcgM = tcgAuto + (p.composition ? placementTotalTCGOffset(composable(p), items) : (p.stabilityOverride?.tcgOffsetM ?? 0))
+  const lcgM = lcgAuto + (p.composition ? placementTotalLCGOffset(composable(p), items) : (p.stabilityOverride?.lcgOffsetM ?? 0))
+  return { vcgM, tcgM, lcgM }
+}
+
 export function buildCargoWeightMoments(
-  placements: {
-    // Needed only to resolve a composed placement's segments (segmentsOf's
-    // implicit-singleton fallback, which never actually runs when
-    // `composition` is set — see the composablePlacement helper below).
-    // Optional so every pre-Round-14 test fixture (plain {x,y,...} objects
-    // with no itemId) keeps compiling unchanged.
-    itemId?: string
-    x: number
-    y: number
-    width: number
-    length: number
-    height: number
-    layers: number
-    weight?: number
-    rotated?: boolean
-    outline?: { x: number; y: number }[]
-    stabilityOverride?: StabilityOverride
-    // Structurally matches (but doesn't import) packing.ts's PipeNestSpec —
-    // only the one number this module actually needs.
-    nest?: { vcgAboveDeckM: number }
-    // Round 14: present ONLY on a placement produced by a cross-item merge
-    // (see CompositionSegment's own doc comment in packing.ts). When set,
-    // this placement's VCG/TCG/LCG/weight are derived per-segment via
-    // placementComposition.ts instead of this placement's own flat
-    // height/weight/stabilityOverride, which for a composed placement are
-    // only a backward-compatible AVERAGE (see PlacedItem.composition).
-    composition?: CompositionSegment[]
-  }[],
+  placements: StabilityPlacement[],
   deckWidth: number,
   deckLength: number,
   shipFrame: DeckShipFrame,
@@ -337,41 +387,9 @@ export function buildCargoWeightMoments(
   // and behaving identically (no placement it passes has `.composition` set).
   items: CompositionCatalogItem[] = []
 ): WeightMoment[] {
-  // `composition` is the only thing ever consulted for a composed
-  // placement's arithmetic (segmentsOf ignores itemId/layers whenever
-  // `composition` is set) — the `?? ''`/`?? 0` fallbacks below exist purely
-  // to satisfy ComposablePlacement's required fields and are never actually
-  // read in that branch.
-  const composable = (p: { itemId?: string; layers: number; composition?: CompositionSegment[] }) => ({
-    itemId: p.itemId ?? '',
-    layers: p.layers,
-    composition: p.composition,
-  })
   return placements
     .filter((p) => (p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0)) > 0)
     .map((p) => {
-      const center = footprintCenter(p)
-      const tcgAuto = shipFrame.originOffsetFromCenterlineM + (center.x - deckWidth / 2)
-      // Deck-local y grows "down" the deck rectangle (toward larger y); the
-      // ship's own +fwd direction is a separate, explicit choice, since
-      // there is no universal convention tying the two together.
-      const alongDeckFromMid = center.y - deckLength / 2
-      const lcgAuto = shipFrame.originOffsetFromMidshipsM + (deckForwardIsPositiveY ? alongDeckFromMid : -alongDeckFromMid)
-      // Composed: per-segment weighted VCG/TCG/LCG-offset via
-      // placementComposition.ts (mathematically exact for ship-level moment
-      // summation — see placementTotalVCG's own doc comment, and the
-      // explicit user requirement to branch here rather than inject a fake
-      // stabilityOverride). Uncomposed: unchanged single computeItemVCG call.
-      const vcgM = shipFrame.heightAboveBaselineM + (p.composition
-        ? placementTotalVCG(composable(p), items)
-        : computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM }))
-      // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
-      // (position-derived) arm, not an absolute value — unlike
-      // vcgAboveDeckM, TCG/LCG move every time the item is dragged, so an
-      // absolute override would silently detach from the item on the next
-      // move. An offset stays correct relative to wherever the item is now.
-      const tcgM = tcgAuto + (p.composition ? placementTotalTCGOffset(composable(p), items) : (p.stabilityOverride?.tcgOffsetM ?? 0))
-      const lcgM = lcgAuto + (p.composition ? placementTotalLCGOffset(composable(p), items) : (p.stabilityOverride?.lcgOffsetM ?? 0))
       // `weight` on a placement is the PER-UNIT weight and `layers` is how
       // many units share this one footprint (packing.ts writes
       // `weight: item.weight` alongside `layers: unitsInStack`). Every other
@@ -381,7 +399,7 @@ export function buildCargoWeightMoments(
       // displacement, KG, list and trim: the load came out UNDERstated,
       // which makes the vessel look more stable than it is.
       const weightKg = p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0) * Math.max(1, p.layers ?? 1)
-      return { weightKg, vcgM, tcgM, lcgM }
+      return { weightKg, ...cargoMomentArm(p, deckWidth, deckLength, shipFrame, deckForwardIsPositiveY, items) }
     })
 }
 
@@ -396,7 +414,7 @@ export function countMissingWeightPlacements(placements: { weight?: number }[]):
   return placements.filter((p) => !((p.weight ?? 0) > 0)).length
 }
 
-function variableWeightsToMoments(items: VariableWeightItem[]): WeightMoment[] {
+export function variableWeightsToMoments(items: VariableWeightItem[]): WeightMoment[] {
   return items
     .filter((w) => w.weightKg > 0)
     .map((w) => ({ weightKg: w.weightKg, vcgM: w.vcgM, tcgM: w.tcgM, lcgM: w.lcgM }))
@@ -417,26 +435,48 @@ function stabilityOverrideToMeters(o: StabilityOverride | undefined, unit: Unit)
   )
 }
 
+export function lightshipMoment(vessel: VesselStabilityData): WeightMoment {
+  return {
+    weightKg: vessel.particulars.lightshipWeightKg,
+    vcgM: vessel.particulars.lightshipKG,
+    tcgM: vessel.particulars.lightshipTCG,
+    lcgM: vessel.particulars.lightshipLCG,
+  }
+}
+
+// Placements and the catalog in metres — see buildLoadingConditionFromPlacements's
+// `unit` param below for why every stability calculation converts first.
+export function placementsInMeters<P extends StabilityPlacement>(placements: P[], unit: Unit): P[] {
+  if (unit === 'm') return placements
+  return placements.map((p) => ({
+    ...p,
+    x: toMeters(p.x, unit),
+    y: toMeters(p.y, unit),
+    width: toMeters(p.width, unit),
+    length: toMeters(p.length, unit),
+    height: toMeters(p.height, unit),
+    outline: p.outline?.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) })),
+    stabilityOverride: stabilityOverrideToMeters(p.stabilityOverride, unit),
+    // nest.vcgAboveDeckM is computed by pipeNest.ts in real metres
+    // throughout (independent of deck display unit) — left as-is.
+  }))
+}
+
+export function catalogInMeters<I extends CompositionCatalogItem>(items: I[], unit: Unit): I[] {
+  if (unit === 'm') return items
+  return items.map((it) => ({
+    ...it,
+    height: toMeters(it.height, unit),
+    stabilityOverride: stabilityOverrideToMeters(it.stabilityOverride, unit),
+  }))
+}
+
 export function buildLoadingConditionFromPlacements(
   vessel: VesselStabilityData,
   shipFrame: DeckShipFrame,
   deck: { width: number; length: number },
   deckForwardIsPositiveY: boolean,
-  placements: {
-    itemId?: string
-    x: number
-    y: number
-    width: number
-    length: number
-    height: number
-    layers: number
-    weight?: number
-    rotated?: boolean
-    outline?: { x: number; y: number }[]
-    stabilityOverride?: StabilityOverride
-    nest?: { vcgAboveDeckM: number }
-    composition?: CompositionSegment[]
-  }[],
+  placements: StabilityPlacement[],
   // The deck's own unit of display (`deck.unit` in the store) — deck
   // dimensions and every placement's x/y/width/length/height/outline are
   // stored in THIS unit (see store/calculator.ts's setUnit, which converts
@@ -456,39 +496,10 @@ export function buildLoadingConditionFromPlacements(
   // exactly like the placements (only `weight`, in kg, is unit-free).
   items: CompositionCatalogItem[] = []
 ): LoadingCondition {
-  const lightship: WeightMoment = {
-    weightKg: vessel.particulars.lightshipWeightKg,
-    vcgM: vessel.particulars.lightshipKG,
-    tcgM: vessel.particulars.lightshipTCG,
-    lcgM: vessel.particulars.lightshipLCG,
-  }
   const deckM = { width: toMeters(deck.width, unit), length: toMeters(deck.length, unit) }
-  const placementsM =
-    unit === 'm'
-      ? placements
-      : placements.map((p) => ({
-          ...p,
-          x: toMeters(p.x, unit),
-          y: toMeters(p.y, unit),
-          width: toMeters(p.width, unit),
-          length: toMeters(p.length, unit),
-          height: toMeters(p.height, unit),
-          outline: p.outline?.map((pt) => ({ x: toMeters(pt.x, unit), y: toMeters(pt.y, unit) })),
-          stabilityOverride: stabilityOverrideToMeters(p.stabilityOverride, unit),
-          // nest.vcgAboveDeckM is computed by pipeNest.ts in real metres
-          // throughout (independent of deck display unit) — left as-is.
-        }))
-  const itemsM =
-    unit === 'm'
-      ? items
-      : items.map((it) => ({
-          ...it,
-          height: toMeters(it.height, unit),
-          stabilityOverride: stabilityOverrideToMeters(it.stabilityOverride, unit),
-        }))
-  const cargo = buildCargoWeightMoments(placementsM, deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY, itemsM)
+  const cargo = buildCargoWeightMoments(placementsInMeters(placements, unit), deckM.width, deckM.length, shipFrame, deckForwardIsPositiveY, catalogInMeters(items, unit))
   const variable = variableWeightsToMoments(vessel.variableWeights)
-  return computeLoadingCondition(lightship, [...variable, ...cargo])
+  return computeLoadingCondition(lightshipMoment(vessel), [...variable, ...cargo])
 }
 
 // FSC (m) = ΣFSM(t·m) / Displacement(t) — standard free-surface correction.
@@ -598,6 +609,9 @@ export interface StabilityResult {
   trimDirection: 'by-head' | 'by-stern' | 'even' | null
   extrapolated: boolean
   hasCrossCurves: boolean
+  // Longitudinal centre of flotation at this displacement, on the same axis
+  // as LCB (longitudinalOrigin) — what the draughts fore and aft pivot on.
+  LCF?: number
 }
 
 export function computeStabilityResult(
@@ -642,6 +656,7 @@ export function computeStabilityResult(
     trimDirection,
     extrapolated: hydro.extrapolated,
     hasCrossCurves: !!vessel.knCurves,
+    LCF: hydro.LCF,
   }
 }
 
@@ -793,19 +808,36 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
   // even when the initial-GM criterion elsewhere correctly failed on it.
   const fsc = computeFreeSurfaceCorrection(vessel.variableWeights, loading.totalDisplacementKg)
   const effectiveKG = loading.KG + fsc
+  // A centre of gravity off the centreline shortens every righting arm by
+  // TCG·cos θ toward the side it lies on — the side the ship lists to and
+  // the worse one. Without it a listed ship read as upright, its arms and
+  // areas overstated. GZ(0°) is then −|TCG|, not 0, and the areas below are
+  // taken from 0°, the negative part included — on the safe side.
+  const tcg = Math.abs(loading.overallTCG)
   const curve: GZPoint[] = kn.headingAngles.map((heelDeg, idx) => {
     const KN = interpolateKN(kn, loading.totalDisplacementKg, idx)
-    const GZ = KN - effectiveKG * Math.sin((heelDeg * Math.PI) / 180)
+    const rad = (heelDeg * Math.PI) / 180
+    const GZ = KN - effectiveKG * Math.sin(rad) - tcg * Math.cos(rad)
     return { heelDeg, GZ }
   })
 
   let maxGZ = -Infinity
   let angleOfMaxGZ = 0
-  for (const p of curve) {
+  let peak = 0
+  curve.forEach((p, i) => {
     if (p.GZ > maxGZ) {
       maxGZ = p.GZ
       angleOfMaxGZ = p.heelDeg
+      peak = i
     }
+  })
+  // KN tables come every 10° or so, and the peak rarely sits on a node: the
+  // vertex of the parabola through the highest node and its two neighbours
+  // places it — the «≥ 25°» criterion is judged on that angle.
+  const vertex = peak > 0 && peak < curve.length - 1 ? parabolaVertex(curve[peak - 1], curve[peak], curve[peak + 1]) : null
+  if (vertex) {
+    maxGZ = vertex.GZ
+    angleOfMaxGZ = vertex.heelDeg
   }
 
   // Angle of vanishing stability: first angle (past the max) where GZ
@@ -814,13 +846,13 @@ export function computeGZCurve(vessel: VesselStabilityData, loading: LoadingCond
   // the tabulated angle range — genuinely "still positive throughout what
   // was tabulated," a reassuring result.
   //
-  // GZ(0°) is always exactly 0 by construction (KN(0°)=0, sin(0°)=0), so a
-  // vessel with NO positive righting arm anywhere (maxGZ <= 0 — already
-  // unstable at upright) would otherwise fall through this loop's `a.GZ >
-  // 0` check and ALSO come out as null — collapsing two opposite physical
-  // situations ("never vanishes because it's always fine" vs. "already
-  // vanished because it was never positive") into the same missing value.
-  // Report that case explicitly as 0deg instead.
+  // GZ(0°) is never positive (−|TCG|, see above), so a vessel with NO
+  // positive righting arm anywhere (maxGZ <= 0 — already unstable at
+  // upright) would otherwise fall through this loop's `a.GZ > 0` check and
+  // ALSO come out as null — collapsing two opposite physical situations
+  // ("never vanishes because it's always fine" vs. "already vanished
+  // because it was never positive") into the same missing value. Report
+  // that case explicitly as 0deg instead.
   let angleOfVanishingStability: number | null = maxGZ <= 0 ? 0 : null
   for (let i = 0; maxGZ > 0 && i < curve.length - 1; i++) {
     const a = curve[i]
@@ -862,93 +894,90 @@ export interface StabilityCriterion {
   pass: boolean
 }
 
-// IMO IS Code 2008, Part A, Chapter 2 general criteria — the weather
-// criterion (§2.3) is deliberately NOT included here, see the module-level
-// comment.
+// The KN-curve reference: the criteria of IS Code 2008 part A 2.2, or the
+// equivalent ones part B 2.4.5 gives supply vessels whose hull makes 2.2
+// impracticable. An estimate from the entered KN curves, never the verdict
+// — that is the booklet's limit (stabilityConditions.ts). The weather
+// criterion (2.3) is not here, see the module-level comment.
 //
-// downfloodingAngleDeg (optional): IS Code 2008 п. 2.2.1 requires
-// substituting the vessel's actual downflooding angle for the standard
-// 30°/40° area boundaries whenever it is SMALLER — a lower real
-// downflooding angle means area credited beyond it is crediting righting
-// arm the ship can no longer actually rely on (water is already entering
-// the hull). undefined preserves today's behavior (fixed 30°/40°). This
-// substitution applies ONLY to the three area criteria (2.2.1) — the
-// GZ≥0.20m-at-30° (2.2.2) and angle-of-max-GZ≥25° (2.2.3) criteria are NOT
-// downflooding-adjusted by the Code, so they're left untouched.
+// downfloodingAngleDeg (optional): by 2.2.1 the angle of downflooding
+// replaces 40° as the upper bound of the areas when it is smaller — area
+// past it credits righting arm the ship no longer has, water already
+// entering. Below 30° it bounds the 0–30° area too: the Code assumes it
+// never comes that low, and crediting area past it would be the same false
+// pass. The GZ and angle criteria keep their angles.
 export function checkIMOCriteria(
   gz: GZCurveResult,
   stability: StabilityResult,
   downfloodingAngleDeg?: number,
-  // THIS vessel's own approved minimum GM (VesselParticulars.minGM). When
-  // given it replaces the generic G_METACENTRIC_MIN_SAFE in the initial-GM
-  // criterion — see that field's own comment for why that matters.
-  minGM?: number
+  criteriaSet: 'is-code-a' | 'osv-b245' = 'is-code-a'
 ): StabilityCriterion[] {
-  const results: StabilityCriterion[] = []
-  const boundary30 = downfloodingAngleDeg !== undefined ? Math.min(30, downfloodingAngleDeg) : 30
-  const boundary40 = downfloodingAngleDeg !== undefined ? Math.min(40, downfloodingAngleDeg) : 40
-  // Reuse the curve's own precomputed 0/30/40 areas when the standard
-  // boundaries apply unchanged (avoids recomputation on the common path);
-  // recompute from the raw curve only when downflooding actually clips a
-  // boundary below its standard value.
-  const areaUnder30 = boundary30 === 30 ? gz.areaUnder30Deg : integrateArea(gz.curve, 0, boundary30)
-  const areaUnder40 = boundary40 === 40 ? gz.areaUnder40Deg : integrateArea(gz.curve, 0, boundary40)
-  const area30to40 = boundary30 === 30 && boundary40 === 40 ? gz.area30to40 : integrateArea(gz.curve, boundary30, boundary40)
+  const upper = downfloodingAngleDeg !== undefined ? Math.min(40, downfloodingAngleDeg) : 40
+  const lower = Math.min(30, upper)
+  const areaTo = (deg: number) => integrateArea(gz.curve, 0, deg)
+  const area30toUpper = integrateArea(gz.curve, lower, upper)
+  // «At an angle of heel equal to or greater than 30°»: the largest arm from
+  // 30° on, not the arm at exactly 30°.
+  const gzFrom30 = Math.max(interpolateGZAt(gz.curve, 30), ...gz.curve.filter((p) => p.heelDeg > 30).map((p) => p.GZ))
+  const angleMax = gz.angleOfMaxGZ
+  const criterion = (id: string, description: string, requiredValue: number, actualValue: number, unit: string): StabilityCriterion => ({
+    id,
+    description,
+    requiredValue,
+    actualValue,
+    unit,
+    pass: actualValue >= requiredValue,
+  })
+  const shared = [
+    criterion('area-30-40', `Площадь под кривой GZ ${lower}°–${upper}°`, 0.03, area30toUpper, 'м·рад'),
+    criterion('gz-max-at-30', 'GZ ≥ 0.20 м при угле крена ≥ 30°', 0.2, gzFrom30, 'м'),
+  ]
+  const initialGm = criterion(
+    'initial-gm',
+    `Начальная GM (с поправкой на своб. поверхность) ≥ ${G_METACENTRIC_MIN_SAFE} м`,
+    G_METACENTRIC_MIN_SAFE,
+    stability.GM_fluid,
+    'м'
+  )
+  if (criteriaSet === 'osv-b245') {
+    // 2.4.5.2.1: the area up to the angle of the maximum, its requirement
+    // moving linearly from 0.070 m·rad at 15° to 0.055 m·rad at 30°.
+    const areaUpTo = Math.min(30, Math.max(15, angleMax))
+    const areaRequired = areaUpTo >= 30 ? 0.055 : areaUpTo <= 15 ? 0.07 : 0.055 + 0.001 * (30 - areaUpTo)
+    return [
+      criterion('area-to-max', `Площадь под кривой GZ до ${fmtAngle(areaUpTo)}° (IS Code, ч. B, 2.4.5)`, areaRequired, areaTo(areaUpTo), 'м·рад'),
+      ...shared.map((c) => ({ ...c, description: `${c.description} (IS Code, ч. B, 2.4.5)` })),
+      criterion('angle-of-max-gz', 'Угол максимума GZ ≥ 15° (IS Code, ч. B, 2.4.5)', 15, angleMax, '°'),
+      { ...initialGm, description: `${initialGm.description} (IS Code, ч. B, 2.4.5)` },
+    ]
+  }
+  return [
+    criterion('area-0-30', `Площадь под кривой GZ до ${lower}° (IS Code 2008, п. 2.2.1)`, 0.055, areaTo(lower), 'м·рад'),
+    { ...shared[0], description: `${shared[0].description} (IS Code 2008, п. 2.2.1)` },
+    criterion('area-0-40', `Площадь под кривой GZ до ${upper}° (IS Code 2008, п. 2.2.1)`, 0.09, areaTo(upper), 'м·рад'),
+    { ...shared[1], description: `${shared[1].description} (IS Code 2008, п. 2.2.2)` },
+    criterion('angle-of-max-gz', 'Угол максимума GZ ≥ 25° (IS Code 2008, п. 2.2.3)', 25, angleMax, '°'),
+    { ...initialGm, description: `${initialGm.description} (IS Code 2008, п. 2.2.4)` },
+  ]
+}
 
-  results.push({
-    id: 'area-0-30',
-    description: `Площадь под кривой GZ до ${boundary30}° (IS Code 2008, п. 2.2.1)`,
-    requiredValue: 0.055,
-    actualValue: areaUnder30,
-    unit: 'м·рад',
-    pass: areaUnder30 >= 0.055,
-  })
-  results.push({
-    id: 'area-30-40',
-    description: `Площадь под кривой GZ ${boundary30}°–${boundary40}° (IS Code 2008, п. 2.2.1)`,
-    requiredValue: 0.03,
-    actualValue: area30to40,
-    unit: 'м·рад',
-    pass: area30to40 >= 0.03,
-  })
-  results.push({
-    id: 'area-0-40',
-    description: `Площадь под кривой GZ до ${boundary40}° (IS Code 2008, п. 2.2.1)`,
-    requiredValue: 0.09,
-    actualValue: areaUnder40,
-    unit: 'м·рад',
-    pass: areaUnder40 >= 0.09,
-  })
-  const gzAt30 = gz.curve.find((p) => p.heelDeg === 30)?.GZ ?? interpolateGZAt(gz.curve, 30)
-  results.push({
-    id: 'gz-max-at-30',
-    description: 'GZ ≥ 0.20 м при угле крена ≥ 30° (IS Code 2008, п. 2.2.2)',
-    requiredValue: 0.2,
-    actualValue: gzAt30,
-    unit: 'м',
-    pass: gzAt30 >= 0.2,
-  })
-  results.push({
-    id: 'angle-of-max-gz',
-    description: 'Угол максимума GZ ≥ 25° (IS Code 2008, п. 2.2.3)',
-    requiredValue: 25,
-    actualValue: gz.angleOfMaxGZ,
-    unit: '°',
-    pass: gz.angleOfMaxGZ >= 25,
-  })
-  const gmLimit = minGM ?? G_METACENTRIC_MIN_SAFE
-  results.push({
-    id: 'initial-gm',
-    description:
-      minGM !== undefined
-        ? `Начальная GM (с поправкой на своб. поверхность) ≥ ${minGM} м — допустимый минимум ИЗ ФОРМУЛЯРА ЭТОГО СУДНА (строже общего ориентира IS Code ${G_METACENTRIC_MIN_SAFE} м)`
-        : `Начальная GM (с поправкой на своб. поверхность) ≥ ${G_METACENTRIC_MIN_SAFE} м (IS Code 2008, п. 2.2.4) — ОБЩИЙ ориентир, сверьте с формуляром остойчивости ВАШЕГО судна`,
-    requiredValue: gmLimit,
-    actualValue: stability.GM_fluid,
-    unit: 'м',
-    pass: stability.GM_fluid >= gmLimit,
-  })
-  return results
+function fmtAngle(deg: number): string {
+  return String(Math.round(deg * 10) / 10)
+}
+
+// Vertex of the parabola through three points of the curve, when it opens
+// downward and falls between the outer two.
+function parabolaVertex(a: GZPoint, b: GZPoint, c: GZPoint): GZPoint | null {
+  const [x1, y1, x2, y2, x3, y3] = [a.heelDeg, a.GZ, b.heelDeg, b.GZ, c.heelDeg, c.GZ]
+  const denom = (x1 - x2) * (x1 - x3) * (x2 - x3)
+  if (denom === 0) return null
+  const A = (x3 * (y2 - y1) + x2 * (y1 - y3) + x1 * (y3 - y2)) / denom
+  const B = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / denom
+  const C = (x2 * x3 * (x2 - x3) * y1 + x3 * x1 * (x3 - x1) * y2 + x1 * x2 * (x1 - x2) * y3) / denom
+  if (!(A < 0)) return null
+  const x = -B / (2 * A)
+  if (x < x1 || x > x3) return null
+  return { heelDeg: x, GZ: A * x * x + B * x + C }
 }
 
 function interpolateGZAt(curve: GZPoint[], heelDeg: number): number {

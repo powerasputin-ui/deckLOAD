@@ -24,15 +24,8 @@ import {
   type SeparationRule,
 } from './packing'
 import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
-import {
-  buildLoadingConditionFromPlacements,
-  checkIMOCriteria,
-  computeGZCurve,
-  computeStabilityResult,
-  G_METACENTRIC_MIN_SAFE,
-  singleFigureMinGM,
-  type DeckShipFrame,
-} from './stability'
+import type { DeckShipFrame } from './stability'
+import { evaluateTripStability, reasonText, type TripStabilityResult } from './stabilityConditions'
 import { vesselTemplateById } from './vesselTemplates'
 import { UNIT_LABEL } from './units'
 import { fmtNumber } from './utils'
@@ -116,31 +109,29 @@ function overloadedZoneCount(t: PackingResult, deck: DeckConfig): number {
   return computeZoneLoads(placements, deck.loadZones, deck.outline, deck.unit).filter((z) => z.exceeded).length
 }
 
-// The same reading of the vessel's data as StabilityPanel.
+// The booklet check of one trip, at departure and arrival.
 function tripStability(t: PackingResult, deck: DeckConfig, items: CargoItem[]): TripStability | undefined {
-  const vessel = deck.vessel
-  if (!vessel) return undefined
-  const loading = buildLoadingConditionFromPlacements(
-    vessel,
-    deck.shipFrame ?? NO_SHIP_FRAME,
-    { width: deck.width, length: deck.length },
-    deck.deckForwardIsPositiveY ?? true,
-    t.placed,
-    deck.unit,
-    items
-  )
-  const stability = computeStabilityResult(vessel, loading)
-  if (!stability) return undefined
-  const gz = computeGZCurve(vessel, loading)
-  const { downfloodingAngleDeg } = vessel.particulars
-  const minGM = singleFigureMinGM(vessel)
-  const criteria = gz ? checkIMOCriteria(gz, stability, downfloodingAngleDeg, minGM) : []
+  const evaluation = evaluateDeckTripStability(deck, t, items)
+  if (!evaluation) return undefined
   return {
-    gmOk: stability.GM_fluid >= (minGM ?? G_METACENTRIC_MIN_SAFE),
-    failedCriteria: criteria.filter((c) => !c.pass).length,
-    estimated: stability.extrapolated || (gz?.knOutOfRange ?? false),
-    hasCrossCurves: !!gz,
+    verdict: evaluation.verdict,
+    reasons: evaluation.reasons.map((r) => ({ status: r.status, text: reasonText(r) })),
   }
+}
+
+// One trip's stability from the deck's own data — the reading the page,
+// the checks and the PDF all share.
+export function evaluateDeckTripStability(deck: DeckConfig, t: PackingResult, items: CargoItem[]): TripStabilityResult | undefined {
+  if (!deck.vessel) return undefined
+  return evaluateTripStability({
+    vessel: deck.vessel,
+    shipFrame: deck.shipFrame ?? NO_SHIP_FRAME,
+    deck: { width: deck.width, length: deck.length, unit: deck.unit, outline: deck.outline },
+    deckForwardIsPositiveY: deck.deckForwardIsPositiveY ?? true,
+    placements: t.placed,
+    items,
+    icing: deck.icing ?? false,
+  })
 }
 
 function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {

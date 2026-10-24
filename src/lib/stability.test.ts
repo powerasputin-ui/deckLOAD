@@ -589,7 +589,9 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     const criteria = checkIMOCriteria(gz, stability)
     const angleCheck = criteria.find((c) => c.id === 'angle-of-max-gz')!
     expect(angleCheck.pass).toBe(false)
-    expect(angleCheck.actualValue).toBe(10)
+    // The vertex of the parabola through the 0°, 10° and 20° nodes, not the
+    // 10° node itself: 13.57° (by hand: −B/2A with A = −0.0175, B = 0.475).
+    expect(angleCheck.actualValue).toBeCloseTo(13.571, 3)
   })
 
   it('checkIMOCriteria: angle-of-max-gz criterion passes when the curve peaks late enough', () => {
@@ -606,7 +608,8 @@ describe('computeGZCurve + checkIMOCriteria', () => {
     const gz = computeGZCurve(latePeakVessel, loading)!
     const angleCheck = checkIMOCriteria(gz, stability).find((c) => c.id === 'angle-of-max-gz')!
     expect(angleCheck.pass).toBe(true)
-    expect(angleCheck.actualValue).toBe(30)
+    // Vertex through 20°, 30°, 40°: 31.67° (A = −0.0075, B = 0.475).
+    expect(angleCheck.actualValue).toBeCloseTo(31.667, 3)
   })
 
   // A deliberately low-magnitude KN curve — every area criterion fails
