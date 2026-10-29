@@ -22,7 +22,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, UNIT_LABEL, roundForDisplay } from '@/store/calculator'
+import { isWholeDeckZone, useCalculator, UNIT_LABEL, roundForDisplay } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
@@ -122,6 +122,8 @@ export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] })
   const addLoadZone = useCalculator((s) => s.addLoadZone)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
   const removeLoadZone = useCalculator((s) => s.removeLoadZone)
+  const deckWidth = useCalculator((s) => s.deck.width)
+  const deckLength = useCalculator((s) => s.deck.length)
 
   return (
     <Section
@@ -135,7 +137,7 @@ export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] })
         <p className="text-xs text-muted-foreground">
           Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
         </p>
-        {zones.map((z) => {
+        {zones.map((z, i) => {
           const load = zoneLoads?.find((zl) => zl.zoneId === z.id)
           // Bare-rectangle capacity preview, shown even before anything is
           // placed — directly answers "how many tonnes actually fit here"
@@ -147,6 +149,11 @@ export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] })
           const capacityT = z.maxLoadPerArea * areaM2
           return (
             <div key={z.id} className="rounded-md border p-2 space-y-1.5">
+              {/* Named as «Проверки» names it (planFacts' zone label). */}
+              <div className="text-xs font-medium">
+                Зона {i + 1}
+                {isWholeDeckZone(z, deckWidth, deckLength) && ' (вся палуба)'}
+              </div>
               <div className="grid grid-cols-4 gap-1">
                 <MiniNumField label="X" value={z.x} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { x: v })} />
                 <MiniNumField label="Y" value={z.y} unit={UNIT_LABEL[unit]} onChange={(v) => updateLoadZone(z.id, { y: v })} />

@@ -6,10 +6,9 @@ import { useTheme } from '@/components/ThemeProvider'
 import { THEME_TOKENS } from '@/lib/theme'
 import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from '@/lib/deckDrawing'
 import { DeckDrawingFrame, DRAWING_MARGINS_PX } from './DeckDrawingFrame'
-import { ZoomIn, ZoomOut, Maximize, Image as ImageIcon, Upload, Trash2, Plug, Ruler, Move, Ratio } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Plug, Ruler, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { compressImageToDataUrl } from '@/lib/imageCompression'
+import { readDeckPhoto } from '@/lib/deckPhoto'
 import {
   computeGridStep,
   clampToDeck,
@@ -109,13 +108,16 @@ interface DeckVisualizationProps {
   showCargoContents: boolean
   backgroundImage?: string
   backgroundImageOpacity?: number
+  // The photo being moved or scaled, or calibrated by a known distance —
+  // armed from «Судно» → «Фото палубы» (spec 8.1); null when neither.
+  photoTool?: 'move' | 'calibrate' | null
+  onSetPhotoTool?: (tool: 'move' | 'calibrate' | null) => void
   // Where/how big the photo is drawn — see DeckConfig.backgroundImageRect's
   // own doc comment. Undefined with backgroundImage set means a project
   // saved before this field existed; DeckVisualization falls back to the
   // deck's own rect in that one legacy case.
   backgroundImageRect?: { x: number; y: number; width: number; length: number }
   onSetBackgroundImage?: (dataUrl: string | null, rect?: { x: number; y: number; width: number; length: number }) => void
-  onSetBackgroundImageOpacity?: (opacity: number) => void
   onSetBackgroundImageRect?: (rect: { x: number; y: number; width: number; length: number }) => void
   // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
   // in calculator.ts. Undefined = plain rectangle, today's behavior.
@@ -268,9 +270,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   showCargoContents,
   backgroundImage,
   backgroundImageOpacity,
+  photoTool = null,
+  onSetPhotoTool,
   backgroundImageRect,
   onSetBackgroundImage,
-  onSetBackgroundImageOpacity,
   onSetBackgroundImageRect,
   deckOutline,
   editingDeckOutline,
@@ -416,21 +419,15 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     e.target.value = '' // allow re-selecting the same file later
     if (!file) return
     try {
-      const { dataUrl, width: pxW, height: pxH } = await compressImageToDataUrl(file)
-      const rectWidth = deckWidth
-      const rectLength = rectWidth * (pxH / pxW)
-      onSetBackgroundImage?.(dataUrl, { x: 0, y: (deckLength - rectLength) / 2, width: rectWidth, length: rectLength })
+      const { dataUrl, rect } = await readDeckPhoto(file, deckWidth, deckLength)
+      onSetBackgroundImage?.(dataUrl, rect)
     } catch {
       toast.error('Не удалось загрузить фото палубы')
     }
   }
-  // Position/scale editing for the placed photo: armed explicitly (button in
-  // the photo popover), independent of every other deck-editing tool this
-  // file has — local state, same as rulerMode, rather than routed through
-  // the store's mutual-exclusion web (editingDeckOutline & co.), since this
-  // is a self-contained overlay that doesn't share a canvas gesture with
-  // any of those.
-  const [editingBackgroundImage, setEditingBackgroundImage] = useState(false)
+  // Position/scale editing for the placed photo, armed from «Фото палубы»
+  // in «Судно» (photoTool); calibrating is part of it.
+  const editingBackgroundImage = !!photoTool && !!backgroundImage
   const effectiveBgRect = backgroundImageRect ?? (backgroundImage ? { x: 0, y: 0, width: deckWidth, length: deckLength } : null)
   type BgImageDrag = {
     kind: 'move' | 'resize'
@@ -458,7 +455,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // around it. Reuses the same click-two-points mechanic as the ruler,
   // operating directly in deck coordinates since the photo already lives
   // there (no separate letterboxed dialog view needed anymore).
-  const [bgCalibrateMode, setBgCalibrateMode] = useState(false)
+  const bgCalibrateMode = photoTool === 'calibrate' && !!backgroundImage
   const [bgCalibratePoints, setBgCalibratePoints] = useState<{ x: number; y: number }[]>([])
   const [bgCalibrateText, setBgCalibrateText] = useState('')
   const handleBgCalibrateClick = (e: React.MouseEvent): boolean => {
@@ -2486,74 +2483,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           className="hidden"
           onChange={handleBackgroundFileChange}
         />
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              size="icon"
-              variant={backgroundImage ? 'secondary' : 'ghost'}
-              className="h-7 w-7 pointer-events-auto"
-              aria-label="Фото палубы"
-              title="Фоновое фото палубы"
-            >
-              <ImageIcon className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent side={toolbarContainer ? 'bottom' : 'left'} align={toolbarContainer ? 'end' : 'start'} className="w-64 p-3 space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Фоновое фото
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => backgroundFileInputRef.current?.click()}
-            >
-              <Upload className="h-3.5 w-3.5 mr-1.5" />
-              {backgroundImage ? 'Заменить фото' : 'Загрузить фото'}
-            </Button>
-            {backgroundImage && (
-              <>
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Прозрачность</span>
-                    <span>{Math.round((backgroundImageOpacity ?? 0.5) * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={backgroundImageOpacity ?? 0.5}
-                    onChange={(e) => onSetBackgroundImageOpacity?.(Number(e.target.value))}
-                    className="w-full accent-primary"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant={editingBackgroundImage ? 'secondary' : 'outline'}
-                  size="sm"
-                  className="w-full h-8 text-xs"
-                  onClick={() => setEditingBackgroundImage((v) => !v)}
-                >
-                  <Move className="h-3.5 w-3.5 mr-1.5" />
-                  {editingBackgroundImage ? 'Готово' : 'Переместить / масштабировать'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="w-full h-8 text-xs text-destructive hover:text-destructive"
-                  onClick={() => onSetBackgroundImage?.(null)}
-                >
-                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                  Удалить фото
-                </Button>
-              </>
-            )}
-          </PopoverContent>
-        </Popover>
     </>
   )
 
@@ -4095,6 +4024,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       )}
       {contextMenu && (
         <div
+          role="menu"
+          aria-label="Палуба"
           className="fixed z-50 w-48 rounded-lg border bg-card p-1 shadow-md"
           style={{
             left: Math.min(contextMenu.x, window.innerWidth - 200),
@@ -4154,7 +4085,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              onClick={() => { setBgCalibrateMode(true); setBgCalibratePoints([]); setBgCalibrateText('') }}
+              onClick={() => { onSetPhotoTool?.('calibrate'); setBgCalibratePoints([]); setBgCalibrateText('') }}
             >
               <Ratio className="h-3.5 w-3.5 mr-1.5" />
               Калибровать по известному расстоянию
@@ -4182,7 +4113,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </div>
               )}
               <div className="flex gap-1.5 justify-end">
-                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setBgCalibrateMode(false); setBgCalibratePoints([]); setBgCalibrateText('') }}>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { onSetPhotoTool?.('move'); setBgCalibratePoints([]); setBgCalibrateText('') }}>
                   Отмена
                 </Button>
                 <Button
@@ -4197,7 +4128,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               </div>
             </>
           )}
-          <Button type="button" size="sm" className="h-7 text-xs" onClick={() => { setEditingBackgroundImage(false); setBgCalibrateMode(false); setBgCalibratePoints([]) }}>
+          <Button type="button" size="sm" className="h-7 text-xs" onClick={() => { onSetPhotoTool?.(null); setBgCalibratePoints([]) }}>
             Готово
           </Button>
         </div>

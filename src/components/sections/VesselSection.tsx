@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { LoadZonesSection } from '@/components/calculator/Sidebar'
 import { VERDICT_WORD, VerdictIcon } from '@/components/stability/StabilityResults'
-import { MarksBlock, ObstaclesBlock, SocketsBlock } from '@/components/sections/vessel/DeckMarksBlocks'
+import { DeckLashingPointsBlock, MarksBlock, ObstaclesBlock, SocketsBlock } from '@/components/sections/vessel/DeckMarksBlocks'
+import { DeckPhotoBlock } from '@/components/sections/vessel/DeckPhotoBlock'
 import { VesselLibrary } from '@/components/sections/vessel/VesselLibrary'
 import { VesselCard } from '@/components/sections/vessel/VesselCard'
 import { DeckBlock } from '@/components/sections/vessel/DeckBlock'
@@ -15,7 +16,8 @@ import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { ZoneLoadCheck } from '@/lib/packing'
 
 // «Судно» (spec 8.1): the vessel from the library and its card, the deck,
-// its shape, obstacles, load zones, sockets and marks; the vessel's
+// its shape and photo, obstacles, load zones, sockets, lashing points tied
+// to no stack and marks; the vessel's
 // stability data opens in the stability workspace (spec 2026-10-24, 6.2),
 // with the open trip's verdict shown here.
 export function VesselSection({
@@ -40,11 +42,13 @@ export function VesselSection({
       <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={onApplyVesselToCurrent} />
       <VesselCard />
       <DeckBlock />
+      <DeckPhotoBlock />
       <ObstaclesBlock />
       <div className="px-4 py-3">
         <LoadZonesSection zoneLoads={zoneLoads} />
       </div>
       <SocketsBlock />
+      <DeckLashingPointsBlock />
       <MarksBlock />
       <PanelBlock title="Остойчивость">
         {stability ? (

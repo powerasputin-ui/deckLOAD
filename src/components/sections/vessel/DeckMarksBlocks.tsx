@@ -1,6 +1,6 @@
 'use client'
 
-import { Ban, Circle, Diamond, MessageSquare, Pencil, Plug, Square, Trash2, Triangle } from 'lucide-react'
+import { Anchor, Ban, Circle, Diamond, MessageSquare, Pencil, Plug, Square, Trash2, Triangle } from 'lucide-react'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { TextField } from '@/components/calculator/TextField'
@@ -13,6 +13,7 @@ import { cn, fmtNumber } from '@/lib/utils'
 const EMPTY_ZONES: never[] = []
 const EMPTY_SOCKETS: never[] = []
 const EMPTY_MARKS: never[] = []
+const EMPTY_POINTS: never[] = []
 
 // What «Судно» keeps of the deck that isn't cargo (spec 7.5, 8.1): the
 // obstacles cargo can't stand on, the marks written on the drawing and the
@@ -91,37 +92,69 @@ export function ObstaclesBlock() {
       {freeform && <Hint>Кликайте по палубе, ставя точки контура (не меньше 3), и замкните его кликом у первой точки. Backspace — убрать точку, Esc — отмена.</Hint>}
       {zones.length > 0 && (
         <ul className="space-y-1.5" aria-label="Препятствия на палубе">
-          {zones.map((z) => (
-            <li key={z.id} className="flex items-center gap-1.5 text-sm">
-              <Ban className="h-3.5 w-3.5 shrink-0 text-danger" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{z.name}</span>
-              {z.shapeType === 'custom' ? (
-                <span className="text-xs text-ink-2">
-                  своя форма, {fmtNumber(z.width)}×{fmtNumber(z.length)} {u}
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-ink-2">
+          {zones.map((z) => {
+            // A drawn obstacle's outline is in deck coordinates: it moves
+            // with its corner.
+            const moveTo = (patch: { x?: number; y?: number }) => {
+              const dx = (patch.x ?? z.x) - z.x
+              const dy = (patch.y ?? z.y) - z.y
+              updateZone(z.id, { ...patch, ...(z.outline ? { outline: z.outline.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : {}) })
+            }
+            return (
+              <li key={z.id} className="space-y-1 rounded-md border border-line p-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Ban className="h-3.5 w-3.5 shrink-0 text-danger" aria-hidden="true" />
+                  <TextField
+                    label={`Название препятствия «${z.name}»`}
+                    value={z.name}
+                    onCommit={(v) => v.trim() && updateZone(z.id, { name: v.trim() })}
+                    className="h-7 min-w-0 flex-1 text-sm"
+                  />
+                  <RemoveButton label={`Удалить препятствие «${z.name}»`} onClick={() => removeZone(z.id)} />
+                </div>
+                <div className="flex flex-wrap items-center gap-1 pl-5 text-xs text-ink-2">
+                  X
                   <NumberField
-                    aria-label={`Ширина «${z.name}», ${u}`}
-                    value={z.width}
-                    min={0.01}
-                    onCommit={(v) => updateZone(z.id, { width: v })}
+                    aria-label={`X «${z.name}», ${u}`}
+                    value={z.x}
+                    onCommit={(v) => moveTo({ x: v })}
                     className="h-7 w-14 px-1.5 text-right text-xs tabular-nums"
                   />
-                  ×
+                  Y
                   <NumberField
-                    aria-label={`Длина «${z.name}», ${u}`}
-                    value={z.length}
-                    min={0.01}
-                    onCommit={(v) => updateZone(z.id, { length: v })}
+                    aria-label={`Y «${z.name}», ${u}`}
+                    value={z.y}
+                    onCommit={(v) => moveTo({ y: v })}
                     className="h-7 w-14 px-1.5 text-right text-xs tabular-nums"
                   />
-                  {u}
-                </span>
-              )}
-              <RemoveButton label={`Удалить препятствие «${z.name}»`} onClick={() => removeZone(z.id)} />
-            </li>
-          ))}
+                  {z.shapeType === 'custom' ? (
+                    <span>
+                      своя форма, {fmtNumber(z.width)}×{fmtNumber(z.length)} {u}
+                    </span>
+                  ) : (
+                    <>
+                      <NumberField
+                        aria-label={`Ширина «${z.name}», ${u}`}
+                        value={z.width}
+                        min={0.01}
+                        onCommit={(v) => updateZone(z.id, { width: v })}
+                        className="ml-1 h-7 w-14 px-1.5 text-right text-xs tabular-nums"
+                      />
+                      ×
+                      <NumberField
+                        aria-label={`Длина «${z.name}», ${u}`}
+                        value={z.length}
+                        min={0.01}
+                        onCommit={(v) => updateZone(z.id, { length: v })}
+                        className="h-7 w-14 px-1.5 text-right text-xs tabular-nums"
+                      />
+                      {u}
+                    </>
+                  )}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
     </PanelBlock>
@@ -149,6 +182,44 @@ export function SocketsBlock() {
               <RemoveButton label={`Удалить розетку ${i + 1}`} onClick={() => removeSocket(s.id)} />
             </li>
           ))}
+        </ul>
+      )}
+    </PanelBlock>
+  )
+}
+
+// «Точки крепления на палубе» (spec 8.1): lashing points tied to no stack —
+// put on the empty deck. A point tied to a stack is its inspector's.
+export function DeckLashingPointsBlock() {
+  const points = useCalculator((s) => s.deck.lashingPoints ?? EMPTY_POINTS)
+  const unit = useCalculator((s) => s.deck.unit)
+  const placing = useCalculator((s) => s.placingLashingPoint)
+  const setPlacing = useCalculator((s) => s.setPlacingLashingPoint)
+  const removePoint = useCalculator((s) => s.removeLashingPoint)
+  const free = points.filter((p) => !p.placementId)
+  const u = UNIT_LABEL[unit]
+  return (
+    <PanelBlock title="Точки крепления на палубе">
+      <ToolButton pressed={placing} onClick={() => setPlacing(!placing)}>
+        <Anchor className="h-4 w-4" aria-hidden="true" />
+        Поставить точку
+      </ToolButton>
+      {placing && <Hint>Клик по пустой палубе ставит точку; клик у угла штабеля — крепление этого штабеля. Esc — готово.</Hint>}
+      {free.length > 0 && (
+        <ul className="space-y-1" aria-label="Точки крепления без штабеля">
+          {free.map((p, i) => {
+            const name = p.label ?? `Точка ${i + 1}`
+            return (
+              <li key={p.id} className="flex items-center gap-1.5 text-sm">
+                <Anchor className="h-3.5 w-3.5 shrink-0 text-ink-2" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{name}</span>
+                <span className="text-xs tabular-nums text-ink-2">
+                  {fmtNumber(p.x)}; {fmtNumber(p.y)} {u}
+                </span>
+                <RemoveButton label={`Удалить «${name}»`} onClick={() => removePoint(p.id)} />
+              </li>
+            )
+          })}
         </ul>
       )}
     </PanelBlock>

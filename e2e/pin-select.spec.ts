@@ -143,7 +143,7 @@ test.describe('Auto-mode selection and pinning', () => {
     }).toPass({ timeout: 10000 })
     // The deck-background menu's own items must not appear alongside it.
     await expect(page.getByRole('button', { name: 'Редактировать' })).not.toBeVisible()
-    await expect(page.getByRole('button', { name: 'Загрузить фото' })).not.toBeVisible()
+    await expect(page.getByRole('menu', { name: 'Палуба' })).toHaveCount(0)
   })
 
   test('dragging an auto-placed stack pins it where it was dropped, locked', async ({ page }) => {

@@ -331,7 +331,6 @@ describe('Home (page.tsx)', () => {
       'Увеличить',
       'Вписать',
       'Линейка',
-      'Фото палубы',
     ])
   })
 
@@ -1080,6 +1079,118 @@ describe('Home (page.tsx)', () => {
       useProjects.getState().createProject()
     })
     expect(variantsList()).toBeNull()
+  })
+
+  // Stage 4, group C2 (spec 8.1): the rest of «Судно» — the deck's shape back
+  // to a rectangle, its photo, obstacles placed by X/Y, numbered zones and
+  // the lashing points tied to no stack.
+  describe('«Судно»: shape, photo, obstacles, zones, points', () => {
+    it('«Сбросить к прямоугольнику» undoes a drawn outline, and «Отменить» brings it back', () => {
+      render(<Home />)
+      const outline = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 16 }, { x: 0, y: 20 }]
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, outline } })
+        clearCalculatorHistory()
+      })
+      openSection('Судно')
+      fireEvent.click(screen.getByRole('button', { name: 'Сбросить к прямоугольнику' }))
+      expect(useCalculator.getState().deck.outline).toBeUndefined()
+      expect(screen.queryByRole('button', { name: 'Сбросить к прямоугольнику' })).toBeNull()
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Палуба снова прямоугольная')!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(useCalculator.getState().deck.outline).toEqual(outline)
+    })
+
+    it('an obstacle is renamed and moved by X/Y; a drawn one carries its outline along', () => {
+      render(<Home />)
+      act(() => {
+        useCalculator.setState({
+          deck: {
+            ...useCalculator.getState().deck,
+            restrictionZones: [
+              { id: 'r', name: 'Кран', shapeType: 'rect', x: 1, y: 1, width: 2, length: 2 },
+              { id: 'c', name: 'Люк', shapeType: 'custom', x: 4, y: 4, width: 2, length: 2, outline: [{ x: 4, y: 4 }, { x: 6, y: 4 }, { x: 5, y: 6 }] },
+            ],
+          },
+        })
+      })
+      openSection('Судно')
+      const name = screen.getByLabelText('Название препятствия «Кран»') as HTMLInputElement
+      fireEvent.change(name, { target: { value: 'Кран-балка' } })
+      fireEvent.keyDown(name, { key: 'Enter' })
+      const x = screen.getByLabelText('X «Люк», м') as HTMLInputElement
+      fireEvent.change(x, { target: { value: '5' } })
+      fireEvent.keyDown(x, { key: 'Enter' })
+      const [crane, hatch] = useCalculator.getState().deck.restrictionZones!
+      expect(crane.name).toBe('Кран-балка')
+      expect(hatch).toMatchObject({ x: 5, y: 4, outline: [{ x: 5, y: 4 }, { x: 7, y: 4 }, { x: 6, y: 6 }] })
+    })
+
+    it('numbers the load zones as «Проверки» names them', () => {
+      render(<Home />)
+      act(() => {
+        const deck = useCalculator.getState().deck
+        useCalculator.setState({
+          deck: {
+            ...deck,
+            loadZones: [
+              { id: 'a', x: 0, y: 0, width: deck.width, length: deck.length, maxLoadPerArea: 5 },
+              { id: 'b', x: 1, y: 1, width: 2, length: 2, maxLoadPerArea: 1 },
+            ],
+          },
+        })
+      })
+      openSection('Судно')
+      fireEvent.click(screen.getByRole('button', { name: /^Зоны нагрузки/ }))
+      expect(screen.getByText('Зона 1 (вся палуба)')).toBeTruthy()
+      expect(screen.getByText('Зона 2')).toBeTruthy()
+    })
+
+    it('lists the lashing points tied to no stack, and deletes them', () => {
+      render(<Home />)
+      act(() => {
+        useCalculator.setState({
+          deck: {
+            ...useCalculator.getState().deck,
+            lashingPoints: [
+              { id: 'free', x: 1, y: 2, label: 'Рым 1' },
+              { id: 'tied', x: 3, y: 3, label: 'Точка 2', placementId: 'p' },
+            ],
+          },
+        })
+      })
+      openSection('Судно')
+      const list = screen.getByRole('list', { name: 'Точки крепления без штабеля' })
+      expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Рым 11; 2 м'])
+      fireEvent.click(within(list).getByRole('button', { name: 'Удалить «Рым 1»' }))
+      expect(useCalculator.getState().deck.lashingPoints!.map((p) => p.id)).toEqual(['tied'])
+      // «Поставить точку» arms the deck for it.
+      fireEvent.click(screen.getByRole('button', { name: 'Поставить точку' }))
+      expect(useCalculator.getState().placingLashingPoint).toBe(true)
+    })
+
+    it('the deck photo: its transparency, moving and calibrating armed from here, removed with «Отменить»', () => {
+      render(<Home />)
+      act(() => {
+        useCalculator.getState().setDeckBackgroundImage('data:image/png;base64,AAAA', { x: 0, y: 0, width: 8, length: 4 })
+        clearCalculatorHistory()
+      })
+      openSection('Судно')
+      fireEvent.change(screen.getByLabelText('Прозрачность'), { target: { value: '0.8' } })
+      expect(useCalculator.getState().deck.backgroundImageOpacity).toBe(0.8)
+      fireEvent.click(screen.getByRole('button', { name: 'Переместить' }))
+      expect(useCalculator.getState().deckPhotoTool).toBe('move')
+      expect(screen.getByRole('button', { name: 'Калибровать по известному расстоянию' })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Калибровать' }))
+      expect(useCalculator.getState().deckPhotoTool).toBe('calibrate')
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(useCalculator.getState().deckPhotoTool).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Удалить фото' }))
+      expect(useCalculator.getState().deck.backgroundImage).toBeUndefined()
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Фото палубы удалено')!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(useCalculator.getState().deck.backgroundImage).toBe('data:image/png;base64,AAAA')
+    })
   })
 
   // Stage 4, group B (spec 8.4): a click on a check says what it found and

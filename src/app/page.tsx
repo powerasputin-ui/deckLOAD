@@ -196,7 +196,8 @@ export default function Home() {
   const showLabels = useCalculator((s) => s.showLabels)
   const showCargoContents = useCalculator((s) => s.showCargoContents)
   const setDeckBackgroundImage = useCalculator((s) => s.setDeckBackgroundImage)
-  const setDeckBackgroundImageOpacity = useCalculator((s) => s.setDeckBackgroundImageOpacity)
+  const deckPhotoTool = useCalculator((s) => s.deckPhotoTool)
+  const setDeckPhotoTool = useCalculator((s) => s.setDeckPhotoTool)
   const setDeckBackgroundImageRect = useCalculator((s) => s.setDeckBackgroundImageRect)
   const mode = useCalculator((s) => s.mode)
   const manualPlacements = useCalculator((s) => s.manualPlacements)
@@ -349,9 +350,10 @@ export default function Home() {
   // cargo stamp — otherwise the only way to dismiss the drag preview "shadow"
   // was switching to auto mode and back.
   useEffect(() => {
-    if (!placingLashingPoint && !placingPowerSocket && !placingAnnotation && !activeStampId && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform) return
+    if (!placingLashingPoint && !placingPowerSocket && !placingAnnotation && !activeStampId && !drawingCustomShape && !pendingCustomShape && !editingDeckOutline && !drawingRestrictionShape && !drawingRestrictionZoneFreeform && !deckPhotoTool) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      if (deckPhotoTool) setDeckPhotoTool(null)
       if (placingLashingPoint) setPlacingLashingPoint(false)
       if (placingPowerSocket) setPlacingPowerSocket(false)
       if (placingAnnotation) setPlacingAnnotation(null)
@@ -364,7 +366,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, placingAnnotation, setPlacingAnnotation, activeStampId, setActiveStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform])
+  }, [placingLashingPoint, setPlacingLashingPoint, placingPowerSocket, setPlacingPowerSocket, placingAnnotation, setPlacingAnnotation, activeStampId, setActiveStamp, drawingCustomShape, pendingCustomShape, editingDeckOutline, setEditingDeckOutline, drawingRestrictionShape, setDrawingRestrictionShape, drawingRestrictionZoneFreeform, setDrawingRestrictionZoneFreeform, deckPhotoTool, setDeckPhotoTool])
 
   // R turns the cargo armed for click placement, as ↻ in the line over the
   // deck does (spec 7.1). KeyR is the same key in the Russian layout («К»).
@@ -1222,7 +1224,8 @@ export default function Home() {
     pendingCustomShape ||
     editingDeckOutline ||
     drawingRestrictionShape ||
-    drawingRestrictionZoneFreeform
+    drawingRestrictionZoneFreeform ||
+    deckPhotoTool
   )
   useEffect(() => {
     if (!hasSelection || toolArmed || workspace !== 'deck') return
@@ -1627,7 +1630,8 @@ export default function Home() {
                 backgroundImageOpacity={deck.backgroundImageOpacity}
                 backgroundImageRect={deck.backgroundImageRect}
                 onSetBackgroundImage={setDeckBackgroundImage}
-                onSetBackgroundImageOpacity={setDeckBackgroundImageOpacity}
+                photoTool={deckPhotoTool}
+                onSetPhotoTool={setDeckPhotoTool}
                 onSetBackgroundImageRect={setDeckBackgroundImageRect}
                 deckOutline={deck.outline}
                 editingDeckOutline={editingDeckOutline}

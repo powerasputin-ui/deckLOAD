@@ -343,6 +343,10 @@ interface CalculatorState {
   setDrawingCustomShape: (v: boolean) => void
   setPendingCustomShape: (v: CalculatorState['pendingCustomShape']) => void
   setEditingDeckOutline: (v: boolean) => void
+  // The deck photo being moved or scaled, or calibrated by a known
+  // distance (spec 8.1, «Фото палубы»); null when neither. UI state only.
+  deckPhotoTool: 'move' | 'calibrate' | null
+  setDeckPhotoTool: (tool: 'move' | 'calibrate' | null) => void
 
   // Restriction (obstacle) zones — hard-blocked everywhere (manual + auto).
   addRestrictionZone: (zone: { shapeType: RestrictionZoneShape; name: string; x: number; y: number; width: number; length: number; outline?: { x: number; y: number }[] }) => void
@@ -960,6 +964,7 @@ export const useCalculator = create<CalculatorState>()(
   drawingCustomShape: false,
   pendingCustomShape: null,
   editingDeckOutline: false,
+  deckPhotoTool: null,
   drawingRestrictionShape: null,
   drawingRestrictionZoneFreeform: false,
 
@@ -2013,7 +2018,16 @@ export const useCalculator = create<CalculatorState>()(
     set({
       editingDeckOutline: v,
       ...(v
-        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false, deckPhotoTool: null }
+        : {}),
+    }),
+  // The photo takes the deck's clicks while it's moved or calibrated: the
+  // other tools step aside, as they do for each other.
+  setDeckPhotoTool: (tool) =>
+    set({
+      deckPhotoTool: tool,
+      ...(tool
+        ? { activeStampId: null, placingLashingPoint: false, placingPowerSocket: false, placingAnnotation: null, drawingCustomShape: false, editingDeckOutline: false, drawingRestrictionShape: null, drawingRestrictionZoneFreeform: false }
         : {}),
     }),
   setDrawingRestrictionShape: (shape) =>

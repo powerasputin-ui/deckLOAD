@@ -121,24 +121,36 @@ test('Сценарий 4: фото палубы и калибровка', async 
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
 
-  // «Фото палубы» over the deck: the photo is uploaded whole.
-  await page.getByRole('button', { name: 'Фото палубы' }).click()
+  // «Судно» → «Фото палубы»: the photo is uploaded whole (spec 8.1).
+  await openSection(page, 'Судно')
+  const photo = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Фото палубы' }) })
   const chooser = page.waitForEvent('filechooser')
-  await page.getByRole('button', { name: 'Загрузить фото' }).click()
+  await photo.getByRole('button', { name: 'Загрузить фото' }).click()
   await (await chooser).setFiles({ name: 'deck.png', mimeType: 'image/png', buffer: TINY_PNG })
   const image = deck(page).locator('image')
   await expect(image).toHaveCount(1)
+  await expect(photo.getByRole('button', { name: 'Заменить фото' })).toBeVisible()
 
-  // Calibrated by two points and the real distance between them.
-  await page.getByRole('button', { name: 'Переместить / масштабировать' }).click()
-  await page.keyboard.press('Escape')
+  // Calibrated by two points and the real distance between them: the scale
+  // changes.
   const before = (await image.boundingBox())!
-  await page.getByRole('button', { name: 'Калибровать по известному расстоянию' }).click()
+  await photo.getByRole('button', { name: 'Калибровать', exact: true }).click()
+  await expect(page.getByText(/Отметьте на фото две точки/)).toBeVisible()
   await background(page).click({ position: { x: 100, y: 60 }, force: true })
   await background(page).click({ position: { x: 300, y: 60 }, force: true })
   await page.locator('label:has-text("Реальное расстояние") + input').fill('2')
   await page.getByRole('button', { name: 'Применить', exact: true }).click()
   await expect.poll(async () => (await image.boundingBox())!.width).not.toBeCloseTo(before.width, 0)
+  await page.keyboard.press('Escape')
+  await expect(photo.getByRole('button', { name: 'Калибровать', exact: true })).toHaveAttribute('aria-pressed', 'false')
+
+  // Removed — and back with «Отменить». Edits less than 400 ms apart are
+  // one undo step (the history's debounce); a person is slower than that.
+  await page.waitForTimeout(500)
+  await photo.getByRole('button', { name: 'Удалить фото' }).click()
+  await expect(image).toHaveCount(0)
+  await page.locator('[data-sonner-toast]').filter({ hasText: 'Фото палубы удалено' }).getByRole('button', { name: 'Отменить' }).click()
+  await expect(image).toHaveCount(1)
 })
 
 test('Сценарий 5: препятствия', async ({ page }) => {
@@ -160,7 +172,8 @@ test('Сценарий 5: препятствия', async ({ page }) => {
   await form.getByRole('button', { name: 'Добавить' }).click()
   await expect(name).toBeHidden()
 
-  await expect(page.getByRole('list', { name: 'Препятствия на палубе' })).toContainText('Кран')
+  // Listed with its name, which can be changed there, and its place.
+  await expect(page.getByRole('list', { name: 'Препятствия на палубе' }).getByLabel('Название препятствия «Кран»')).toHaveValue('Кран')
 
   // Cargo doesn't go into it — saying why — and goes beside it. In manual
   // mode a pallet from the catalogue is armed for a click.

@@ -1,13 +1,13 @@
 'use client'
 
 import { useId } from 'react'
-import { PenLine } from 'lucide-react'
+import { PenLine, RectangleHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
-import { convertLength, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
+import { convertLength, undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { fmtNumber } from '@/lib/utils'
@@ -133,10 +133,26 @@ export function DeckBlock() {
             Сменить
           </Button>
         </div>
-        <Button variant="outline" size="sm" className="w-full" onClick={() => setEditingDeckOutline(true)}>
-          <PenLine className="mr-1.5 h-4 w-4" aria-hidden="true" />
-          Форма палубы
-        </Button>
+        <div className="flex gap-1.5">
+          <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingDeckOutline(true)}>
+            <PenLine className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            Форма палубы
+          </Button>
+          {deck.outline && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => {
+                setDeck({ outline: undefined })
+                toast.info('Палуба снова прямоугольная', { action: { label: 'Отменить', onClick: () => undoCalculator() } })
+              }}
+            >
+              <RectangleHorizontal className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              Сбросить к прямоугольнику
+            </Button>
+          )}
+        </div>
       </div>
     </PanelBlock>
   )
