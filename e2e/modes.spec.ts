@@ -81,10 +81,10 @@ test.describe('Auto / manual modes', () => {
       await expect(selectedStroke).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
 
-    // Give it a clearance zone via the "Крепление груза" sidebar section.
-    await openSection(page, 'Проверки')
-    await page.getByRole('button', { name: /^Крепление груза/ }).click()
-    await page.getByRole('button', { name: 'Зона отступа' }).click()
+    // Give it a clearance zone in its inspector's «Крепление» (spec 6.5).
+    const lashing = inspector(page).getByTestId('inspector-lashing')
+    await lashing.getByText('Крепление', { exact: true }).click()
+    await lashing.getByRole('button', { name: 'Зона отступа' }).click()
 
     const before = await placedRect.getAttribute('x')
 

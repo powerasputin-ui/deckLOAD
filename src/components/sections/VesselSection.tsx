@@ -3,7 +3,7 @@
 import { Scale } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PanelBlock } from '@/components/shell/SectionPanel'
-import { LoadZonesSection } from '@/components/calculator/Sidebar'
+import { LoadZonesBlock } from '@/components/sections/vessel/LoadZonesBlock'
 import { VERDICT_WORD, VerdictIcon } from '@/components/stability/StabilityResults'
 import { DeckLashingPointsBlock, MarksBlock, ObstaclesBlock, SocketsBlock } from '@/components/sections/vessel/DeckMarksBlocks'
 import { DeckPhotoBlock } from '@/components/sections/vessel/DeckPhotoBlock'
@@ -44,9 +44,7 @@ export function VesselSection({
       <DeckBlock />
       <DeckPhotoBlock />
       <ObstaclesBlock />
-      <div className="px-4 py-3">
-        <LoadZonesSection zoneLoads={zoneLoads} />
-      </div>
+      <LoadZonesBlock zoneLoads={zoneLoads} />
       <SocketsBlock />
       <DeckLashingPointsBlock />
       <MarksBlock />

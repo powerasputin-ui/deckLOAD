@@ -66,6 +66,7 @@ import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
+import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
 import { VideoIntro } from '@/components/intro/VideoIntro'
 import { useFirstRun } from '@/hooks/useFirstRun'
@@ -1540,7 +1541,6 @@ export default function Home() {
               onOpenSection={openSection}
               onOpenStability={() => setWorkspace('stability')}
               onCheckAction={handleCheckAction}
-              lashing={{ autoStack: selectedAutoStack, onPatchAutoStack: patchAutoStack }}
             />
           )}
           {activeSection === 'report' && (
@@ -1760,6 +1760,7 @@ export default function Home() {
               stack={inspected?.stack}
               actions={inspectedActions}
               selection={inspectedSelection}
+              lashing={<StackLashing autoStack={selectedAutoStack} onPatchAutoStack={patchAutoStack} />}
               onShowChecks={() => openSection('checks')}
               onClose={closeInspector}
             />

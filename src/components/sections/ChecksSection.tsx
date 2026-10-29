@@ -1,7 +1,6 @@
 'use client'
 
 import { ChevronDown, ChevronRight, CircleCheck, CircleX, Info, Minus, TriangleAlert } from 'lucide-react'
-import { LashingPointsSection } from '@/components/calculator/Sidebar'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { SeparationRulesEditor, VesselMotionPicker } from '@/components/sections/checks/CheckSettings'
 import type { Check, CheckAction, CheckDetailLine, CheckDetails, CheckId, CheckStatus } from '@/lib/checks'
@@ -12,9 +11,8 @@ import { cn } from '@/lib/utils'
 // line by line, with the trip named when there are several — and the
 // stacks at fault light up on the open trip's deck (the page dims the
 // rest). The separation rules and the voyage's conditions are set in their
-// checks; «Требуют внимания» offers what can be done about each case. The
-// selected stack's lashing keeps its block below until it moves into the
-// inspector.
+// checks; «Требуют внимания» offers what can be done about each case. A
+// stack's lashing points are its inspector's.
 export function ChecksSection({
   checks,
   openCheck,
@@ -25,7 +23,6 @@ export function ChecksSection({
   onOpenSection,
   onOpenStability,
   onCheckAction,
-  lashing,
 }: {
   checks: readonly Check[]
   openCheck: CheckId | null
@@ -37,7 +34,6 @@ export function ChecksSection({
   onOpenSection: (id: SectionId) => void
   onOpenStability: () => void
   onCheckAction: (action: CheckAction) => void
-  lashing: React.ComponentProps<typeof LashingPointsSection>
 }) {
   return (
     <>
@@ -79,7 +75,12 @@ export function ChecksSection({
                       onAction={onCheckAction}
                     />
                     {c.id === 'separation' && <SeparationRulesEditor />}
-                    {c.id === 'lashing' && <VesselMotionPicker />}
+                    {c.id === 'lashing' && (
+                      <>
+                        <VesselMotionPicker />
+                        <p className="text-xs text-ink-2">Точки крепления штабеля — в его инспекторе: выделите штабель на палубе</p>
+                      </>
+                    )}
                     <TargetLink check={c} onOpenSection={onOpenSection} onOpenStability={onOpenStability} />
                   </div>
                 )}
@@ -88,9 +89,6 @@ export function ChecksSection({
           })}
         </ul>
       </PanelBlock>
-      <div className="px-4 py-3">
-        <LashingPointsSection {...lashing} />
-      </div>
     </>
   )
 }

@@ -41,7 +41,6 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
   expect(await textBelow12px(page)).toEqual([])
 
   await openSection(page, 'Судно')
-  await page.getByRole('button', { name: /^Зоны нагрузки/ }).click()
   expect(await textBelow12px(page)).toEqual([])
 
   // The stability workspace, in the deck's place, with all its groups open.
@@ -64,7 +63,6 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
 
   // Every check open in turn, and the selected stack's lashing block.
   await openSection(page, 'Проверки')
-  await page.getByRole('button', { name: /^Крепление груза/ }).click()
   for (const id of ['capacity', 'deck-weight', 'zones', 'separation', 'lashing', 'stability']) {
     await page.locator(`[data-check="${id}"] > button`).click()
     expect(await textBelow12px(page)).toEqual([])

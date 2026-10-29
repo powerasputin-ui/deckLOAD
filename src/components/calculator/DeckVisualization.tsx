@@ -2192,12 +2192,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     checkDroppedPlacementSeparation()
     // Click on empty deck area clears selection (pins/unpinned highlight in
     // auto mode, manual selection, load zones always) — but not while a
-    // stamp is armed: that click is about placing a NEW item elsewhere, not
-    // about dismissing the current selection, and clearing it first
-    // (pointerup fires before the click that actually places the item) made
-    // the sidebar's lashing panel lose track of whichever placement the
-    // user had just been configuring, even when the new item landed cleanly.
-    if (!pinDrag && !dragState && !zoneDrag && !rzDrag && !clearanceDrag && !panDrag && !activeStamp) {
+    // stamp or any deck tool is armed: that click is the tool's (L8), not a
+    // dismissal. Clearing it first (pointerup fires before the click that
+    // does the tool's work) closed the inspector of the very stack a
+    // lashing point was being put on.
+    if (!pinDrag && !dragState && !zoneDrag && !rzDrag && !clearanceDrag && !panDrag && !anyToolArmed) {
       const target = e.target as Element
       // Only clear if clicked directly on the deck background (marked via a
       // data attribute) or the SVG root itself — not coupled to fill colors,

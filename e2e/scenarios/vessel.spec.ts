@@ -198,7 +198,6 @@ test('Сценарий 6: зоны нагрузки', async ({ page }) => {
 
   // A zone over the whole deck at 0.05 t/m²: the demo's 16.6 t is twice that.
   await openSection(page, 'Судно')
-  await page.getByRole('button', { name: /^Зоны нагрузки/ }).click()
   await page.getByRole('button', { name: 'Добавить зону' }).click()
   const field = (label: string) => page.locator(`label:has-text("${label}") + input`).first()
   await field('X').fill('0')

@@ -1,6 +1,5 @@
 'use client'
 
-import { createContext, useState } from 'react'
 import { ClipboardCheck, FileText, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, Ship } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SECTION_ORDER, SECTION_TITLE, type SectionId } from '@/lib/workflow'
@@ -13,11 +12,6 @@ export const SECTION_ICON: Record<SectionId, React.ComponentType<{ className?: s
   checks: ClipboardCheck,
   report: FileText,
 }
-
-// Which collapsible blocks of the sections are open. The panel unmounts the
-// section it leaves, so a block's own state would reset on every switch; this
-// keeps it while the page is open (not across reloads).
-export const BlockOpenState = createContext<Map<string, boolean> | null>(null)
 
 // The left panel (spec 5.4): the open section's content, 360 px wide, or a
 // 48 px strip of section icons when collapsed. Opening and closing it never
@@ -35,7 +29,6 @@ export function SectionPanel({
   onSelect: (id: SectionId) => void
   children: React.ReactNode
 }) {
-  const [blockOpenState] = useState(() => new Map<string, boolean>())
   if (collapsed) {
     return (
       <aside aria-label="Панель разделов" className="flex w-12 shrink-0 flex-col items-center gap-1 border-r bg-surface py-2">
@@ -78,9 +71,7 @@ export function SectionPanel({
           <PanelLeftClose className="h-4 w-4" />
         </Button>
       </div>
-      <BlockOpenState.Provider value={blockOpenState}>
-        <div className="section-content thin-scrollbar min-h-0 flex-1 overflow-y-auto">{children}</div>
-      </BlockOpenState.Provider>
+      <div className="section-content thin-scrollbar min-h-0 flex-1 overflow-y-auto">{children}</div>
     </aside>
   )
 }

@@ -126,6 +126,19 @@ describe('Home (page.tsx)', () => {
   beforeEach(() => {
     stubLocalStorage()
     useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    // The deck's tools are the page's state, not the calculation's: loading
+    // a project doesn't disarm one a test left armed.
+    useCalculator.setState({
+      placingLashingPoint: false,
+      placingPowerSocket: false,
+      placingAnnotation: null,
+      activeStampId: null,
+      drawingCustomShape: false,
+      editingDeckOutline: false,
+      drawingRestrictionShape: null,
+      drawingRestrictionZoneFreeform: false,
+      deckPhotoTool: null,
+    })
     vi.spyOn(toast, 'success').mockImplementation(() => '')
     vi.spyOn(toast, 'info').mockImplementation(() => '')
     vi.spyOn(toast, 'warning').mockImplementation(() => '')
@@ -1081,6 +1094,47 @@ describe('Home (page.tsx)', () => {
     expect(variantsList()).toBeNull()
   })
 
+  // Stage 4, group D (spec 6.5): the selected stack's lashing is in its
+  // inspector — the points tied to it, what the norms ask, adding and
+  // taking them off.
+  it('the inspector\'s «Крепление»: the stack\'s points with their device, MSL and angle, the count against the norm', () => {
+    render(<Home />)
+    clearDemoCargo()
+    act(() => {
+      useCalculator.getState().addItem({ name: 'Труба', width: 2, length: 1, height: 1, quantity: 1, category: 'Металлопродукция', weight: 100_000 })
+      const it = useCalculator.getState().items[0]
+      useCalculator.setState({
+        mode: 'manual',
+        manualPlacements: [{ id: 'm1', itemId: it.id, name: it.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: it.color, weight: 100_000 }],
+        deck: {
+          ...useCalculator.getState().deck,
+          lashingPoints: [
+            { id: 'p1', x: 0.5, y: 0.5, label: 'Точка 1', placementId: 'm1', itemId: it.id, cornerX: 1, cornerY: 1, mslKg: 5000, verticalAngleDeg: 45, deviceType: 'chain_g80_10' },
+            { id: 'p2', x: 5, y: 5, label: 'Рым' },
+          ],
+        },
+        selectedManualIds: ['m1'],
+      })
+    })
+    const lashing = within(screen.getByTestId('inspector-lashing'))
+    // 100 t of metal asks for 2 lashings; one is set — and 5 t of MSL can't
+    // hold it.
+    expect(lashing.getByTestId('lashing-count').textContent).toBe('Нужно 2, задано 1')
+    expect(lashing.getByTestId('lashing-balance').textContent).toMatch(/^Не держит по расчёту сил/)
+    expect(lashing.getByLabelText(/^Обоснование/)).toBeTruthy()
+    const points = lashing.getByRole('list', { name: 'Точки крепления штабеля' })
+    expect(within(points).getAllByRole('listitem')).toHaveLength(1)
+    const msl = within(points).getByLabelText('MSL (кг)') as HTMLInputElement
+    fireEvent.change(msl, { target: { value: '8000' } })
+    fireEvent.keyDown(msl, { key: 'Enter' })
+    expect(useCalculator.getState().deck.lashingPoints!.find((p) => p.id === 'p1')!.mslKg).toBe(8000)
+    fireEvent.click(lashing.getByRole('button', { name: 'Добавить точку крепления' }))
+    expect(useCalculator.getState().placingLashingPoint).toBe(true)
+    fireEvent.click(lashing.getByRole('button', { name: /^Снять все точки этого штабеля/ }))
+    // The point tied to no stack stays: it is «Судно»'s.
+    expect(useCalculator.getState().deck.lashingPoints!.map((p) => p.id)).toEqual(['p2'])
+  })
+
   // Stage 4, group C2 (spec 8.1): the rest of «Судно» — the deck's shape back
   // to a rectangle, its photo, obstacles placed by X/Y, numbered zones and
   // the lashing points tied to no stack.
@@ -1141,7 +1195,6 @@ describe('Home (page.tsx)', () => {
         })
       })
       openSection('Судно')
-      fireEvent.click(screen.getByRole('button', { name: /^Зоны нагрузки/ }))
       expect(screen.getByText('Зона 1 (вся палуба)')).toBeTruthy()
       expect(screen.getByText('Зона 2')).toBeTruthy()
     })
@@ -3875,7 +3928,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // buildLashingRequirementRows directly). A composed [A(metal)x2,B(general)x3]
   // pin must render TWO independent verdict blocks, not one verdict computed
   // from only the nominal itemId's category.
-  it('Sidebar lashing section renders one verdict block PER SEGMENT for a composed placement', () => {
+  it('the inspector\'s lashing renders one verdict block PER SEGMENT for a composed placement', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -3895,8 +3948,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    openSection('Проверки')
-    fireEvent.click(screen.getByText('Крепление груза'))
+    // The stack's «Крепление», in its inspector (spec 6.5).
+    within(screen.getByTestId('inspector-lashing')).getByText('Крепление')
 
     // Both segment labels appear (2 ед./3 ед. — the segment's own layers,
     // not the placement's combined 5).
@@ -3908,7 +3961,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(screen.getByText(/Ориентировочное количество найтовов/)).toBeTruthy()
   })
 
-  it('Sidebar lashing section: a dangerous-goods segment is excluded per-segment without hiding the other segment\'s verdict, regardless of which one is nominal', () => {
+  it('the inspector\'s lashing: a dangerous-goods segment is excluded per-segment without hiding the other segment\'s verdict, regardless of which one is nominal', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -3931,8 +3984,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       useCalculator.setState({ selectedPinIds: [pinId] })
     })
 
-    openSection('Проверки')
-    fireEvent.click(screen.getByText('Крепление груза'))
+    within(screen.getByTestId('inspector-lashing')).getByText('Крепление')
 
     expect(screen.getAllByText(/IMDG Code/).length).toBeGreaterThan(0) // dangerous segment's own not-applicable notice
     // "требуется найтовов" appears ONLY in the calculated-verdict block
@@ -5310,7 +5362,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     // A click used to pin the stack, which is what made the sidebar's
     // «Крепление груза» see it; a selected auto-placed stack must still be
     // reachable there.
-    it('«Крепление груза» works on a selected auto-placed stack and pins it on the first change', () => {
+    it('the inspector\'s «Крепление» works on a selected auto-placed stack and pins it on the first change', () => {
       render(<Home />)
       clearDemoCargo()
       setupAuto()
@@ -5318,9 +5370,8 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         fireEvent.pointerDown(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100, button: 0 })
         fireEvent.pointerUp(placementGroupByLabel('BoxA'), { clientX: 100, clientY: 100 })
       })
-      openSection('Проверки')
-      fireEvent.click(screen.getByRole('button', { name: /^Крепление груза/ }))
-      expect(screen.getByText('Режим для «BoxA»')).toBeTruthy()
+      const lashing = within(screen.getByTestId('inspector-lashing'))
+      expect(lashing.getByRole('group', { name: 'Способ крепления' })).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Точки крепления' }))
       expect(pins()).toHaveLength(0)
       fireEvent.click(screen.getByRole('button', { name: 'Зона отступа' }))

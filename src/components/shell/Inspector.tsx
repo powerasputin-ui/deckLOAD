@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ClipboardCheck, createLucideIcon, Lock, Minus, Plus, RotateCw, Trash2, Unlock, X } from 'lucide-react'
+import { ChevronRight, createLucideIcon, Lock, Minus, Plus, RotateCw, Trash2, Unlock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
-import { cn, pluralRu } from '@/lib/utils'
+import { pluralRu } from '@/lib/utils'
 
 // The selected stack as the inspector and the mini-panel show it (spec 6.5,
 // 6.6). page.tsx builds it from the selection.
@@ -92,13 +92,16 @@ export function Inspector({
   stack,
   selection,
   actions,
+  lashing,
   onShowChecks,
   onClose,
 }: {
   stack?: InspectedStack
   selection?: InspectedSelection
   actions?: StackActions
-  // Opens «Проверки», where the problems and the lashing are.
+  // The stack's «Крепление» (StackLashing).
+  lashing?: React.ReactNode
+  // Opens «Проверки», where the problems are.
   onShowChecks: () => void
   onClose: () => void
 }) {
@@ -109,7 +112,7 @@ export function Inspector({
       style={{ width: INSPECTOR_WIDTH_PX }}
     >
       {stack && actions ? (
-        <StackDetails stack={stack} actions={actions} onShowChecks={onShowChecks} onClose={onClose} />
+        <StackDetails stack={stack} actions={actions} lashing={lashing} onShowChecks={onShowChecks} onClose={onClose} />
       ) : selection ? (
         <SelectionDetails selection={selection} onClose={onClose} />
       ) : null}
@@ -138,11 +141,13 @@ function Header({ children, onClose }: { children: React.ReactNode; onClose: () 
 function StackDetails({
   stack,
   actions,
+  lashing,
   onShowChecks,
   onClose,
 }: {
   stack: InspectedStack
   actions: StackActions
+  lashing?: React.ReactNode
   onShowChecks: () => void
   onClose: () => void
 }) {
@@ -283,19 +288,15 @@ function StackDetails({
           </section>
         )}
 
-        <section className="px-4 py-3">
-          <button
-            type="button"
-            onClick={onShowChecks}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-ink-2 hover:bg-accent hover:text-ink',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-            )}
-          >
-            <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
-            Крепление и проверки — в разделе «Проверки»
-          </button>
-        </section>
+        {lashing && (
+          <details className="group px-4 py-3" data-testid="inspector-lashing">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium hover:text-ink [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="h-4 w-4 shrink-0 text-ink-2 transition-transform group-open:rotate-90" aria-hidden="true" />
+              Крепление
+            </summary>
+            <div className="pt-2.5">{lashing}</div>
+          </details>
+        )}
       </div>
     </>
   )

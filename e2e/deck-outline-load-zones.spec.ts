@@ -26,7 +26,6 @@ test.describe('Load zones on a non-rectangular deck', () => {
 
     await openSection(page, 'Судно')
 
-    await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()
 
     const xInput = page.locator('label:has-text("X (") + input, label:has-text("X (") ~ input').first()
@@ -43,7 +42,6 @@ test.describe('Load zones on a non-rectangular deck', () => {
 
     await openSection(page, 'Судно')
 
-    await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()
 
     const clippedGroup = page.locator('svg g[clip-path="url(#deck-outline-clip)"]')
@@ -67,7 +65,6 @@ test.describe('Load zones on a non-rectangular deck', () => {
 
     await openSection(page, 'Судно')
 
-    await page.getByRole('button', { name: 'Зоны нагрузки' }).click()
     await page.getByRole('button', { name: 'Добавить зону' }).click()
 
     const xInput = page.locator('label:has-text("X (") + input, label:has-text("X (") ~ input').first()
