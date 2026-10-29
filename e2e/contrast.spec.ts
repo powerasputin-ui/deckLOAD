@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { inspector, openSection } from './helpers'
+import { chooseLibraryVessel, inspector, openSection } from './helpers'
 
 // Stage 1 (spec 13, 14): no text on the main screen below WCAG AA contrast,
 // in the light theme and in the dark one — every section, and the inspector
@@ -93,8 +93,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     // reference with its chart and criteria.
     test('the stability workspace reads at AA contrast', async ({ page }) => {
       await page.goto('/')
-      await openSection(page, 'Судно')
-      await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
+      await chooseLibraryVessel(page, 'Алексей Кузнецов (IMO 9692648)')
       await page.getByRole('button', { name: 'Открыть остойчивость' }).click()
       const workspace = page.getByTestId('stability-workspace')
       await expect(workspace.getByText('Числа ниже — только оценка')).toBeVisible()

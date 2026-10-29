@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { chooseFromCatalog, clearCalculation, openCargoTable, openSection, setNumber, tripSummaryValue, unitsCount } from '../helpers'
+import { chooseFromCatalog, chooseLibraryVessel, clearCalculation, openCargoTable, openSection, setNumber, tripSummaryValue, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 1–6, from the entry points of stage 2: what is on
 // screen, never a right-click. Stages 3 and 4 rewrite them into their full
@@ -19,8 +19,7 @@ async function deckArea(page: Page): Promise<string> {
 test('Сценарий 1: начать с реального судна', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
-  await openSection(page, 'Судно')
-  await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
+  await chooseLibraryVessel(page, 'Алексей Кузнецов (IMO 9692648)')
 
   // The vessel's deck, drawn with its size and its bow and stern named.
   await expect(deck(page).getByText('49.10 м')).toBeVisible()
@@ -30,9 +29,9 @@ test('Сценарий 1: начать с реального судна', async 
 
   // Its sources disagree on the deck strength: a limit is picked, and the
   // check stops asking.
-  await expect(page.getByText('Лимит прочности палубы не выбран')).toBeVisible()
+  await expect(page.getByText('лимит не выбран', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '5 т/м²' }).click()
-  await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
+  await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
   await openSection(page, 'Проверки')
   await expect(page.locator('[data-check="zones"]')).toHaveAttribute('data-check-status', 'ok')
 })

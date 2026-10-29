@@ -341,7 +341,7 @@ export default function Home() {
   // cargo doesn't itself fire the toast; only a NEW overload caused by the
   // user's own next action does.
   const prevOverloadedZoneCountRef = useRef(0)
-  const { importInputRef, handleExportJson, handleImportFile, handleNewCalculation, handleApplyVesselTemplate } = useProjectActions({
+  const { importInputRef, handleExportJson, handleImportFile, handleNewCalculation, handleNewCalculationForVessel, handleApplyVesselToCurrent } = useProjectActions({
     prevOverloadedZoneCountRef,
   })
 
@@ -1488,7 +1488,8 @@ export default function Home() {
         <SectionPanel active={activeSection} collapsed={panelCollapsed} onCollapsedChange={changePanelCollapsed} onSelect={openSection}>
           {activeSection === 'vessel' && (
             <VesselSection
-              onApplyVesselTemplate={handleApplyVesselTemplate}
+              onNewCalculationForVessel={handleNewCalculationForVessel}
+              onApplyVesselToCurrent={handleApplyVesselToCurrent}
               zoneLoads={zoneLoads}
               stability={statusGm}
               hasVessel={!!deck.vessel}

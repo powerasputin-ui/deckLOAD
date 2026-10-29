@@ -62,6 +62,26 @@ export async function addSeparationRule(page: Page, categoryA: string, categoryB
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Правило добавлено' })).toBeVisible()
 }
 
+// A library vessel picked in «Судно» (spec 8.1). With cargo in the
+// calculation a dialog asks how: by default a new calculation for it, as
+// the library always did before.
+export async function chooseLibraryVessel(
+  page: Page,
+  label: string,
+  how: 'Новый расчёт с этим судном' | 'Заменить палубу в текущем (груз останется)' = 'Новый расчёт с этим судном'
+) {
+  await openSection(page, 'Судно')
+  await page.getByText(label, { exact: true }).click()
+  const dialog = page.getByRole('alertdialog')
+  // Without cargo, nor anything tied to the old deck, there is no question.
+  const asked = await dialog.waitFor({ state: 'visible', timeout: 2000 }).then(
+    () => true,
+    () => false
+  )
+  if (asked) await dialog.getByRole('button', { name: how }).click()
+  await expect(dialog).toBeHidden()
+}
+
 // An item of the calculation's menu, top left (spec 5.2).
 export async function projectMenuItem(page: Page, name: string) {
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()

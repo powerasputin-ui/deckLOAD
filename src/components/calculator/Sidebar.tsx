@@ -1,10 +1,10 @@
 'use client'
 
-// The blocks of the left panel's «Судно» and «Проверки» sections (spec 13,
-// stage 2: today's content, moved as is). Stages 3–4 rebuild them; until
-// then each keeps its own collapsible heading. The vessel's stability data
-// moved to the stability workspace (src/components/stability/, stage 2a).
-import { useContext, useId, useState } from 'react'
+// The blocks of the left panel's «Судно» and «Проверки» sections still kept
+// from the old sidebar (spec 13, stage 2: moved as is): «Зоны нагрузки» and
+// the selected stack's lashing, each with its own collapsible heading, until
+// stage 4 rebuilds them.
+import { useContext, useState } from 'react'
 // Stable empty-array references for zustand selectors — `s.deck.x ?? []`
 // would allocate a new array every call, which useSyncExternalStore treats
 // as "the snapshot changed" and re-renders forever.
@@ -12,21 +12,17 @@ const EMPTY_ZONES: never[] = []
 const EMPTY_POINTS: never[] = []
 import {
   Plus,
-  Settings2,
-  Layers,
   ChevronDown,
   ChevronRight,
   Trash2,
-  Anchor,
   Scale,
   ShieldAlert,
   MapPin,
-  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, UNIT_LABEL, roundForDisplay, convertLength, isWholeDeckZone, type Unit } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, roundForDisplay } from '@/store/calculator'
 import {
   LASHING_DEVICES,
   WIRE_ROPE_SPECS,
@@ -39,12 +35,9 @@ import {
   type ZoneLoadCheck,
   type WireRopeType,
 } from '@/lib/packing'
-import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
 import { BlockOpenState } from '@/components/shell/SectionPanel'
-import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
-import { toast } from 'sonner'
 import {
   Select,
   SelectContent,
@@ -52,10 +45,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@/components/ui/toggle-group'
 
 export type PlacementPatch = {
   clearanceMargin?: ClearanceMargin
@@ -63,13 +52,6 @@ export type PlacementPatch = {
   lashingJustification?: string
 }
 
-// No real vessel's cargo deck comes anywhere close to this — the largest
-// container ships afloat run well under 500 m LOA. Without a cap, a stray
-// extra digit (e.g. typing "999999999" instead of "20") silently collapses
-// the whole deck to a sliver a few px tall on screen and every placed item
-// becomes unplaceable, with no error explaining why — this clamp turns that
-// into a normal, explained validation instead.
-const MAX_DECK_DIMENSION_M = 1000
 
 export function Section({
   icon,
@@ -134,127 +116,12 @@ export function Section({
   )
 }
 
-export function DeckSettings() {
-  const deck = useCalculator((s) => s.deck)
-  const setDeck = useCalculator((s) => s.setDeck)
-  const setUnit = useCalculator((s) => s.setUnit)
-  const uid = useId()
-  const maxDeckInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
-
-  // Every field here applies on Enter/blur, not per keystroke: setDeck()
-  // reflows and clamps the placements already on the deck whenever the size,
-  // board offset or clearance changes, and a transient "2" on the way to
-  // "24" would rearrange (or discard stacked layers from) the user's layout
-  // for good. See NumberField.
-  return (
-    <Section icon={<Settings2 className="h-4 w-4" />} title="Палуба" tourId="deck-settings">
-      <div className="space-y-2.5">
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <label htmlFor={`${uid}-width`} className="text-xs text-muted-foreground">Ширина (борт–борт)</label>
-            <NumberField
-              id={`${uid}-width`}
-              min={0.1}
-              max={maxDeckInUnit}
-              step={0.1}
-              value={deck.width}
-              onClamp={({ bound, limit }) => {
-                if (bound === 'max') toast.warning(`Максимальная ширина палубы — ${fmtNumber(limit)} ${UNIT_LABEL[deck.unit]}`)
-              }}
-              onCommit={(v) => setDeck({ width: v })}
-              className="h-8 text-xs"
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor={`${uid}-length`} className="text-xs text-muted-foreground">Длина (нос–корма)</label>
-            <NumberField
-              id={`${uid}-length`}
-              min={0.1}
-              max={maxDeckInUnit}
-              step={0.1}
-              value={deck.length}
-              onClamp={({ bound, limit }) => {
-                if (bound === 'max') toast.warning(`Максимальная длина палубы — ${fmtNumber(limit)} ${UNIT_LABEL[deck.unit]}`)
-              }}
-              onCommit={(v) => setDeck({ length: v })}
-              className="h-8 text-xs"
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label htmlFor={`${uid}-offset`} className="text-xs text-muted-foreground flex items-center gap-1">
-            <Anchor className="h-3 w-3" /> Отступ от борта
-          </label>
-          <div className="flex items-center gap-1.5">
-            <NumberField
-              id={`${uid}-offset`}
-              min={0}
-              step={0.05}
-              value={deck.boardOffset}
-              onCommit={(v) => setDeck({ boardOffset: v })}
-              className="h-8 text-xs flex-1"
-            />
-            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label htmlFor={`${uid}-clearance`} className="text-xs text-muted-foreground flex items-center gap-1">
-            <Layers className="h-3 w-3" /> Предельная высота штабеля
-          </label>
-          <div className="flex items-center gap-1.5">
-            <NumberField
-              id={`${uid}-clearance`}
-              min={0}
-              step={0.1}
-              value={deck.clearance}
-              onCommit={(v) => setDeck({ clearance: v })}
-              className="h-8 text-xs flex-1"
-            />
-            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            0 — палуба высоту не ограничивает: ярусов столько, сколько указано
-            в «Ярусов» у груза, а если там 0 — один. Больше 0 — штабель не выше
-            этой высоты и не больше «Ярусов»
-          </p>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Единицы</label>
-          <ToggleGroup
-            type="single"
-            value={deck.unit}
-            onValueChange={(v) => v && setUnit(v as Unit)}
-            className="justify-start"
-          >
-            <ToggleGroupItem value="m" className="h-7 text-xs px-2">м</ToggleGroupItem>
-            <ToggleGroupItem value="cm" className="h-7 text-xs px-2">см</ToggleGroupItem>
-            <ToggleGroupItem value="ft" className="h-7 text-xs px-2">фт</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-      </div>
-    </Section>
-  )
-}
-
 export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const zones = useCalculator((s) => s.deck.loadZones ?? EMPTY_ZONES)
   const unit = useCalculator((s) => s.deck.unit)
   const addLoadZone = useCalculator((s) => s.addLoadZone)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
   const removeLoadZone = useCalculator((s) => s.removeLoadZone)
-  const vesselTemplateId = useCalculator((s) => s.deck.vesselTemplateId)
-  const strengthChoice = useCalculator((s) => s.deck.deckStrengthChoiceTPerM2)
-  const deckWidth = useCalculator((s) => s.deck.width)
-  const deckLength = useCalculator((s) => s.deck.length)
-  const chooseDeckStrength = useCalculator((s) => s.chooseDeckStrength)
-
-  // A library vessel whose sources disagree on deck strength: the limit is
-  // never picked for the user. The choice stays here, on top, until made.
-  const vessel = vesselTemplateById(vesselTemplateId)
-  const strength = vessel?.limits?.deckStrengthTPerM2
-  const strengthPending = !!strength && strengthChoice === undefined
-  const strengthZoneMissing =
-    !!strength && strengthChoice !== undefined && !zones.some((z) => isWholeDeckZone(z, deckWidth, deckLength))
 
   return (
     <Section
@@ -262,51 +129,9 @@ export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] })
       title="Зоны нагрузки"
       badge={zones.length}
       defaultOpen={false}
-      openWhen={strengthPending}
       tourId="load-zones"
     >
       <div className="space-y-2">
-        {vessel && strength && (
-          <div
-            className={cn(
-              'rounded-md border p-2 space-y-1.5',
-              strengthPending && 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
-            )}
-          >
-            {strengthPending ? (
-              <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                Лимит прочности палубы не выбран
-              </div>
-            ) : (
-              <div className="text-xs font-medium">
-                Прочность палубы: {fmtNumber(strengthChoice ?? 0)} т/м²
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              «{vessel.label}»: источники расходятся ({strength.sources}). Выбор задаёт зону нагрузки на всю палубу.
-            </p>
-            {strengthZoneMissing && (
-              <p className="text-xs text-amber-800 dark:text-amber-300">
-                Зоны на всю палубу нет, лимит не проверяется. Нажмите выбранное значение, чтобы вернуть её.
-              </p>
-            )}
-            <div className="flex gap-1.5">
-              {(strength.min === strength.max ? [strength.min] : [strength.min, strength.max]).map((v) => (
-                <Button
-                  key={v}
-                  size="sm"
-                  variant={strengthChoice === v ? 'default' : 'outline'}
-                  aria-pressed={strengthChoice === v}
-                  className="h-7 flex-1 text-xs"
-                  onClick={() => chooseDeckStrength(v)}
-                >
-                  {fmtNumber(v)} т/м²
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
         <p className="text-xs text-muted-foreground">
           Лимит — это ПЛОТНОСТЬ (тонны на каждый квадратный метр площади зоны), не общий вес зоны целиком. Лимит «2» на зоне 5×4 м (20 м²) значит зона держит до 2×20 = 40 т в сумме, не 2 т. Превышение — мягкое предупреждение, груз не блокируется.
         </p>

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { openSection, unitsCount } from './helpers'
+import { chooseLibraryVessel, openSection, unitsCount } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -14,18 +14,18 @@ test.describe('Library vessel deck strength', () => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
 
-    await openSection(page, 'Судно')
-    await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
+    await chooseLibraryVessel(page, 'Алексей Кузнецов (IMO 9692648)')
 
-    // Waiting, opened, in «Зоны нагрузки» — and said by the zones check.
-    await expect(page.getByText('Лимит прочности палубы не выбран')).toBeVisible()
+    // Waiting in the vessel's card — and said by the zones check.
+    await expect(page.getByText('лимит не выбран', { exact: true })).toBeVisible()
     await openSection(page, 'Проверки')
     const zones = page.locator('[data-check="zones"]')
     await expect(zones).toHaveAttribute('data-check-status', 'warn')
     await expect(zones).toContainText('Не выбран лимит прочности палубы')
     await openSection(page, 'Судно')
     await page.getByRole('button', { name: '5 т/м²' }).click()
-    await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
+    await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('лимит не выбран', { exact: true })).toHaveCount(0)
     await openSection(page, 'Проверки')
     await expect(zones).toHaveAttribute('data-check-status', 'ok')
 
@@ -33,8 +33,6 @@ test.describe('Library vessel deck strength', () => {
     await page.waitForTimeout(800)
     await page.reload()
     await openSection(page, 'Судно')
-    await page.getByRole('button', { name: /^Зоны нагрузки/ }).click()
-    await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
     await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
     await openSection(page, 'Проверки')
     await expect(zones).toHaveAttribute('data-check-status', 'ok')

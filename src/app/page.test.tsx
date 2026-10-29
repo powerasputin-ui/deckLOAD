@@ -71,6 +71,14 @@ function openCheckRow(id: string): HTMLElement {
   return document.querySelector<HTMLElement>(`[data-check="${id}"]`)!
 }
 
+// A library vessel picked in «Судно» (spec 8.1); with cargo in the
+// calculation the dialog asks how, and `how` answers.
+function chooseVessel(label: string, how?: 'Новый расчёт с этим судном' | 'Заменить палубу в текущем (груз останется)') {
+  fireEvent.click(screen.getByText(label))
+  const dialog = screen.queryByRole('alertdialog')
+  if (dialog && how) fireEvent.click(within(dialog).getByRole('button', { name: how }))
+}
+
 // A button of the mini-panel over the selected stack (spec 6.6).
 function stackButton(name: string): HTMLElement {
   return within(screen.getByRole('toolbar', { name: 'Действия со штабелем' })).getByRole('button', { name })
@@ -197,9 +205,78 @@ describe('Home (page.tsx)', () => {
   it('applying a library vessel confirms the new calculation and marks the vessel', () => {
     render(<Home />)
     openSection('Судно')
-    fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
+    chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Новый расчёт с этим судном')
     expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
     expect(screen.getByText('применено')).toBeTruthy()
+  })
+
+  // Stage 4, group C (spec 8.1): a library vessel goes onto the open
+  // calculation — straight away without cargo, by choice with it.
+  describe('a library vessel on the open calculation', () => {
+    it('without cargo it is applied, and a calculation named as created takes its name', () => {
+      render(<Home />)
+      act(() => {
+        useProjects.getState().createProject()
+      })
+      const id = useProjects.getState().activeId!
+      expect(useProjects.getState().projects.find((p) => p.id === id)!.name).toMatch(/^Расчёт \d+$/)
+      openSection('Судно')
+      fireEvent.click(screen.getByText('Коммандер (IMO 9340609)'))
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(useCalculator.getState().deck).toMatchObject({ vesselTemplateId: 'olympic-commander', width: 16, length: 51 })
+      expect(useProjects.getState().activeId).toBe(id)
+      expect(useProjects.getState().projects.find((p) => p.id === id)!.name).toBe('Коммандер (IMO 9340609)')
+      expect(toast.success).toHaveBeenCalledWith('Судно «Коммандер (IMO 9340609)» применено', expect.anything())
+    })
+
+    it('the vessel card: the limits, the cargo limit changed and cleared, where the data comes from', () => {
+      render(<Home />)
+      openSection('Судно')
+      const value = (term: string) => screen.getByText(term).nextElementSibling!.textContent
+      expect(screen.getByTestId('vessel-name').textContent).toBe('Своя палуба')
+      expect(value('Данные остойчивости')).toBe('не заданы')
+      chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Заменить палубу в текущем (груз останется)')
+      expect(screen.getByTestId('vessel-name').textContent).toBe('Алексей Кузнецов (IMO 9692648)')
+      expect(value('Вместимость 10-футовых контейнеров')).toBe('14')
+      expect(value('Предельная высота штабеля по данным судна')).toBe('3 м')
+      expect(value('Направление носа')).toBe('из данных судна')
+      const limit = screen.getByLabelText('Наибольший вес груза на палубе') as HTMLInputElement
+      expect(limit.value).toBe('2550')
+      fireEvent.change(limit, { target: { value: '2000' } })
+      fireEvent.keyDown(limit, { key: 'Enter' })
+      expect(useCalculator.getState().deck.maxDeckCargoT).toBe(2000)
+      fireEvent.change(limit, { target: { value: '' } })
+      fireEvent.keyDown(limit, { key: 'Enter' })
+      expect(useCalculator.getState().deck.maxDeckCargoT).toBeUndefined()
+      expect(screen.getByTestId('vessel-note').textContent).toMatch(/^ОЦЕНКА: длина палубы/)
+    })
+
+    it('with cargo it replaces the deck, keeps the cargo, drops what was tied to the old deck — and one undo brings it all back', () => {
+      render(<Home />)
+      const before = useCalculator.getState()
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, { ...before.items[0], itemId: before.items[0].id, x: 0, y: 0, layers: 1, rotated: false, locked: true })
+        useCalculator.getState().addLashingPoint({ x: 1, y: 1 })
+        clearCalculatorHistory()
+      })
+      const deckBefore = useCalculator.getState().deck
+      openSection('Судно')
+      fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
+      const dialog = screen.getByRole('alertdialog')
+      expect([...within(dialog).getByRole('list', { name: 'Будет удалено' }).querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+        '1 точка крепления',
+        '1 закрепление',
+      ])
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Заменить палубу в текущем (груз останется)' }))
+      const after = useCalculator.getState()
+      expect(after.items).toBe(before.items)
+      expect(after.deck).toMatchObject({ vesselTemplateId: 'aleksey-kuznetsov', width: 16.9, length: 49.1, clearance: 3, maxDeckCargoT: 2550 })
+      expect(after.deck.lashingPoints).toBeUndefined()
+      expect(after.pinnedPlacementsByTrip).toEqual({})
+      act(() => undoCalculator())
+      expect(useCalculator.getState().deck).toEqual(deckBefore)
+      expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
+    })
   })
 
   // Stage 1 (m6): there was no dark theme.
@@ -850,14 +927,12 @@ describe('Home (page.tsx)', () => {
       // bow at +y — drawn lengthwise, bow at the right.
       expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'right', stern: 'left' })
       expect(bowLabel()).toBe('↓ НОС')
-      // The switch is in the stability workspace, which stands in the
-      // deck's place.
+      // The switch is with the deck, in «Судно» (spec 8.1).
       openSection('Судно')
-      fireEvent.click(screen.getByRole('button', { name: 'Открыть остойчивость' }))
-      expect(screen.getByText('Нос на схеме: справа')).toBeTruthy()
+      const bowLine = () => screen.getByText(/^Нос на схеме:/).textContent
+      expect(bowLine()).toBe('Нос на схеме: справа')
       fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
-      expect(screen.getByText('Нос на схеме: слева')).toBeTruthy()
-      fireEvent.click(screen.getByRole('button', { name: 'К палубе' }))
+      expect(bowLine()).toBe('Нос на схеме: слева')
       expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'left', stern: 'right' })
       expect(bowLabel()).toBe('↑ НОС')
     })
@@ -956,11 +1031,11 @@ describe('Home (page.tsx)', () => {
     const custom = vi.spyOn(toast, 'custom').mockImplementation(() => '')
     render(<Home />)
     openSection('Судно')
-    fireEvent.click(screen.getByText('Алексей Кузнецов (IMO 9692648)'))
+    chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Новый расчёт с этим судном')
     expect(custom).not.toHaveBeenCalled()
     expect(useCalculator.getState().deck.vesselTemplateId).toBe('aleksey-kuznetsov')
-    // «Зоны нагрузки» opened by itself, with the choice on top.
-    expect(screen.getByText('Лимит прочности палубы не выбран')).toBeTruthy()
+    // The vessel's card asks for it (spec 8.1).
+    expect(screen.getByText('лимит не выбран')).toBeTruthy()
     openSection('Проверки')
     expect(openCheckRow('zones').getAttribute('data-check-status')).toBe('warn')
     expect(openCheckRow('zones').textContent).toMatch(/Не выбран лимит прочности палубы/)
@@ -969,7 +1044,8 @@ describe('Home (page.tsx)', () => {
     const deck = useCalculator.getState().deck
     expect(deck.deckStrengthChoiceTPerM2).toBe(5)
     expect(deck.loadZones).toEqual([{ id: expect.any(String), x: 0, y: 0, width: deck.width, length: deck.length, maxLoadPerArea: 5 }])
-    expect(screen.getByText('Прочность палубы: 5 т/м²')).toBeTruthy()
+    expect(screen.getByText('Прочность палубы').nextElementSibling!.textContent).toBe('5 т/м²')
+    expect(screen.getByRole('button', { name: '5 т/м²' }).getAttribute('aria-pressed')).toBe('true')
     openSection('Проверки')
     expect(openCheckRow('zones').textContent).not.toMatch(/Не выбран лимит/)
   })
@@ -977,10 +1053,9 @@ describe('Home (page.tsx)', () => {
   it('a library vessel with no disputed deck strength asks for nothing', () => {
     render(<Home />)
     openSection('Судно')
-    fireEvent.click(screen.getByText('Коммандер (IMO 9340609)'))
+    chooseVessel('Коммандер (IMO 9340609)', 'Новый расчёт с этим судном')
     expect(useCalculator.getState().deck.vesselTemplateId).toBe('olympic-commander')
     expect(screen.queryByText('лимит не выбран')).toBeNull()
-    expect(screen.queryByText('Лимит прочности палубы не выбран')).toBeNull()
   })
 
   // Phase 0, L13: variants are a snapshot of one project's cargo; they used

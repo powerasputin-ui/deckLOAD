@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { addSeparationRule, inspector, openSection, unitsCount } from '../helpers'
+import { addSeparationRule, chooseLibraryVessel, inspector, openSection, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 15–16, from the entry points of stage 2. Stage 4
 // rewrites them for the single list of checks.
@@ -73,8 +73,7 @@ test('Сценарий 15: сепарация и крепление', async ({ p
 test('Сценарий 16: остойчивость', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
-  await openSection(page, 'Судно')
-  await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
+  await chooseLibraryVessel(page, 'Алексей Кузнецов (IMO 9692648)')
   await expect(deck(page).getByText('49.10 м')).toBeVisible()
 
   // The library vessel brings its data: «Судно» sums up the open trip, and

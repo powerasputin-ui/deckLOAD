@@ -452,7 +452,6 @@ function FrameGroup({ particulars: p, open }: { particulars: VesselParticulars; 
   const frame = useCalculator((s) => s.deck.shipFrame) ?? DEFAULT_SHIP_FRAME
   const setFrame = useCalculator((s) => s.setShipFrame)
   const forward = useCalculator((s) => s.deck.deckForwardIsPositiveY ?? true)
-  const setForward = useCalculator((s) => s.setDeckForwardIsPositiveY)
   const width = useCalculator((s) => s.deck.width)
   const length = useCalculator((s) => s.deck.length)
   const bow = DRAWING_EDGE_WORD[hullSideEdges(width, length, forward).bow]
@@ -479,12 +478,8 @@ function FrameGroup({ particulars: p, open }: { particulars: VesselParticulars; 
           hint="Она же высота борта для надводного борта"
         />
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-ink-2">Нос на схеме: {bow}</span>
-        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setForward(!forward)}>
-          Сменить
-        </Button>
-      </div>
+      {/* Set with the deck, in «Судно» → «Палуба» (spec 8.1, A.6). */}
+      <p className="text-xs text-ink-2">Нос на схеме: {bow}. Меняется в разделе «Судно», блок «Палуба»</p>
     </Group>
   )
 }

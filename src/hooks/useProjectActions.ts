@@ -3,8 +3,9 @@
 import { useRef } from 'react'
 import { toast } from 'sonner'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
-import { clearCalculatorHistory, DEMO_DECK, useCalculator } from '@/store/calculator'
+import { clearCalculatorHistory, DEMO_DECK, undoCalculator, useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
+import { deckForVessel, isDefaultCalculationName } from '@/lib/vesselDeck'
 
 // What is done to the calculation as a whole from the page: its file, clearing
 // it, and a new one for a library vessel. The rest of the calculation's menu
@@ -20,6 +21,7 @@ export function useProjectActions({
   const getActiveProject = useProjects((s) => s.getActive)
   const importProject = useProjects((s) => s.importProject)
   const createProject = useProjects((s) => s.createProject)
+  const renameProject = useProjects((s) => s.renameProject)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   const handleExportJson = () => {
@@ -87,57 +89,24 @@ export function useProjectActions({
     toast.success('Текущий расчёт очищен')
   }
 
-  // "Судно" header button — creates a fresh calculation with a real
-  // vessel's deck size + stability data (lightship/hydrostatics/tanks)
-  // already filled in. Cargo is deliberately left empty; see
-  // src/lib/vesselTemplates.ts for exactly which fields are real vs.
-  // estimated for each vessel.
+  // «Судно из библиотеки» (spec 8.1), as a new calculation: the vessel's
+  // deck and data (deckForVessel), cargo empty. See src/lib/vesselTemplates.ts
+  // for which of its figures are real and which estimated.
   //
   // Writes go through saveSnapshot (the PROJECT'S own persisted data),
   // never useCalculator.setState directly — createProject() switches
-  // activeId, which schedules the "load project into calculator" effect
-  // above (~line 332) to run on the next commit and overwrite the
-  // calculator store from projects.find(activeId)'s CURRENT data. Calling
-  // useCalculator.setState synchronously here would just get clobbered by
-  // that effect a moment later (confirmed live — vessel came back
-  // undefined). Updating the project itself first means the load effect
-  // picks up the vessel data on its own, instead of fighting it.
-  const handleApplyVesselTemplate = (tpl: VesselTemplate) => {
+  // activeId, which schedules the page's "load project into calculator"
+  // effect to run on the next commit and overwrite the calculator store from
+  // projects.find(activeId)'s CURRENT data. Calling useCalculator.setState
+  // synchronously here would just get clobbered by that effect a moment
+  // later (confirmed live — vessel came back undefined). Updating the
+  // project itself first means the load effect picks up the vessel data on
+  // its own, instead of fighting it.
+  const handleNewCalculationForVessel = (tpl: VesselTemplate) => {
     const newId = createProject(tpl.label)
     saveSnapshot({
       id: newId,
-      deck: {
-        width: tpl.deck.width,
-        length: tpl.deck.length,
-        unit: 'm',
-        gap: 0.1,
-        boardOffset: 0.2,
-        // Seed the deck-wide stack-height budget from the vessel's own
-        // approved limit (e.g. 3.0 m for a pipe stack, ДВТК п. 2.1.2) — the
-        // number was already shown in the picker as a promise, so applying
-        // the template must actually make it bind, not just display it.
-        clearance: tpl.limits?.maxStackHeightM ?? 0,
-        // Same reasoning as clearance above — the picker already shows
-        // "груз до N т" as a promise; without binding it here, the app can
-        // silently let a user load far past the vessel's own approved
-        // total-deck-cargo capacity with zero warning (this WAS the case —
-        // maxDeckCargoT existed only as picker text, never checked).
-        maxDeckCargoT: tpl.limits?.maxDeckCargoT,
-        tenFootContainerCapacity: tpl.limits?.tenFootContainerCapacity,
-        vessel: tpl.vessel,
-        shipFrame: tpl.shipFrame,
-        deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
-        // A non-rectangular real deck silhouette (digitized from a GA
-        // drawing) and its real obstacles (hatches, moon pool, etc.) —
-        // same "bind the promise, don't just display it" reasoning as
-        // clearance/maxDeckCargoT above. Both undefined for a template
-        // with only a plain rectangular deck (e.g. Kuznetsov).
-        outline: tpl.deck.outline,
-        restrictionZones: tpl.restrictionZones,
-        // Remembered, so the deck-strength choice (Sidebar «Зоны нагрузки»)
-        // knows which vessel's sources to offer, also after a reload.
-        vesselTemplateId: tpl.id,
-      },
+      deck: deckForVessel(tpl, { width: 0, length: 0, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 }),
       items: [],
       manualPlacements: [],
       pinnedPlacementsByTrip: {},
@@ -152,10 +121,30 @@ export function useProjectActions({
     })
     toast.success(`Создан расчёт для «${tpl.label}»`)
     // A vessel whose sources disagree on deck strength gets no limit picked
-    // for it: the choice waits in «Зоны нагрузки» (opened by itself) and the
-    // stats say «лимит не выбран» until it's made. It used to be a toast
-    // that vanished after 20 seconds, leaving no limit and no reminder.
+    // for it: the choice waits in its card, and the zones check warns until
+    // it's made. It used to be a toast that vanished after 20 seconds.
   }
 
-  return { importInputRef, handleExportJson, handleImportFile, handleNewCalculation, handleApplyVesselTemplate }
+  // The same vessel applied to the open calculation: its deck replaced, its
+  // cargo kept (spec 8.1). A calculation still named as created takes the
+  // vessel's name. «Отменить» puts back the deck and the name; Ctrl+Z, the
+  // deck.
+  const handleApplyVesselToCurrent = (tpl: VesselTemplate) => {
+    const active = getActiveProject()
+    const oldName = active?.name
+    useCalculator.getState().applyVesselToDeck(tpl)
+    const renamed = !!active && isDefaultCalculationName(active.name)
+    if (renamed) renameProject(active.id, tpl.label)
+    toast.success(`Судно «${tpl.label}» применено`, {
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          undoCalculator()
+          if (renamed && oldName) renameProject(active.id, oldName)
+        },
+      },
+    })
+  }
+
+  return { importInputRef, handleExportJson, handleImportFile, handleNewCalculation, handleNewCalculationForVessel, handleApplyVesselToCurrent }
 }

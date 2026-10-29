@@ -49,6 +49,8 @@ import {
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
 import { keptByVariants } from '@/lib/variantKeep'
+import { deckForVessel } from '@/lib/vesselDeck'
+import type { VesselTemplate } from '@/lib/vesselTemplates'
 import { autoPlacementKey } from '@/lib/stackSelection'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
@@ -313,6 +315,10 @@ interface CalculatorState {
   // the whole deck with it: one load zone over the full deck, re-rated (not
   // duplicated) when the choice changes. One undo step.
   chooseDeckStrength: (limitTPerM2: number) => void
+  // «Заменить палубу в текущем» (spec 8.1): the deck becomes the vessel's
+  // (deckForVessel), the cargo, rules and settings stay, and the positions
+  // tied to the old deck go — the cargo is laid out afresh. One undo step.
+  applyVesselToDeck: (tpl: VesselTemplate) => void
 
   // Lashing/securing points — optionally attached to a placement (placementId
   // + corner) for the CSS-Code-style securing-force check in packing.ts
@@ -1847,6 +1853,16 @@ export const useCalculator = create<CalculatorState>()(
   removeLoadZone: (id) =>
     set((s) => ({
       deck: { ...s.deck, loadZones: (s.deck.loadZones ?? []).filter((z) => z.id !== id) },
+    })),
+  applyVesselToDeck: (tpl) =>
+    set((s) => ({
+      deck: deckForVessel(tpl, s.deck),
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      selectedPinIds: [],
+      selectedAutoKeys: [],
+      selectedManualIds: [],
+      activeStampId: null,
     })),
   chooseDeckStrength: (limitTPerM2) =>
     set((s) => {
