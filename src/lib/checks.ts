@@ -10,7 +10,7 @@
 // when there is more than one.
 import type { LoadingState } from './stability'
 import { prefixedReason } from './stabilityConditions'
-import { fmtTonnes, pluralRu } from './utils'
+import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'none'
@@ -42,8 +42,41 @@ export interface TripStability {
 export interface TripFacts {
   weightKg: number
   overloadedZones: number
+  // Stacks pressing on the deck harder than the zone under them allows
+  // (computeFootprintPressures): a zone's average can hide a heavy stack on
+  // a small footprint.
+  overPressureStacks?: number
   separationViolations: number
   stability?: TripStability
+  // What the checks found, stack by stack — the counts above, itemised.
+  found?: TripFindings
+}
+
+// A stack the checks name: the key the deck finds it by (autoPlacementKey)
+// and its cargo's name.
+export interface StackRef {
+  key: string
+  name: string
+}
+
+// What the checks found on one trip (8.4: a click on a check says what is
+// wrong and lights up the stacks at fault).
+export interface TripFindings {
+  // Zones over their limit by their average load, with the stacks in them.
+  zones: { label: string; densityTPerM2: number; limitTPerM2: number; stacks: StackRef[] }[]
+  pressure: { stack: StackRef; pressureTPerM2: number; limitTPerM2: number }[]
+  // Pairs closer than a separation rule allows, in the deck's unit.
+  separation: { a: StackRef; b: StackRef; distance: number; minDistance: number }[]
+  // Secured stacks short of securing: fewer points than required with no
+  // justification written, or the force balance failing.
+  lashingShort: { stack: StackRef; required: number; attached: number; balanceFails: boolean }[]
+  dangerousGoods: StackRef[]
+  // «Требуют внимания», on the deck…
+  unknownMakeup: { stack: StackRef; recordId: string }[]
+  conflicts: { stack: StackRef; recordId: string; reason: string }[]
+  // …and off it.
+  rejectedPins: { recordId: string; name: string; reason: string }[]
+  quarantined: { recordId: string; name: string }[]
 }
 
 export interface PlanFacts {
@@ -69,6 +102,13 @@ export interface PlanFacts {
     dangerousGoodsStacks: number
   }
   hasVessel: boolean
+  // The cargo no trip takes (auto) or not placed yet (manual), with why.
+  unfit?: { name: string; reason: string }[]
+  // A library vessel's 10-foot container capacity, against each trip's
+  // 10-foot units (informational: the figure holds for a full load of pipe).
+  tenFoot?: { capacity: number; byTrip: number[] }
+  // The deck's unit, for distances.
+  unitLabel?: string
   // Cases that need the user's decision (8.4, «Требуют внимания»).
   attention: {
     // Stacks whose data couldn't be read; they aren't on the deck.
@@ -131,9 +171,15 @@ export function buildChecks(f: PlanFacts): Check[] {
   {
     const base = { id: 'zones' as const, title: 'Зоны т/м²', target: 'vessel' as const }
     const overloaded = tripsWhere((t) => t.overloadedZones > 0)
-    if (overloaded.length > 0) {
+    const pressed = tripsWhere((t) => (t.overPressureStacks ?? 0) > 0)
+    if (overloaded.length > 0 || pressed.length > 0) {
       const most = Math.max(...f.trips.map((t) => t.overloadedZones))
-      checks.push({ ...base, status: 'error', detail: `Перегружено зон: ${most}${onTrips(overloaded)}` })
+      const mostPressed = Math.max(...f.trips.map((t) => t.overPressureStacks ?? 0))
+      const parts = [
+        overloaded.length > 0 && `Перегружено зон: ${most}${onTrips(overloaded)}`,
+        pressed.length > 0 && `Давление под грузом выше лимита: ${mostPressed} ${stacksWord(mostPressed)}${onTrips(pressed)}`,
+      ].filter((p): p is string => !!p)
+      checks.push({ ...base, status: 'error', detail: parts.join(' · ') })
     } else if (f.deckStrength === 'pending')
       checks.push({ ...base, status: 'warn', detail: 'Не выбран лимит прочности палубы' })
     else if (f.deckStrength === 'unchecked')
@@ -234,4 +280,85 @@ export function checkCounts(checks: readonly Check[]): { errors: number; warning
     errors: checks.filter((c) => c.status === 'error').length,
     warnings: checks.filter((c) => c.status === 'warn').length,
   }
+}
+
+// A line of a check's details (8.4): what is wrong, where.
+export interface CheckDetailLine {
+  status: 'warn' | 'error' | 'info'
+  text: string
+  // The trip it is about (0-based) — set only when there is more than one.
+  trip?: number
+}
+
+export interface CheckDetails {
+  lines: CheckDetailLine[]
+  // The stacks at fault on each trip (0-based), by key: the deck lights up
+  // those of the open trip.
+  stacks: Map<number, Set<string>>
+}
+
+// What a check found, itemised, and the stacks it blames — read off the same
+// facts the check's status comes from. Stability's reasons are the check's
+// own `lines`.
+export function checkDetails(f: PlanFacts, id: CheckId): CheckDetails {
+  const multiTrip = f.trips.length > 1
+  const lines: CheckDetailLine[] = []
+  const stacks = new Map<number, Set<string>>()
+  const add = (trip: number, status: CheckDetailLine['status'], text: string, ...blamed: StackRef[]) => {
+    lines.push(multiTrip ? { status, text, trip } : { status, text })
+    if (blamed.length === 0) return
+    const set = stacks.get(trip) ?? new Set<string>()
+    for (const b of blamed) set.add(b.key)
+    stacks.set(trip, set)
+  }
+  const unit = f.unitLabel ?? 'м'
+  f.trips.forEach((t, i) => {
+    const found = t.found
+    switch (id) {
+      case 'capacity':
+        if (f.tenFoot) add(i, 'info', `10-футовых контейнеров: ${f.tenFoot.byTrip[i] ?? 0} из ${fmtNumber(f.tenFoot.capacity)}`)
+        break
+      case 'deck-weight':
+        if (f.maxDeckCargoT !== undefined && multiTrip) {
+          const over = t.weightKg / 1000 > f.maxDeckCargoT + 1e-9
+          add(i, over ? 'error' : 'info', `${fmtTonnes(t.weightKg)} из ${f.maxDeckCargoT} т`)
+        }
+        break
+      case 'zones':
+        for (const z of found?.zones ?? [])
+          add(i, 'error', `${z.label}: ${fmtNumber(z.densityTPerM2)} из ${fmtNumber(z.limitTPerM2)} т/м²`, ...z.stacks)
+        for (const p of found?.pressure ?? [])
+          add(i, 'error', `«${p.stack.name}»: под грузом ${fmtNumber(p.pressureTPerM2)} т/м² при лимите ${fmtNumber(p.limitTPerM2)}`, p.stack)
+        break
+      case 'separation':
+        for (const v of found?.separation ?? [])
+          add(i, 'error', `«${v.a.name}» и «${v.b.name}»: ${fmtNumber(v.distance)} из ${fmtNumber(v.minDistance)} ${unit}`, v.a, v.b)
+        break
+      case 'lashing':
+        for (const l of found?.lashingShort ?? []) {
+          const why = [
+            l.attached < l.required && `нужно ${l.required}, задано ${l.attached}`,
+            l.balanceFails && 'не держит по расчёту сил',
+          ].filter((w): w is string => !!w)
+          add(i, 'warn', `«${l.stack.name}»: ${why.join('; ')}`, l.stack)
+        }
+        for (const d of found?.dangerousGoods ?? [])
+          add(i, 'warn', `«${d.name}»: опасный груз — крепление и сегрегация по IMDG Code`, d)
+        break
+      case 'attention':
+        for (const q of found?.quarantined ?? []) add(i, 'error', `«${q.name}»: данные штабеля повреждены, на палубе его нет`)
+        for (const u of found?.unknownMakeup ?? []) add(i, 'error', `«${u.stack.name}»: состав неизвестен`, u.stack)
+        for (const r of found?.rejectedPins ?? []) add(i, 'error', `«${r.name}»: закреплённая позиция недопустима — ${lowerFirst(r.reason)}`)
+        for (const c of found?.conflicts ?? []) add(i, 'error', `«${c.stack.name}»: ${lowerFirst(c.reason)}`, c.stack)
+        break
+    }
+  })
+  // The cargo itself, not a trip's: what fits nowhere, or waits to be placed.
+  if (id === 'capacity')
+    lines.unshift(...(f.unfit ?? []).map((u) => ({ status: f.mode === 'auto' ? ('error' as const) : ('warn' as const), text: `«${u.name}»: ${lowerFirst(u.reason)}` })))
+  return { lines, stacks }
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLocaleLowerCase('ru') + text.slice(1)
 }

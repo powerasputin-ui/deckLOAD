@@ -183,4 +183,68 @@ describe('gatherPlanFacts', () => {
       expect(facts.attention).toEqual({ malformed: 0, legacyUnknown: 1, rejectedPins: 0, manualConflicts: 1 })
     })
   })
+
+  // Stage 4, group B (spec 8.4): what each check found, stack by stack —
+  // the counts above, itemised, with the keys the deck finds stacks by.
+  describe('findings', () => {
+    const key = (itemId: string, x: number, y: number) => `${itemId}@${x.toFixed(3)},${y.toFixed(3)}`
+
+    it('names the overloaded zone and the stacks in it', () => {
+      const d = deck({ loadZones: [{ id: 'z', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 0.005 }] })
+      const facts = gatherPlanFacts(manualPlan(d, [item({ id: 'box' })], [manual({ id: 'm1', itemId: 'box', x: 2, y: 3 })]))
+      expect(facts.trips[0].found!.zones).toEqual([
+        { label: 'Зона 1 (вся палуба)', densityTPerM2: 0.01, limitTPerM2: 0.005, stacks: [{ key: key('box', 2, 3), name: 'box' }] },
+      ])
+    })
+
+    it('finds a stack pressing harder than its zone allows, though the zone holds', () => {
+      // 2 t on 1 m² over a 10 × 10 m zone of 1 t/m²: the zone carries 0.02 t/m².
+      const d = deck({ loadZones: [{ id: 'z', x: 0, y: 0, width: 10, length: 10, maxLoadPerArea: 1 }] })
+      const facts = gatherPlanFacts(manualPlan(d, [item({ id: 'box', weight: 2000 })], [manual({ id: 'm1', itemId: 'box', weight: 2000 })]))
+      expect(facts.trips[0].overloadedZones).toBe(0)
+      expect(facts.trips[0].overPressureStacks).toBe(1)
+      expect(facts.trips[0].found!.pressure).toEqual([{ stack: { key: key('box', 0, 0), name: 'box' }, pressureTPerM2: 2, limitTPerM2: 1 }])
+    })
+
+    it('names both stacks of a separation pair and how far apart they are', () => {
+      const items = [item({ id: 'acid', category: 'Химикаты' }), item({ id: 'food', category: 'Продукты' })]
+      const placements = [manual({ id: 'm1', itemId: 'acid' }), manual({ id: 'm2', itemId: 'food', x: 3 })]
+      const rules = [{ id: 'r', categoryA: 'Продукты', categoryB: 'Химикаты', minDistance: 5 }]
+      const facts = gatherPlanFacts(manualPlan(deck(), items, placements, { separationRules: rules }))
+      expect(facts.trips[0].found!.separation).toEqual([
+        { a: { key: key('acid', 0, 0), name: 'acid' }, b: { key: key('food', 3, 0), name: 'food' }, distance: 2, minDistance: 5 },
+      ])
+    })
+
+    it('says how a secured stack falls short', () => {
+      const items = [item({ id: 'pipe', category: 'Металлопродукция', weight: 100_000 })]
+      const d = deck({ lashingPoints: [{ id: 'p1', x: 3, y: 3, placementId: 'm1', cornerX: 1, cornerY: 1, mslKg: 50_000 }] })
+      const facts = gatherPlanFacts(manualPlan(d, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
+      expect(facts.trips[0].found!.lashingShort).toEqual([
+        { stack: { key: key('pipe', 0, 0), name: 'pipe' }, required: 2, attached: 1, balanceFails: false },
+      ])
+    })
+
+    it('lists the cases needing a decision with the records they are about', () => {
+      const d = deck({ restrictionZones: [{ id: 'crane', name: 'Кран', shapeType: 'rect', x: 0, y: 0, width: 2, length: 2 }] })
+      const placements = [
+        manual({ id: 'm1', itemId: 'box' }),
+        manual({ id: 'm2', itemId: 'box', x: 5, legacyUnknownComposition: true }),
+      ]
+      const found = gatherPlanFacts(manualPlan(d, [item({ id: 'box', quantity: 2 })], placements)).trips[0].found!
+      expect(found.unknownMakeup).toEqual([{ stack: { key: key('box', 5, 0), name: 'box' }, recordId: 'm2' }])
+      expect(found.conflicts).toEqual([{ stack: { key: key('box', 0, 0), name: 'box' }, recordId: 'm1', reason: 'В зоне ограничения' }])
+
+      const pin: PinnedPlacement = { id: 'a', itemId: 'box', name: 'box', x: 20, y: 20, width: 1, length: 1, layers: 1, rotated: false, color: '#000000', locked: true }
+      const auto = gatherPlanFacts(autoPlan(deck(), [item({ id: 'box' })], { 0: [pin] })).trips[0].found!
+      expect(auto.rejectedPins).toEqual([{ recordId: 'a', name: 'box', reason: expect.any(String) }])
+    })
+
+    it('says what fits in no trip, and the 10-foot units against the vessel\'s capacity', () => {
+      const items = [item({ id: 'box', name: "Контейнер 10'", quantity: 2 }), item({ id: 'crate', width: 3, length: 3 })]
+      const facts = gatherPlanFacts(autoPlan(deck({ width: 2, length: 2, tenFootContainerCapacity: 70 }), items))
+      expect(facts.unfit).toEqual([{ name: 'crate', reason: expect.any(String) }])
+      expect(facts.tenFoot).toEqual({ capacity: 70, byTrip: [2] })
+    })
+  })
 })

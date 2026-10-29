@@ -13,7 +13,6 @@ import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, PALETTE, autoPlacementKey } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
-import { vesselTemplateById } from '@/lib/vesselTemplates'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,7 +63,7 @@ import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
-import { buildChecks, checkCounts } from '@/lib/checks'
+import { buildChecks, checkCounts, checkDetails, type CheckId } from '@/lib/checks'
 import { evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
@@ -314,6 +313,8 @@ export default function Home() {
   const [workspace, setWorkspace] = useState<'deck' | 'stability'>('deck')
   // The cargo table across the bottom (spec 5.4), closed at first.
   const [cargoTableOpen, setCargoTableOpen] = useState(false)
+  // The check open in «Проверки», one at a time (spec 8.4).
+  const [openCheck, setOpenCheck] = useState<CheckId | null>(null)
   // Variants are a snapshot of one project's cargo on one trip. Applying one
   // after switching project or trip, or after editing the cargo or the deck,
   // used to write a stale layout over the current one — so they're kept
@@ -587,10 +588,6 @@ export default function Home() {
       ),
     [mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items]
   )
-  // A library vessel whose sources disagree on deck strength, with no limit
-  // picked yet (the choice sits in the sidebar's «Зоны нагрузки»).
-  const deckStrengthPending =
-    !!vesselTemplateById(deck.vesselTemplateId)?.limits?.deckStrengthTPerM2 && deck.deckStrengthChoiceTPerM2 === undefined
   // The one purely auto-placed stack selected on the deck (no pin yet), if
   // any. Keys and the sidebar's «Крепление груза» act on it like on a pin:
   // the first change pins it, locked, and applies there.
@@ -808,7 +805,7 @@ export default function Home() {
   // clicking a stamp, arming a preset, or "+"-ing a pinned stack's layers in
   // AUTO could all silently blow past the limit — packDeck was never in the
   // loop for any of them. maxDeckCargoT is the vessel's own PER-TRIP capacity
-  // (see StatsPanel's comment on this field), so AUTO checks only the
+  // (see DeckConfig.maxDeckCargoT), so AUTO checks only the
   // CURRENT trip's pins, matching how the weight-edit guard in updateItem
   // already treats separate trips independently.
   const wouldExceedMaxDeckCargo = (addedWeightKg: number): boolean =>
@@ -1167,21 +1164,24 @@ export default function Home() {
   // The whole plan's checks (spec 8.4), every trip: their ✕ and ⚠ in the
   // status line and on the «Проверки» tab, the list at the top of that
   // section.
-  const planChecks = useMemo(
+  const planFacts = useMemo(
     () =>
-      buildChecks(
-        gatherPlanFacts({
-          mode,
-          trips: hasEmptyTrailingTrip ? trips.slice(0, -1) : trips,
-          pinnedPlacementsByTrip,
-          manualPlacements,
-          items,
-          deck,
-          separationRules: separationRulesInUnit,
-        })
-      ),
+      gatherPlanFacts({
+        mode,
+        trips: hasEmptyTrailingTrip ? trips.slice(0, -1) : trips,
+        pinnedPlacementsByTrip,
+        manualPlacements,
+        items,
+        deck,
+        separationRules: separationRulesInUnit,
+      }),
     [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, items, deck, separationRulesInUnit]
   )
+  const planChecks = useMemo(() => buildChecks(planFacts), [planFacts])
+  // The check opened in «Проверки» (8.4): what it found, and its stacks at
+  // fault lit up on the open trip's deck while the section is open.
+  const openCheckDetails = useMemo(() => (openCheck ? checkDetails(planFacts, openCheck) : null), [planFacts, openCheck])
+  const focusKeys = activeSection === 'checks' && openCheckDetails ? (openCheckDetails.stacks.get(clampedTripIndex) ?? null) : null
 
   // Esc closes the inspector by dropping the selection (spec 5.4). An armed
   // tool takes Esc first (above), and so do fields, dialogs and menus.
@@ -1518,26 +1518,16 @@ export default function Home() {
           {activeSection === 'checks' && (
             <ChecksSection
               checks={planChecks}
+              openCheck={openCheck}
+              openDetails={openCheckDetails}
+              onToggleCheck={(id) => setOpenCheck((open) => (open === id ? null : id))}
+              tripIndex={clampedTripIndex}
+              onSelectTrip={(i) => {
+                setActiveTripIndex(i)
+                clearSelection()
+              }}
               onOpenSection={openSection}
               onOpenStability={() => setWorkspace('stability')}
-              stats={{
-                result,
-                unit: deck.unit,
-                loadZones: deck.loadZones,
-                deckOutline: deck.outline,
-                maxDeckCargoT: deck.maxDeckCargoT,
-                tenFootContainerCapacity: deck.tenFootContainerCapacity,
-                deckStrengthPending,
-                cargoNumberByItemId,
-                unplaced:
-                  mode === 'auto'
-                    ? {
-                        count: unfitUnits,
-                        label: 'Не влезло',
-                        note: carriedToNextTrip > 0 ? `ещё ${carriedToNextTrip} в рейс ${clampedTripIndex + 2}` : undefined,
-                      }
-                    : { count: Math.max(0, result.requestedCount - result.placedCount), label: 'Не размещено' },
-              }}
               lashing={{ autoStack: selectedAutoStack, onPatchAutoStack: patchAutoStack }}
             />
           )}
@@ -1683,6 +1673,7 @@ export default function Home() {
                 separationRules={separationRulesInUnit}
                 separationPairs={separationPairs}
                 lashingShortIds={lashingShortIds}
+                focusKeys={focusKeys}
                 placingLashingPoint={placingLashingPoint}
                 onPlaceLashingPoint={(x, y, corner) => {
                   const count = (deck.lashingPoints?.length ?? 0) + 1

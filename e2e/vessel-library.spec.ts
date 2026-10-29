@@ -17,15 +17,17 @@ test.describe('Library vessel deck strength', () => {
     await openSection(page, 'Судно')
     await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
 
-    // Waiting, opened, in «Зоны нагрузки» — and said in the stats («Проверки»).
+    // Waiting, opened, in «Зоны нагрузки» — and said by the zones check.
     await expect(page.getByText('Лимит прочности палубы не выбран')).toBeVisible()
     await openSection(page, 'Проверки')
-    await expect(page.getByText('лимит не выбран')).toBeVisible()
+    const zones = page.locator('[data-check="zones"]')
+    await expect(zones).toHaveAttribute('data-check-status', 'warn')
+    await expect(zones).toContainText('Не выбран лимит прочности палубы')
     await openSection(page, 'Судно')
     await page.getByRole('button', { name: '5 т/м²' }).click()
     await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
     await openSection(page, 'Проверки')
-    await expect(page.getByText('лимит не выбран')).toHaveCount(0)
+    await expect(zones).toHaveAttribute('data-check-status', 'ok')
 
     // Let the debounced autosave land, then reload.
     await page.waitForTimeout(800)
@@ -35,6 +37,6 @@ test.describe('Library vessel deck strength', () => {
     await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
     await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
     await openSection(page, 'Проверки')
-    await expect(page.getByText('лимит не выбран')).toHaveCount(0)
+    await expect(zones).toHaveAttribute('data-check-status', 'ok')
   })
 })

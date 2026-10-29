@@ -63,6 +63,14 @@ function openSection(title: 'Судно' | 'Грузы' | 'Размещение'
   fireEvent.click(within(nav).getByRole('button', { name: new RegExp(`^${title}`) }))
 }
 
+// A check in «Проверки» (spec 8.4), opened: its row, with what it found.
+function openCheckRow(id: string): HTMLElement {
+  const row = document.querySelector<HTMLElement>(`[data-check="${id}"]`)!
+  const button = row.querySelector('button')!
+  if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button)
+  return document.querySelector<HTMLElement>(`[data-check="${id}"]`)!
+}
+
 // A button of the mini-panel over the selected stack (spec 6.6).
 function stackButton(name: string): HTMLElement {
   return within(screen.getByRole('toolbar', { name: 'Действия со штабелем' })).getByRole('button', { name })
@@ -781,7 +789,8 @@ describe('Home (page.tsx)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'К палубе' }))
 
       openSection('Проверки')
-      const reasons = screen.getByRole('list', { name: 'Остойчивость: причины' })
+      openCheckRow('stability')
+      const reasons = screen.getByRole('list', { name: 'Остойчивость: подробности' })
       expect(within(reasons).getByText('Предел по формуляру не задан')).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Остойчивость: открыть панель остойчивости' }))
       expect(screen.getByTestId('stability-workspace')).toBeTruthy()
@@ -925,10 +934,9 @@ describe('Home (page.tsx)', () => {
     expect(document.querySelector('svg rect[fill="#00ff00"]')).toBeNull()
     expect(screen.getAllByTitle('Груз № 2').length).toBeGreaterThan(0)
 
-    openSection('Проверки')
-    const table = screen.getByText('Учёт по грузам').parentElement!.parentElement!.querySelector('table')!
-    const rows = [...table.querySelectorAll<HTMLTableRowElement>('tbody tr')]
-    expect(rows.map((r) => [r.cells[0].textContent, r.cells[1].textContent])).toEqual([
+    openSection('Грузы')
+    const rows = screen.getAllByTestId('cargo-list-row')
+    expect(rows.map((r) => [r.querySelector('[title^="Груз №"]')?.textContent, r.querySelector('p[title]')?.textContent])).toEqual([
       ['1', 'Труба'],
       ['2', 'Ящик'],
     ])
@@ -954,7 +962,8 @@ describe('Home (page.tsx)', () => {
     // «Зоны нагрузки» opened by itself, with the choice on top.
     expect(screen.getByText('Лимит прочности палубы не выбран')).toBeTruthy()
     openSection('Проверки')
-    expect(screen.getByText('лимит не выбран')).toBeTruthy()
+    expect(openCheckRow('zones').getAttribute('data-check-status')).toBe('warn')
+    expect(openCheckRow('zones').textContent).toMatch(/Не выбран лимит прочности палубы/)
     openSection('Судно')
     fireEvent.click(screen.getByRole('button', { name: '5 т/м²' }))
     const deck = useCalculator.getState().deck
@@ -962,7 +971,7 @@ describe('Home (page.tsx)', () => {
     expect(deck.loadZones).toEqual([{ id: expect.any(String), x: 0, y: 0, width: deck.width, length: deck.length, maxLoadPerArea: 5 }])
     expect(screen.getByText('Прочность палубы: 5 т/м²')).toBeTruthy()
     openSection('Проверки')
-    expect(screen.queryByText('лимит не выбран')).toBeNull()
+    expect(openCheckRow('zones').textContent).not.toMatch(/Не выбран лимит/)
   })
 
   it('a library vessel with no disputed deck strength asks for nothing', () => {
@@ -996,6 +1005,56 @@ describe('Home (page.tsx)', () => {
       useProjects.getState().createProject()
     })
     expect(variantsList()).toBeNull()
+  })
+
+  // Stage 4, group B (spec 8.4): a click on a check says what it found and
+  // lights up the stacks at fault — the rest of the deck steps back.
+  describe('«Проверки»', () => {
+    const dimmed = (name: string) => document.querySelector(`svg g[data-cargo-name="${name}"]`)!.getAttribute('data-dimmed')
+
+    it('an open check dims every stack but those at fault, until it is closed or the section left', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        const s = useCalculator.getState()
+        s.addItem({ name: 'Кислота', width: 1, length: 1, height: 1, quantity: 1, category: 'Химикаты' })
+        s.addItem({ name: 'Мука', width: 1, length: 1, height: 1, quantity: 1, category: 'Продукты' })
+        s.addItem({ name: 'Ящик', width: 1, length: 1, height: 1, quantity: 1 })
+        s.addSeparationRule({ categoryA: 'Продукты', categoryB: 'Химикаты', minDistance: 5 })
+        const [acid, flour, box] = useCalculator.getState().items
+        const at = (it: typeof acid, id: string, x: number, y: number) => ({
+          id, itemId: it.id, name: it.name, x, y, width: 1, length: 1, layers: 1, rotated: false, color: it.color,
+        })
+        useCalculator.setState({ mode: 'manual', manualPlacements: [at(acid, 'm1', 1, 1), at(flour, 'm2', 3, 1), at(box, 'm3', 12, 5)] })
+      })
+      openSection('Проверки')
+      const row = openCheckRow('separation')
+      expect(within(row).getByRole('list', { name: 'Сепарация: подробности' }).textContent).toBe('ошибка: «Кислота» и «Мука»: 1 из 5 м')
+      expect([dimmed('Кислота'), dimmed('Мука'), dimmed('Ящик')]).toEqual([null, null, 'true'])
+
+      fireEvent.click(row.querySelector('button')!)
+      expect(dimmed('Ящик')).toBeNull()
+
+      openCheckRow('separation')
+      openSection('Грузы')
+      expect(dimmed('Ящик')).toBeNull()
+    })
+
+    it('a line about another trip opens it', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.setState({
+          deck: { ...useCalculator.getState().deck, unit: 'm', width: 10, length: 10, gap: 0, boardOffset: 0, clearance: 0, outline: undefined, restrictionZones: [], loadZones: [], maxDeckCargoT: 3 },
+        })
+        useCalculator.getState().addItem({ name: 'Блок', width: 5, length: 5, height: 1, quantity: 6, weight: 1000 })
+      })
+      openSection('Проверки')
+      const details = within(openCheckRow('deck-weight')).getByRole('list', { name: 'Вес палубы: подробности' })
+      expect([...details.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['сведения: Рейс 1: 3 из 3 т', 'сведения: Рейс 2: 3 из 3 т'])
+      fireEvent.click(within(details).getByRole('button', { name: 'Рейс 2' }))
+      expect(screen.getByRole('tab', { name: /^Рейс 2/ }).getAttribute('aria-selected')).toBe('true')
+    })
   })
 
   // Stage 4, group A (spec 8.2): «Размещение» — the open trip's summary,
@@ -1285,13 +1344,15 @@ describe('Home (page.tsx)', () => {
 
       fireEvent.click(within(status).getByRole('button', { name: /^Проверки — 1 ошибка/ }))
       expect(screen.getByRole('heading', { name: 'Проверки' })).toBeTruthy()
-      const summary = screen.getByRole('list', { name: 'Сводка проверок' })
+      const summary = screen.getByRole('list', { name: 'Список проверок' })
       const row = (id: string) => summary.querySelector(`[data-check="${id}"]`)!
       expect(row('capacity').getAttribute('data-check-status')).toBe('error')
       expect(row('capacity').textContent).toMatch(/1 ед\. не помещаются ни в один рейс/)
       expect(row('lashing').getAttribute('data-check-status')).toBe('warn')
       expect(row('separation').textContent).toMatch(/не проверяется.*Правил нет/)
 
+      // Opened, the check names the cargo and why.
+      expect(within(openCheckRow('capacity')).getByRole('list', { name: 'Вместимость и рейсы: подробности' }).textContent).toMatch(/^ошибка: «Плита»: /)
       fireEvent.click(within(summary).getByRole('button', { name: 'Вместимость и рейсы: открыть раздел «Размещение»' }))
       expect(screen.getByRole('heading', { name: 'Размещение' })).toBeTruthy()
 

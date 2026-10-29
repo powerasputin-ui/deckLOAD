@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildChecks, checkCounts, type PlanFacts, type TripFacts } from './checks'
+import { buildChecks, checkCounts, checkDetails, type PlanFacts, type TripFacts, type TripFindings } from './checks'
 
 const trip = (partial: Partial<TripFacts> = {}): TripFacts => ({
   weightKg: 16_600,
@@ -108,6 +108,15 @@ describe('buildChecks', () => {
     it('is fine when every zone is within its limit', () => {
       expect(check(facts({ zoneCount: 2 }), 'zones')).toMatchObject({ status: 'ok', detail: 'Все зоны в лимите' })
     })
+
+    // Stage 4, group B: the load statistics said so in red; the check didn't.
+    it('is an error when a stack presses harder than its zone allows', () => {
+      const trips = [trip(), trip({ overPressureStacks: 1 })]
+      expect(check(facts({ zoneCount: 1, trips }), 'zones')).toMatchObject({
+        status: 'error',
+        detail: 'Давление под грузом выше лимита: 1 штабель (рейс 2)',
+      })
+    })
   })
 
   describe('separation', () => {
@@ -208,5 +217,89 @@ describe('checkCounts', () => {
       lashing: { securedStacks: 0, shortStacks: 0, dangerousGoodsStacks: 1 },
     })
     expect(checkCounts(buildChecks(f))).toEqual({ errors: 2, warnings: 2 })
+  })
+})
+
+// Stage 4, group B (spec 8.4): a click on a check says what it found and
+// lights up the stacks at fault.
+describe('checkDetails', () => {
+  const none: TripFindings = {
+    zones: [], pressure: [], separation: [], lashingShort: [], dangerousGoods: [],
+    unknownMakeup: [], conflicts: [], rejectedPins: [], quarantined: [],
+  }
+  const found = (partial: Partial<TripFindings>) => ({ ...none, ...partial })
+  const box = { key: 'box@1', name: 'Ящик' }
+  const drum = { key: 'drum@2', name: 'Бочка' }
+
+  it('names the zone and its load; the stacks in it are at fault', () => {
+    const f = facts({ trips: [trip({ found: found({ zones: [{ label: 'Зона 1', densityTPerM2: 6.2, limitTPerM2: 5, stacks: [box, drum] }] }) })] })
+    const d = checkDetails(f, 'zones')
+    expect(d.lines).toEqual([{ status: 'error', text: 'Зона 1: 6.20 из 5 т/м²' }])
+    expect(d.stacks).toEqual(new Map([[0, new Set(['box@1', 'drum@2'])]]))
+  })
+
+  it('names the trip when there is more than one, and blames stacks trip by trip', () => {
+    const pair = { a: box, b: drum, distance: 1.2, minDistance: 3 }
+    const f = facts({ unitLabel: 'м', trips: [trip(), trip({ found: found({ separation: [pair] }) })] })
+    const d = checkDetails(f, 'separation')
+    expect(d.lines).toEqual([{ status: 'error', text: '«Ящик» и «Бочка»: 1.20 из 3 м', trip: 1 }])
+    expect([...d.stacks.keys()]).toEqual([1])
+  })
+
+  it('says what a secured stack lacks; dangerous goods are left to the IMDG Code', () => {
+    const f = facts({
+      trips: [
+        trip({
+          found: found({
+            lashingShort: [{ stack: box, required: 4, attached: 2, balanceFails: true }],
+            dangerousGoods: [drum],
+          }),
+        }),
+      ],
+    })
+    expect(checkDetails(f, 'lashing').lines.map((l) => l.text)).toEqual([
+      '«Ящик»: нужно 4, задано 2; не держит по расчёту сил',
+      '«Бочка»: опасный груз — крепление и сегрегация по IMDG Code',
+    ])
+  })
+
+  it('lists what fits nowhere first, then each trip\'s 10-foot units', () => {
+    const f = facts({ unfit: [{ name: 'Кран', reason: 'Больше палубы' }], tenFoot: { capacity: 70, byTrip: [12] } })
+    expect(checkDetails(f, 'capacity').lines).toEqual([
+      { status: 'error', text: '«Кран»: больше палубы' },
+      { status: 'info', text: '10-футовых контейнеров: 12 из 70' },
+    ])
+  })
+
+  it('weighs each trip against the limit when there are several', () => {
+    const f = facts({ maxDeckCargoT: 20, trips: [trip({ weightKg: 25_000 }), trip({ weightKg: 10_000 })] })
+    expect(checkDetails(f, 'deck-weight').lines).toEqual([
+      { status: 'error', text: '25 из 20 т', trip: 0 },
+      { status: 'info', text: '10 из 20 т', trip: 1 },
+    ])
+    expect(checkDetails(facts({ maxDeckCargoT: 20 }), 'deck-weight').lines).toEqual([])
+  })
+
+  it('names every case needing a decision; those on the deck are at fault', () => {
+    const f = facts({
+      trips: [
+        trip({
+          found: found({
+            quarantined: [{ recordId: 'q', name: 'Груз 1' }],
+            unknownMakeup: [{ stack: box, recordId: 'p1' }],
+            rejectedPins: [{ recordId: 'p2', name: 'Бочка', reason: 'Вне палубы' }],
+            conflicts: [{ stack: drum, recordId: 'm1', reason: 'В зоне ограничения' }],
+          }),
+        }),
+      ],
+    })
+    const d = checkDetails(f, 'attention')
+    expect(d.lines.map((l) => l.text)).toEqual([
+      '«Груз 1»: данные штабеля повреждены, на палубе его нет',
+      '«Ящик»: состав неизвестен',
+      '«Бочка»: закреплённая позиция недопустима — вне палубы',
+      '«Бочка»: в зоне ограничения',
+    ])
+    expect(d.stacks.get(0)).toEqual(new Set(['box@1', 'drum@2']))
   })
 })

@@ -15,8 +15,7 @@ import {
 // Spec 2.3: how many actions the frequent tasks take, pinned by tests. An
 // action is a click, or a number typed over the selected one and confirmed
 // with Enter. Getting to where the task starts (the section, the open table,
-// a cargo to work on) isn't counted. «Найти причину предупреждения» joins at
-// stage 4, with «Проверки» lighting up the stacks at fault.
+// a cargo to work on) isn't counted.
 
 class Actions {
   count = 0
@@ -116,6 +115,58 @@ test('Закрепить штабель: 2 действия — выделить
   await a.click(deck(page).locator('g[data-cargo-name="Контейнер 20ft"]').first(), { force: true })
   await a.click(inspector(page).getByRole('button', { name: 'Закрепить', exact: true }))
   await expect(deck(page).locator('[data-mark="lock"]')).toHaveCount(1)
+  expect(a.count).toBe(2)
+})
+
+// Placed by hand: a dangerous cargo tied down too weakly, and a box.
+const WEAKLY_TIED = {
+  id: 'weak',
+  name: 'Крепление',
+  createdAt: 0,
+  updatedAt: 0,
+  deck: {
+    width: 8,
+    length: 20,
+    unit: 'm',
+    gap: 0.1,
+    boardOffset: 0.2,
+    clearance: 6,
+    lashingPoints: [{ id: 'l1', x: 1.5, y: 1.5, placementId: 'mg', itemId: 'g', cornerX: 2, cornerY: 2, mslKg: 100, verticalAngleDeg: 45 }],
+  },
+  items: [
+    { id: 'g', name: 'Газ', width: 2, length: 2, height: 1, quantity: 1, color: '#dc2626', allowRotation: true, weight: 5000, category: 'Опасный груз' },
+    { id: 'f', name: 'Ящик', width: 1, length: 1, height: 1, quantity: 1, color: '#0ea5e9', allowRotation: true, weight: 1000 },
+  ],
+  manualPlacements: [
+    { id: 'mg', itemId: 'g', name: 'Газ', x: 2, y: 2, width: 2, length: 2, layers: 1, rotated: false, color: '#dc2626', weight: 5000 },
+    { id: 'mf', itemId: 'f', name: 'Ящик', x: 5, y: 12, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9', weight: 1000 },
+  ],
+  pinnedPlacementsByTrip: {},
+  separationRules: [],
+  mode: 'manual',
+  sortStrategy: 'area-desc',
+  globalRotation: true,
+  showFreeSpace: true,
+  showGrid: true,
+  showLabels: true,
+  showCargoContents: true,
+}
+
+test('Найти причину предупреждения: 2 действия — «⚠ N» в строке статуса, пункт списка', async ({ page }) => {
+  await page.addInitScript((project) => {
+    if (sessionStorage.getItem('seeded')) return
+    sessionStorage.setItem('seeded', '1')
+    localStorage.setItem('deckload-projects', JSON.stringify({ activeId: project.id, projects: [project] }))
+  }, WEAKLY_TIED)
+  await page.goto('/')
+  await expect(unitsCount(page)).toHaveText(/^2\/2 ед\./)
+  const a = new Actions(page)
+  await a.click(page.locator('[data-status-item="warnings"]'))
+  await a.click(page.locator('[data-check="lashing"] > button'))
+  // The reason, and the stack at fault: the other one steps back.
+  await expect(page.getByRole('list', { name: 'Крепление: подробности' })).toContainText('«Газ»: не держит по расчёту сил')
+  await expect(deck(page).locator('g[data-cargo-name="Газ"]')).not.toHaveAttribute('data-dimmed', 'true')
+  await expect(deck(page).locator('g[data-cargo-name="Ящик"]')).toHaveAttribute('data-dimmed', 'true')
   expect(a.count).toBe(2)
 })
 

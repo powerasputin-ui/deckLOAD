@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { chooseFromCatalog, clearCalculation, openCargoTable, openSection, setNumber, unitsCount } from '../helpers'
+import { chooseFromCatalog, clearCalculation, openCargoTable, openSection, setNumber, tripSummaryValue, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 1–6, from the entry points of stage 2: what is on
 // screen, never a right-click. Stages 3 and 4 rewrite them into their full
@@ -8,13 +8,12 @@ import { chooseFromCatalog, clearCalculation, openCargoTable, openSection, setNu
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 const background = (page: Page) => deck(page).locator('[data-deck-background="true"]').first()
 
-// The deck's area, as «Проверки» states it: «Площадь палубы 160 м²».
+// The deck's area, as the trip's summary states it in «Размещение»: free
+// out of the whole, «160 из 160 м²» on an empty deck.
 async function deckArea(page: Page): Promise<string> {
-  await openSection(page, 'Проверки')
-  const label = page.getByText('Площадь палубы', { exact: true })
-  await expect(label).toBeVisible()
-  // The label's row, then the tile holding it and the figure.
-  return label.locator('../..').innerText()
+  const free = await tripSummaryValue(page, 'Свободно')
+  await expect(free).toBeVisible()
+  return free.innerText()
 }
 
 test('Сценарий 1: начать с реального судна', async ({ page }) => {
@@ -35,7 +34,7 @@ test('Сценарий 1: начать с реального судна', async 
   await page.getByRole('button', { name: '5 т/м²' }).click()
   await expect(page.getByText('Прочность палубы: 5 т/м²')).toBeVisible()
   await openSection(page, 'Проверки')
-  await expect(page.getByText('лимит не выбран')).toHaveCount(0)
+  await expect(page.locator('[data-check="zones"]')).toHaveAttribute('data-check-status', 'ok')
 })
 
 test('Сценарий 2: размеры, отступы, предельная высота, единицы', async ({ page }) => {

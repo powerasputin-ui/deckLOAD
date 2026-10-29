@@ -8,6 +8,14 @@ export interface StackSelection {
   autoKeys: readonly string[]
 }
 
+// The key of a stack on a trip's deck: its cargo and position — the same
+// identity pins are matched to placed stacks by. Selects a stack the
+// auto-packer placed on its own (selectedAutoKeys), and names the stacks at
+// fault in the checks (spec 8.4).
+export function autoPlacementKey(p: { itemId: string; x: number; y: number }): string {
+  return `${p.itemId}@${p.x.toFixed(3)},${p.y.toFixed(3)}`
+}
+
 export function isStackSelected(
   stack: { placementId?: string; autoKey?: string },
   mode: 'auto' | 'manual',

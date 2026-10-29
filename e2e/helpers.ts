@@ -31,6 +31,13 @@ export async function pickVariants(page: Page): Promise<Locator> {
   return variants
 }
 
+// A figure of the open trip's summary in «Размещение» (spec 8.2): the value
+// next to its term, e.g. «Свободно» → «160 из 160 м²».
+export async function tripSummaryValue(page: Page, term: string): Promise<Locator> {
+  await openSection(page, 'Размещение')
+  return page.getByTestId('trip-summary').getByText(term, { exact: true }).locator('xpath=following-sibling::dd')
+}
+
 // An item of the calculation's menu, top left (spec 5.2).
 export async function projectMenuItem(page: Page, name: string) {
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()

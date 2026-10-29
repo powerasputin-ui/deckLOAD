@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection, pickVariants } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection, pickVariants, tripSummaryValue } from './helpers'
 
 // The outline's vertex handle at the top right of the drawing. Which deck
 // corner that is depends on how the deck is drawn (long side horizontal, bow
@@ -44,9 +44,8 @@ test.describe('Non-rectangular deck outline', () => {
     await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
 
     // Deck area shrinks below the plain-rectangle 160 m^2 once the corner is
-    // cut — said in the load statistics («Проверки»).
-    await openSection(page, 'Проверки')
-    await expect(page.getByText(/^\d+\.\d\d м²$/).first()).toBeVisible()
+    // cut — said in the trip's summary («Размещение»).
+    await expect(await tripSummaryValue(page, 'Свободно')).toHaveText(/из \d+\.\d\d м²$/)
     await openSection(page, 'Грузы')
 
     // Manual mode first, so adding cargo doesn't auto-place it via packDeck.

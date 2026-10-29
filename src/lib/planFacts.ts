@@ -8,6 +8,7 @@ import type { DeckConfig } from '@/store/calculator'
 import {
   assessLashingRequirement,
   checkLashingBalance,
+  computeFootprintPressures,
   computeZoneLoads,
   isWholeDeckZone,
   lashingMethodologyFor,
@@ -29,7 +30,8 @@ import { evaluateTripStability, type TripStabilityResult } from './stabilityCond
 import { vesselTemplateById } from './vesselTemplates'
 import { UNIT_LABEL } from './units'
 import { fmtNumber } from './utils'
-import type { PlanFacts, TripFacts, TripStability } from './checks'
+import { autoPlacementKey } from './stackSelection'
+import type { PlanFacts, StackRef, TripFacts, TripFindings, TripStability } from './checks'
 
 export interface PlanInput {
   mode: 'auto' | 'manual'
@@ -56,19 +58,26 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
     mode === 'manual' ? p.manualPlacements : trips.flatMap((_, i) => pinsOf(i))
 
   const lastTrip = trips[trips.length - 1]
-  const tripFacts = trips.map((t): TripFacts => ({
-    weightKg: t.totalWeight,
-    overloadedZones: overloadedZoneCount(t, deck),
-    separationViolations: separationViolations(
-      t.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, categories: placementCategorySet(pl, items) })),
-      p.separationRules
-    ).length,
-    stability: tripStability(t, deck, items),
-  }))
+  const tripFacts = trips.map((t, i): TripFacts => {
+    // The trip's own placement records: what flags and lashing points sit on.
+    const tripRecords = (mode === 'manual' ? (i === 0 ? p.manualPlacements : []) : pinsOf(i)).filter((r) => !isQuarantined(r))
+    const found = tripFindings(t, tripRecords, mode === 'auto' ? pinsOf(i) : [], deck, items, p.separationRules)
+    return {
+      weightKg: t.totalWeight,
+      overloadedZones: found.zones.length,
+      overPressureStacks: found.pressure.length,
+      separationViolations: found.separation.length,
+      stability: tripStability(t, deck, items),
+      found,
+    }
+  })
+
+  // A count over every trip's findings.
+  const sum = (count: (f: TripFindings) => number) => tripFacts.reduce((n, t) => n + count(t.found!), 0)
 
   return {
     mode,
-    totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
+    totalUnits: items.reduce((n, it) => n + Math.max(0, it.quantity), 0),
     // Each trip passes on what it couldn't place, so what the last one
     // leaves fits nowhere; in manual mode it is what isn't placed yet.
     unplacedUnits: lastTrip ? Math.max(0, lastTrip.requestedCount - lastTrip.placedCount) : 0,
@@ -77,36 +86,95 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
     zoneCount: deck.loadZones?.length ?? 0,
     deckStrength: deckStrengthState(deck),
     separationRuleCount: p.separationRules.length,
-    lashing: lashingFacts(trips, records.filter((r) => !isQuarantined(r)), deck, items),
+    lashing: {
+      securedStacks: records.filter((r) => !isQuarantined(r) && lashingVerdict(r, deck, items) !== 'none').length,
+      shortStacks: sum((f) => f.lashingShort.length),
+      dangerousGoodsStacks: sum((f) => f.dangerousGoods.length),
+    },
     hasVessel: !!deck.vessel,
+    unfit: lastTrip
+      ? lastTrip.unplaced
+          .filter((u) => (mode === 'auto' ? u.kind === 'shortfall' : u.kind === 'manual'))
+          .map((u) => ({ name: u.name, reason: u.reason }))
+      : [],
+    tenFoot:
+      deck.tenFootContainerCapacity !== undefined
+        ? { capacity: deck.tenFootContainerCapacity, byTrip: trips.map((t) => tenFootUnits(t)) }
+        : undefined,
+    unitLabel: UNIT_LABEL[deck.unit],
     attention: {
-      malformed: trips.reduce((sum, t) => sum + t.quarantined.length, 0),
-      legacyUnknown: records.filter((r) => r.legacyUnknownComposition).length,
-      // Only a position the user locked is a problem: a rejected layout pin
-      // (left by an applied variant) just has its units placed elsewhere.
-      rejectedPins:
-        mode === 'auto'
-          ? trips.reduce(
-              (sum, t, i) =>
-                sum + t.unplaced.filter((u) => u.kind === 'pin' && pinsOf(i).find((pin) => pin.id === u.pinId)?.locked).length,
-              0
-            )
-          : 0,
-      manualConflicts: mode === 'manual' ? trips.reduce((sum, t) => sum + t.placed.filter((pl) => pl.conflict).length, 0) : 0,
+      malformed: sum((f) => f.quarantined.length),
+      legacyUnknown: sum((f) => f.unknownMakeup.length),
+      rejectedPins: sum((f) => f.rejectedPins.length),
+      manualConflicts: sum((f) => f.conflicts.length),
     },
   }
 }
 
-function overloadedZoneCount(t: PackingResult, deck: DeckConfig): number {
-  if (!deck.loadZones || deck.loadZones.length === 0) return 0
-  const placements = t.placed.map((pl) => ({
-    x: pl.x,
-    y: pl.y,
-    width: pl.width,
-    length: pl.length,
-    totalWeightKg: (pl.weight ?? 0) * pl.stackedCount,
-  }))
-  return computeZoneLoads(placements, deck.loadZones, deck.outline, deck.unit).filter((z) => z.exceeded).length
+// What the checks find on one trip, stack by stack (spec 8.4). `records`
+// are the trip's placement records on the deck, `pins` every pin of the trip
+// (a rejected one is in no result).
+function tripFindings(
+  t: PackingResult,
+  records: readonly (ManualPlacement | PinnedPlacement)[],
+  pins: readonly PinnedPlacement[],
+  deck: DeckConfig,
+  items: CargoItem[],
+  separationRules: readonly SeparationRule[]
+): TripFindings {
+  const ref = (pl: { itemId: string; x: number; y: number; name: string }): StackRef => ({ key: autoPlacementKey(pl), name: pl.name })
+  const zones = deck.loadZones ?? []
+  const loads = t.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, totalWeightKg: (pl.weight ?? 0) * pl.stackedCount }))
+  const zoneLabel = (id: string) => {
+    const index = zones.findIndex((z) => z.id === id)
+    const zone = zones[index]
+    return zone && isWholeDeckZone(zone, deck.width, deck.length) ? `Зона ${index + 1} (вся палуба)` : `Зона ${index + 1}`
+  }
+  return {
+    zones:
+      zones.length > 0
+        ? computeZoneLoads(loads, zones, deck.outline, deck.unit)
+            .filter((z) => z.exceeded)
+            .map((z) => ({
+              label: zoneLabel(z.zoneId),
+              densityTPerM2: z.densityTPerM2,
+              limitTPerM2: z.limitTPerM2,
+              stacks: t.placed.filter((pl) => zoneIdsOverlapping(pl, zones).includes(z.zoneId)).map(ref),
+            }))
+        : [],
+    pressure: computeFootprintPressures(loads, zones, deck.unit)
+      .filter((c) => c.exceeded)
+      .map((c) => ({ stack: ref(t.placed[c.index]), pressureTPerM2: c.pressureTPerM2, limitTPerM2: c.limitTPerM2 })),
+    separation: separationViolations(
+      t.placed.map((pl) => ({ x: pl.x, y: pl.y, width: pl.width, length: pl.length, categories: placementCategorySet(pl, items) })),
+      separationRules
+    ).map((v) => ({ a: ref(t.placed[v.a]), b: ref(t.placed[v.b]), distance: v.distance, minDistance: v.minDistance })),
+    lashingShort: records.flatMap((r) => {
+      const s = lashingShortfall(r, deck, items)
+      return s ? [{ stack: ref(r), ...s }] : []
+    }),
+    dangerousGoods: t.placed
+      .filter((pl) => segmentLashingInputs(pl, items).some((seg) => lashingMethodologyFor(seg.category) === 'dangerous-goods'))
+      .map(ref),
+    unknownMakeup: records.filter((r) => r.legacyUnknownComposition).map((r) => ({ stack: ref(r), recordId: r.id })),
+    // A manual stack stands where its record says: they share the key.
+    conflicts: t.placed.flatMap((pl) => {
+      const record = pl.conflict ? records.find((r) => autoPlacementKey(r) === autoPlacementKey(pl)) : undefined
+      return record && pl.conflict ? [{ stack: ref(pl), recordId: record.id, reason: pl.conflict }] : []
+    }),
+    // Only a position the user locked is a problem: a rejected layout pin
+    // (left by an applied variant) just has its units placed elsewhere.
+    rejectedPins: t.unplaced.flatMap((u) =>
+      u.kind === 'pin' && u.pinId && pins.find((pin) => pin.id === u.pinId)?.locked ? [{ recordId: u.pinId, name: u.name, reason: u.reason }] : []
+    ),
+    quarantined: t.quarantined.map((q) => ({ recordId: q.id, name: q.name })),
+  }
+}
+
+// 10-foot units on a trip: every 10' catalogue cargo carries «10'» in its
+// name, the only mark they have (see the PRESETS).
+function tenFootUnits(t: PackingResult): number {
+  return t.placed.filter((p) => p.name.includes("10'")).reduce((sum, p) => sum + p.stackedCount, 0)
 }
 
 // The booklet check of one trip, at departure and arrival.
@@ -150,8 +218,19 @@ export function lashingVerdict(
   deck: DeckConfig,
   items: CargoItem[]
 ): 'none' | 'ok' | 'short' {
+  if (!(deck.lashingPoints ?? []).some((pt) => pt.placementId === r.id)) return 'none'
+  return lashingShortfall(r, deck, items) ? 'short' : 'ok'
+}
+
+// How a secured stack falls short, or null when it doesn't (or has no
+// lashing points to judge).
+export function lashingShortfall(
+  r: ManualPlacement | PinnedPlacement,
+  deck: DeckConfig,
+  items: CargoItem[]
+): { required: number; attached: number; balanceFails: boolean } | null {
   const attached = (deck.lashingPoints ?? []).filter((pt) => pt.placementId === r.id)
-  if (attached.length === 0) return 'none'
+  if (attached.length === 0) return null
   const layers = Math.max(1, placementTotalLayers(r))
   const balance = checkLashingBalance(
     { x: r.x, y: r.y, width: r.width, length: r.length, weight: placementTotalWeightKg(r, items) / layers, layers },
@@ -167,32 +246,8 @@ export function lashingVerdict(
     })
   )
   const tooFew = attached.length < required && !r.lashingJustification?.trim()
-  return (balance && !balance.ok) || tooFew ? 'short' : 'ok'
-}
-
-function lashingFacts(
-  trips: readonly PackingResult[],
-  records: readonly (ManualPlacement | PinnedPlacement)[],
-  deck: DeckConfig,
-  items: CargoItem[]
-): PlanFacts['lashing'] {
-  let securedStacks = 0
-  let shortStacks = 0
-  for (const r of records) {
-    const verdict = lashingVerdict(r, deck, items)
-    if (verdict === 'none') continue
-    securedStacks++
-    if (verdict === 'short') shortStacks++
-  }
-  const dangerousGoodsStacks = trips.reduce(
-    (sum, t) =>
-      sum +
-      t.placed.filter((pl) =>
-        segmentLashingInputs(pl, items).some((seg) => lashingMethodologyFor(seg.category) === 'dangerous-goods')
-      ).length,
-    0
-  )
-  return { securedStacks, shortStacks, dangerousGoodsStacks }
+  const balanceFails = !!balance && !balance.ok
+  return tooFew || balanceFails ? { required, attached: attached.length, balanceFails } : null
 }
 
 // What is wrong with one stack, for its inspector (spec 6.5): the facts the

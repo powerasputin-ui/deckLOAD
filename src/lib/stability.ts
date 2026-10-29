@@ -419,7 +419,7 @@ export function buildCargoWeightMoments(
       // `weight` on a placement is the PER-UNIT weight and `layers` is how
       // many units share this one footprint (packing.ts writes
       // `weight: item.weight` alongside `layers: unitsInStack`). Every other
-      // consumer in the app multiplies the two — page.tsx, StatsPanel,
+      // consumer in the app multiplies the two — page.tsx, planFacts.ts,
       // DeckVisualization, packing.ts's own breakdown builder. This one did
       // not, so a multi-tier stack contributed a single unit's weight to
       // displacement, KG, list and trim: the load came out UNDERstated,

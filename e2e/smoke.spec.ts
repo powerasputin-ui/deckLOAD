@@ -15,7 +15,7 @@ test.describe('DeckLoad smoke tests', () => {
     await expect(page.getByRole('button', { name: 'Меню расчёта «Демо-расчёт»' })).toBeVisible()
     await expect(page.locator('svg [data-deck-background="true"]').first()).toBeVisible()
     await openSection(page, 'Проверки')
-    await expect(page.getByText('Статистика загрузки')).toBeVisible()
+    await expect(page.getByRole('list', { name: 'Список проверок' })).toBeVisible()
   })
 
   test('utilization is between 0% and 100%', async ({ page }) => {

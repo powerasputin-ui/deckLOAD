@@ -49,6 +49,7 @@ import {
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
 import { keptByVariants } from '@/lib/variantKeep'
+import { autoPlacementKey } from '@/lib/stackSelection'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
@@ -87,8 +88,8 @@ export interface DeckConfig {
   clearance: number // max stack height above deck; 0 or item without height = single tier (no stacking)
   // The vessel's own approved total deck-cargo capacity (t), seeded from
   // VesselTemplate.limits.maxDeckCargoT when a template is applied.
-  // Undefined = no known limit, not "unlimited" — StatsPanel shows nothing
-  // rather than a fabricated always-green check. A real HARD stop in BOTH
+  // Undefined = no known limit, not "unlimited" — the «Вес палубы» check
+  // reads «—» rather than a fabricated always-green tick. A real HARD stop in BOTH
   // modes (contract A, chosen explicitly by the user — see
   // cargoValidation.ts's wouldExceedDeckCapacity, the one shared check both
   // modes' new-placement guards call): AUTO passes it to packMultiTrip/
@@ -97,13 +98,14 @@ export interface DeckConfig {
   // area) AND every interactive placement path in both modes (click/stamp/
   // preset/pin "+", see page.tsx's wouldExceedMaxDeckCargo) blocks the
   // placement outright with a toast error — NOT a soft warning in either
-  // mode. StatsPanel's own live counter is a separate, purely
-  // informational readout of the same number; the enforcement itself
-  // happens at the placement call sites above, not there.
+  // mode. The «Вес палубы» check and the status line are separate,
+  // purely informational readouts of the same number; the enforcement
+  // itself happens at the placement call sites above, not there.
   maxDeckCargoT?: number
   // The vessel's own registry figure for how many 10-foot units fit at
   // full pipe load, seeded from VesselTemplate.limits.tenFootContainerCapacity.
-  // Purely informational (StatsPanel live counter) — never enforced, since
+  // Purely informational (the «Вместимость и рейсы» check's details) —
+  // never enforced, since
   // the source figure is itself conditional ("when fully loaded with
   // pipe"), not a standalone hard cap.
   tenFootContainerCapacity?: number
@@ -1319,7 +1321,7 @@ export const useCalculator = create<CalculatorState>()(
       // every existing placement's weight with no bound. Block the edit
       // itself before it's applied, checking manualPlacements and each
       // trip's pins independently — maxDeckCargoT is the vessel's own
-      // PER-TRIP capacity (see StatsPanel's comment on this same field),
+      // PER-TRIP capacity (see DeckConfig.maxDeckCargoT),
       // and MANUAL has no trip concept of its own, so summing across all
       // trips together would incorrectly reject valid multi-trip plans.
       //
@@ -2224,12 +2226,8 @@ export function redoCalculator() {
 
 export { UNIT_LABEL, PALETTE, convertLength }
 
-// Selection key of a stack the auto-packer placed on its own (see
-// selectedAutoKeys) — item plus position, the same identity pins are
-// matched to placed stacks by.
-export function autoPlacementKey(p: { itemId: string; x: number; y: number }): string {
-  return `${p.itemId}@${p.x.toFixed(3)},${p.y.toFixed(3)}`
-}
+// Lives in stackSelection.ts, where the checks name stacks by it too.
+export { autoPlacementKey }
 
 // Lives in packing.ts, next to LoadZone; still exported from here for the
 // components that import it with the store.

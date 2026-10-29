@@ -142,7 +142,7 @@ describe('stacked deck cargo contributes its FULL weight to the loading conditio
   // PlacedItem.weight is the PER-UNIT weight — packing.ts writes
   // `weight: item.weight` while counting units in `layers`/`stackedCount`.
   // Every other consumer in the app multiplies the two (page.tsx,
-  // StatsPanel, DeckVisualization, packing.ts's own breakdown builder, and
+  // planFacts.ts, DeckVisualization, packing.ts's own breakdown builder, and
   // packing.invariants.test.ts). buildCargoWeightMoments did not, so a
   // multi-tier stack contributed a single unit's weight to displacement,
   // KG, list and trim — understating the load, which errs UNSAFE.

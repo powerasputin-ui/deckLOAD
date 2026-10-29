@@ -184,6 +184,10 @@ interface DeckVisualizationProps {
   separationPairs?: readonly SeparationViolation[]
   // Pins or manual stacks whose lashing falls short: an amber chain (6.3).
   lashingShortIds?: ReadonlySet<string>
+  // The stacks a check opened in «Проверки» blames (spec 8.4), by
+  // autoPlacementKey: the rest are dimmed so these stand out. Null: no check
+  // open, or none of its stacks on this trip.
+  focusKeys?: ReadonlySet<string> | null
   placingLashingPoint?: boolean
   onPlaceLashingPoint?: (
     x: number,
@@ -306,6 +310,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   separationRules,
   separationPairs,
   lashingShortIds,
+  focusKeys,
   placingLashingPoint,
   onPlaceLashingPoint,
   onUpdateLashingPoint,
@@ -3450,7 +3455,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             {/* Live area readout, so a mismatch against a known printed area
                 (a GA drawing's own cargo-deck figure, say) shows up while
                 still dragging vertices, not only after confirming and
-                checking StatsPanel afterward. */}
+                checking the trip's summary afterward. */}
             {editingOutline.length >= 3 && (() => {
               const first = deckToScreen(editingOutline[0].x, editingOutline[0].y)
               return (
@@ -3596,7 +3601,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               onContentsHover={(text, cx, cy) => setContentsTooltip(text ? { text, x: cx, y: cy } : null)}
               mergeTarget={isMergeTarget}
               mergeBlocked={isMergeTarget && mergePreview?.targetId === placementId && !mergePreview.ok}
-              dimmed={isBeingDragged && !!mergeTargetId}
+              dimmed={(isBeingDragged && !!mergeTargetId) || (!!focusKeys && !focusKeys.has(autoPlacementKey(p)))}
               onPointerDown={
                 mode === 'manual' && p.manualId
                   ? (e) => handleManualPointerDown(e, manualPlacements.find((m) => m.id === p.manualId)!)
@@ -4598,6 +4603,7 @@ function PlacedRect({
       onPointerDown={onPointerDown}
       onContextMenu={onItemContextMenu}
       style={{ cursor, opacity: dimmed ? 0.4 : 1, transition: 'opacity 0.15s' }}
+      data-dimmed={dimmed || undefined}
     >
       {/* Stacked-layers cue: faint offset "ghost" outlines behind the main
           box, so a multi-layer footprint visually reads as a physical pile
