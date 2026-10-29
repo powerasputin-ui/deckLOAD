@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { inspector, openSection, unitsCount } from '../helpers'
+import { addSeparationRule, inspector, openSection, unitsCount } from '../helpers'
 
 // Appendix C, scenarios 15–16, from the entry points of stage 2. Stage 4
 // rewrites them for the single list of checks.
@@ -50,14 +50,8 @@ test('Сценарий 15: сепарация и крепление', async ({ p
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/2\/2 ед\./)
 
-  // The rule «Опасный груз ↔ Обычный ≥ 3 м».
-  await openSection(page, 'Проверки')
-  await page.getByRole('button', { name: /^Сепарация груза/ }).click()
-  await page.getByRole('combobox').filter({ hasText: 'Категория A' }).click()
-  await page.getByRole('option', { name: 'Опасный груз' }).click()
-  await page.getByRole('combobox').filter({ hasText: 'Категория B' }).click()
-  await page.getByRole('option', { name: 'Обычный' }).click()
-  await page.getByRole('button', { name: 'Добавить правило' }).click()
+  // The rule «Опасный груз ↔ Обычный ≥ 3 м», in the separation check.
+  await addSeparationRule(page, 'Опасный груз', 'Обычный')
 
   // The two stand 1.5 m apart: the check fails, and the deck joins them with
   // a dashed line saying how far apart they are.

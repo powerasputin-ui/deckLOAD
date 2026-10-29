@@ -63,7 +63,7 @@ import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
-import { buildChecks, checkCounts, checkDetails, type CheckId } from '@/lib/checks'
+import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
@@ -546,15 +546,11 @@ export default function Home() {
   // trip's shortfall is cargo that fits in no trip at all.
   const unfitAnywhere = mode === 'auto' ? lastTrip.unplaced.filter((u) => u.kind === 'shortfall') : []
   const unfitUnits = mode === 'auto' ? Math.max(0, lastTrip.requestedCount - lastTrip.placedCount) : 0
-  // Only a position the user chose is worth a red alarm: a rejected layout
-  // pin (left by an applied variant) just gets its units packed elsewhere.
-  const rejectedPinsHere = result.unplaced.filter(
-    (u) => u.kind === 'pin' && !!(pinnedPlacementsByTrip[clampedTripIndex] ?? []).find((p) => p.id === u.pinId)?.locked
-  )
   const manualToDo = mode === 'manual' ? result.unplaced.filter((u) => u.kind === 'manual') : []
-  // Manual stacks the deck changed under (see packingResultFromManual).
-  const manualConflicts = mode === 'manual' ? result.placed.filter((p) => p.conflict) : []
-  const redStripCount = unfitAnywhere.length + rejectedPinsHere.length + manualConflicts.length
+  // A locked position the packer can't use and a manual stack where it may
+  // not stand are «Требуют внимания» in «Проверки» (A.12), with what can be
+  // done about them; the red strip is for the cargo itself.
+  const redStripCount = unfitAnywhere.length
   // Units entering the next trip are the ones it (or a later trip) will
   // place plus the unfit ones, which pass through every trip.
   const nextTrip = mode === 'auto' ? trips[clampedTripIndex + 1] : undefined
@@ -1161,6 +1157,37 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [workspace])
 
+  // What «Требуют внимания» offers (spec 8.4), on the record a case is
+  // about. Removing a stack or a pin says so with «Отменить».
+  const handleCheckAction = (action: CheckAction) => {
+    const s = useCalculator.getState()
+    const undo = { label: 'Отменить', onClick: () => undoCalculator() }
+    switch (action.kind) {
+      case 'delete':
+        if (s.mode === 'manual') s.removeManualPlacement(action.recordId)
+        else s.removePinned(action.trip, action.recordId)
+        toast.info('Штабель удалён', { action: undo })
+        break
+      case 'keep-makeup':
+        // What the stack holds stays unknown; the user takes it as it is.
+        if (s.mode === 'manual') s.updateManualPlacement(action.recordId, { legacyUnknownComposition: undefined })
+        else s.updatePinned(action.trip, action.recordId, { legacyUnknownComposition: undefined })
+        break
+      case 'unpin':
+        s.removePinned(action.trip, action.recordId)
+        toast.info('Закрепление снято — груз встанет туда, где есть место', { action: undo })
+        break
+      case 'show':
+        setActiveTripIndex(action.trip)
+        useCalculator.setState(
+          s.mode === 'manual'
+            ? { selectedManualIds: [action.recordId], selectedPinIds: [], selectedAutoKeys: [] }
+            : { selectedPinIds: [action.recordId], selectedManualIds: [], selectedAutoKeys: [] }
+        )
+        break
+    }
+  }
+
   // The whole plan's checks (spec 8.4), every trip: their ✕ and ⚠ in the
   // status line and on the «Проверки» tab, the list at the top of that
   // section.
@@ -1420,7 +1447,7 @@ export default function Home() {
           <div className="flex items-start gap-2 flex-wrap">
             <span className="flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-400 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5" />
-              {mode === 'manual' ? 'Требует перестановки' : 'Не поместилось'} ({redStripCount}):
+              Не поместилось ({redStripCount}):
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {unfitAnywhere.map((u, i) => {
@@ -1436,26 +1463,6 @@ export default function Home() {
                   </Badge>
                 )
               })}
-              {rejectedPinsHere.map((u, i) => (
-                <Badge
-                  key={`pin-${u.itemId}-${i}`}
-                  variant="destructive"
-                  className="text-xs font-normal"
-                  title={u.reason}
-                >
-                  {u.name} — {u.reason}
-                </Badge>
-              ))}
-              {manualConflicts.map((p) => (
-                <Badge
-                  key={`conflict-${p.index}`}
-                  variant="destructive"
-                  className="text-xs font-normal"
-                  title={p.conflict}
-                >
-                  {p.name} — {p.conflict}
-                </Badge>
-              ))}
             </div>
           </div>
         </div>
@@ -1528,6 +1535,7 @@ export default function Home() {
               }}
               onOpenSection={openSection}
               onOpenStability={() => setWorkspace('stability')}
+              onCheckAction={handleCheckAction}
               lashing={{ autoStack: selectedAutoStack, onPatchAutoStack: patchAutoStack }}
             />
           )}

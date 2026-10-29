@@ -62,11 +62,13 @@ test('no text outside the deck is smaller than 12 px, in every section and menu'
   await openSection(page, 'Размещение')
   expect(await textBelow12px(page)).toEqual([])
 
+  // Every check open in turn, and the selected stack's lashing block.
   await openSection(page, 'Проверки')
-  for (const title of ['Сепарация груза', 'Крепление груза']) {
-    await page.getByRole('button', { name: new RegExp(`^${title}`) }).click()
+  await page.getByRole('button', { name: /^Крепление груза/ }).click()
+  for (const id of ['capacity', 'deck-weight', 'zones', 'separation', 'lashing', 'stability']) {
+    await page.locator(`[data-check="${id}"] > button`).click()
+    expect(await textBelow12px(page)).toEqual([])
   }
-  expect(await textBelow12px(page)).toEqual([])
 
   await openSection(page, 'Отчёт')
   expect(await textBelow12px(page)).toEqual([])

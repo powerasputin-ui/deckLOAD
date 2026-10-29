@@ -1,17 +1,20 @@
 'use client'
 
 import { ChevronDown, ChevronRight, CircleCheck, CircleX, Info, Minus, TriangleAlert } from 'lucide-react'
-import { LashingPointsSection, SeparationRulesSection } from '@/components/calculator/Sidebar'
+import { LashingPointsSection } from '@/components/calculator/Sidebar'
 import { PanelBlock } from '@/components/shell/SectionPanel'
-import type { Check, CheckDetailLine, CheckDetails, CheckId, CheckStatus } from '@/lib/checks'
+import { SeparationRulesEditor, VesselMotionPicker } from '@/components/sections/checks/CheckSettings'
+import type { Check, CheckAction, CheckDetailLine, CheckDetails, CheckId, CheckStatus } from '@/lib/checks'
 import { SECTION_TITLE, type SectionId } from '@/lib/workflow'
 import { cn } from '@/lib/utils'
 
 // «Проверки» (spec 8.4): one list. A click opens a check: what it found,
 // line by line, with the trip named when there are several — and the
 // stacks at fault light up on the open trip's deck (the page dims the
-// rest). Separation and lashing keep their sidebar blocks below until they
-// move into their checks and the inspector.
+// rest). The separation rules and the voyage's conditions are set in their
+// checks; «Требуют внимания» offers what can be done about each case. The
+// selected stack's lashing keeps its block below until it moves into the
+// inspector.
 export function ChecksSection({
   checks,
   openCheck,
@@ -21,6 +24,7 @@ export function ChecksSection({
   onSelectTrip,
   onOpenSection,
   onOpenStability,
+  onCheckAction,
   lashing,
 }: {
   checks: readonly Check[]
@@ -32,6 +36,7 @@ export function ChecksSection({
   onSelectTrip: (index: number) => void
   onOpenSection: (id: SectionId) => void
   onOpenStability: () => void
+  onCheckAction: (action: CheckAction) => void
   lashing: React.ComponentProps<typeof LashingPointsSection>
 }) {
   return (
@@ -71,7 +76,10 @@ export function ChecksSection({
                       details={openDetails}
                       tripIndex={tripIndex}
                       onSelectTrip={onSelectTrip}
+                      onAction={onCheckAction}
                     />
+                    {c.id === 'separation' && <SeparationRulesEditor />}
+                    {c.id === 'lashing' && <VesselMotionPicker />}
                     <TargetLink check={c} onOpenSection={onOpenSection} onOpenStability={onOpenStability} />
                   </div>
                 )}
@@ -80,9 +88,6 @@ export function ChecksSection({
           })}
         </ul>
       </PanelBlock>
-      <div className="px-4 py-3">
-        <SeparationRulesSection />
-      </div>
       <div className="px-4 py-3">
         <LashingPointsSection {...lashing} />
       </div>
@@ -97,11 +102,13 @@ function DetailLines({
   details,
   tripIndex,
   onSelectTrip,
+  onAction,
 }: {
   check: Check
   details: CheckDetails | null
   tripIndex: number
   onSelectTrip: (index: number) => void
+  onAction: (action: CheckAction) => void
 }) {
   const lines: CheckDetailLine[] = check.lines ?? details?.lines ?? []
   if (lines.length === 0) return null
@@ -127,11 +134,33 @@ function DetailLines({
                 </>
               ))}
             {line.text}
+            {line.actions && (
+              <span className="mt-1 flex flex-wrap gap-1.5">
+                {line.actions.map((a) => (
+                  <button
+                    key={a.kind}
+                    type="button"
+                    onClick={() => onAction(a)}
+                    aria-label={`${ACTION_LABEL[a.kind]}: ${line.text}`}
+                    className="rounded border border-line px-1.5 py-0.5 text-xs text-ink hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {ACTION_LABEL[a.kind]}
+                  </button>
+                ))}
+              </span>
+            )}
           </span>
         </li>
       ))}
     </ul>
   )
+}
+
+const ACTION_LABEL: Record<CheckAction['kind'], string> = {
+  delete: 'Удалить',
+  'keep-makeup': 'Оставить как есть',
+  unpin: 'Снять закрепление',
+  show: 'Показать',
 }
 
 // Where a check's settings are: another section, or the stability

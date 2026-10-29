@@ -38,6 +38,30 @@ export async function tripSummaryValue(page: Page, term: string): Promise<Locato
   return page.getByTestId('trip-summary').getByText(term, { exact: true }).locator('xpath=following-sibling::dd')
 }
 
+// A check in «Проверки» (spec 8.4), opened: its row, with what it found and
+// its settings.
+export async function openCheck(page: Page, id: string): Promise<Locator> {
+  await openSection(page, 'Проверки')
+  const row = page.locator(`[data-check="${id}"]`)
+  const button = row.locator('> button')
+  if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+  await expect(button).toHaveAttribute('aria-expanded', 'true')
+  return row
+}
+
+// A separation rule added in its check: two categories and the distance.
+export async function addSeparationRule(page: Page, categoryA: string, categoryB: string, distance?: string) {
+  const row = await openCheck(page, 'separation')
+  const rule = row.getByRole('group', { name: 'Новое правило' })
+  await rule.getByRole('combobox', { name: 'Категория A' }).click()
+  await page.getByRole('option', { name: categoryA, exact: true }).click()
+  await rule.getByRole('combobox', { name: 'Категория B' }).click()
+  await page.getByRole('option', { name: categoryB, exact: true }).click()
+  if (distance !== undefined) await setNumber(rule.getByLabel('Минимальное расстояние, м'), distance)
+  await rule.getByRole('button', { name: 'Добавить правило' }).click()
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Правило добавлено' })).toBeVisible()
+}
+
 // An item of the calculation's menu, top left (spec 5.2).
 export async function projectMenuItem(page: Page, name: string) {
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()

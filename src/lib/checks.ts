@@ -282,12 +282,21 @@ export function checkCounts(checks: readonly Check[]): { errors: number; warning
   }
 }
 
+// What «Требуют внимания» offers for a case (8.4), on the placement record
+// it is about, on its trip (0-based).
+export type CheckAction = {
+  kind: 'delete' | 'keep-makeup' | 'unpin' | 'show'
+  recordId: string
+  trip: number
+}
+
 // A line of a check's details (8.4): what is wrong, where.
 export interface CheckDetailLine {
   status: 'warn' | 'error' | 'info'
   text: string
   // The trip it is about (0-based) — set only when there is more than one.
   trip?: number
+  actions?: CheckAction[]
 }
 
 export interface CheckDetails {
@@ -306,6 +315,13 @@ export function checkDetails(f: PlanFacts, id: CheckId): CheckDetails {
   const stacks = new Map<number, Set<string>>()
   const add = (trip: number, status: CheckDetailLine['status'], text: string, ...blamed: StackRef[]) => {
     lines.push(multiTrip ? { status, text, trip } : { status, text })
+    blame(trip, blamed)
+  }
+  // The last line added offers these.
+  const offer = (...actions: CheckAction[]) => {
+    lines[lines.length - 1].actions = actions
+  }
+  const blame = (trip: number, blamed: StackRef[]) => {
     if (blamed.length === 0) return
     const set = stacks.get(trip) ?? new Set<string>()
     for (const b of blamed) set.add(b.key)
@@ -346,10 +362,24 @@ export function checkDetails(f: PlanFacts, id: CheckId): CheckDetails {
           add(i, 'warn', `«${d.name}»: опасный груз — крепление и сегрегация по IMDG Code`, d)
         break
       case 'attention':
-        for (const q of found?.quarantined ?? []) add(i, 'error', `«${q.name}»: данные штабеля повреждены, на палубе его нет`)
-        for (const u of found?.unknownMakeup ?? []) add(i, 'error', `«${u.stack.name}»: состав неизвестен`, u.stack)
-        for (const r of found?.rejectedPins ?? []) add(i, 'error', `«${r.name}»: закреплённая позиция недопустима — ${lowerFirst(r.reason)}`)
-        for (const c of found?.conflicts ?? []) add(i, 'error', `«${c.stack.name}»: ${lowerFirst(c.reason)}`, c.stack)
+        for (const q of found?.quarantined ?? []) {
+          add(i, 'error', `«${q.name}»: данные штабеля повреждены, на палубе его нет`)
+          offer({ kind: 'delete', recordId: q.recordId, trip: i })
+        }
+        for (const u of found?.unknownMakeup ?? []) {
+          add(i, 'error', `«${u.stack.name}»: состав неизвестен — штабель объединили до того, как расчёт стал хранить состав`, u.stack)
+          offer({ kind: 'keep-makeup', recordId: u.recordId, trip: i }, { kind: 'delete', recordId: u.recordId, trip: i })
+        }
+        // The packer's reason names the position already: «Закреплённая
+        // позиция вне палубы».
+        for (const r of found?.rejectedPins ?? []) {
+          add(i, 'error', `«${r.name}»: ${lowerFirst(r.reason)}`)
+          offer({ kind: 'unpin', recordId: r.recordId, trip: i })
+        }
+        for (const c of found?.conflicts ?? []) {
+          add(i, 'error', `«${c.stack.name}»: ${lowerFirst(c.reason)}`, c.stack)
+          offer({ kind: 'show', recordId: c.recordId, trip: i })
+        }
         break
     }
   })

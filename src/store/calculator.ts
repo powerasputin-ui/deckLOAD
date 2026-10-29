@@ -394,6 +394,7 @@ interface CalculatorState {
 
   // Cargo category separation rules
   addSeparationRule: (rule: Omit<SeparationRule, 'id'>) => void
+  updateSeparationRule: (id: string, patch: Partial<Omit<SeparationRule, 'id'>>) => void
   removeSeparationRule: (id: string) => void
 }
 
@@ -2142,6 +2143,8 @@ export const useCalculator = create<CalculatorState>()(
 
   addSeparationRule: (rule) =>
     set((s) => ({ separationRules: [...s.separationRules, { ...rule, id: uuid() }] })),
+  updateSeparationRule: (id, patch) =>
+    set((s) => ({ separationRules: s.separationRules.map((r) => (r.id === id ? { ...r, ...patch } : r)) })),
   removeSeparationRule: (id) =>
     set((s) => ({ separationRules: s.separationRules.filter((r) => r.id !== id) })),
     }),

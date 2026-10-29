@@ -41,7 +41,6 @@ import {
 } from '@/lib/packing'
 import { vesselTemplateById } from '@/lib/vesselTemplates'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
-import { DEFAULT_CATEGORIES } from '@/lib/cargoTable'
 import { BlockOpenState } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { cn, fmtNumber } from '@/lib/utils'
@@ -359,91 +358,6 @@ export function LoadZonesSection({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] })
         <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => addLoadZone()}>
           <Plus className="h-3.5 w-3.5 mr-1" /> Добавить зону
         </Button>
-      </div>
-    </Section>
-  )
-}
-
-export function SeparationRulesSection() {
-  const rules = useCalculator((s) => s.separationRules)
-  const addSeparationRule = useCalculator((s) => s.addSeparationRule)
-  const removeSeparationRule = useCalculator((s) => s.removeSeparationRule)
-  const items = useCalculator((s) => s.items)
-  const [categoryA, setCategoryA] = useState('')
-  const [categoryB, setCategoryB] = useState('')
-  const [minDistance, setMinDistance] = useState(3)
-
-  const categoryOptions = Array.from(
-    new Set([...DEFAULT_CATEGORIES, ...items.map((it) => it.category).filter((c): c is string => !!c)])
-  )
-
-  return (
-    <Section icon={<ShieldAlert className="h-4 w-4" />} title="Сепарация груза" badge={rules.length} defaultOpen={false} tourId="separation">
-      <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Минимальное расстояние (в метрах) между грузами двух категорий. Нарушение блокирует размещение.
-        </p>
-        {rules.map((r) => (
-          <div key={r.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs">
-            <span className="truncate flex-1">
-              «{r.categoryA}» ↔ «{r.categoryB}»: ≥{r.minDistance} м
-            </span>
-            <button
-              onClick={() => removeSeparationRule(r.id)}
-              className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-destructive shrink-0"
-              title="Удалить правило"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
-        <div className="rounded-md border p-2 space-y-1.5">
-          <Select value={categoryA} onValueChange={setCategoryA}>
-            <SelectTrigger className="h-7 w-full text-xs">
-              <SelectValue placeholder="Категория A" />
-            </SelectTrigger>
-            <SelectContent>
-              {categoryOptions.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={categoryB} onValueChange={setCategoryB}>
-            <SelectTrigger className="h-7 w-full text-xs">
-              <SelectValue placeholder="Категория B" />
-            </SelectTrigger>
-            <SelectContent>
-              {categoryOptions.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="flex items-center gap-1.5">
-            <NumberField
-              aria-label="Минимальное расстояние, м"
-              min={0}
-              step={0.5}
-              value={minDistance}
-              onCommit={setMinDistance}
-              className="h-7 text-xs flex-1"
-            />
-            <span className="text-xs text-muted-foreground">м</span>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs w-full"
-            disabled={!categoryA || !categoryB}
-            onClick={() => {
-              addSeparationRule({ categoryA, categoryB, minDistance })
-              setCategoryA('')
-              setCategoryB('')
-              toast.success('Правило добавлено')
-            }}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Добавить правило
-          </Button>
-        </div>
       </div>
     </Section>
   )

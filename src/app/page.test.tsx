@@ -1040,6 +1040,55 @@ describe('Home (page.tsx)', () => {
       expect(dimmed('Ящик')).toBeNull()
     })
 
+    it('a separation rule is changed in its check, and the new one added there', () => {
+      render(<Home />)
+      act(() => useCalculator.getState().addSeparationRule({ categoryA: 'Опасный груз', categoryB: 'Обычный', minDistance: 3 }))
+      openSection('Проверки')
+      const row = openCheckRow('separation')
+      const distance = within(row).getByLabelText('Правило 1: расстояние, м') as HTMLInputElement
+      fireEvent.change(distance, { target: { value: '5' } })
+      fireEvent.keyDown(distance, { key: 'Enter' })
+      expect(useCalculator.getState().separationRules).toEqual([{ id: expect.any(String), categoryA: 'Опасный груз', categoryB: 'Обычный', minDistance: 5 }])
+      fireEvent.click(within(row).getByRole('button', { name: 'Удалить правило 1' }))
+      expect(useCalculator.getState().separationRules).toEqual([])
+      expect(within(openCheckRow('separation')).getByRole('group', { name: 'Новое правило' })).toBeTruthy()
+    })
+
+    it('the lashing check says coastal waters are assumed until other conditions are chosen', () => {
+      render(<Home />)
+      openSection('Проверки')
+      const row = openCheckRow('lashing')
+      const motion = within(row).getByLabelText('Условия плавания')
+      expect(document.getElementById(motion.getAttribute('aria-describedby')!)!.textContent).toBe(
+        'По умолчанию — прибрежное плавание. Ускорения: поперёк 0.35 g, вдоль 0.20 g; трение 0.30'
+      )
+      act(() => useCalculator.getState().setVesselMotion({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' }))
+      expect(document.getElementById(motion.getAttribute('aria-describedby')!)!.textContent).toBe('Ускорения: поперёк 0.50 g, вдоль 0.30 g; трение 0.30')
+    })
+
+    it('«Требуют внимания»: a stack of unknown makeup is kept as it is, or deleted with «Отменить»', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Ящик', width: 1, length: 1, height: 1, quantity: 2 })
+        const it = useCalculator.getState().items[0]
+        const at = (id: string, x: number) => ({ id, itemId: it.id, name: it.name, x, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: it.color, legacyUnknownComposition: true as const })
+        useCalculator.setState({ mode: 'manual', manualPlacements: [at('m1', 1), at('m2', 4)] })
+        clearCalculatorHistory()
+      })
+      openSection('Проверки')
+      const keep = within(openCheckRow('attention')).getAllByRole('button', { name: /^Оставить как есть/ })
+      expect(keep).toHaveLength(2)
+      fireEvent.click(keep[0])
+      expect(useCalculator.getState().manualPlacements.map((m) => !!m.legacyUnknownComposition)).toEqual([false, true])
+      fireEvent.click(within(openCheckRow('attention')).getByRole('button', { name: /^Удалить/ }))
+      expect(useCalculator.getState().manualPlacements.map((m) => m.id)).toEqual(['m1'])
+      expect(document.querySelector('[data-check="attention"]')).toBeNull()
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Штабель удалён')!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(useCalculator.getState().manualPlacements).toHaveLength(2)
+    })
+
     it('a line about another trip opens it', () => {
       render(<Home />)
       clearDemoCargo()
@@ -4828,7 +4877,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // Phase 0, L14: in manual mode an obstacle moved onto standing cargo (or a
   // new outline, or a widened clearance zone) left the stack where it may
   // not stand, with nothing said.
-  it('manual cargo the deck changed under is hatched red and listed in the red strip', () => {
+  it('manual cargo the deck changed under is hatched red and needs attention in «Проверки», which shows it', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -4842,7 +4891,6 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         manualPlacements: [{ id: 'm1', itemId: item.id, name: 'Ящик', x: 4, y: 4, width: 2, length: 1, layers: 1, rotated: false, color: item.color }],
       })
     })
-    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
     expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
     act(() => {
       useCalculator.setState({
@@ -4852,9 +4900,14 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         },
       })
     })
-    expect(screen.getByText(/Требует перестановки \(1\)/)).toBeTruthy()
-    expect(screen.getByText('Ящик — В зоне ограничения')).toBeTruthy()
     expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(1)
+    // Not in the red strip, which is for cargo that fits nowhere (A.12).
+    expect(screen.queryByText(/Не поместилось/)).toBeNull()
+    openSection('Проверки')
+    const row = openCheckRow('attention')
+    expect(row.getAttribute('data-check-status')).toBe('error')
+    fireEvent.click(within(row).getByRole('button', { name: 'Показать: «Ящик»: в зоне ограничения' }))
+    expect(useCalculator.getState().selectedManualIds).toEqual(['m1'])
     // Still on the deck: manual mode never moves cargo by itself.
     expect(useCalculator.getState().manualPlacements).toHaveLength(1)
   })
@@ -4872,8 +4925,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     switchToManual()
     expect(useCalculator.getState().manualPlacements.length).toBeGreaterThan(0)
-    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
     expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
+    openSection('Проверки')
+    expect(document.querySelector('[data-check="attention"]')).toBeNull()
   })
 
   it('stacked pipes on a cut-corner deck taken into manual mode raise no conflicts', () => {
@@ -4894,8 +4948,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     switchToManual()
     expect(useCalculator.getState().manualPlacements.some((m) => m.name === 'Труба' && m.layers > 1)).toBe(true)
-    expect(screen.queryByText(/Требует перестановки/)).toBeNull()
     expect(document.querySelectorAll('svg [data-conflict="true"]')).toHaveLength(0)
+    openSection('Проверки')
+    expect(document.querySelector('[data-check="attention"]')).toBeNull()
   })
 
   // Phase 0, group D: selecting never changes saved data; a change the user
@@ -5138,12 +5193,21 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
           itemId: item.id, name: item.name, x: 20, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color,
         })
       })
-      expect(screen.queryByText(/Закреплённая позиция вне палубы/)).toBeNull()
+      openSection('Проверки')
+      expect(document.querySelector('[data-check="attention"]')).toBeNull()
       act(() => {
         const id = pins()[0].id
         useCalculator.getState().updatePinned(0, id, { locked: true })
+        clearCalculatorHistory()
       })
-      expect(screen.getByText(/Закреплённая позиция вне палубы/)).toBeTruthy()
+      const row = openCheckRow('attention')
+      fireEvent.click(within(row).getByRole('button', { name: /^Снять закрепление: «BoxA»: закреплённая позиция вне палубы/ }))
+      expect(pins()).toHaveLength(0)
+      expect(document.querySelector('[data-check="attention"]')).toBeNull()
+      // «Отменить» brings the pin back.
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => String(text).startsWith('Закрепление снято'))!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(pins()).toHaveLength(1)
     })
   })
 

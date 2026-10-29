@@ -287,19 +287,20 @@ describe('checkDetails', () => {
           found: found({
             quarantined: [{ recordId: 'q', name: 'Груз 1' }],
             unknownMakeup: [{ stack: box, recordId: 'p1' }],
-            rejectedPins: [{ recordId: 'p2', name: 'Бочка', reason: 'Вне палубы' }],
+            rejectedPins: [{ recordId: 'p2', name: 'Бочка', reason: 'Закреплённая позиция вне палубы' }],
             conflicts: [{ stack: drum, recordId: 'm1', reason: 'В зоне ограничения' }],
           }),
         }),
       ],
     })
     const d = checkDetails(f, 'attention')
-    expect(d.lines.map((l) => l.text)).toEqual([
-      '«Груз 1»: данные штабеля повреждены, на палубе его нет',
-      '«Ящик»: состав неизвестен',
-      '«Бочка»: закреплённая позиция недопустима — вне палубы',
-      '«Бочка»: в зоне ограничения',
+    expect(d.lines.map((l) => [l.text, l.actions?.map((a) => a.kind)])).toEqual([
+      ['«Груз 1»: данные штабеля повреждены, на палубе его нет', ['delete']],
+      ['«Ящик»: состав неизвестен — штабель объединили до того, как расчёт стал хранить состав', ['keep-makeup', 'delete']],
+      ['«Бочка»: закреплённая позиция вне палубы', ['unpin']],
+      ['«Бочка»: в зоне ограничения', ['show']],
     ])
+    expect(d.lines[2].actions).toEqual([{ kind: 'unpin', recordId: 'p2', trip: 0 }])
     expect(d.stacks.get(0)).toEqual(new Set(['box@1', 'drum@2']))
   })
 })

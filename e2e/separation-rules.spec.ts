@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { addOwnCargo, armCargo, clearCalculation, setNumber, unitsCount, openSection, pickVariants } from './helpers'
+import { addOwnCargo, addSeparationRule, armCargo, clearCalculation, unitsCount, pickVariants } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -18,17 +18,12 @@ test.describe('Category separation rules', () => {
     await addOwnCargo(page, { category: 'СепА' })
     await addOwnCargo(page, { category: 'СепБ' })
 
-    // Open "Сепарация груза" (collapsed by default) and add a rule with a
-    // large minimum distance so any placement close together violates it.
-    await openSection(page, 'Проверки')
-    await page.getByRole('button', { name: /Сепарация груза/ }).click()
-    await page.getByText('Категория A', { exact: true }).click()
-    await page.getByRole('option', { name: 'СепА' }).click()
-    await page.getByText('Категория B', { exact: true }).click()
-    await page.getByRole('option', { name: 'СепБ' }).click()
-    await page.getByRole('button', { name: 'Добавить правило' }).click()
-    await expect(page.getByText('Правило добавлено')).toBeVisible()
-    await expect(page.getByText('«СепА» ↔ «СепБ»')).toBeVisible()
+    // The rule, added in the separation check (spec 8.4): any placement
+    // closer than 3 m violates it.
+    await addSeparationRule(page, 'СепА', 'СепБ')
+    const rules = page.getByRole('list', { name: 'Правила сепарации' })
+    await expect(rules.getByRole('combobox', { name: 'Правило 1: категория A' })).toHaveText('СепА')
+    await expect(rules.getByRole('combobox', { name: 'Правило 1: категория B' })).toHaveText('СепБ')
 
     const background = page.locator('svg [data-deck-background="true"]').first()
 
@@ -63,7 +58,7 @@ test.describe('Category separation rules', () => {
     await expect(headerBadge(page)).toHaveText(/^2\/2 /)
   })
 
-  test('"Автораспределение" (auto-packing) itself respects the rule — not just the manual click check', async ({ page }) => {
+  test('«Подобрать варианты» (auto-packing) itself respects the rule — not just the manual click check', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
     // Stays in auto mode (the default after "Очистить") — cargo is placed
@@ -74,21 +69,11 @@ test.describe('Category separation rules', () => {
     await addOwnCargo(page, { category: 'СепА' })
     await addOwnCargo(page, { category: 'СепБ' })
 
-    await openSection(page, 'Проверки')
-
-    await page.getByRole('button', { name: /Сепарация груза/ }).click()
-    await page.getByText('Категория A', { exact: true }).click()
-    await page.getByRole('option', { name: 'СепА' }).click()
-    await page.getByText('Категория B', { exact: true }).click()
-    await page.getByRole('option', { name: 'СепБ' }).click()
     // A distance close to the deck's own width forces the packer to choose:
     // either keep both apart (and still fit, since the deck is wide) or
     // reject one — either outcome proves the rule is enforced by the
     // algorithm itself, not just by a UI-level click check.
-    const distanceInput = page.getByLabel('Минимальное расстояние, м')
-    await setNumber(distanceInput, '15')
-    await page.getByRole('button', { name: 'Добавить правило' }).click()
-    await expect(page.getByText('Правило добавлено')).toBeVisible()
+    await addSeparationRule(page, 'СепА', 'СепБ', '15')
 
     await pickVariants(page)
 
