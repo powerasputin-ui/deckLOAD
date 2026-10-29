@@ -6,6 +6,7 @@ import {
   closeCargoTable,
   inspector,
   openSection,
+  pickVariants,
   sectionBar,
   setCargoCells,
   setCargoTotal,
@@ -66,13 +67,13 @@ test('Сценарий 9: авторазмещение и варианты', asy
   const fixed = await saved(page)
   const pin = fixed.pinnedPlacementsByTrip['0'].find((p: { locked?: boolean }) => p.locked)
 
-  // Variants, and the second one applied: the fixed container stays put.
-  await openSection(page, 'Размещение')
-  await page.getByRole('button', { name: /^Автораспределение/ }).click()
-  await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
-  const variants = page.locator('button').filter({ has: page.getByText(/ед\.$/) }).filter({ hasText: '%' })
+  // Variants, and the second one applied: the fixed container stays put,
+  // as the section says before the click.
+  const variants = await pickVariants(page)
+  await expect(page.getByTestId('variants-kept')).toHaveText(/^Закреплённые штабели \(1\) остаются на местах/)
   await expect(variants.nth(1)).toBeVisible()
   await variants.nth(1).click()
+  await expect(variants.nth(1)).toHaveAttribute('aria-pressed', 'true')
   await expect(locks(page)).toHaveCount(1)
   const after = await saved(page)
   const kept = after.pinnedPlacementsByTrip['0'].find((p: { locked?: boolean }) => p.locked)

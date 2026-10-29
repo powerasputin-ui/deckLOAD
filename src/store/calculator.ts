@@ -48,6 +48,7 @@ import {
   weightsInState,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
+import { keptByVariants } from '@/lib/variantKeep'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
@@ -261,6 +262,11 @@ interface CalculatorState {
   clearItems: () => void
   setSortStrategy: (s: SortStrategy) => void
   toggleGlobalRotation: () => void
+  // Lets the auto mode lay the cargo out afresh after a rule of placement
+  // changed: drops every trip's pins that are only the packer's own layout
+  // (an applied variant), keeping what «Подобрать варианты» keeps
+  // (keptByVariants) and quarantined records. Returns how many it dropped.
+  dropPackerLayout: () => number
   toggleFreeSpace: () => void
   toggleGrid: () => void
   toggleLabels: () => void
@@ -907,9 +913,13 @@ type CalculatorHistoryState = Pick<
   'deck' | 'items' | 'manualPlacements' | 'pinnedPlacementsByTrip' | 'separationRules' | 'mode'
 >
 
+// A record quarantined on load: in no result, kept as it is (see
+// PinnedPlacement.malformed).
+const isQuarantinedRecord = (p: { malformed?: unknown; composition?: unknown }) => !!p.malformed && !p.composition
+
 export const useCalculator = create<CalculatorState>()(
   temporal(
-    (set) => ({
+    (set, get) => ({
   // Starts empty, not with demo cargo — this is the store's state before
   // the actual saved project has loaded from localStorage (an async effect
   // in page.tsx, see useProjects.hydrate). Seeding it with demo items here
@@ -1572,6 +1582,21 @@ export const useCalculator = create<CalculatorState>()(
   setSortStrategy: (st) => set({ sortStrategy: st }),
   toggleGlobalRotation: () =>
     set((s) => ({ globalRotation: !s.globalRotation })),
+  dropPackerLayout: () => {
+    const s = get()
+    let dropped = 0
+    const pinnedPlacementsByTrip: Record<number, PinnedPlacement[]> = {}
+    for (const [trip, pins] of Object.entries(s.pinnedPlacementsByTrip)) {
+      const kept = new Set(keptByVariants(pins, s.deck.lashingPoints))
+      const stay = pins.filter((p) => kept.has(p) || isQuarantinedRecord(p))
+      dropped += pins.length - stay.length
+      pinnedPlacementsByTrip[Number(trip)] = stay
+    }
+    if (dropped === 0) return 0
+    const ids = new Set(Object.values(pinnedPlacementsByTrip).flat().map((p) => p.id))
+    set({ pinnedPlacementsByTrip, selectedPinIds: s.selectedPinIds.filter((id) => ids.has(id)), selectedAutoKeys: [] })
+    return dropped
+  },
   toggleFreeSpace: () => set((s) => ({ showFreeSpace: !s.showFreeSpace })),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),

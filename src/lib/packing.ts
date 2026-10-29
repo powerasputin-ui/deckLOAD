@@ -1949,6 +1949,9 @@ export function packDeck(
     result.usedArea += pin.width * pin.length
     result.placedCount += layers
     if (pinWeight) result.totalWeight += pinWeight * layers
+    // A pinned stack counts towards the highest stack like any other: an
+    // applied variant (every stack pinned) used to read as none at all.
+    if (pinHeight * layers > result.maxStackHeight) result.maxStackHeight = pinHeight * layers
   }
 
   // Expand each item into the number of STACKS (floor footprints) needed.
@@ -2422,6 +2425,8 @@ function variantSignature(result: PackingResult): string {
 
 export interface PackVariant {
   result: PackingResult
+  // «Вариант 1 — по площади»: numbered in the order the list shows them,
+  // best first.
   label: string
   utilizationPct: number
   placedCount: number
@@ -2464,17 +2469,10 @@ export function packDeckVariants(
         continue
       }
       seen.add(sig)
-      const label =
-        s === 0
-          ? `Вариант ${variants.length + 1} — по площади`
-          : s === 1
-            ? `Вариант ${variants.length + 1} — по ширине`
-            : s === 2
-              ? `Вариант ${variants.length + 1} — по длине`
-              : `Вариант ${variants.length + 1} — мелкие сначала`
       variants.push({
         result: res,
-        label,
+        // Numbered once sorted, below.
+        label: ['по площади', 'по ширине', 'по длине', 'мелкие сначала'][s],
         utilizationPct: Math.round(res.utilization * 100),
         placedCount: res.placedCount,
         unplacedCount: res.unplaced.length,
@@ -2487,7 +2485,8 @@ export function packDeckVariants(
   // Sort by raw utilization desc (best first). `utilizationPct` is rounded for display
   // only; using the raw value avoids arbitrary ordering within the same integer bucket.
   variants.sort((a, b) => (b._utilization ?? b.utilizationPct) - (a._utilization ?? a.utilizationPct))
-  return variants.slice(0, count)
+  // Numbered before the sort, «Вариант 2» could head the list.
+  return variants.slice(0, count).map((v, i) => ({ ...v, label: `Вариант ${i + 1} — ${v.label}` }))
 }
 
 // Repeatedly packs a deck, feeding each trip's leftover (`result.unplaced`)

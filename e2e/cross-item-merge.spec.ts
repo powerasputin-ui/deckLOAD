@@ -12,6 +12,7 @@ import {
   unitsCount,
   openSection,
   inspector,
+  pickVariants,
 } from './helpers'
 
 // A stack's box once it has stopped moving. Esc closes the inspector, and the
@@ -52,14 +53,13 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await clearanceInput.blur()
 
     // From the catalogue the pipe joins the list and, in auto mode, the deck
-    // (spec 7.2). Its quantity goes to 8 and «Автораспределение»
+    // (spec 7.2). Its quantity goes to 8 and «Подобрать варианты»
     // consolidates all 8 into one clean pyramid before duplicating —
     // otherwise the two stacks being merged wouldn't each cleanly hold 8,
     // making the expected "16" unpredictable.
     await chooseFromCatalog(page, 'Обсадная труба')
     await setCargoTotal(page, 'Обсадная труба', '8')
-    await openSection(page, 'Размещение')
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
+    await pickVariants(page)
     // A stacked pipe pyramid now draws as several <rect> capsule segments
     // sharing the same fill (see DeckVisualization's per-row pipe render) —
     // count placements via the g[data-cargo-placement] wrapper, not raw
@@ -184,8 +184,7 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
 
     await chooseFromCatalog(page, 'Обсадная труба')
     await setCargoTotal(page, 'Обсадная труба', '8')
-    await openSection(page, 'Размещение')
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
+    await pickVariants(page)
     const pipePlacements = page.locator('svg g[data-cargo-name^="Обсадная труба"]')
     await expect(pipePlacements).toHaveCount(1)
 

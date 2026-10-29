@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { addOwnCargo, armCargo, clearCalculation, setNumber, unitsCount, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, setNumber, unitsCount, openSection, pickVariants } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -90,9 +90,7 @@ test.describe('Category separation rules', () => {
     await page.getByRole('button', { name: 'Добавить правило' }).click()
     await expect(page.getByText('Правило добавлено')).toBeVisible()
 
-    await openSection(page, 'Размещение')
-
-    await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
+    await pickVariants(page)
 
     const badge = headerBadge(page)
     await expect(badge).toBeVisible()

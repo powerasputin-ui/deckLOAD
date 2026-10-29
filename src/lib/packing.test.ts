@@ -720,6 +720,20 @@ describe('computeFreeRects', () => {
   })
 })
 
+describe('packDeck: the highest stack', () => {
+  // Stage 4, group A: «Итог рейса» showed «—» once a variant pinned every
+  // stack.
+  it('counts a pinned stack', () => {
+    const items = [item({ id: 'a', width: 2, length: 2, height: 1.2, quantity: 3 })]
+    const pinned: PinnedPlacement[] = [
+      { id: 'p1', itemId: 'a', name: 'A', x: 0, y: 0, width: 2, length: 2, layers: 3, rotated: false, color: '#0ea5e9' },
+    ]
+    const result = packDeck(10, 10, items, { pinned })
+    expect(result.placed).toHaveLength(1)
+    expect(result.maxStackHeight).toBeCloseTo(3.6)
+  })
+})
+
 describe('packDeckVariants', () => {
   it('is deterministic with fixed seed', () => {
     const items = [item({ id: 'a', width: 3, length: 2, quantity: 4 })]

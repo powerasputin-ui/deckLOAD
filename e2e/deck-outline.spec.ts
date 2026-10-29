@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection } from './helpers'
+import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection, pickVariants } from './helpers'
 
 // The outline's vertex handle at the top right of the drawing. Which deck
 // corner that is depends on how the deck is drawn (long side horizontal, bow
@@ -148,10 +148,8 @@ test.describe('Non-rectangular deck outline', () => {
     // the outline-blind bug, not a genuine capacity shortfall.
     await addOwnCargo(page, { quantity: '2', width: '6', length: '2.4' })
 
-    await openSection(page, 'Размещение')
-
-    await page.getByRole('button', { name: 'Автораспределение (варианты)' }).click()
-    await page.getByText(/Вариант 1/).click()
+    const variants = await pickVariants(page)
+    await variants.first().click()
 
     await expect(page.getByText(/Не поместилось/)).not.toBeVisible()
   })

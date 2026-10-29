@@ -80,6 +80,7 @@ import { isQuarantined, matchLashingCarryover } from '@/store/placementCarryover
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
 import { exportDeckPlanToPdf, buildLashingRequirementRows, buildStabilityPdfBlock, lashingPlacementsForPlan } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
+import { keptByVariants } from '@/lib/variantKeep'
 import { toast } from 'sonner'
 
 // The left panel's open section and whether it's collapsed are kept in this
@@ -110,6 +111,38 @@ function writePanelSetting(key: string, value: string): void {
   }
 }
 
+// What a list of variants was built from (phase 0, L13; spec 8.2): the
+// calculation, the open trip, the cargo, the deck and the rules of placement,
+// and last the placements holding the trip's layout. Applying a variant
+// re-keeps the list with the placements it wrote, so a stack locked, moved
+// or placed since — or an undo — drops the list instead of letting a stale
+// variant overwrite it (L20: variants never move what is fixed).
+type VariantSource = Pick<
+  ReturnType<typeof useCalculator.getState>,
+  'deck' | 'items' | 'mode' | 'manualPlacements' | 'pinnedPlacementsByTrip' | 'separationRules' | 'globalRotation'
+>
+function variantInputsOf(s: VariantSource, projectId: string | null, tripIndex: number): unknown[] {
+  return [
+    projectId,
+    tripIndex,
+    s.mode,
+    s.items,
+    s.deck.width,
+    s.deck.length,
+    s.deck.unit,
+    s.deck.gap,
+    s.deck.boardOffset,
+    s.deck.clearance,
+    s.deck.outline,
+    s.deck.restrictionZones,
+    s.deck.loadZones,
+    s.deck.maxDeckCargoT,
+    s.deck.lashingPoints,
+    s.separationRules,
+    s.globalRotation,
+    s.mode === 'manual' ? s.manualPlacements : s.pinnedPlacementsByTrip[tripIndex],
+  ]
+}
 
 // The five-step tour (spec 10.2). Each `selector` targets a `data-tour`
 // attribute on the real element in the frame — the tour never needs its own
@@ -286,7 +319,14 @@ export default function Home() {
   // used to write a stale layout over the current one — so they're kept
   // together with what they were built from and only shown while that still
   // matches (see `variants` below the trip clamp).
-  const [variantsSnapshot, setVariantsSnapshot] = useState<{ list: PackVariant[]; builtFor: unknown[] }>({
+  // `applied` is the variant on the deck: the list is kept with the
+  // placements it wrote (see variantInputsOf), so while it shows, the deck
+  // holds that variant.
+  const [variantsSnapshot, setVariantsSnapshot] = useState<{
+    list: PackVariant[]
+    builtFor: unknown[]
+    applied?: number
+  }>({
     list: [],
     builtFor: [],
   })
@@ -524,24 +564,17 @@ export default function Home() {
       ? result.unplaced.filter((u) => u.kind === 'shortfall' && !unfitIds.has(u.itemId))
       : []
   const placedAcrossTrips = shownTrips.flatMap((t) => t.placed)
-  const variantInputs: unknown[] = [
+  const variantInputs = variantInputsOf(
+    { deck, items, mode, manualPlacements, pinnedPlacementsByTrip, separationRules, globalRotation },
     activeId,
-    clampedTripIndex,
-    items,
-    deck.width,
-    deck.length,
-    deck.unit,
-    deck.gap,
-    deck.boardOffset,
-    deck.clearance,
-    deck.outline,
-    deck.restrictionZones,
-  ]
+    clampedTripIndex
+  )
   const variants =
     variantsSnapshot.builtFor.length === variantInputs.length &&
     variantsSnapshot.builtFor.every((v, i) => Object.is(v, variantInputs[i]))
       ? variantsSnapshot.list
       : []
+  const appliedVariant = variants.length > 0 ? variantsSnapshot.applied : undefined
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
   // Stacks whose lashing falls short — the amber chain on the deck (6.3).
@@ -923,6 +956,9 @@ export default function Home() {
     pinnedPlacementsByTrip,
   })
 
+  // «Отменить» in the toast after a layout is applied: one undo step.
+  const undoVariant = { label: 'Отменить', onClick: () => undoCalculator() }
+
   // Generate several packing variants so the user can choose the best one.
   // Each click produces a fresh set (new seed) — repeated clicks give
   // different options, so this deliberately doesn't disable the button or
@@ -956,11 +992,9 @@ export default function Home() {
     // geometric guess, not a guarantee the rigging still makes physical
     // sense afterward, so freezing the placement in place is what
     // actually keeps a lashing setup valid across a redistribute.
-    const sourcePlacements = mode === 'manual' ? manualPlacements : pinnedPlacements
-    const attachedIds = new Set((deck.lashingPoints ?? []).map((lp) => lp.placementId).filter(Boolean))
+    const sourcePlacements: (ManualPlacement | PinnedPlacement)[] = mode === 'manual' ? manualPlacements : pinnedPlacements
     const isLocked = (p: ManualPlacement | PinnedPlacement) => 'locked' in p && !!p.locked
-    const frozenPinned: PinnedPlacement[] = sourcePlacements
-      .filter((p) => !!p.clearanceMargin || attachedIds.has(p.id) || isLocked(p))
+    const frozenPinned: PinnedPlacement[] = keptByVariants(sourcePlacements, deck.lashingPoints)
       .map((p) => ({
         id: p.id,
         itemId: p.itemId,
@@ -988,17 +1022,11 @@ export default function Home() {
     // it is what this button is for, so there's nothing to warn about. (The
     // old warning counted those internal pins, and every trip's, though
     // only this trip is repacked.) In manual mode every placement is the
-    // user's own: say how many get re-arranged.
-    if (mode === 'manual') {
-      const frozenIds = new Set(frozenPinned.map((p) => p.id))
-      const reshuffled = manualPlacements.filter((p) => !frozenIds.has(p.id) && !isQuarantined(p)).length
-      if (reshuffled > 0) {
-        toast.warning(`Ручные размещения (${reshuffled}) будут переставлены заново`)
-      }
-    }
-    if (frozenPinned.length > 0) {
-      toast.info(`Закреплённый груз, зоны отступа и точки крепления (${frozenPinned.length}) останутся на месте`)
-    }
+    // user's own: say how many got re-arranged. What stays put is said in
+    // the section before the click (keptByVariants).
+    const frozenIds = new Set(frozenPinned.map((p) => p.id))
+    const reshuffled =
+      mode === 'manual' ? manualPlacements.filter((p) => !frozenIds.has(p.id) && !isQuarantined(p)).length : 0
     const newVariants = packDeckVariants(
       deck.width,
       deck.length,
@@ -1018,12 +1046,16 @@ export default function Home() {
       },
       3
     )
-    setVariantsSnapshot({ list: newVariants, builtFor: variantInputs })
-    // Apply the best variant immediately
-    if (newVariants.length > 0) {
-      applyVariant(newVariants[0])
+    if (newVariants.length === 0) return
+    // The best one goes on the deck straight away: one click to a layout.
+    applyVariant(newVariants[0])
+    setVariantsSnapshot({ list: newVariants, builtFor: variantInputsAfterApply(), applied: 0 })
+    const what = `Применён: ${newVariants[0].label} · ${newVariants[0].utilizationPct}%`
+    if (reshuffled > 0) {
+      toast.warning(`Ручные штабели (${reshuffled}) переставлены заново`, { description: what, action: undoVariant })
+    } else {
+      toast.success(what, { action: undoVariant })
     }
-    toast.success(`Сгенерировано вариантов: ${newVariants.length}`)
   }
 
   // Apply a chosen variant: in manual mode store as manual placements, in
@@ -1108,10 +1140,14 @@ export default function Home() {
       useCalculator.getState().remapLashingPointsForRedistribute(matches)
     }
   }
+  // What the variants list is now kept with: the store as the variant left
+  // it (its placements, and lashing points moved along with them).
+  const variantInputsAfterApply = () => variantInputsOf(useCalculator.getState(), activeId, clampedTripIndex)
 
   const handleSelectVariant = (variant: PackVariant) => {
     applyVariant(variant)
-    toast.info(`Применён: ${variant.label} (${variant.utilizationPct}%)`)
+    setVariantsSnapshot((prev) => ({ list: prev.list, builtFor: variantInputsAfterApply(), applied: prev.list.indexOf(variant) }))
+    toast.success(`Применён: ${variant.label} · ${variant.utilizationPct}%`, { action: undoVariant })
   }
 
   // Esc goes back from the stability workspace to the deck, unless a field,
@@ -1467,8 +1503,15 @@ export default function Home() {
               tripIndex={clampedTripIndex}
               result={result}
               trips={shownTrips}
-              onAutoRedistribute={handleAutoRedistribute}
+              onSelectTrip={(i) => {
+                setActiveTripIndex(i)
+                clearSelection()
+              }}
+              carriedToNextTrip={carriedToNextTrip}
+              hasCargo={items.some((it) => it.quantity >= 1)}
+              onPickVariants={handleAutoRedistribute}
               variants={variants}
+              appliedVariant={appliedVariant}
               onSelectVariant={handleSelectVariant}
             />
           )}

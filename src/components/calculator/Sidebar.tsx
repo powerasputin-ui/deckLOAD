@@ -32,7 +32,6 @@ import {
   WIRE_ROPE_SPECS,
   DEFAULT_WIRE_ROPE_TYPE,
   assessLashingRequirement,
-  type SortStrategy,
   type LashingDeviceType,
   type PinnedPlacement,
   type PlacedItem,
@@ -140,14 +139,12 @@ export function DeckSettings() {
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
   const setUnit = useCalculator((s) => s.setUnit)
-  const sortStrategy = useCalculator((s) => s.sortStrategy)
-  const setSortStrategy = useCalculator((s) => s.setSortStrategy)
   const uid = useId()
   const maxDeckInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
 
   // Every field here applies on Enter/blur, not per keystroke: setDeck()
   // reflows and clamps the placements already on the deck whenever the size,
-  // gap, board offset or clearance changes, and a transient "2" on the way to
+  // board offset or clearance changes, and a transient "2" on the way to
   // "24" would rearrange (or discard stacked layers from) the user's layout
   // for good. See NumberField.
   return (
@@ -183,22 +180,6 @@ export function DeckSettings() {
               onCommit={(v) => setDeck({ length: v })}
               className="h-8 text-xs"
             />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label htmlFor={`${uid}-gap`} className="text-xs text-muted-foreground flex items-center gap-1">
-            <Layers className="h-3 w-3" /> Отступ между грузами
-          </label>
-          <div className="flex items-center gap-1.5">
-            <NumberField
-              id={`${uid}-gap`}
-              min={0}
-              step={0.05}
-              value={deck.gap}
-              onCommit={(v) => setDeck({ gap: v })}
-              className="h-8 text-xs flex-1"
-            />
-            <span className="text-xs text-muted-foreground w-6">{UNIT_LABEL[deck.unit]}</span>
           </div>
         </div>
         <div className="space-y-1">
@@ -250,22 +231,6 @@ export function DeckSettings() {
             <ToggleGroupItem value="cm" className="h-7 text-xs px-2">см</ToggleGroupItem>
             <ToggleGroupItem value="ft" className="h-7 text-xs px-2">фт</ToggleGroupItem>
           </ToggleGroup>
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Стратегия упаковки</label>
-          <Select value={sortStrategy} onValueChange={(v) => setSortStrategy(v as SortStrategy)}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="area-desc">По площади (крупные сначала)</SelectItem>
-              <SelectItem value="area-asc">По площади (мелкие сначала)</SelectItem>
-              <SelectItem value="width-desc">По ширине (убыв.)</SelectItem>
-              <SelectItem value="length-desc">По длине (убыв.)</SelectItem>
-              <SelectItem value="quantity-desc">По количеству (убыв.)</SelectItem>
-              <SelectItem value="none">В порядке ввода</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
       </div>
     </Section>

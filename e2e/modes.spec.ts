@@ -16,14 +16,17 @@ test.describe('Auto / manual modes', () => {
     await page.getByText('Ручной').first().click()
     await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
     await openSection(page, 'Размещение')
-    await expect(page.getByRole('heading', { name: 'Ручной режим' })).toBeVisible()
+    await expect(page.getByText('Ручной: каждый груз ставите вы')).toBeVisible()
   })
 
-  test('auto redistribute generates variants', async ({ page }) => {
+  test('«Подобрать варианты» lists the variants and puts the best on the deck', async ({ page }) => {
     await page.goto('/')
     await openSection(page, 'Размещение')
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
+    await page.getByRole('button', { name: 'Подобрать варианты' }).click()
+    const variants = page.getByRole('list', { name: 'Варианты раскладки' }).getByRole('button')
+    await expect(variants.first()).toHaveText(/^Вариант 1 — .+ · \d+% · \d+ ед\.на палубе$/)
+    await expect(variants.first()).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /^Применён: Вариант 1/ })).toBeVisible()
   })
 
   // In auto mode an unlocked pin is the packer's own layout (nothing to warn
@@ -35,9 +38,8 @@ test.describe('Auto / manual modes', () => {
     await page.getByText('Ручной').first().click()
     await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
     await openSection(page, 'Размещение')
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.getByText(/Ручные размещения \(\d+\) будут переставлены заново/)).toBeVisible()
-    await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
+    await page.getByRole('button', { name: 'Подобрать варианты' }).click()
+    await expect(page.getByText(/^Ручные штабели \(\d+\) переставлены заново$/)).toBeVisible()
   })
 
   test('auto redistribute keeps a LOCKED placement fixed in place', async ({ page }) => {
@@ -53,9 +55,9 @@ test.describe('Auto / manual modes', () => {
 
     const before = await placedRect.getAttribute('x')
     await openSection(page, 'Размещение')
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.getByText(/Закреплённый груз.*останутся на месте/)).toBeVisible()
-    await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
+    await expect(page.getByText(/^Закреплённые штабели \(1\) остаются на местах/)).toBeVisible()
+    await page.getByRole('button', { name: 'Подобрать варианты' }).click()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /^Применён: Вариант 1/ })).toBeVisible()
 
     const after = await placedRect.getAttribute('x')
     expect(after).toBe(before)
@@ -87,10 +89,9 @@ test.describe('Auto / manual modes', () => {
     const before = await placedRect.getAttribute('x')
 
     await openSection(page, 'Размещение')
-
-    await page.getByRole('button', { name: 'Автораспределение' }).click()
-    await expect(page.getByText(/зоны отступа.*останутся на месте/)).toBeVisible()
-    await expect(page.getByText(/Сгенерировано вариантов/)).toBeVisible()
+    await expect(page.getByText(/^Закреплённые штабели \(1\) остаются на местах/)).toBeVisible()
+    await page.getByRole('button', { name: 'Подобрать варианты' }).click()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /^Применён: Вариант 1/ })).toBeVisible()
 
     const after = await placedRect.getAttribute('x')
     expect(after).toBe(before)

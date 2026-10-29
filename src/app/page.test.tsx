@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import Home from './page'
-import { useCalculator } from '@/store/calculator'
+import { clearCalculatorHistory, redoCalculator, undoCalculator, useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import { exportDeckPlanToPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
@@ -79,10 +79,15 @@ function projectMenuItem(name: string) {
   fireEvent.click(screen.getByRole('button', { name }))
 }
 
-// «Автораспределение (варианты)» sits in «Размещение».
+// «Подобрать варианты» sits in «Размещение».
 function clickAutoRedistribute() {
   openSection('Размещение')
-  fireEvent.click(screen.getByRole('button', { name: /Автораспределение/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Подобрать варианты' }))
+}
+
+// The list of variants under it, while it is shown.
+function variantsList() {
+  return screen.queryByRole('list', { name: 'Варианты раскладки' })
 }
 
 // The deck's width field, in «Судно».
@@ -975,22 +980,221 @@ describe('Home (page.tsx)', () => {
   it('drops the variants list once the cargo changes', () => {
     render(<Home />)
     clickAutoRedistribute()
-    expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
+    expect(variantsList()).toBeTruthy()
     act(() => {
       const first = useCalculator.getState().items[0]
       useCalculator.getState().updateItem(first.id, { quantity: first.quantity + 1 })
     })
-    expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
+    expect(variantsList()).toBeNull()
   })
 
   it('drops the variants list when another calculation becomes active', () => {
     render(<Home />)
     clickAutoRedistribute()
-    expect(screen.getByText(/Варианты раскладки/)).toBeTruthy()
+    expect(variantsList()).toBeTruthy()
     act(() => {
       useProjects.getState().createProject()
     })
-    expect(screen.queryByText(/Варианты раскладки/)).toBeNull()
+    expect(variantsList()).toBeNull()
+  })
+
+  // Stage 4, group A (spec 8.2): «Размещение» — the open trip's summary,
+  // the trips, the layout and the rules of placement.
+  describe('«Размещение»', () => {
+    // A 10 × 10 m deck with nothing on it but what a test adds.
+    function bareDeck(patch: Record<string, unknown> = {}) {
+      act(() => {
+        useCalculator.setState({
+          deck: {
+            ...useCalculator.getState().deck,
+            unit: 'm',
+            width: 10,
+            length: 10,
+            gap: 0,
+            boardOffset: 0,
+            clearance: 0,
+            outline: undefined,
+            restrictionZones: [],
+            loadZones: [],
+            maxDeckCargoT: undefined,
+            ...patch,
+          },
+        })
+      })
+    }
+    const summaryValue = (term: string) => within(screen.getByTestId('trip-summary')).getByText(term).nextElementSibling?.textContent
+
+    it('sums up the open trip: load, used and free area, weight, the highest stack against the deck\'s limit', () => {
+      render(<Home />)
+      clearDemoCargo()
+      bareDeck({ clearance: 3, maxDeckCargoT: 10 })
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, height: 1.3, quantity: 4, weight: 1000, maxLayers: 2 })
+      })
+      openSection('Размещение')
+      expect(summaryValue('Загрузка площади')).toBe('4%')
+      expect(summaryValue('Занято')).toBe('4 м²')
+      expect(summaryValue('Свободно')).toBe('96 из 100 м²')
+      expect(summaryValue('Вес груза')).toBe('4 из 10 т')
+      expect(summaryValue('Наибольшая высота штабеля')).toBe('2.60 из 3 м')
+    })
+
+    it('lists the trips; a trip opens on click, and the units going on are said calmly', () => {
+      render(<Home />)
+      clearDemoCargo()
+      bareDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Block', width: 5, length: 5, height: 1, quantity: 6 })
+      })
+      openSection('Размещение')
+      const trips = screen.getByRole('list', { name: 'Рейсы' })
+      const rows = within(trips).getAllByRole('button')
+      expect(rows.map((r) => r.textContent)).toEqual(['Рейс 1 · 4 ед. · 100%', 'Рейс 2 · 2 ед. · 50%'])
+      expect(rows[0].getAttribute('aria-current')).toBe('true')
+      expect(screen.getByTestId('placement-carry')).toHaveTextContent('2 ед. уходят в рейс 2')
+      fireEvent.click(rows[1])
+      expect(within(screen.getByRole('list', { name: 'Рейсы' })).getAllByRole('button')[1].getAttribute('aria-current')).toBe('true')
+      expect(screen.getByText('Итог рейса 2')).toBeTruthy()
+      expect(screen.queryByTestId('placement-carry')).toBeNull()
+    })
+
+    it('«Подобрать варианты» puts the best on the deck and marks it; another is a click away', () => {
+      render(<Home />)
+      clickAutoRedistribute()
+      const pressed = () => within(variantsList()!).getAllByRole('button').map((b) => b.getAttribute('aria-pressed'))
+      const buttons = within(variantsList()!).getAllByRole('button')
+      expect(buttons[0].textContent).toMatch(/^Вариант 1 — .+ · \d+% · \d+ ед\.на палубе$/)
+      expect(pressed()[0]).toBe('true')
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/^Применён: Вариант 1 — /),
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) })
+      )
+      if (buttons.length > 1) {
+        fireEvent.click(buttons[1])
+        expect(pressed()).toEqual(['false', 'true', ...pressed().slice(2)])
+      }
+    })
+
+    // L13, L20: a list kept past what it was built on could put a stale
+    // layout over the current one — moving a stack locked since.
+    it('the list goes with an undo and comes back with a redo', () => {
+      render(<Home />)
+      clickAutoRedistribute()
+      act(() => undoCalculator())
+      expect(variantsList()).toBeNull()
+      act(() => redoCalculator())
+      expect(within(variantsList()!).getAllByRole('button')[0].getAttribute('aria-pressed')).toBe('true')
+    })
+
+    it('a stack locked after the variants were built drops the list', () => {
+      render(<Home />)
+      clickAutoRedistribute()
+      act(() => {
+        const pin = useCalculator.getState().pinnedPlacementsByTrip[0][0]
+        useCalculator.getState().updatePinned(0, pin.id, { locked: true })
+      })
+      expect(variantsList()).toBeNull()
+    })
+
+    it('a new rule lays an applied variant out afresh; «Отменить» brings back the layout and the rule', () => {
+      render(<Home />)
+      clickAutoRedistribute()
+      act(() => clearCalculatorHistory())
+      const variantPins = useCalculator.getState().pinnedPlacementsByTrip[0]
+      expect(variantPins.length).toBeGreaterThan(0)
+      fireEvent.click(screen.getByRole('switch', { name: 'Разрешить поворот на 90°' }))
+      expect(useCalculator.getState().globalRotation).toBe(false)
+      expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toEqual([])
+      // Built with rotation allowed, the variants no longer apply.
+      expect(variantsList()).toBeNull()
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Груз расставлен заново по новому правилу')!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toBe(variantPins)
+      expect(useCalculator.getState().globalRotation).toBe(true)
+    })
+
+    it('a new rule with nothing but the user\'s own stacks just applies', () => {
+      render(<Home />)
+      openSection('Размещение')
+      fireEvent.click(screen.getByRole('switch', { name: 'Разрешить поворот на 90°' }))
+      expect(useCalculator.getState().globalRotation).toBe(false)
+      expect(toast.info).not.toHaveBeenCalledWith('Груз расставлен заново по новому правилу', expect.anything())
+    })
+
+    it('«Подобрать варианты» waits for cargo', () => {
+      render(<Home />)
+      clearDemoCargo()
+      openSection('Размещение')
+      expect((screen.getByRole('button', { name: 'Подобрать варианты' }) as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    it('«Снять все закрепления» says so with «Отменить», which brings the pins back', () => {
+      render(<Home />)
+      clearDemoCargo()
+      bareDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, height: 1, quantity: 2 })
+      })
+      const item = useCalculator.getState().items[0]
+      act(() => {
+        useCalculator.getState().pinFromPlaced(0, { itemId: item.id, name: item.name, x: 1, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color, locked: true })
+        // The setup isn't the user's edit: the undo goes back to it.
+        clearCalculatorHistory()
+      })
+      openSection('Размещение')
+      fireEvent.click(screen.getByRole('button', { name: 'Снять все закрепления' }))
+      expect(useCalculator.getState().pinnedPlacementsByTrip[0] ?? []).toHaveLength(0)
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Все закрепления сняты')!
+      const { action } = call[1] as unknown as { action: { label: string; onClick: () => void } }
+      expect(action.label).toBe('Отменить')
+      act(() => action.onClick())
+      expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toHaveLength(1)
+    })
+
+    it('«Очистить расстановку» in manual mode, with «Отменить»', () => {
+      render(<Home />)
+      clearDemoCargo()
+      bareDeck()
+      act(() => {
+        useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, height: 1, quantity: 2 })
+      })
+      const item = useCalculator.getState().items[0]
+      const base = { itemId: item.id, name: item.name, y: 1, width: 2, length: 1, layers: 1, rotated: false, color: item.color }
+      act(() => {
+        useCalculator.setState({ mode: 'manual', manualPlacements: [{ ...base, id: 'm1', x: 1 }, { ...base, id: 'm2', x: 4 }] })
+        clearCalculatorHistory()
+      })
+      openSection('Размещение')
+      expect(screen.getByText('Ручной: каждый груз ставите вы')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Очистить расстановку' }))
+      expect(useCalculator.getState().manualPlacements).toHaveLength(0)
+      const call = vi.mocked(toast.info).mock.calls.find(([text]) => text === 'Расстановка очищена')!
+      act(() => (call[1] as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(useCalculator.getState().manualPlacements).toHaveLength(2)
+    })
+
+    it('holds the rules of placement: strategy with its line, the gap, rotation — and «Судно» no longer does', () => {
+      render(<Home />)
+      openSection('Размещение')
+      const strategy = screen.getByLabelText('Стратегия упаковки')
+      expect(document.getElementById(strategy.getAttribute('aria-describedby')!)!.textContent).toMatch(/^Мелкие грузы заполняют промежутки/)
+      act(() => useCalculator.getState().setSortStrategy('none'))
+      expect(document.getElementById(strategy.getAttribute('aria-describedby')!)!.textContent).toBe('Грузы ставятся в том порядке, в каком идут в списке')
+
+      const gap = screen.getByLabelText('Отступ между грузами') as HTMLInputElement
+      fireEvent.change(gap, { target: { value: '0.3' } })
+      fireEvent.keyDown(gap, { key: 'Enter' })
+      expect(useCalculator.getState().deck.gap).toBe(0.3)
+
+      const rotation = screen.getByRole('switch', { name: 'Разрешить поворот на 90°' })
+      expect(rotation.getAttribute('aria-describedby')).toBeTruthy()
+      fireEvent.click(rotation)
+      expect(useCalculator.getState().globalRotation).toBe(false)
+
+      openSection('Судно')
+      expect(screen.queryByLabelText('Отступ между грузами')).toBeNull()
+      expect(screen.queryByText('Стратегия упаковки')).toBeNull()
+    })
   })
 
   // Stage 2 (spec 5): the frame — five sections in the top bar, the open one
@@ -2962,12 +3166,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(pin.rotated).toBe(true)
   })
 
-  // R29 corrective pass: PlacementPanel's "Снять все закрепления" button
-  // must not appear when the ONLY pinned placement is a Tier-2 quarantined
-  // one — nothing is visibly on the deck to clear. Derived from
-  // `result.quarantined` (authoritative), not a second independent
-  // `malformed && !composition` check.
-  it('PlacementPanel: "Снять все закрепления" does not appear when the only pin is Tier-2 quarantined', () => {
+  // R29 corrective pass: «Снять все закрепления» must not appear when the
+  // ONLY locked pin is a Tier-2 quarantined one — nothing is visibly on the
+  // deck to clear (keptByVariants leaves quarantined records out).
+  it('«Снять все закрепления» does not appear when the only locked pin is Tier-2 quarantined', () => {
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -2976,15 +3178,19 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
     act(() => {
       useCalculator.getState().pinFromPlaced(0, {
-        itemId: itemA.id, name: 'Ghost', x: 1, y: 1, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color,
+        itemId: itemA.id, name: 'Ghost', x: 1, y: 1, width: 2, length: 1, layers: 6, rotated: false, color: itemA.color, locked: true,
       })
+    })
+    openSection('Размещение')
+    expect(screen.getByTestId('variants-kept')).toHaveTextContent('Закреплённые штабели (1) остаются на местах')
+    expect(screen.getByRole('button', { name: 'Снять все закрепления' })).toBeTruthy()
+    act(() => {
       const pinId = useCalculator.getState().pinnedPlacementsByTrip[0][0].id
       useCalculator.getState().updatePinned(0, pinId, {
         malformed: { invalidComposition: true, rawComposition: [{ itemId: itemA.id, layers: 6 }, { itemId: 'garbage', layers: 1 }] },
       })
     })
-
-    expect(screen.queryByText('Снять все закрепления')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Снять все закрепления' })).toBeNull()
   })
 
   it('warns (once) when a placement newly exceeds a load zone\'s density limit', async () => {
@@ -4835,7 +5041,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         expect(pins().every((p) => !p.locked)).toBe(true)
         clock.mockReturnValue(1_002_000)
         clickAutoRedistribute()
-        expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('будут переставлены'))
+        expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('переставлены'), expect.anything())
       } finally {
         clock.mockRestore()
       }
@@ -4855,7 +5061,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
         })
       })
       clickAutoRedistribute()
-      expect(toast.warning).toHaveBeenCalledWith('Ручные размещения (2) будут переставлены заново')
+      expect(toast.warning).toHaveBeenCalledWith(
+        'Ручные штабели (2) переставлены заново',
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) })
+      )
     })
 
     it('only a position the user chose (locked pin) is red when the packer rejects it', () => {

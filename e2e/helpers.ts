@@ -21,6 +21,16 @@ export async function openSection(page: Page, title: 'Судно' | 'Грузы'
   await sectionBar(page).getByRole('button', { name: new RegExp(`^${title}`) }).click()
 }
 
+// «Подобрать варианты» in «Размещение» (spec 8.2): the best variant goes on
+// the deck at once; the list of variants is returned.
+export async function pickVariants(page: Page): Promise<Locator> {
+  await openSection(page, 'Размещение')
+  await page.getByRole('button', { name: 'Подобрать варианты' }).click()
+  const variants = page.getByRole('list', { name: 'Варианты раскладки' }).getByRole('button')
+  await expect(variants.first()).toHaveAttribute('aria-pressed', 'true')
+  return variants
+}
+
 // An item of the calculation's menu, top left (spec 5.2).
 export async function projectMenuItem(page: Page, name: string) {
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()

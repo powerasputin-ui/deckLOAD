@@ -1626,6 +1626,37 @@ describe('calculator store', () => {
 
   // Phase 0, L11: the deck-strength choice used to exist only as two buttons
   // in a 20-second toast.
+  // Stage 4, group A (spec 8.2): a new rule of placement lays the cargo out
+  // afresh — what holds an applied variant on the deck goes, what the user
+  // fixed stays.
+  describe('dropPackerLayout', () => {
+    const pin = (id: string, extra: Record<string, unknown> = {}) => ({
+      id, itemId: 'a', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000', ...extra,
+    })
+    it('drops the packer\'s own pins on every trip and keeps locked, zoned, lashed and quarantined ones', () => {
+      useCalculator.setState({
+        deck: { ...useCalculator.getState().deck, lashingPoints: [{ id: 'lp', x: 0, y: 0, placementId: 'lashed' }] },
+        pinnedPlacementsByTrip: {
+          0: [pin('own'), pin('locked', { locked: true }), pin('zoned', { clearanceMargin: { top: 1, right: 1, bottom: 1, left: 1 } })],
+          1: [pin('own2'), pin('lashed'), pin('quarantined', { malformed: { invalidComposition: true } })],
+        },
+        selectedPinIds: ['own', 'locked'],
+      })
+      expect(useCalculator.getState().dropPackerLayout()).toBe(2)
+      const { pinnedPlacementsByTrip, selectedPinIds } = useCalculator.getState()
+      expect(pinnedPlacementsByTrip[0].map((p) => p.id)).toEqual(['locked', 'zoned'])
+      expect(pinnedPlacementsByTrip[1].map((p) => p.id)).toEqual(['lashed', 'quarantined'])
+      expect(selectedPinIds).toEqual(['locked'])
+    })
+
+    it('changes nothing when every pin is the user\'s', () => {
+      const before = { 0: [pin('locked', { locked: true })] }
+      useCalculator.setState({ pinnedPlacementsByTrip: before })
+      expect(useCalculator.getState().dropPackerLayout()).toBe(0)
+      expect(useCalculator.getState().pinnedPlacementsByTrip).toBe(before)
+    })
+  })
+
   describe('chooseDeckStrength', () => {
     const zones = () => useCalculator.getState().deck.loadZones ?? []
 
