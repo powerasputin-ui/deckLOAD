@@ -1,9 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
-import { chooseFromCatalog, chooseLibraryVessel, clearCalculation, openCargoTable, openSection, setNumber, tripSummaryValue, unitsCount } from '../helpers'
+import { chooseFromCatalog, chooseLibraryVessel, clearCalculation, openCargoTable, openCheck, openSection, setNumber, tripSummaryValue, unitsCount } from '../helpers'
 
-// Appendix C, scenarios 1–6, from the entry points of stage 2: what is on
-// screen, never a right-click. Stages 3 and 4 rewrite them into their full
-// versions (the table's last column).
+// Appendix C, scenarios 1–6 in their full versions (stage 4): what is on
+// screen, never a right-click.
 
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 const background = (page: Page) => deck(page).locator('[data-deck-background="true"]').first()
@@ -19,7 +18,10 @@ async function deckArea(page: Page): Promise<string> {
 test('Сценарий 1: начать с реального судна', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
+  // The demo has cargo: the vessel goes onto a calculation of its own, and
+  // the question closes.
   await chooseLibraryVessel(page, 'Алексей Кузнецов (IMO 9692648)')
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
   // The vessel's deck, drawn with its size and its bow and stern named.
   await expect(deck(page).getByText('49.10 м')).toBeVisible()
@@ -27,11 +29,20 @@ test('Сценарий 1: начать с реального судна', async 
   await expect(deck(page).locator('[data-hull-side="bow"]')).toContainText('НОС')
   await expect(deck(page).locator('[data-hull-side="stern"]')).toHaveText('КОРМА')
 
-  // Its sources disagree on the deck strength: a limit is picked, and the
-  // check stops asking.
+  // Its sources disagree on the deck strength: the card says so, and the
+  // zones check waits.
+  await expect(page.getByTestId('vessel-name')).toHaveText('Алексей Кузнецов (IMO 9692648)')
   await expect(page.getByText('лимит не выбран', { exact: true })).toBeVisible()
+  await openSection(page, 'Проверки')
+  await expect(page.locator('[data-check="zones"]')).toHaveAttribute('data-check-status', 'warn')
+
+  // «5 т/м²» makes a zone over the whole deck, and the check is fine.
+  await openSection(page, 'Судно')
   await page.getByRole('button', { name: '5 т/м²' }).click()
   await expect(page.getByRole('button', { name: '5 т/м²' })).toHaveAttribute('aria-pressed', 'true')
+  const zones = page.getByRole('list', { name: 'Зоны нагрузки' })
+  await expect(zones.getByText('Зона 1 (вся палуба)')).toBeVisible()
+  await expect(zones.getByLabel('Зона 1: Лимит, т/м²')).toHaveValue('5')
   await openSection(page, 'Проверки')
   await expect(page.locator('[data-check="zones"]')).toHaveAttribute('data-check-status', 'ok')
 })
@@ -91,26 +102,73 @@ async function dragTopRightCornerIn(page: Page) {
   await page.mouse.up()
 }
 
-test('Сценарий 3: непрямоугольная палуба', async ({ page }) => {
-  await page.goto('/')
-  await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
-  await clearCalculation(page)
-  const rectangle = await deckArea(page)
+// A box in each corner of an 8 × 20 m deck, placed by hand: whichever
+// corner the outline cuts off, one box ends up outside it.
+const FOUR_CORNERS = {
+  id: 'corners',
+  name: 'Углы',
+  createdAt: 0,
+  updatedAt: 0,
+  deck: { width: 8, length: 20, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 },
+  items: [{ id: 'b', name: 'Ящик', width: 1, length: 1, height: 1, quantity: 4, color: '#0ea5e9', allowRotation: true, weight: 500 }],
+  manualPlacements: [
+    [0.3, 0.3],
+    [6.7, 0.3],
+    [0.3, 18.7],
+    [6.7, 18.7],
+  ].map(([x, y], i) => ({ id: `m${i}`, itemId: 'b', name: 'Ящик', x, y, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9', weight: 500 })),
+  pinnedPlacementsByTrip: {},
+  separationRules: [],
+  mode: 'manual',
+  sortStrategy: 'area-desc',
+  globalRotation: true,
+  showFreeSpace: true,
+  showGrid: true,
+  showLabels: true,
+  showCargoContents: true,
+}
 
-  // «Форма палубы»: a corner pulled in and saved makes the deck smaller.
-  await openSection(page, 'Судно')
-  await page.getByRole('button', { name: 'Форма палубы' }).click()
-  await dragTopRightCornerIn(page)
-  await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
-  const cut = await deckArea(page)
-  expect(cut).not.toBe(rectangle)
+test('Сценарий 3: непрямоугольная палуба', async ({ page }) => {
+  await page.addInitScript((project) => {
+    if (sessionStorage.getItem('seeded')) return
+    sessionStorage.setItem('seeded', '1')
+    localStorage.setItem('deckload-projects', JSON.stringify({ activeId: project.id, projects: [project] }))
+  }, FOUR_CORNERS)
+  await page.goto('/')
+  await expect(unitsCount(page)).toHaveText(/^4\/4 ед\./)
+  const rectangle = await deckArea(page)
 
   // «Отмена» throws an edit away.
   await openSection(page, 'Судно')
   await page.getByRole('button', { name: 'Форма палубы' }).click()
   await dragTopRightCornerIn(page)
   await page.getByRole('button', { name: 'Отмена', exact: true }).click()
-  expect(await deckArea(page)).toBe(cut)
+  expect(await deckArea(page)).toBe(rectangle)
+
+  // «Форма палубы»: a corner pulled in and saved makes the deck smaller…
+  await openSection(page, 'Судно')
+  await page.getByRole('button', { name: 'Форма палубы' }).click()
+  await dragTopRightCornerIn(page)
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
+  expect(await deckArea(page)).not.toBe(rectangle)
+
+  // …and the boxes it leaves outside — the cut slants both edges next to
+  // the corner — are hatched and need attention in «Проверки», each with
+  // «Показать».
+  const outside = deck(page).locator('[data-conflict="true"]')
+  await expect(outside.first()).toBeVisible()
+  const count = await outside.count()
+  const attention = await openCheck(page, 'attention')
+  await expect(attention).toHaveAttribute('data-check-status', 'error')
+  await expect(attention.getByRole('button', { name: /^Показать: «Ящик»/ })).toHaveCount(count)
+
+  // «Сбросить к прямоугольнику»: the deck is whole again, nothing to fix.
+  await openSection(page, 'Судно')
+  await page.getByRole('button', { name: 'Сбросить к прямоугольнику' }).click()
+  expect(await deckArea(page)).toBe(rectangle)
+  await expect(outside).toHaveCount(0)
+  await openSection(page, 'Проверки')
+  await expect(page.locator('[data-check="attention"]')).toHaveCount(0)
 })
 
 // A minimal valid 1×1 PNG.
@@ -210,6 +268,8 @@ test('Сценарий 6: зоны нагрузки', async ({ page }) => {
   // The check fails, and the stacks on the zone are outlined red with «!».
   await expect(deck(page).locator('[data-load-zone="overloaded"]')).toBeVisible()
   await expect(deck(page).locator('[data-mark="overload"]').first()).toBeVisible()
-  await openSection(page, 'Проверки')
-  await expect(page.locator('[data-check="zones"]')).toHaveAttribute('data-check-status', 'error')
+  // Opened, the check names the zone and its load (spec 8.4).
+  const zones = await openCheck(page, 'zones')
+  await expect(zones).toHaveAttribute('data-check-status', 'error')
+  await expect(zones.getByRole('list', { name: 'Зоны т/м²: подробности' })).toContainText(/Зона 1 \(вся палуба\): [\d.]+ из 0\.05 т\/м²/)
 })
