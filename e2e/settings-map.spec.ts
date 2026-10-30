@@ -23,9 +23,9 @@ async function selectStack(page: Page, name: string) {
 
 test('A.1: the header, the calculation and its files', async ({ page }) => {
   await demo(page)
-  // «?»: the tour, the shortcuts, the intro.
+  // «?»: the tour, the shortcuts, the start screen.
   await page.getByRole('button', { name: 'Справка' }).click()
-  for (const item of ['Пройти тур', 'Горячие клавиши', 'Показать вступление']) await expect(page.getByRole('button', { name: item })).toBeVisible()
+  for (const item of ['Пройти тур', 'Горячие клавиши', 'Показать стартовый экран']) await expect(page.getByRole('button', { name: item })).toBeVisible()
   await page.keyboard.press('Escape')
   // The calculation's menu.
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()

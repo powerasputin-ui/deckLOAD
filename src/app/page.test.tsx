@@ -1601,6 +1601,34 @@ describe('Home (page.tsx)', () => {
       expect(sectionButton('Отчёт').textContent).not.toMatch(/готово/)
     })
 
+    // Spec 10.1: from «?» the start screen makes new calculations and
+    // leaves the open one as it is; the calculator under it is out of reach.
+    it('the start screen from «?» opens a new calculation its way, and Esc leaves everything as it was', () => {
+      render(<Home />)
+      const openStart = () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Справка' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Показать стартовый экран' }))
+        return screen.getByRole('dialog', { name: 'DeckLoad' })
+      }
+      const before = useProjects.getState().projects.length
+      let start = openStart()
+      expect(screen.getByRole('navigation', { name: 'Разделы', hidden: true }).closest('[inert]')).toBeTruthy()
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: 'DeckLoad' })).toBeNull()
+      expect(useProjects.getState().projects).toHaveLength(before)
+
+      start = openStart()
+      fireEvent.click(within(start).getByRole('button', { name: 'Открыть пример' }))
+      expect(useProjects.getState().projects).toHaveLength(before + 1)
+      expect(useProjects.getState().getActive()?.name).toBe('Демо-расчёт')
+
+      start = openStart()
+      fireEvent.click(within(start).getByRole('button', { name: 'Начать с судна' }))
+      expect(useProjects.getState().projects).toHaveLength(before + 2)
+      expect(useProjects.getState().getActive()?.name).toBe(`Расчёт ${before + 2}`)
+      expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
+    })
+
     // Spec 8.8: what the PDF will be — a trip's sheet as it prints, the
     // sheets, what goes in, and a word when there are errors.
     it('«Отчёт» previews a trip\'s sheet, lists the sheets and says what goes in', () => {

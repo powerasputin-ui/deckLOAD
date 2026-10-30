@@ -3,19 +3,20 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 
-// The first visit (spec 10.1, 10.2): the intro, then the five-step tour. A
-// visitor who knew the interface before stage 2 gets a one-time note
+// The first visit (spec 10.1, 10.2): the start screen, then the five-step
+// tour. A visitor who knew the interface before stage 2 gets a one-time note
 // instead. Moved out of page.tsx as it was (spec 12.3).
 
-// Once a visitor clicks through the intro, this survives reloads/new tabs
-// so the video doesn't replay every time they come back.
+// Once a visitor leaves the start screen, this survives reloads/new tabs so
+// it doesn't open every time they come back — the last calculation does.
+// The key is the intro video's: whoever saw the video doesn't get the start
+// screen on their own.
 const INTRO_SEEN_KEY = 'deckload-intro-seen'
 
-// Separate flag from INTRO_SEEN_KEY on purpose — the video intro and the
-// interactive product tour are different first-run experiences (one is
-// atmospheric/passive, the other walks the real working UI) with
-// independent "seen" states: skipping the tour shouldn't require rewatching
-// the video, and vice versa.
+// Separate flag from INTRO_SEEN_KEY on purpose — the start screen and the
+// product tour are different first-run experiences with independent "seen"
+// states: skipping the tour shouldn't bring the start screen back, and vice
+// versa.
 const TOUR_SEEN_KEY = 'deckload-tour-seen'
 
 // The one-time note for those who knew the interface before stage 2: they've
@@ -66,33 +67,32 @@ export function useFirstRun() {
   // true from the first real client render on. The two "seen" flags below
   // report `false` during that first pass no matter what localStorage says,
   // so on their own they can't tell "visitor hasn't seen it" from "haven't
-  // been able to read it yet" — which made every returning visitor's HTML
-  // start with the intro (poster + 3.5 MB video requested, then thrown away
-  // on hydration) and, wherever `entered` was already true on that pass,
+  // been able to read it yet" — which flashed the first-run screen at every
+  // returning visitor and, wherever `entered` was already true on that pass,
   // armed the product tour a second time.
   const clientReady = useSyncExternalStore(noopSubscribe, () => true, () => false)
   const introSeen = useSyncExternalStore(noopSubscribe, getIntroSeenSnapshot, getIntroSeenServerSnapshot)
-  // A same-session "just clicked enter" flag — the snapshot above only
-  // reflects localStorage from a PAST visit; localStorage.setItem in
-  // handleEnterIntro doesn't itself trigger a re-render (noopSubscribe
+  // A same-session "just left the start screen" flag — the snapshot above
+  // only reflects localStorage from a PAST visit; localStorage.setItem in
+  // handleCloseStart doesn't itself trigger a re-render (noopSubscribe
   // never fires), so entering this session is tracked separately.
   const [justEntered, setJustEntered] = useState(false)
-  // Clicking "DeckLoad" in the header replays the intro on demand — this
+  // «?» → «Показать стартовый экран» opens it again on demand — this
   // overrides both the localStorage "seen" flag and justEntered until the
-  // visitor clicks/skips through the video again.
-  const [replayIntro, setReplayIntro] = useState(false)
+  // visitor leaves it again.
+  const [replayStart, setReplayStart] = useState(false)
   // NEXT_PUBLIC_SKIP_INTRO is inlined as a constant at build time —
   // identical on server and client, so it's safe to read directly here.
   // Set ONLY in vitest.config.ts's test environment, so the unit suite
   // renders the calculator directly (the e2e suite seeds the "seen"
   // localStorage flags instead — see playwright.config.ts).
-  const entered = !replayIntro && (process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered)
-  const handleEnterIntro = () => {
+  const entered = !replayStart && (process.env.NEXT_PUBLIC_SKIP_INTRO === '1' || introSeen || justEntered)
+  const handleCloseStart = () => {
     writeSeenFlag(INTRO_SEEN_KEY)
     setJustEntered(true)
-    setReplayIntro(false)
+    setReplayStart(false)
   }
-  const handleReplayIntro = () => setReplayIntro(true)
+  const handleShowStart = () => setReplayStart(true)
   const tourSeen = useSyncExternalStore(noopSubscribe, getTourSeenSnapshot, getTourSeenServerSnapshot)
   const [tourActive, setTourActive] = useState(false)
   // Auto-arm the tour once per mount as soon as we know both `entered` and
@@ -126,5 +126,7 @@ export function useFirstRun() {
       action: { label: 'Пройти тур', onClick: () => setTourActive(true) },
     })
   }, [clientReady, entered, tourSeen, uiUpdateHintSeen])
-  return { clientReady, entered, handleEnterIntro, handleReplayIntro, tourActive, handleCloseTour, handleShowTour }
+  // Opened from «?», not on the first visit: its buttons then make new
+  // calculations rather than taking over the first one (spec 10.1).
+  return { clientReady, entered, startFromHelp: replayStart, handleCloseStart, handleShowStart, tourActive, handleCloseTour, handleShowTour }
 }

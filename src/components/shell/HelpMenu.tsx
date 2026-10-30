@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { CircleHelp, Keyboard, MapPinned, PlayCircle } from 'lucide-react'
+import { CircleHelp, House, Keyboard, MapPinned } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -18,7 +18,7 @@ const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Esc', action: 'Снять инструмент, выбранный для постановки груз или выделение (закрывает инспектор)' },
 ]
 
-export function HelpMenu({ onStartTour, onShowIntro }: { onStartTour: () => void; onShowIntro: () => void }) {
+export function HelpMenu({ onStartTour, onShowStart }: { onStartTour: () => void; onShowStart: () => void }) {
   const [open, setOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const pick = (action: () => void) => () => {
@@ -40,8 +40,8 @@ export function HelpMenu({ onStartTour, onShowIntro }: { onStartTour: () => void
           <MenuItem icon={<Keyboard />} onSelect={pick(() => setShortcutsOpen(true))}>
             Горячие клавиши
           </MenuItem>
-          <MenuItem icon={<PlayCircle />} onSelect={pick(onShowIntro)}>
-            Показать вступление
+          <MenuItem icon={<House />} onSelect={pick(onShowStart)}>
+            Показать стартовый экран
           </MenuItem>
         </PopoverContent>
       </Popover>

@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, PALETTE, autoPlacementKey } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, PALETTE, autoPlacementKey, DEMO_DECK } from '@/store/calculator'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import {
   AlertDialog,
@@ -67,7 +67,7 @@ import { evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProble
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
-import { VideoIntro } from '@/components/intro/VideoIntro'
+import { StartScreen } from '@/components/intro/StartScreen'
 import { useFirstRun } from '@/hooks/useFirstRun'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
 import { useTrips } from '@/hooks/useTrips'
@@ -187,7 +187,7 @@ const TOUR_STEPS: TourStep[] = [
 
 
 export default function Home() {
-  const { clientReady, entered, handleEnterIntro, handleReplayIntro, tourActive, handleCloseTour, handleShowTour } = useFirstRun()
+  const { clientReady, entered, startFromHelp, handleCloseStart, handleShowStart, tourActive, handleCloseTour, handleShowTour } = useFirstRun()
   const { canUndo, canRedo } = useUndoRedo()
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
@@ -1373,25 +1373,55 @@ export default function Home() {
     pdfUpToDate,
   })
 
-  // Until the visitor's real flags are readable, show neither the intro nor
-  // the app: a plain surface in the app's own background colour, so a
-  // returning visitor goes straight into the calculator without ever
-  // requesting the intro video.
+  // The start screen's three ways in (spec 10.1). On the first visit the
+  // example made for it is the one calculation: the example stays open, the
+  // other two turn it into an empty 8 × 20 m deck named «Расчёт 1». From «?»
+  // each makes a new calculation and leaves the others as they are.
+  const firstVisitDemoId = useProjects((s) => s.firstVisitDemoId)
+  const createProject = useProjects((s) => s.createProject)
+  const renameProject = useProjects((s) => s.renameProject)
+  const startFromScreen = (way: 'vessel' | 'example' | 'empty') => {
+    const takeOver = !startFromHelp && firstVisitDemoId !== null && activeId === firstVisitDemoId && projects.length === 1
+    if (way === 'example') {
+      if (!takeOver) createProject('Демо-расчёт', { demo: true })
+    } else if (takeOver) {
+      useCalculator.setState({
+        deck: { ...DEMO_DECK },
+        items: [],
+        manualPlacements: [],
+        pinnedPlacementsByTrip: {},
+        separationRules: [],
+        selectedPinIds: [],
+        selectedAutoKeys: [],
+        selectedManualIds: [],
+        mode: 'auto',
+      })
+      clearCalculatorHistory()
+      renameProject(firstVisitDemoId, 'Расчёт 1')
+    } else {
+      createProject()
+    }
+    handleCloseStart()
+    if (way !== 'example') openSection('vessel')
+  }
+
+  // Until the visitor's real flags are readable, show neither the start
+  // screen nor the app: a plain surface in the app's own background colour,
+  // so a returning visitor goes straight into the calculator.
   if (!clientReady) {
     return <div className="h-screen bg-paper" aria-hidden />
   }
 
-  if (!entered) {
-    return <VideoIntro onEnter={handleEnterIntro} />
-  }
-
   return (
-    <div className="h-screen flex flex-col bg-paper overflow-hidden">
+    <>
+    {/* Under the start screen the calculator stays as it is, out of reach
+        of the keyboard and the pointer until the screen closes. */}
+    <div className="h-screen flex flex-col bg-paper overflow-hidden" inert={!entered}>
       <TopBar
         projectMenu={
           <ProjectMenu onOpenFile={() => importInputRef.current?.click()} onSaveFile={handleExportJson} onClear={handleNewCalculation} />
         }
-        helpMenu={<HelpMenu onStartTour={handleShowTour} onShowIntro={handleReplayIntro} />}
+        helpMenu={<HelpMenu onStartTour={handleShowTour} onShowStart={handleShowStart} />}
         activeSection={activeSection}
         marks={marks}
         onSelectSection={openSection}
@@ -1793,5 +1823,14 @@ export default function Home() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    {!entered && (
+      <StartScreen
+        onStartWithVessel={() => startFromScreen('vessel')}
+        onOpenExample={() => startFromScreen('example')}
+        onEmptyDeck={() => startFromScreen('empty')}
+        onClose={handleCloseStart}
+      />
+    )}
+    </>
   )
 }

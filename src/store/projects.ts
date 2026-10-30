@@ -108,6 +108,11 @@ interface ProjectsState {
   // record up (discardCorruptedStorage), so it can't be overwritten behind
   // their back — see the corrupted branch in hydrate().
   storageLocked: boolean
+  // The example hydrate() made on this first visit ever, nothing saved
+  // before it: the start screen (spec 10.1) turns it into the user's first
+  // calculation instead of adding one. Never set for a calculation the
+  // user already had.
+  firstVisitDemoId: string | null
 
   hydrate: () => void
   discardCorruptedStorage: () => void
@@ -1120,6 +1125,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   activeId: null,
   hydrated: false,
   storageLocked: false,
+  firstVisitDemoId: null,
 
   hydrate: () => {
     if (get().hydrated) return
@@ -1142,7 +1148,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       // will be true next time (the key still exists, just with an empty
       // list) and it won't come back.
       const p = freshProject('Демо-расчёт', true)
-      set({ projects: [p], activeId: p.id, hydrated: true, storageLocked: false })
+      set({ projects: [p], activeId: p.id, hydrated: true, storageLocked: false, firstVisitDemoId: p.id })
       saveToStorage([p], p.id)
     } else if (projects.length === 0) {
       set({ projects: [], activeId: null, hydrated: true, storageLocked: false })

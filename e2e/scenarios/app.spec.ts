@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
-import { projectMenuItem, sectionBar, setCargoTotal, unitsCount } from '../helpers'
+import { projectMenuItem, setCargoTotal, unitsCount } from '../helpers'
 
-// Appendix C, scenarios 17–22, from the entry points of stage 2. Stage 5
-// rewrites 19 and 22 for the report and the start screen.
+// Appendix C, scenarios 17–22. 22 starts from the start screen (stage 5);
+// stage 5 rewrites 19 for the report.
 
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 
@@ -141,27 +141,27 @@ test('Сценарий 21: настройки вида', async ({ page }) => {
 })
 
 test.describe('Сценарий 22: обучение', () => {
-  // A first visit: nothing seen yet. Without motion, the intro's backdrop
-  // draws one still frame (spec 9.6).
+  // A first visit: nothing seen yet. Without motion, the start screen's
+  // water draws one still frame (spec 9.6).
   test.use({ storageState: { cookies: [], origins: [] }, contextOptions: { reducedMotion: 'reduce' } })
 
-  test('первый визит: вступление, тур из 5 шагов с «Назад» и Esc, «?» → «Пройти тур»', async ({ page }) => {
-    test.setTimeout(60_000)
+  test('первый визит: стартовый экран → «Открыть пример» → тур из 5 шагов с «Назад» и Esc, «?» → «Пройти тур»', async ({ page }) => {
     await page.goto('/')
-    await expect(async () => {
-      if (await sectionBar(page).isVisible()) return
-      const enter = page.getByRole('button', { name: 'Войти на сайт' })
-      if (await enter.isVisible()) await enter.click({ force: true, timeout: 5000 })
-      else await page.getByRole('button', { name: 'Пропустить', exact: true }).click({ force: true, timeout: 5000 })
-    }).toPass({ timeout: 40_000 })
+    const start = page.getByRole('dialog', { name: 'DeckLoad' })
+    await expect(start).toBeVisible()
+    await start.getByRole('button', { name: 'Открыть пример' }).click()
+    await expect(start).toHaveCount(0)
+    await expect(unitsCount(page)).toHaveText(/22\/22 ед\./)
 
-    // The tour starts by itself on the first visit.
+    // The tour starts by itself after the start screen.
     const step = page.getByRole('dialog').filter({ hasText: /Шаг \d из 5/ })
     await expect(step).toContainText('Шаг 1 из 5')
-    await step.getByRole('button', { name: 'Далее' }).click()
-    await expect(step).toContainText('Шаг 2 из 5')
+    for (const n of [2, 3, 4, 5]) {
+      await step.getByRole('button', { name: 'Далее' }).click()
+      await expect(step).toContainText(`Шаг ${n} из 5`)
+    }
     await step.getByRole('button', { name: 'Назад' }).click()
-    await expect(step).toContainText('Шаг 1 из 5')
+    await expect(step).toContainText('Шаг 4 из 5')
     await page.keyboard.press('Escape')
     await expect(step).toHaveCount(0)
 
