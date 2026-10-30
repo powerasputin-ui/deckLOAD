@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
-import { projectMenuItem, setCargoTotal, unitsCount } from '../helpers'
+import { openSection, projectMenuItem, setCargoTotal, sheetCount, unitsCount } from '../helpers'
 
-// Appendix C, scenarios 17–22. 22 starts from the start screen (stage 5);
-// stage 5 rewrites 19 for the report.
+// Appendix C, scenarios 17–22. 19 goes through «Отчёт» and 22 starts from
+// the start screen (stage 5).
 
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 
@@ -73,17 +73,33 @@ test('Сценарий 18: проекты', async ({ page }) => {
 test('Сценарий 19: PDF, сохранение и открытие файла', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
+  // Containers enough for more than one trip.
+  await setCargoTotal(page, 'Контейнер 20ft', '12')
+  await expect(page.locator('[data-status-item="trips"]')).toBeVisible()
 
+  // «Отчёт»: a trip's sheet as it will print, the sheets one per trip and the totals.
+  await openSection(page, 'Отчёт')
+  const sheets = page.getByRole('list', { name: 'Листы PDF' })
+  const trips = await sheets.getByRole('button').count()
+  expect(trips).toBeGreaterThan(1)
+  await expect(sheets.getByText('Итого по операции')).toBeVisible()
+  await expect(page.getByRole('img', { name: `Превью листа: Рейс 1 из ${trips}` })).toBeVisible()
+  await sheets.getByRole('button', { name: new RegExp(`^Рейс 2 из ${trips}`) }).click()
+  await expect(page.getByRole('img', { name: `Превью листа: Рейс 2 из ${trips}` })).toBeVisible()
+
+  // The section's own «Скачать PDF»: a sheet per trip at least, and the totals.
   const pdf = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Скачать PDF' }).click()
-  expect((await pdf).suggestedFilename()).toMatch(/^deckload-.*\.pdf$/)
+  await page.getByRole('button', { name: 'Скачать PDF' }).last().click()
+  const file = await pdf
+  expect(file.suggestedFilename()).toMatch(/^deckload-.*\.pdf$/)
+  expect(await sheetCount(file)).toBeGreaterThanOrEqual(trips + 1)
 
   // «Сохранить файл…» gives the calculation as JSON…
   const json = page.waitForEvent('download')
   await projectMenuItem(page, 'Сохранить файл…')
-  const file = await json
-  expect(file.suggestedFilename()).toMatch(/^deckload-.*\.json$/)
-  const content = await (await file.createReadStream()).toArray()
+  const saved = await json
+  expect(saved.suggestedFilename()).toMatch(/^deckload-.*\.json$/)
+  const content = await (await saved.createReadStream()).toArray()
   const project = JSON.parse(Buffer.concat(content).toString('utf8'))
 
   // …and «Открыть файл…» opens it as a new calculation, the current one kept.
@@ -95,7 +111,7 @@ test('Сценарий 19: PDF, сохранение и открытие фай�
     buffer: Buffer.from(JSON.stringify({ ...project, name: 'Открытый из файла' })),
   })
   await expect(page.getByRole('button', { name: 'Меню расчёта «Открытый из файла»' })).toBeVisible()
-  await expect(unitsCount(page)).toHaveText(/22\/22 ед\./)
+  await expect(unitsCount(page)).toHaveText(/30\/30 ед\./)
   await projectMenuItem(page, 'Все расчёты…')
   await expect(page.getByRole('dialog').getByRole('listitem')).toHaveCount(2)
 })

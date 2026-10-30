@@ -52,6 +52,8 @@ const CONTENT_BOTTOM = PAGE.h - 34
 // The deck drawing: the full width between the margins, down to about 60%
 // of the sheet.
 export const SCHEME_FRAME = { x: MARGIN, y: CONTENT_TOP, w: CONTENT_W, h: 292 }
+// «Составил», «Проверил», «Дата» with room above them.
+const SIGNATURES_HEIGHT = 44
 
 // jsPDF's built-in fonts (helvetica/times/courier) only cover WinAnsi/Latin
 // glyphs — any Cyrillic text renders as garbage. PT Sans is a Cyrillic-native
@@ -646,11 +648,18 @@ export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string
       y += 8
     }
 
-    // Lashing of the trip's cargo.
+    // Lashing of the trip's cargo, then the signatures — together on the
+    // next sheet when they don't fit here, rather than the signatures alone
+    // on a sheet of their own.
+    const lashingHeight =
+      sheet.lashing.rows.length > 0 || sheet.lashing.dangerousGoodsNames.length > 0
+        ? 16 + (sheet.lashing.rows.length + 1) * 19 + 40 + (sheet.lashing.dangerousGoodsNames.length > 0 ? 30 : 0)
+        : 0
+    if (lashingHeight + SIGNATURES_HEIGHT < CONTENT_BOTTOM - CONTENT_TOP) makeRoom(lashingHeight + SIGNATURES_HEIGHT)
     drawLashing(sheet.lashing, `Крепление груза рейса ${i + 1}`)
 
     // Signatures.
-    makeRoom(44)
+    makeRoom(SIGNATURES_HEIGHT)
     y += 18
     pdf.setFont(FONT_FAMILY, 'normal')
     pdf.setFontSize(9)

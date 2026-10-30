@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Download, type Locator, type Page } from '@playwright/test'
 
 // Types a number into one of the calculator's numeric fields and commits it.
 // These fields (src/components/calculator/NumberField.tsx) keep what you type
@@ -254,4 +254,11 @@ export async function clearDeckSpot(page: Page): Promise<{ x: number; y: number 
     }
   }
   return best
+}
+
+// The sheets of a downloaded PDF (spec 11): jsPDF writes one «/Type /Page»
+// object each.
+export async function sheetCount(download: Download): Promise<number> {
+  const bytes = Buffer.concat(await (await download.createReadStream()).toArray()).toString('latin1')
+  return (bytes.match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length
 }

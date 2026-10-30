@@ -2,9 +2,8 @@ import { test, expect, type Page } from '@playwright/test'
 import { inspector, openCheck, openSection, unitsCount } from './helpers'
 
 // Appendix A of the redesign spec, «Где что было и где будет», for every
-// stage up to 4: each setting and action is found at its new place by what
-// it says. A row moved further on (the start screen, the report, the phone)
-// waits for its stage.
+// stage up to 5: each setting and action is found at its new place by what
+// it says. A row moved further on (the phone) waits for its stage.
 
 const deck = (page: Page) => page.locator('svg[data-deck-plan]')
 const section = (page: Page, title: string) => page.locator('section').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
@@ -36,7 +35,7 @@ test('A.1: the header, the calculation and its files', async ({ page }) => {
   // With how many there are.
   await expect(menu.getByRole('button', { name: /^Все расчёты…/ })).toBeVisible()
   await page.keyboard.press('Escape')
-  // The top bar.
+  // The top bar, and «Скачать PDF» in «Отчёт» too.
   await expect(page.getByRole('button', { name: 'Скачать PDF' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Отменить (Ctrl+Z)' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Повторить (Ctrl+Y)' })).toBeVisible()
@@ -45,6 +44,8 @@ test('A.1: the header, the calculation and its files', async ({ page }) => {
   // The vessel library is in «Судно».
   await openSection(page, 'Судно')
   await expect(page.getByRole('heading', { name: 'Судно из библиотеки' })).toBeVisible()
+  await openSection(page, 'Отчёт')
+  await expect(page.getByRole('button', { name: 'Скачать PDF' })).toHaveCount(2)
 })
 
 test('A.2: the deck — in «Судно», its gap and packing order in «Размещение»', async ({ page }) => {

@@ -1,11 +1,5 @@
-import { test, expect, type Download } from '@playwright/test'
-import { clearCalculation, openSection } from './helpers'
-
-// The sheets in a downloaded PDF: jsPDF writes one «/Type /Page» object each.
-async function sheetCount(download: Download): Promise<number> {
-  const bytes = Buffer.concat(await (await download.createReadStream()).toArray()).toString('latin1')
-  return (bytes.match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length
-}
+import { test, expect } from '@playwright/test'
+import { clearCalculation, openSection, sheetCount } from './helpers'
 
 test.describe('PDF export', () => {
   // Spec 11: a sheet per trip — the demo is one — and the totals.
