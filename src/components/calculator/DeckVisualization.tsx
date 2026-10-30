@@ -249,6 +249,10 @@ interface DeckVisualizationProps {
 const CANVAS_W = 900
 const CANVAS_H = 560
 
+// How near on screen a dragged stack has to come to a neighbour or the deck
+// edge before it locks flush against it.
+const MAGNET_PX = 8
+
 export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProps>(function DeckVisualization({
   result,
   unit,
@@ -1712,9 +1716,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     return best?.id ?? null
   }
 
-  // Tetris-style snap/lock drag resolution: snaps to the grid and magnetically
-  // locks flush against neighbours/margins when close enough, falling back to
-  // gap-aware vector-sliding when nothing is nearby to lock onto.
+  // Tetris-style snap/lock drag resolution: magnetically locks flush against
+  // neighbours/margins when close enough, falling back to gap-aware
+  // vector-sliding when nothing is nearby to lock onto.
+  //
+  // The magnet reaches MAGNET_PX on screen (spec 6.8), so zoomed in it is a
+  // few centimetres; Alt held during the drag (`free`) turns it off. It used
+  // to reach a grid step whatever the zoom — 5 m on a 50 m deck, where a
+  // stack let go 2 m from the side jumped to it.
   const resolveDragPosition = (
     targetX: number,
     targetY: number,
@@ -1723,7 +1732,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     currentX: number,
     currentY: number,
     others: { x: number; y: number; width: number; length: number }[],
-    selfMargin?: ClearanceMargin
+    selfMargin: ClearanceMargin | undefined,
+    free: boolean
   ): { x: number; y: number } =>
     resolveSnappedDragPosition(
       targetX,
@@ -1738,7 +1748,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       edgePad,
       gap,
       gridStep,
-      undefined,
+      free ? 0 : MAGNET_PX / (scale * screenPx * zoom),
       selfMargin
     )
 
@@ -1884,7 +1894,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             draggedRendered ? pyramidSpreadAsClearance(draggedRendered, draggedRendered.stackedCount) : undefined
           )
           const resolved = resolveDragPosition(
-            nx, ny, mp.width, mp.length, mp.x, mp.y, others, selfMargin
+            nx, ny, mp.width, mp.length, mp.x, mp.y, others, selfMargin, e.altKey
           )
           const resolvedTarget = { x: resolved.x, y: resolved.y, width: mp.width, length: mp.length, rotated: mp.rotated, outline: draggedRendered?.outline, clearanceMargin: mp.clearanceMargin, shape: draggedRendered?.shape, height: draggedRendered?.height, stackedCount: draggedRendered?.stackedCount }
           const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
@@ -2119,7 +2129,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           draggedRendered ? pyramidSpreadAsClearance(draggedRendered, draggedRendered.stackedCount) : undefined
         )
         const resolved = resolveDragPosition(
-          nx, ny, pin.width, pin.length, pin.x, pin.y, others, selfMargin
+          nx, ny, pin.width, pin.length, pin.x, pin.y, others, selfMargin, e.altKey
         )
         const resolvedTarget = { x: resolved.x, y: resolved.y, width: pin.width, length: pin.length, rotated: pin.rotated, outline: draggedRendered?.outline, clearanceMargin: pin.clearanceMargin, shape: draggedRendered?.shape, height: draggedRendered?.height, stackedCount: draggedRendered?.stackedCount }
         const insideDeck = !usableOutline || rectInsidePolygon(resolvedTarget, usableOutline)
