@@ -39,9 +39,7 @@ import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
   loading: () => (
-    <div className="w-full rounded-lg border flex items-center justify-center text-sm text-muted-foreground" style={{ height: 480 }}>
-      Загрузка 3D...
-    </div>
+    <div className="flex h-full w-full items-center justify-center text-sm text-ink-2">Загрузка 3D…</div>
   ),
 })
 import { TopBar } from '@/components/shell/TopBar'
@@ -1610,14 +1608,17 @@ export default function Home() {
             />
           )}
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
-            <div className={viewMode === '3d' ? 'my-auto w-full' : 'min-h-0 w-full flex-1'}>
+            <div className="min-h-0 w-full flex-1">
               {viewMode === '3d' ? (
                 <Deck3DView
+                  toolbarContainer={canvasToolsEl}
                   result={result}
                   cargoNumberByItemId={cargoNumberByItemId}
                   deckWidth={result.deckWidth}
                   deckLength={result.deckLength}
                   deckOutline={deck.outline}
+                  deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
+                  coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
                   mode={mode}
                   manualPlacements={manualPlacements}
                   pinnedPlacements={pinnedPlacements}

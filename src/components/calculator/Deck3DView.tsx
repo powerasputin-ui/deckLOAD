@@ -1,15 +1,19 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import * as THREE from 'three'
-import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Edges } from '@react-three/drei'
-import { Maximize, Minimize } from 'lucide-react'
+import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Html, OrbitControls } from '@react-three/drei'
+import { Expand, Maximize, Shrink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/ThemeProvider'
+import { fitCamera } from '@/lib/cameraFit'
 import { cargoToneForNumber } from '@/lib/cargoPalette'
+import { HULL_SIDE_LABEL, deckDrawnTransposed, hullSideEdges, type DrawingEdge, type HullSide } from '@/lib/deckDrawing'
 import { DRAG_THRESHOLD_PX, isStackSelected, type StackSelection } from '@/lib/stackSelection'
 import { THEME_TOKENS } from '@/lib/theme'
+import { BOW_ARROW } from './DeckDrawingFrame'
 import { autoPlacementKey } from '@/store/calculator'
 import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 import { pipeNestTierOffsets } from '@/lib/pipeNest'
@@ -34,6 +38,10 @@ interface Deck3DViewProps {
   // Real (possibly non-rectangular) deck silhouette — see DeckConfig.outline
   // in calculator.ts. Undefined = plain rectangle floor, today's behavior.
   deckOutline?: { x: number; y: number }[]
+  // Which end of the deck's length is the bow, for the side names.
+  deckForwardIsPositiveY?: boolean
+  // Pixels at the right of the view covered by the inspector (spec 5.4).
+  coveredRight?: number
   mode: 'auto' | 'manual'
   manualPlacements: ManualPlacement[]
   pinnedPlacements: PinnedPlacement[]
@@ -49,6 +57,9 @@ interface Deck3DViewProps {
   cargoNumberByItemId?: Map<string, number>
   // The stacks selected (shared with 2D), outlined in the accent here too.
   selection?: StackSelection
+  // Where the canvas tools go, next to 2D's (spec 6.10): «Вписать» and full
+  // screen. Without it they sit in the canvas's corner.
+  toolbarContainer?: HTMLElement | null
 }
 
 const SQRT3 = Math.sqrt(3)
@@ -61,6 +72,37 @@ const SQRT3 = Math.sqrt(3)
 // cap, 2 = bottom cap.
 const PIPE_CAP_COLOR = '#cbd5e1'
 
+// Every surface sits a hair behind its own edges, so the outlines — the
+// deck's and each stack's, as in 2D — aren't hidden under the faces they
+// lie on.
+const SURFACE = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 } as const
+
+// The outline of the mesh it is placed in: the mesh's edges as plain lines.
+// drei's <Edges> draws them as screen-space quads, which some WebGL
+// implementations (the software one included) never show. Only edges
+// sharper than 20°: a pipe's 24 sides meet at 15°, and its outline is its
+// two ends, not a stripe down every side.
+function Outline({ color }: { color: string }) {
+  const ref = useRef<THREE.LineSegments>(null)
+  useLayoutEffect(() => {
+    const line = ref.current
+    const mesh = line?.parent
+    if (!line || !(mesh instanceof THREE.Mesh) || line.userData.of === mesh.geometry) return
+    line.userData.of = mesh.geometry
+    line.geometry.dispose()
+    line.geometry = new THREE.EdgesGeometry(mesh.geometry, 20)
+  })
+  useEffect(() => {
+    const line = ref.current
+    return () => line?.geometry.dispose()
+  }, [])
+  return (
+    <lineSegments ref={ref} raycast={() => null}>
+      <lineBasicMaterial color={color} />
+    </lineSegments>
+  )
+}
+
 // 3D snapshot of the current layout — camera rotate/zoom only, no editing.
 // Clicking a mesh updates the shared selection (the inspector opens, and 2D
 // shows it selected too); the selected stacks are outlined in the accent
@@ -71,6 +113,8 @@ export default function Deck3DView({
   deckWidth,
   deckLength,
   deckOutline,
+  deckForwardIsPositiveY = true,
+  coveredRight = 0,
   mode,
   manualPlacements,
   pinnedPlacements,
@@ -79,9 +123,11 @@ export default function Deck3DView({
   onSelectAuto,
   cargoNumberByItemId,
   selection,
+  toolbarContainer,
 }: Deck3DViewProps) {
   const { resolved: theme } = useTheme()
-  const accent = THEME_TOKENS[theme].accent
+  const palette = THEME_TOKENS[theme]
+  const accent = palette.accent
   const isSelected = (b: { placementId?: string; pinData?: PinData }) =>
     !!selection &&
     isStackSelected({ placementId: b.placementId, autoKey: b.pinData ? autoPlacementKey(b.pinData) : undefined }, mode, selection)
@@ -409,6 +455,22 @@ export default function Deck3DView({
 
   const maxDim = Math.max(deckWidth, deckLength, 1)
 
+  // Laid out as the 2D plan is (spec 6.1): the deck's long side across the
+  // screen. 2D draws a deck longer than it is wide transposed — deck y along
+  // the screen's x — which is a reflection, so the scene takes the same one
+  // and 3D shows each side where 2D shows it. The camera then looks from the
+  // plan's bottom edge (+z), the way one looks at the drawing.
+  const transposed = deckDrawnTransposed(deckWidth, deckLength)
+  const planMatrix = useMemo(
+    () => (transposed ? new THREE.Matrix4().set(0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1) : new THREE.Matrix4()),
+    [transposed]
+  )
+  const planRef = useRef<THREE.Group>(null)
+  const drawnWidth = transposed ? deckLength : deckWidth
+  const drawnDepth = transposed ? deckWidth : deckLength
+  // «Вписать» brings the camera back to the whole deck.
+  const [fitRequest, setFitRequest] = useState(0)
+
   // minDistance used to be based purely on the deck's own size (maxDim),
   // so on a full-size deck the camera could never get closer than several
   // metres — nowhere near close enough to tell a 0.5-1m barrel/pipe's
@@ -421,32 +483,51 @@ export default function Deck3DView({
     : maxDim
   const minDistance = Math.min(maxDim * 0.3, Math.max(0.5, minCargoDim * 1.2))
 
-  return (
-    <div
-      ref={containerRef}
-      className={
-        'relative w-full rounded-lg border overflow-hidden bg-slate-100' +
-        (isFullscreen ? ' h-screen w-screen' : '')
-      }
-      style={isFullscreen ? undefined : { height: 480 }}
-    >
+  const tools = (
+    <>
+      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label="Вписать" title="Вписать" onClick={() => setFitRequest((n) => n + 1)}>
+        <Maximize className="h-4 w-4" aria-hidden="true" />
+      </Button>
       <Button
         type="button"
-        size="icon"
         variant="ghost"
-        className="absolute bottom-2 right-2 z-10 h-7 w-7 rounded-lg border bg-card/95 shadow-sm backdrop-blur-sm"
+        size="icon"
+        className="h-7 w-7"
+        aria-label={isFullscreen ? 'Свернуть из полноэкранного режима' : 'Развернуть на весь экран'}
         title={isFullscreen ? 'Свернуть из полноэкранного режима' : 'Развернуть на весь экран'}
         onClick={toggleFullscreen}
       >
-        {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+        {isFullscreen ? <Shrink className="h-4 w-4" aria-hidden="true" /> : <Expand className="h-4 w-4" aria-hidden="true" />}
       </Button>
-      <Canvas
-        camera={{ position: [maxDim * 0.7, maxDim * 0.65, maxDim * 0.9], fov: 45 }}
-        dpr={[1, 2]}
-      >
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[maxDim, maxDim * 1.5, maxDim]} intensity={1} />
+    </>
+  )
 
+  return (
+    // The whole deck area, like the 2D plan — the page's own background
+    // around the deck, in either theme.
+    <div ref={containerRef} className={'relative h-full w-full overflow-hidden bg-paper' + (isFullscreen ? ' h-screen w-screen' : '')}>
+      {toolbarContainer && !isFullscreen
+        ? createPortal(<div className="flex items-center gap-0.5 rounded-md border bg-surface p-0.5">{tools}</div>, toolbarContainer)
+        : <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border bg-surface p-0.5 shadow-sm">{tools}</div>}
+      {/* A narrow field of view, so the near edge of the deck isn't much
+          wider than the far one and the plan reads as in 2D. No tone
+          mapping, and the light set so that a top face shows its cargo's
+          own tone, as in 2D and the legend; the faces towards the camera a
+          little darker. */}
+      <Canvas flat camera={{ position: [0, maxDim * 0.8, maxDim * 0.6], fov: 30 }} dpr={[1, 2]}>
+        <FitView
+          plan={planRef}
+          content={boxes}
+          outline={deckOutline}
+          deckWidth={deckWidth}
+          deckLength={deckLength}
+          coveredRight={coveredRight}
+          request={fitRequest}
+        />
+        <ambientLight intensity={1.7} />
+        <directionalLight position={[0.3, 1, 0.45]} intensity={1.64} />
+
+        <group ref={planRef} matrix={planMatrix} matrixAutoUpdate={false}>
         {/* Deck base — real (possibly non-rectangular) silhouette when an
             outline is set, matching the 2D clipped render; otherwise the
             plain rectangle floor as before. */}
@@ -463,14 +544,14 @@ export default function Deck3DView({
                 { depth: 0.02, bevelEnabled: false },
               ]}
             />
-            <meshStandardMaterial color="#e2e8f0" />
-            <Edges color="#1e293b" />
+            <meshStandardMaterial color={palette.deck} {...SURFACE} />
+            <Outline color={palette.deckOutline} />
           </mesh>
         ) : (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
             <planeGeometry args={[deckWidth, deckLength]} />
-            <meshStandardMaterial color="#e2e8f0" />
-            <Edges color="#1e293b" />
+            <meshStandardMaterial color={palette.deck} {...SURFACE} />
+            <Outline color={palette.deckOutline} />
           </mesh>
         )}
 
@@ -497,8 +578,8 @@ export default function Deck3DView({
                 onClick={handleClick(b.placementId, b.pinData)}
               >
                 <extrudeGeometry args={[shape, { depth: b.depth ?? 0.3, bevelEnabled: false }]} />
-                <meshStandardMaterial color={b.color} {...glow} />
-                <Edges color={edgeColor} />
+                <meshStandardMaterial color={b.color} {...glow} {...SURFACE} />
+                <Outline color={edgeColor} />
               </mesh>
             )
           }
@@ -506,8 +587,8 @@ export default function Deck3DView({
             return (
               <mesh key={b.key} position={[b.x, b.y, b.z]} onClick={handleClick(b.placementId, b.pinData)}>
                 <boxGeometry args={[b.w!, b.h!, b.d!]} />
-                <meshStandardMaterial color={b.color} {...glow} />
-                <Edges color={edgeColor} />
+                <meshStandardMaterial color={b.color} {...glow} {...SURFACE} />
+                <Outline color={edgeColor} />
               </mesh>
             )
           }
@@ -523,29 +604,173 @@ export default function Deck3DView({
                 onClick={handleClick(b.placementId, b.pinData)}
               >
                 <cylinderGeometry args={[b.radius, b.radius, b.cylLen, b.radialSegments]} />
-                <meshStandardMaterial color={b.color} {...glow} />
-                <Edges color={edgeColor} />
+                <meshStandardMaterial color={b.color} {...glow} {...SURFACE} />
+                <Outline color={edgeColor} />
               </mesh>
             )
           }
           return (
             <mesh key={b.key} position={[b.x, b.y, b.z]} rotation={b.rot} onClick={handleClick(b.placementId, b.pinData)}>
               <cylinderGeometry args={[b.radius, b.radius, b.cylLen, 24]} />
-              <meshStandardMaterial attach="material-0" color={b.color} {...glow} />
-              <meshStandardMaterial attach="material-1" color={PIPE_CAP_COLOR} />
-              <meshStandardMaterial attach="material-2" color={PIPE_CAP_COLOR} />
-              <Edges color={edgeColor} />
+              <meshStandardMaterial attach="material-0" color={b.color} {...glow} {...SURFACE} />
+              <meshStandardMaterial attach="material-1" color={PIPE_CAP_COLOR} {...SURFACE} />
+              <meshStandardMaterial attach="material-2" color={PIPE_CAP_COLOR} {...SURFACE} />
+              <Outline color={edgeColor} />
             </mesh>
           )
         })}
+
+        </group>
+
+        <DeckSides
+          sides={hullSideEdges(deckWidth, deckLength, deckForwardIsPositiveY)}
+          width={drawnWidth}
+          depth={drawnDepth}
+          container={containerRef}
+        />
 
         <OrbitControls
           makeDefault
           maxPolarAngle={Math.PI / 2 - 0.02}
           minDistance={minDistance}
-          maxDistance={maxDim * 4}
+          // Room beyond the fit, which on a narrow canvas stands far back.
+          maxDistance={maxDim * 8}
         />
       </Canvas>
     </div>
   )
+}
+
+// Which side of the hull each edge of the deck is, named as 2D's drawing
+// frame names them (spec 6.1): beside the middle of each edge, the names on
+// the left and right edges turned to read upwards. They stay level however
+// the camera turns, on a backing of the page's colour where a stack rises
+// behind them. They go into the view's own container: left to find one
+// itself, drei moves them once the canvas takes events, and loses one.
+const SIDE_SHIFT: Record<DrawingEdge, string> = {
+  top: 'translate(-50%, -50%) translate(0, -14px)',
+  bottom: 'translate(-50%, -50%) translate(0, 14px)',
+  left: 'translate(-50%, -50%) translate(-14px, 0) rotate(-90deg)',
+  right: 'translate(-50%, -50%) translate(14px, 0) rotate(-90deg)',
+}
+
+function DeckSides({
+  sides,
+  width,
+  depth,
+  container,
+}: {
+  sides: Record<HullSide, DrawingEdge>
+  width: number
+  depth: number
+  container: React.RefObject<HTMLDivElement | null>
+}) {
+  const at = (edge: DrawingEdge): [number, number, number] =>
+    edge === 'top' ? [0, 0, -depth / 2] : edge === 'bottom' ? [0, 0, depth / 2] : edge === 'left' ? [-width / 2, 0, 0] : [width / 2, 0, 0]
+  return (Object.keys(sides) as HullSide[]).map((side) => {
+    const edge = sides[side]
+    return (
+      <Html
+        key={side}
+        position={at(edge)}
+        portal={container as React.RefObject<HTMLElement>}
+        zIndexRange={[10, 0]}
+        style={{ pointerEvents: 'none' }}
+      >
+        <div
+          data-hull-side={side}
+          data-edge={edge}
+          className="select-none whitespace-nowrap rounded-sm bg-paper/85 px-1 text-xs font-semibold tracking-[0.08em] text-ink"
+          style={{ transform: SIDE_SHIFT[edge] }}
+        >
+          {side === 'bow' ? `${BOW_ARROW[edge]} ${HULL_SIDE_LABEL[side]}` : HULL_SIDE_LABEL[side]}
+        </div>
+      </Html>
+    )
+  })
+}
+
+// The camera on the whole deck, as 2D's «Вписать» puts it (spec 6.10): from
+// the plan's bottom edge, raised to look down at it, and back just far
+// enough for the deck and every stack on it to fill the canvas with a
+// margin (cameraFit.ts). On first sight, and again when the cargo, the
+// canvas or the inspector over it changes while the camera is where this
+// put it; once the user has turned or zoomed it, only a new deck or
+// «Вписать» moves it. While the inspector is open the picture's centre is
+// the middle of what it leaves open, and the fit is to that part.
+const ELEVATION = (60 * Math.PI) / 180
+// Leaves the side names room outside the deck.
+const FILL = 0.9
+
+function FitView({
+  plan,
+  content,
+  outline,
+  deckWidth,
+  deckLength,
+  coveredRight,
+  request,
+}: {
+  plan: React.RefObject<THREE.Group | null>
+  // What is drawn: a new value means a new picture to fit.
+  content: unknown
+  outline: unknown
+  deckWidth: number
+  deckLength: number
+  coveredRight: number
+  request: number
+}) {
+  const camera = useThree((s) => s.camera)
+  const size = useThree((s) => s.size)
+  const controls = useThree((s) => s.controls) as unknown as {
+    target: THREE.Vector3
+    update: () => void
+    addEventListener: (type: 'change', listener: () => void) => void
+    removeEventListener: (type: 'change', listener: () => void) => void
+  } | null
+  // Turned: the camera has moved other than by this. A click that only
+  // picks a stack leaves it as it was.
+  const turned = useRef(false)
+  const fitting = useRef(false)
+  useEffect(() => {
+    if (!controls) return
+    const onChange = () => {
+      if (!fitting.current) turned.current = true
+    }
+    controls.addEventListener('change', onChange)
+    return () => controls.removeEventListener('change', onChange)
+  }, [controls])
+  useLayoutEffect(() => {
+    if (!(camera instanceof THREE.PerspectiveCamera)) return
+    if (coveredRight > 0) camera.setViewOffset(size.width, size.height, coveredRight / 2, 0, size.width, size.height)
+    else camera.clearViewOffset()
+  }, [camera, size.width, size.height, coveredRight])
+  // Before the first frame, so the camera never shows anything else first;
+  // the reset ahead of the fit it allows.
+  useLayoutEffect(() => {
+    turned.current = false
+  }, [deckWidth, deckLength, request])
+  useLayoutEffect(() => {
+    const group = plan.current
+    if (turned.current || !group || size.width <= 0 || size.height <= 0 || !(camera instanceof THREE.PerspectiveCamera)) return
+    // The corners of every mesh's box, where the plan's transform puts it —
+    // forced, as before the first frame nothing has applied it yet.
+    group.updateMatrixWorld(true)
+    const box = new THREE.Box3()
+    const points = group.children.flatMap((child) => {
+      box.setFromObject(child)
+      return [box.min.x, box.max.x].flatMap((x) => [box.min.y, box.max.y].flatMap((y) => [box.min.z, box.max.z].map((z) => ({ x, y, z }))))
+    })
+    const open = Math.max(1, size.width - coveredRight)
+    const fit = fitCamera(points, { fov: camera.fov, aspect: open / size.height, elevation: ELEVATION, fill: FILL })
+    camera.position.set(...fit.position)
+    camera.lookAt(...fit.target)
+    if (controls) {
+      fitting.current = true
+      controls.target.set(...fit.target)
+      controls.update()
+      fitting.current = false
+    }
+  }, [camera, controls, plan, content, outline, size.width, size.height, coveredRight, deckWidth, deckLength, request])
+  return null
 }

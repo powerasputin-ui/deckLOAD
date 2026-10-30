@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { unitsCount } from './helpers'
+import { inspector, unitsCount } from './helpers'
 
 test.describe('3D deck view', () => {
   test('mounts without console errors, orbits without crashing, and clicking a mesh selects it (visible back in 2D)', async ({ page }) => {
@@ -45,5 +45,49 @@ test.describe('3D deck view', () => {
     void selectedStroke
 
     expect(pageErrors, `3D view threw: ${pageErrors.join('; ')}`).toEqual([])
+  })
+
+  test('takes the whole deck area, as 2D does, and names each side of the hull on the edge 2D names it', async ({ page }) => {
+    await page.goto('/')
+    await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
+    const sides = async () =>
+      Object.fromEntries(await page.locator('[data-hull-side]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-hull-side'), e.getAttribute('data-edge')])))
+    await expect(page.locator('svg [data-hull-side]')).toHaveCount(4)
+    const in2d = await sides()
+
+    await page.getByRole('radio', { name: '3D' }).click()
+    const canvas = page.locator('canvas')
+    await expect(canvas).toBeVisible()
+    await expect(page.locator('[data-hull-side]')).toHaveCount(4)
+    expect(await sides()).toEqual(in2d)
+
+    // Not a box 480 px tall in the middle of it.
+    const area = (await page.locator('[data-tour="deck-view"]').boundingBox())!
+    const box = (await canvas.boundingBox())!
+    expect(box.width).toBeGreaterThan(area.width * 0.9)
+    expect(box.height).toBeGreaterThan(area.height * 0.8)
+    // «Вписать» with the canvas tools, where 2D keeps its own.
+    await expect(page.getByRole('button', { name: 'Вписать' })).toBeVisible()
+  })
+
+  test('with a stack selected, the whole deck shows beside the inspector', async ({ page }) => {
+    await page.goto('/')
+    const stack = page.locator('svg g[data-cargo-placement]').first()
+    await expect(stack).toBeVisible()
+    await expect(async () => {
+      await stack.click({ force: true })
+      await expect(inspector(page)).toBeVisible({ timeout: 1000 })
+    }).toPass()
+
+    await page.getByRole('radio', { name: '3D' }).click()
+    await expect(page.locator('canvas')).toBeVisible()
+    await expect(inspector(page)).toBeVisible()
+    await expect(page.locator('[data-hull-side]')).toHaveCount(4)
+    const panel = (await inspector(page).boundingBox())!
+    // The bow's name, the furthest right, clear of the panel.
+    await expect(async () => {
+      const rights = await page.locator('[data-hull-side]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().right))
+      expect(Math.max(...rights)).toBeLessThan(panel.x)
+    }).toPass()
   })
 })

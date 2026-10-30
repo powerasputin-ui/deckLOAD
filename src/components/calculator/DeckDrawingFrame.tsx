@@ -22,7 +22,7 @@ const rowCenter = (row: 1 | 2) => GAP + (row - 1) * ROW + FONT / 2
 
 // The bow's arrow points out of the drawing. Labels on the left and right
 // edges are turned to read bottom-to-top, which turns the glyph with them.
-const BOW_ARROW: Record<DrawingEdge, string> = { top: '↑', bottom: '↓', left: '↑', right: '↓' }
+export const BOW_ARROW: Record<DrawingEdge, string> = { top: '↑', bottom: '↓', left: '↑', right: '↓' }
 
 export interface ScaleBar {
   // One grid step in viewBox units, how many steps the bar spans, and its label.
