@@ -59,6 +59,19 @@ describe('layoutStackLabels', () => {
     expect(plans.get('p1')).toEqual({ kind: 'group', full: '4 ×3' })
   })
 
+  it('writes no group number over empty deck: an L-shaped group whose middle belongs to none of its stacks', () => {
+    // A pipe along the top and one down the left side, touching at the corner.
+    const { plans, groups } = layoutStackLabels(
+      [
+        stack('top', [3], { x: 0, y: 0, w: 200, h: 5 }, { x: 0, y: 0, width: 0.25, length: 9.5 }),
+        stack('side', [3], { x: 0, y: 5, w: 5, h: 200 }, { x: 0.25, y: 0, width: 9.5, length: 0.25 }),
+      ],
+      0.1
+    )
+    expect(groups).toEqual([])
+    expect(plans.get('top')).toEqual({ kind: 'none', full: '3' })
+  })
+
   it('keeps other cargo and stacks further apart than the gap out of a group', () => {
     const { groups } = layoutStackLabels(
       [

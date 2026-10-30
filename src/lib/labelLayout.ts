@@ -24,10 +24,20 @@ export const NAME_FONT_SIZE = 12
 export const LABEL_FONT_FAMILY = "'IBM Plex Sans', Arial, sans-serif"
 const NUMBER_WEIGHT = 600
 const NAME_WEIGHT = 400
-const PAD_X = 4
-const PAD_Y = 2
-// Between the number and the name under it.
-const LINE_GAP = 2
+
+// The sizes a layout works in: the deck's screen pixels by default, the
+// PDF's points for the plan on paper (planDrawing.ts).
+export interface LabelSizes {
+  // Number sizes, largest first; the last one is the smallest written.
+  numbers: readonly number[]
+  name: number
+  // A number's frame: text width + padX, font size + padY.
+  padX: number
+  padY: number
+  // Between the number and the name under it.
+  lineGap: number
+}
+export const SCREEN_LABEL_SIZES: LabelSizes = { numbers: NUMBER_FONT_SIZES, name: NAME_FONT_SIZE, padX: 4, padY: 2, lineGap: 2 }
 
 export interface LabelStack {
   key: string
@@ -101,14 +111,14 @@ export function measureTextWidth(text: string, fontSize: number, fontWeight: num
   return measuringContext.measureText(text).width
 }
 
-const fitsIn = (textWidth: number, fontSize: number, w: number, h: number) =>
-  textWidth + PAD_X <= w && fontSize + PAD_Y <= h
+const fitsIn = (textWidth: number, fontSize: number, w: number, h: number, sizes: LabelSizes) =>
+  textWidth + sizes.padX <= w && fontSize + sizes.padY <= h
 
 // The largest number size that fits and isn't over 40% of the shorter side
 // (never below the smallest size, if that one fits).
-function numberSize(text: string, w: number, h: number, measure: Measure): number | undefined {
-  const cap = Math.max(NUMBER_FONT_SIZES[NUMBER_FONT_SIZES.length - 1], 0.4 * Math.min(w, h))
-  return NUMBER_FONT_SIZES.find((size) => size <= cap && fitsIn(measure(text, size, NUMBER_WEIGHT), size, w, h))
+function numberSize(text: string, w: number, h: number, measure: Measure, sizes: LabelSizes): number | undefined {
+  const cap = Math.max(sizes.numbers[sizes.numbers.length - 1], 0.4 * Math.min(w, h))
+  return sizes.numbers.find((size) => size <= cap && fitsIn(measure(text, size, NUMBER_WEIGHT), size, w, h, sizes))
 }
 
 type Measure = (text: string, fontSize: number, fontWeight: number) => number
@@ -119,14 +129,15 @@ type Measure = (text: string, fontSize: number, fontWeight: number) => number
 export function ownLabelSize(
   plan: StackLabelPlan | undefined,
   withName: boolean,
-  measure: Measure = (text, fontSize) => estimateTextWidth(text, fontSize)
+  measure: Measure = (text, fontSize) => estimateTextWidth(text, fontSize),
+  sizes: LabelSizes = SCREEN_LABEL_SIZES
 ): { w: number; h: number } {
   if (plan?.kind !== 'own' || !plan.text) return { w: 0, h: 0 }
-  const numberW = measure(plan.text, plan.fontSize, NUMBER_WEIGHT) + PAD_X
-  if (!withName || !plan.name) return { w: numberW, h: plan.fontSize + PAD_Y }
+  const numberW = measure(plan.text, plan.fontSize, NUMBER_WEIGHT) + sizes.padX
+  if (!withName || !plan.name) return { w: numberW, h: plan.fontSize + sizes.padY }
   return {
-    w: Math.max(numberW, measure(plan.name, NAME_FONT_SIZE, NAME_WEIGHT) + PAD_X),
-    h: plan.fontSize + PAD_Y + LINE_GAP + NAME_FONT_SIZE + PAD_Y,
+    w: Math.max(numberW, measure(plan.name, sizes.name, NAME_WEIGHT) + sizes.padX),
+    h: plan.fontSize + sizes.padY + sizes.lineGap + sizes.name + sizes.padY,
   }
 }
 
@@ -134,16 +145,17 @@ export function layoutStackLabels(
   stacks: readonly LabelStack[],
   // The deck's gap between cargo, in deck units.
   gap: number,
-  measure: Measure = (text, fontSize) => estimateTextWidth(text, fontSize)
+  measure: Measure = (text, fontSize) => estimateTextWidth(text, fontSize),
+  sizes: LabelSizes = SCREEN_LABEL_SIZES
 ): { plans: Map<string, StackLabelPlan>; groups: StackGroupLabel[] } {
   const plans = new Map<string, StackLabelPlan>()
   const unfit: LabelStack[] = []
   for (const s of stacks) {
     const full = stackLabelText(s.numbers, s.layers)
     const short = numbersText(s.numbers)
-    const fullSize = numberSize(full, s.rect.w, s.rect.h, measure)
+    const fullSize = numberSize(full, s.rect.w, s.rect.h, measure, sizes)
     const text = fullSize === undefined ? short : full
-    const fontSize = fullSize ?? numberSize(short, s.rect.w, s.rect.h, measure)
+    const fontSize = fullSize ?? numberSize(short, s.rect.w, s.rect.h, measure, sizes)
     if (fontSize === undefined) {
       plans.set(s.key, { kind: 'none', full })
       unfit.push(s)
@@ -151,8 +163,8 @@ export function layoutStackLabels(
     }
     const nameFits =
       !!s.name &&
-      measure(s.name, NAME_FONT_SIZE, NAME_WEIGHT) + PAD_X <= s.rect.w &&
-      fontSize + PAD_Y + LINE_GAP + NAME_FONT_SIZE + PAD_Y <= s.rect.h
+      measure(s.name, sizes.name, NAME_WEIGHT) + sizes.padX <= s.rect.w &&
+      fontSize + sizes.padY + sizes.lineGap + sizes.name + sizes.padY <= s.rect.h
     plans.set(s.key, { kind: 'own', full, text, fontSize, name: nameFits ? s.name : undefined })
   }
 
@@ -180,10 +192,23 @@ export function layoutStackLabels(
     const top = Math.min(...group.map((s) => s.rect.y))
     const right = Math.max(...group.map((s) => s.rect.x + s.rect.w))
     const bottom = Math.max(...group.map((s) => s.rect.y + s.rect.h))
-    const fontSize = numberSize(text, right - left, bottom - top, measure)
+    const fontSize = numberSize(text, right - left, bottom - top, measure, sizes)
     if (fontSize === undefined) continue
-    groups.push({ keys: group.map((s) => s.key), text, fontSize, cx: (left + right) / 2, cy: (top + bottom) / 2 })
+    const cx = (left + right) / 2
+    const cy = (top + bottom) / 2
+    // The number stands on the group's stacks: a group bent into an L has
+    // the middle of its bounds over empty deck, where the number would
+    // belong to nothing.
+    const near = Math.min(...group.map((s) => distanceToRect(cx, cy, s.rect)))
+    if (near > fontSize / 2 + sizes.padY) continue
+    groups.push({ keys: group.map((s) => s.key), text, fontSize, cx, cy })
     for (const s of group) plans.set(s.key, { kind: 'group', full: stackLabelText(s.numbers, s.layers) })
   }
   return { plans, groups }
+}
+
+function distanceToRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): number {
+  const dx = Math.max(r.x - x, 0, x - (r.x + r.w))
+  const dy = Math.max(r.y - y, 0, y - (r.y + r.h))
+  return Math.hypot(dx, dy)
 }
