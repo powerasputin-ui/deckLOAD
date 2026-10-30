@@ -43,7 +43,7 @@ export function DeckBlock() {
   const tpl = vesselTemplateById(deck.vesselTemplateId)
 
   return (
-    <PanelBlock title="Палуба">
+    <PanelBlock title="Палуба" fold="deck">
       <div data-tour="deck-settings" className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <Field id={`${uid}-width`} label="Ширина (борт–борт)">

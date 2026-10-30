@@ -28,7 +28,7 @@ export function VesselCard() {
   const stackHeightM = tpl?.limits?.maxStackHeightM
 
   return (
-    <PanelBlock title="Карточка судна">
+    <PanelBlock title="Карточка судна" fold="card">
       <p className="text-sm font-medium" data-testid="vessel-name">
         {tpl ? tpl.label : 'Своя палуба'}
       </p>

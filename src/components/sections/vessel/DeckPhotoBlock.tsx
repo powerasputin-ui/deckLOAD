@@ -37,7 +37,7 @@ export function DeckPhotoBlock() {
   }
 
   return (
-    <PanelBlock title="Фото палубы">
+    <PanelBlock title="Фото палубы" fold="photo">
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={load} data-testid="deck-photo-input" />
       <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => fileRef.current?.click()}>
         <Upload className="mr-1.5 h-4 w-4" aria-hidden="true" />

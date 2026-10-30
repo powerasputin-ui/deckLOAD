@@ -1,6 +1,7 @@
 'use client'
 
-import { ClipboardCheck, FileText, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, Ship } from 'lucide-react'
+import { createContext, useContext, useId } from 'react'
+import { ChevronRight, CircleCheck, CircleX, ClipboardCheck, FileText, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, Ship, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SECTION_ORDER, SECTION_TITLE, type SectionId } from '@/lib/workflow'
 import { cn } from '@/lib/utils'
@@ -76,13 +77,92 @@ export function SectionPanel({
   )
 }
 
+// Blocks that fold (spec 8.1, revision 2026-10-30): the section holding
+// them says which are open, and what a folded one shows — a line of what it
+// holds, its step number when it is one of the steps to fill in, and a mark
+// when something in it needs looking at.
+export interface FoldingBlocks {
+  isOpen: (id: string) => boolean
+  toggle: (id: string) => void
+  line: (id: string) => { summary: string; status?: 'ok' | 'warn' | 'error'; step?: number } | undefined
+}
+
+export const FoldingBlocksContext = createContext<FoldingBlocks | null>(null)
+
+const STATUS_WORD = { ok: 'в порядке', warn: 'нужна проверка', error: 'ошибка' } as const
+
+function StatusMark({ status }: { status: 'ok' | 'warn' | 'error' }) {
+  const cls = 'mt-0.5 h-4 w-4 shrink-0'
+  return status === 'ok' ? (
+    <CircleCheck className={cn(cls, 'text-ok')} aria-hidden="true" />
+  ) : status === 'warn' ? (
+    <TriangleAlert className={cn(cls, 'text-warn')} aria-hidden="true" />
+  ) : (
+    <CircleX className={cn(cls, 'text-danger')} aria-hidden="true" />
+  )
+}
+
 // One block of a section: a heading and its content, divided from the next
-// block by a line rather than boxed in a card (spec 9.4).
-export function PanelBlock({ title, children, className }: { title?: string; children: React.ReactNode; className?: string }) {
+// block by a line rather than boxed in a card (spec 9.4). With `fold`, in a
+// section that folds its blocks, the heading opens and folds it.
+export function PanelBlock({ title, children, className, fold }: { title?: string; children: React.ReactNode; className?: string; fold?: string }) {
+  const folding = useContext(FoldingBlocksContext)
+  const uid = useId()
+  if (!fold || !folding || !title) {
+    return (
+      <section className={cn('panel-block space-y-3 px-4 py-4', className)}>
+        {title && <h3 className="text-sm font-semibold">{title}</h3>}
+        {children}
+      </section>
+    )
+  }
+  const open = folding.isOpen(fold)
+  const line = folding.line(fold)
   return (
-    <section className={cn('panel-block space-y-3 px-4 py-4', className)}>
-      {title && <h3 className="text-sm font-semibold">{title}</h3>}
-      {children}
+    <section className={cn('panel-block', className)} data-fold={fold} data-open={open}>
+      {/* The heading is named by the title alone; the folded line and the
+          mark are its description. */}
+      <h3>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`${uid}-body`}
+          aria-describedby={line ? `${uid}-line` : undefined}
+          onClick={() => folding.toggle(fold)}
+          className="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ChevronRight className={cn('mt-0.5 h-4 w-4 shrink-0 text-ink-2 transition-transform', open && 'rotate-90')} aria-hidden="true" />
+          {line?.step !== undefined && (
+            <span
+              aria-hidden="true"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong text-xs font-medium tabular-nums text-ink-2"
+            >
+              {line.step}
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{title}</span>
+            {line && !open && (
+              <span aria-hidden="true" className="block truncate text-xs text-ink-2" data-fold-line>
+                {line.summary}
+              </span>
+            )}
+          </span>
+          {line?.status && <StatusMark status={line.status} />}
+        </button>
+      </h3>
+      {line && (
+        <span id={`${uid}-line`} hidden>
+          {line.step !== undefined && `Шаг ${line.step}. `}
+          {line.summary}
+          {line.status && line.status !== 'ok' && `. ${STATUS_WORD[line.status]}`}
+        </span>
+      )}
+      {open && (
+        <div id={`${uid}-body`} className="space-y-3 px-4 pb-4">
+          {children}
+        </div>
+      )}
     </section>
   )
 }

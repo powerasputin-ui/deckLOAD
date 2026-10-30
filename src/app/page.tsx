@@ -64,6 +64,8 @@ import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
 import { NO_DECK_HEIGHT } from '@/lib/stabilityConditions'
+import type { VesselStepId } from '@/lib/vesselSteps'
+import { openVesselStep } from '@/store/vesselSteps'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
@@ -269,6 +271,9 @@ export default function Home() {
 
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
+  // The calculation whose deck is on screen: «Судно» picks its open block
+  // from that deck, not from the one it replaces.
+  const deckProjectId = useCalculator((s) => s.loadedProjectId)
   const hydrated = useProjects((s) => s.hydrated)
   const hydrate = useProjects((s) => s.hydrate)
   const saveSnapshot = useProjects((s) => s.saveSnapshot)
@@ -300,12 +305,17 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<SectionId>(() => (typeof window === 'undefined' ? 'cargo' : readPanelSection()))
   const [panelCollapsed, setPanelCollapsed] = useState(() => typeof window !== 'undefined' && readPanelCollapsed())
   // A section opens in the panel, which unfolds if it was collapsed (spec 5.4).
-  const openSection = useCallback((id: SectionId) => {
-    setActiveSection(id)
-    setPanelCollapsed(false)
-    writePanelSetting(PANEL_SECTION_KEY, id)
-    writePanelSetting(PANEL_COLLAPSED_KEY, '0')
-  }, [])
+  // With a step, that block of «Судно» opens too (a check's «Настроить»).
+  const openSection = useCallback(
+    (id: SectionId, step?: VesselStepId) => {
+      if (step && activeId) openVesselStep(activeId, step)
+      setActiveSection(id)
+      setPanelCollapsed(false)
+      writePanelSetting(PANEL_SECTION_KEY, id)
+      writePanelSetting(PANEL_COLLAPSED_KEY, '0')
+    },
+    [activeId]
+  )
   const changePanelCollapsed = useCallback((collapsed: boolean) => {
     setPanelCollapsed(collapsed)
     writePanelSetting(PANEL_COLLAPSED_KEY, collapsed ? '1' : '0')
@@ -457,6 +467,7 @@ export default function Home() {
       showCargoContents: proj.showCargoContents ?? true,
       activeStampId: null,
       stampRotated: false,
+      loadedProjectId: activeId,
     })
     // A different project's undo history shouldn't leak into this one — an
     // Ctrl+Z right after switching would otherwise silently jump back to the
@@ -1519,6 +1530,13 @@ export default function Home() {
         <SectionPanel active={activeSection} collapsed={panelCollapsed} onCollapsedChange={changePanelCollapsed} onSelect={openSection}>
           {activeSection === 'vessel' && (
             <VesselSection
+              key={deckProjectId ?? 'none'}
+              projectId={deckProjectId ?? 'none'}
+              fresh={marks.vessel.kind === 'none'}
+              checks={{
+                deckWeight: planChecks.find((c) => c.id === 'deck-weight')?.status,
+                zones: planChecks.find((c) => c.id === 'zones')?.status,
+              }}
               onNewCalculationForVessel={handleNewCalculationForVessel}
               onApplyVesselToCurrent={handleApplyVesselToCurrent}
               zoneLoads={zoneLoads}
@@ -1622,7 +1640,7 @@ export default function Home() {
               onClose={() => setWorkspace('deck')}
               onChooseVessel={() => {
                 setWorkspace('deck')
-                openSection('vessel')
+                openSection('vessel', 'library')
               }}
             />
           ) : (
@@ -1634,7 +1652,7 @@ export default function Home() {
               open: there the deck itself is being set up. */}
           {!hasCargo && !toolArmed && activeSection !== 'vessel' && (
             <EmptyDeck
-              onChooseVessel={() => openSection('vessel')}
+              onChooseVessel={() => openSection('vessel', 'library')}
               onAddCargo={() => openSection('cargo')}
               onOpenExample={() => {
                 createProject('Демо-расчёт', { demo: true })

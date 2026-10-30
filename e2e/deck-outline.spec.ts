@@ -171,3 +171,20 @@ test.describe('Non-rectangular deck outline', () => {
     await expect(page.getByText(/Не поместилось/)).not.toBeVisible()
   })
 })
+
+// The deck's right-click menu stays where it was opened while the side
+// panel scrolls — switching sections scrolls it as its content gets shorter,
+// and that used to close the menu just opened.
+test('the deck menu stays open while the side panel scrolls', async ({ page }) => {
+  await page.goto('/')
+  await clearCalculation(page)
+  await openSection(page, 'Судно')
+  const background = page.locator('svg [data-deck-background="true"]').first()
+  await background.click({ position: { x: 300, y: 150 }, button: 'right', force: true })
+  await expect(page.getByRole('button', { name: 'Редактировать' })).toBeVisible()
+  await page.locator('.section-content').evaluate((el) => {
+    el.scrollTop = 200
+    el.dispatchEvent(new Event('scroll'))
+  })
+  await expect(page.getByRole('button', { name: 'Редактировать' })).toBeVisible()
+})

@@ -5,6 +5,7 @@ import { PanelBlock } from '@/components/shell/SectionPanel'
 import { SeparationRulesEditor, VesselMotionPicker } from '@/components/sections/checks/CheckSettings'
 import type { Check, CheckAction, CheckDetailLine, CheckDetails, CheckId, CheckStatus } from '@/lib/checks'
 import { SECTION_TITLE, type SectionId } from '@/lib/workflow'
+import type { VesselStepId } from '@/lib/vesselSteps'
 import { cn } from '@/lib/utils'
 
 // «Проверки» (spec 8.4): one list. A click opens a check: what it found,
@@ -36,7 +37,7 @@ export function ChecksSection({
   // The open trip, and opening another.
   tripIndex: number
   onSelectTrip: (index: number) => void
-  onOpenSection: (id: SectionId) => void
+  onOpenSection: (id: SectionId, step?: VesselStepId) => void
   onOpenStability: () => void
   onCheckAction: (action: CheckAction) => void
 }) {
@@ -172,13 +173,21 @@ const ACTION_LABEL: Record<CheckAction['kind'], string> = {
 
 // Where a check's settings are: another section, or the stability
 // workspace. None for the checks whose settings are here.
-function TargetLink({ check, onOpenSection, onOpenStability }: { check: Check; onOpenSection: (id: SectionId) => void; onOpenStability: () => void }) {
+function TargetLink({
+  check,
+  onOpenSection,
+  onOpenStability,
+}: {
+  check: Check
+  onOpenSection: (id: SectionId, step?: VesselStepId) => void
+  onOpenStability: () => void
+}) {
   const { target } = check
   if (target === 'checks') return null
   const [label, text, open] =
     target === 'stability'
       ? [`${check.title}: открыть панель остойчивости`, 'Открыть остойчивость', onOpenStability]
-      : [`${check.title}: открыть раздел «${SECTION_TITLE[target]}»`, `Настроить в разделе «${SECTION_TITLE[target]}»`, () => onOpenSection(target)]
+      : [`${check.title}: открыть раздел «${SECTION_TITLE[target]}»`, `Настроить в разделе «${SECTION_TITLE[target]}»`, () => onOpenSection(target, check.targetStep)]
   return (
     <button
       type="button"

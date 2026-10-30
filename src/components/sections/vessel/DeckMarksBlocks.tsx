@@ -75,7 +75,7 @@ export function ObstaclesBlock() {
   const u = UNIT_LABEL[unit]
 
   return (
-    <PanelBlock title="Препятствия">
+    <PanelBlock title="Препятствия" fold="obstacles">
       <Hint>Груз в препятствие не ставится — ни вручную, ни авторасстановкой.</Hint>
       <div role="group" aria-label="Нарисовать препятствие" className="flex flex-wrap gap-1.5">
         {SHAPES.map(({ shapeType, label, Icon }) => (
@@ -167,7 +167,7 @@ export function SocketsBlock() {
   const setPlacing = useCalculator((s) => s.setPlacingPowerSocket)
   const removeSocket = useCalculator((s) => s.removePowerSocket)
   return (
-    <PanelBlock title="Розетки">
+    <PanelBlock title="Розетки" fold="sockets">
       <ToolButton pressed={placing} onClick={() => setPlacing(!placing)}>
         <Plug className="h-4 w-4" aria-hidden="true" />
         Поставить розетку
@@ -199,7 +199,7 @@ export function DeckLashingPointsBlock() {
   const free = points.filter((p) => !p.placementId)
   const u = UNIT_LABEL[unit]
   return (
-    <PanelBlock title="Точки крепления на палубе">
+    <PanelBlock title="Точки крепления на палубе" fold="lashing">
       <ToolButton pressed={placing} onClick={() => setPlacing(!placing)}>
         <Anchor className="h-4 w-4" aria-hidden="true" />
         Поставить точку
@@ -234,7 +234,7 @@ export function MarksBlock() {
   const removeMark = useCalculator((s) => s.removeAnnotation)
   const armed = placing?.kind === 'note'
   return (
-    <PanelBlock title="Метки">
+    <PanelBlock title="Метки" fold="marks">
       <div className="flex flex-wrap gap-1.5">
         <ToolButton pressed={armed && !placing.withLeader} onClick={() => setPlacing(armed && !placing.withLeader ? null : { kind: 'note', withLeader: false })}>
           <MessageSquare className="h-4 w-4" aria-hidden="true" />

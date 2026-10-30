@@ -17,8 +17,16 @@ export function sectionBar(page: Page): Locator {
 }
 
 // Opens a section in the left panel (spec 5.3).
+// «Судно» folds its blocks (spec 8.1); here they are all opened, for the
+// tests of what's in them — vessel-steps.spec.ts tests the folding.
 export async function openSection(page: Page, title: 'Судно' | 'Грузы' | 'Размещение' | 'Проверки' | 'Отчёт') {
   await sectionBar(page).getByRole('button', { name: new RegExp(`^${title}`) }).click()
+  if (title === 'Судно') await unfoldVesselBlocks(page)
+}
+
+export async function unfoldVesselBlocks(page: Page) {
+  const folded = page.locator('[data-fold] > h3 > button[aria-expanded="false"]')
+  while ((await folded.count()) > 0) await folded.first().click()
 }
 
 // «Подобрать варианты» in «Размещение» (spec 8.2): the best variant goes on
@@ -80,6 +88,10 @@ export async function chooseLibraryVessel(
   )
   if (asked) await dialog.getByRole('button', { name: how }).click()
   await expect(dialog).toBeHidden()
+  // The vessel's block folds to its name, in a new calculation for it too;
+  // then «Судно» is opened in full again.
+  await expect(page.locator('[data-fold="library"] > h3 > button')).toContainText(label)
+  await unfoldVesselBlocks(page)
 }
 
 // An item of the calculation's menu, top left (spec 5.2).

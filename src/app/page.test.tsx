@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import Home from './page'
 import { clearCalculatorHistory, redoCalculator, undoCalculator, useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
+import { useVesselSteps } from '@/store/vesselSteps'
 import { buildPlanPdf, exportPlanPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
@@ -58,9 +59,23 @@ function inspectorCategoryOfPin(pinId: string): string | null {
 }
 
 // The frame's sections (spec 5.3): the left panel shows one at a time.
+// «Судно» folds its blocks (8.1); here they are all opened, for the tests
+// of what's in them — the folding has tests of its own.
 function openSection(title: 'Судно' | 'Грузы' | 'Размещение' | 'Проверки' | 'Отчёт') {
   const nav = screen.getByRole('navigation', { name: 'Разделы' })
   fireEvent.click(within(nav).getByRole('button', { name: new RegExp(`^${title}`) }))
+  if (title === 'Судно') unfoldVesselBlocks()
+}
+
+function unfoldVesselBlocks() {
+  for (const fold of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-fold] > h3 > button[aria-expanded="false"]'))) fireEvent.click(fold)
+}
+
+// A block of «Судно»: open or folded, and the line it folds to.
+function vesselBlock(id: string): { open: boolean; line: string; button: HTMLButtonElement } {
+  const button = document.querySelector<HTMLButtonElement>(`[data-fold="${id}"] > h3 > button`)!
+  const line = document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent ?? ''
+  return { open: button.getAttribute('aria-expanded') === 'true', line, button }
 }
 
 // A check in «Проверки» (spec 8.4), opened: its row, with what it found.
@@ -126,6 +141,8 @@ describe('Home (page.tsx)', () => {
   beforeEach(() => {
     stubLocalStorage()
     useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    // Which «Судно» blocks were opened lives for the session, per calculation.
+    useVesselSteps.setState({ byProject: {} })
     // The deck's tools are the page's state, not the calculation's: loading
     // a project doesn't disarm one a test left armed.
     useCalculator.setState({
@@ -220,6 +237,11 @@ describe('Home (page.tsx)', () => {
     openSection('Судно')
     chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Новый расчёт с этим судном')
     expect(toast.success).toHaveBeenCalledWith('Создан расчёт для «Алексей Кузнецов (IMO 9692648)»')
+    // The new calculation's «Судно» opens on what is next to do: the deck
+    // strength its sources disagree on; the vessel's block folds to its name.
+    expect(vesselBlock('library')).toMatchObject({ open: false, line: 'Шаг 1. Алексей Кузнецов (IMO 9692648)' })
+    expect(vesselBlock('card').open).toBe(true)
+    fireEvent.click(vesselBlock('library').button)
     expect(screen.getByText('применено')).toBeTruthy()
   })
 
@@ -1167,6 +1189,79 @@ describe('Home (page.tsx)', () => {
   // Stage 4, group C2 (spec 8.1): the rest of «Судно» — the deck's shape back
   // to a rectangle, its photo, obstacles placed by X/Y, numbered zones and
   // the lashing points tied to no stack.
+  // Revision 2026-10-30 (spec 8.1): «Судно» as steps, each block folded to
+  // a line of what it holds; everything open at once lost new users.
+  describe('«Судно» as steps', () => {
+    // The section tab alone, without the helper's opening of every block.
+    const enterVessel = () => fireEvent.click(within(screen.getByRole('navigation', { name: 'Разделы' })).getByRole('button', { name: /^Судно/ }))
+
+    it('folds every block to its line on a calculation with nothing to look at, the steps numbered and the rest under «Дополнительно»', () => {
+      render(<Home />)
+      enterVessel()
+      const ids = ['library', 'deck', 'card', 'zones', 'stability', 'obstacles', 'photo', 'sockets', 'lashing', 'marks']
+      expect(ids.map((id) => vesselBlock(id).open)).toEqual(ids.map(() => false))
+      expect(ids.map((id) => vesselBlock(id).line)).toEqual([
+        'Шаг 1. Своя палуба',
+        'Шаг 2. 8 × 20 м · нос справа',
+        'Шаг 3. вес груза не ограничен',
+        'Шаг 4. нет',
+        'Шаг 5. нет данных судна',
+        'нет',
+        'нет',
+        'нет',
+        'нет',
+        'нет',
+      ])
+      // Named by the title alone.
+      expect(screen.getByRole('heading', { name: 'Палуба' })).toBeTruthy()
+      expect(screen.getByText('Дополнительно')).toBeTruthy()
+      // Opened, a block shows what's in it; folded again, it doesn't.
+      fireEvent.click(vesselBlock('deck').button)
+      expect(screen.getByLabelText('Ширина (борт–борт)')).toBeTruthy()
+      fireEvent.click(vesselBlock('deck').button)
+      expect(screen.queryByLabelText('Ширина (борт–борт)')).toBeNull()
+    })
+
+    it('opens the vessel step on a new calculation, and keeps what the user opened when they come back', () => {
+      render(<Home />)
+      act(() => {
+        useProjects.getState().createProject()
+      })
+      enterVessel()
+      expect(vesselBlock('library').open).toBe(true)
+      expect(vesselBlock('deck').open).toBe(false)
+      fireEvent.click(vesselBlock('deck').button)
+      openSection('Грузы')
+      enterVessel()
+      expect([vesselBlock('library').open, vesselBlock('deck').open, vesselBlock('card').open]).toEqual([true, true, false])
+    })
+
+    it('opens the step with something to look at, which stays open once it is done', () => {
+      render(<Home />)
+      openSection('Судно')
+      chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Новый расчёт с этим судном')
+      expect(vesselBlock('card')).toMatchObject({ open: true, line: expect.stringMatching(/прочность палубы не выбрана\. нужна проверка$/) })
+      fireEvent.click(screen.getByRole('button', { name: '5 т/м²' }))
+      // Nothing folds under the user's hands.
+      expect(vesselBlock('card')).toMatchObject({ open: true, line: 'Шаг 3. до 2550 т · 5 т/м²' })
+      expect(vesselBlock('zones').line).toBe('Шаг 4. 1 зона')
+    })
+
+    it('«Настроить в разделе «Судно»» from a check opens its block', () => {
+      render(<Home />)
+      openSection('Судно')
+      chooseVessel('Алексей Кузнецов (IMO 9692648)', 'Новый расчёт с этим судном')
+      fireEvent.click(vesselBlock('card').button)
+      expect(vesselBlock('card').open).toBe(false)
+      openSection('Проверки')
+      // The deck strength left to choose is the vessel card's.
+      openCheckRow('zones')
+      fireEvent.click(screen.getByRole('button', { name: 'Зоны т/м²: открыть раздел «Судно»' }))
+      expect(vesselBlock('card').open).toBe(true)
+      expect(screen.getByRole('group', { name: 'Лимит прочности палубы' })).toBeTruthy()
+    })
+  })
+
   describe('«Судно»: shape, photo, obstacles, zones, points', () => {
     it('«Сбросить к прямоугольнику» undoes a drawn outline, and «Отменить» brings it back', () => {
       render(<Home />)

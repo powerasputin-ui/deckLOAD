@@ -217,6 +217,9 @@ interface CalculatorState {
   // autoPlacementKey (item + position) instead. UI state only — never saved,
   // never part of undo.
   selectedAutoKeys: string[]
+  // The calculation whose data the store holds — set when a calculation is
+  // loaded into it, a render after the active one changes. UI state only.
+  loadedProjectId: string | null
   // The cargo placed by clicking the deck (spec 7.1, «Поставить»). A cargo
   // from the catalogue joins the list first and is armed from there.
   activeStampId: string | null
@@ -957,6 +960,7 @@ export const useCalculator = create<CalculatorState>()(
   selectedPinIds: [],
   selectedAutoKeys: [],
   selectedManualIds: [],
+  loadedProjectId: null,
   activeStampId: null,
   stampRotated: false,
   placingLashingPoint: false,

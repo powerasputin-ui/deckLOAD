@@ -43,7 +43,7 @@ export function VesselLibrary({
   }
 
   return (
-    <PanelBlock title="Судно из библиотеки">
+    <PanelBlock title="Судно из библиотеки" fold="library">
       <ul className="space-y-1" aria-label="Суда из библиотеки">
         {VESSEL_TEMPLATES.map((tpl) => {
           const applied = tpl.id === vesselTemplateId

@@ -12,6 +12,7 @@ import type { LoadingState } from './stability'
 import { NO_DECK_HEIGHT, NO_HYDROSTATICS, prefixedReason } from './stabilityConditions'
 import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
+import type { VesselStepId } from './vesselSteps'
 
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'none'
 
@@ -29,6 +30,8 @@ export interface Check {
   // Where its settings are (8.4, «Где настройки»): a section, or the
   // stability workspace in the deck's place.
   target: SectionId | 'stability'
+  // The block of «Судно» that opens with it.
+  targetStep?: VesselStepId
 }
 
 // One trip's stability by the booklet check (stabilityConditions.ts); a
@@ -164,7 +167,7 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // Вес палубы.
   {
-    const base = { id: 'deck-weight' as const, title: 'Вес палубы', target: 'vessel' as const }
+    const base = { id: 'deck-weight' as const, title: 'Вес палубы', target: 'vessel' as const, targetStep: 'card' as const }
     const limit = f.maxDeckCargoT
     if (limit === undefined) checks.push({ ...base, status: 'none', detail: 'Лимит не задан' })
     else {
@@ -183,7 +186,8 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // Зоны т/м².
   {
-    const base = { id: 'zones' as const, title: 'Зоны т/м²', target: 'vessel' as const }
+    // The deck strength left to choose is chosen on the vessel's card.
+    const base = { id: 'zones' as const, title: 'Зоны т/м²', target: 'vessel' as const, targetStep: f.deckStrength === 'pending' ? ('card' as const) : ('zones' as const) }
     const overloaded = tripsWhere((t) => t.overloadedZones > 0)
     const pressed = tripsWhere((t) => (t.overPressureStacks ?? 0) > 0)
     if (overloaded.length > 0 || pressed.length > 0) {

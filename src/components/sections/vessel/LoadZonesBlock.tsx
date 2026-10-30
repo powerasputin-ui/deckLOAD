@@ -28,7 +28,7 @@ export function LoadZonesBlock({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const u = UNIT_LABEL[unit]
 
   return (
-    <PanelBlock title="Зоны нагрузки">
+    <PanelBlock title="Зоны нагрузки" fold="zones">
       <p className="text-xs text-ink-2">
         Лимит — плотность, тонн на квадратный метр зоны, а не общий вес: при лимите 2 т/м² зона 5 × 4 м держит до 40 т. Перегруз —
         предупреждение, груз не блокируется.

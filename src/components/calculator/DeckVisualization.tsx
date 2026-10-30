@@ -515,14 +515,21 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
+    // Only a scroll that moves the deck takes the menu off the spot it was
+    // opened on — not one in the side panel, which a section switch makes
+    // as the panel's content gets shorter.
+    const scrolled = (e: Event) => {
+      const deck = svgRef.current
+      if (!deck || e.target === document || (e.target instanceof Node && e.target.contains(deck))) close()
+    }
     window.addEventListener('pointerdown', close)
     window.addEventListener('keydown', close)
-    window.addEventListener('scroll', close, true)
+    window.addEventListener('scroll', scrolled, true)
     window.addEventListener('resize', close)
     return () => {
       window.removeEventListener('pointerdown', close)
       window.removeEventListener('keydown', close)
-      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('scroll', scrolled, true)
       window.removeEventListener('resize', close)
     }
   }, [contextMenu])
