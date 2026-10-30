@@ -22,7 +22,7 @@ import { buildChecks, type Check, type CheckStatus, type PlanFacts } from './che
 import { deckStabilityMissing, evaluateDeckTripStability } from './planFacts'
 import { buildPlanDrawing, type PlanDrawing } from './planDrawing'
 import { drawPlanOnPdf } from './planToPdf'
-import { vesselTemplateById } from './vesselTemplates'
+import { appliedVessel } from './vesselLibrary'
 
 // The plan for the vessel (spec 11): A4 landscape, a sheet per trip — the
 // header, the deck drawn from the calculation, the trip's cargo, its summary
@@ -382,8 +382,8 @@ export const CHECK_STATUS_WORD: Record<CheckStatus, string> = { ok: 'в норм
 export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
   const { deck, items, trips, numbers } = input
   const unit = UNIT_LABEL[deck.unit]
-  const tpl = vesselTemplateById(deck.vesselTemplateId)
-  const vessel = tpl ? tpl.label : `Своя палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
+  const applied = appliedVessel(deck)
+  const vessel = applied ? applied.label : `Своя палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
   const count = trips.length
   const lashingOf = (placements: LashingPlacement[]): PdfLashing => {
     const { rows, dangerousGoodsNames } = buildLashingRequirementRows(placements, items, deck.lashingPoints ?? [])

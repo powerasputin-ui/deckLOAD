@@ -9,7 +9,7 @@ import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { convertLength, undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
-import { vesselTemplateById } from '@/lib/vesselTemplates'
+import { appliedVessel } from '@/lib/vesselLibrary'
 import { fmtNumber } from '@/lib/utils'
 
 // No real vessel's cargo deck comes anywhere close to this — the largest
@@ -40,7 +40,7 @@ export function DeckBlock() {
   const maxDeckInUnit = convertLength(MAX_DECK_DIMENSION_M, 'm', deck.unit)
   const forward = deck.deckForwardIsPositiveY ?? true
   const bow = DRAWING_EDGE_WORD[hullSideEdges(deck.width, deck.length, forward).bow]
-  const tpl = vesselTemplateById(deck.vesselTemplateId)
+  const applied = appliedVessel(deck)
 
   return (
     <PanelBlock title="Палуба" fold="deck">
@@ -127,7 +127,7 @@ export function DeckBlock() {
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-ink-2">
             Нос на схеме: <span className="font-medium text-ink">{bow}</span>
-            {tpl && tpl.deckForwardIsPositiveY === undefined && <span className="text-warn"> — по умолчанию, проверьте</span>}
+            {applied && !applied.bowFromData && <span className="text-warn"> — по умолчанию, проверьте</span>}
           </span>
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setForward(!forward)}>
             Сменить

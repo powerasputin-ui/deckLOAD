@@ -10,8 +10,8 @@
 // Fields the source document does not give are explicitly estimated and
 // marked as such in `note`, never silently invented as if they were real.
 
-import type { VesselStabilityData, DeckShipFrame, VariableWeightItem } from './stability'
-import type { RestrictionZone } from './packing'
+import type { VesselStabilityData, DeckShipFrameInput, VariableWeightItem } from './stability'
+import type { LoadZone, RestrictionZone } from './packing'
 
 export interface VesselTemplate {
   id: string
@@ -29,14 +29,20 @@ export interface VesselTemplate {
   // geometry-only template just leaves stability unset instead of lying
   // with invented numbers.
   vessel?: VesselStabilityData
-  shipFrame?: DeckShipFrame
+  shipFrame?: DeckShipFrameInput
   deckForwardIsPositiveY?: boolean
   // Hard-blocked obstacles on the real deck (hatches, moon pool, crane
   // pedestals, etc.) — seeded onto the new project's deck.restrictionZones
   // on apply, same mechanism a user could draw by hand, just pre-filled
   // from the real drawing.
   restrictionZones?: RestrictionZone[]
+  // The deck's rated load zones (t/m²): a vessel the user saved from a
+  // calculation brings its zones along; a built-in one has its strength in
+  // `limits` instead.
+  loadZones?: LoadZone[]
   note: string // shown to the user on selection — what's real vs. estimated
+  // When the user saved it (their own vessels only), ISO 8601.
+  savedAt?: string
   // Operational limits, kept as STRUCTURED numbers rather than only as
   // prose inside `note`. A caveat buried in a toast the user dismisses once
   // is not a safety control; a number the app can show, compare against and

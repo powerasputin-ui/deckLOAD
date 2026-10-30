@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { isWholeDeckZone, useCalculator, UNIT_LABEL, convertLength } from '@/store/calculator'
-import { vesselTemplateById } from '@/lib/vesselTemplates'
+import { appliedVessel } from '@/lib/vesselLibrary'
 import { cn, fmtNumber } from '@/lib/utils'
 
 // The vessel's card (spec 8.1): what the calculation is planned for and the
@@ -19,18 +19,19 @@ export function VesselCard() {
   const setDeck = useCalculator((s) => s.setDeck)
   const chooseDeckStrength = useCalculator((s) => s.chooseDeckStrength)
   const uid = useId()
-  const tpl = vesselTemplateById(deck.vesselTemplateId)
-  const strength = tpl?.limits?.deckStrengthTPerM2
+  // The vessel as the calculation copied it when applied.
+  const applied = appliedVessel(deck)
+  const strength = applied?.deckStrengthTPerM2
   const choice = deck.deckStrengthChoiceTPerM2
   const pending = !!strength && choice === undefined
   // The choice made, but the zone over the whole deck that carries it gone.
   const zoneMissing = !!strength && choice !== undefined && !(deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length))
-  const stackHeightM = tpl?.limits?.maxStackHeightM
+  const stackHeightM = applied?.maxStackHeightM
 
   return (
     <PanelBlock title="Карточка судна" fold="card">
       <p className="text-sm font-medium" data-testid="vessel-name">
-        {tpl ? tpl.label : 'Своя палуба'}
+        {applied ? applied.label : 'Своя палуба'}
       </p>
       <dl className="space-y-1.5 text-sm">
         {strength && (
@@ -101,20 +102,20 @@ export function VesselCard() {
             value={`${fmtNumber(convertLength(stackHeightM, 'm', deck.unit))} ${UNIT_LABEL[deck.unit]}`}
           />
         )}
-        {tpl && (
+        {applied && (
           <Row
             term="Направление носа"
-            value={tpl.deckForwardIsPositiveY === undefined ? 'по умолчанию — проверьте' : 'из данных судна'}
-            tone={tpl.deckForwardIsPositiveY === undefined ? 'text-warn' : undefined}
+            value={applied.bowFromData ? 'из данных судна' : 'по умолчанию — проверьте'}
+            tone={applied.bowFromData ? undefined : 'text-warn'}
           />
         )}
-        {!tpl && <Row term="Данные остойчивости" value={deck.vessel ? 'заданы' : 'не заданы'} />}
+        {!applied && <Row term="Данные остойчивости" value={deck.vessel ? 'заданы' : 'не заданы'} />}
       </dl>
-      {tpl && (
+      {applied?.note && (
         <details className="text-xs">
           <summary className="cursor-pointer text-ink-2 hover:text-ink">Откуда данные</summary>
           <p className="mt-1 whitespace-pre-line text-ink-2" data-testid="vessel-note">
-            {tpl.note}
+            {applied.note}
           </p>
         </details>
       )}

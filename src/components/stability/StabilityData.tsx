@@ -26,7 +26,7 @@ import {
   type VesselStabilityData,
 } from '@/lib/stability'
 import { parseKnTable } from '@/lib/tablePaste'
-import { vesselTemplateById } from '@/lib/vesselTemplates'
+import { appliedVessel } from '@/lib/vesselLibrary'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { cn, fmtNumber, pluralRu } from '@/lib/utils'
 
@@ -39,22 +39,27 @@ const num = (v: CellValue) => (typeof v === 'number' ? v : undefined)
 // vessel's data by group, each field saved on Enter or leaving it. A
 // library vessel's groups come filled in and folded.
 export function StabilityData() {
-  const vessel = useCalculator((s) => s.deck.vessel) ?? EMPTY_VESSEL
+  const deckVessel = useCalculator((s) => s.deck.vessel)
+  const vessel = deckVessel ?? EMPTY_VESSEL
+  const vesselInfo = useCalculator((s) => s.deck.vesselInfo)
   const templateId = useCalculator((s) => s.deck.vesselTemplateId)
-  const template = vesselTemplateById(templateId)
-  const fromLibrary = !!template?.vessel
+  // The library vessel as the calculation copied it.
+  const applied = appliedVessel({ vesselInfo, vesselTemplateId: templateId })
+  const fromLibrary = !!applied && !!deckVessel
 
   return (
     <div className="space-y-2">
-      {template && (
+      {applied && (
         <div className="rounded-md border border-line bg-surface px-3 py-2 text-xs">
           <p>
-            Данные из библиотеки: <span className="font-medium">{template.label}</span>
+            Данные из библиотеки: <span className="font-medium">{applied.label}</span>
           </p>
-          <details className="mt-1">
-            <summary className="cursor-pointer text-ink-2 hover:text-ink">Откуда данные</summary>
-            <p className="mt-1 text-ink-2">{template.note}</p>
-          </details>
+          {applied.note && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-ink-2 hover:text-ink">Откуда данные</summary>
+              <p className="mt-1 text-ink-2">{applied.note}</p>
+            </details>
+          )}
         </div>
       )}
       <VesselGroup particulars={vessel.particulars} open={!fromLibrary} />

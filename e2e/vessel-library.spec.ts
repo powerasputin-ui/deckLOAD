@@ -38,3 +38,35 @@ test.describe('Library vessel deck strength', () => {
     await expect(zones).toHaveAttribute('data-check-status', 'ok')
   })
 })
+
+// Revision 2026-10-30 (spec 8.1): the user's own vessels — saved from the
+// deck, kept in the browser, carried to another one as a file.
+test.describe('Own vessels', () => {
+  test('a vessel saved from the deck stays after a reload, and comes back from its file', async ({ page }) => {
+    await page.goto('/')
+    await openSection(page, 'Судно')
+    await page.getByRole('button', { name: 'Сохранить палубу как судно' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Сохранить палубу как судно' })
+    await dialog.getByLabel('Название судна').fill('Нептун')
+    await dialog.getByLabel('Откуда данные').fill('Формуляр, ред. 2')
+    await dialog.getByRole('button', { name: 'Сохранить' }).click()
+    const library = page.getByRole('list', { name: 'Суда из библиотеки' })
+    await expect(library.getByRole('button', { name: /^Нептун/ })).toHaveAttribute('aria-current', 'true')
+
+    await page.reload()
+    await openSection(page, 'Судно')
+    await expect(library.getByRole('button', { name: /^Нептун/ })).toBeVisible()
+
+    // To a file, and back into a browser without it.
+    const downloading = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Экспорт' }).click()
+    const file = await (await downloading).path()
+    await page.evaluate(() => localStorage.removeItem('deckload-vessels'))
+    await page.reload()
+    await openSection(page, 'Судно')
+    await expect(library.getByRole('button', { name: /^Нептун/ })).toHaveCount(0)
+    await page.getByTestId('vessel-library-input').setInputFiles(file)
+    await expect(library.getByRole('button', { name: /^Нептун/ })).toBeVisible()
+    await expect(page.getByText('Импортировано · новых: 1')).toBeVisible()
+  })
+})

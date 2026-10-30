@@ -72,6 +72,21 @@ describe('deckForVessel', () => {
     // No stack height in the vessel's data: the deck doesn't limit it.
     expect(deck.clearance).toBe(0)
   })
+
+  // Revision 2026-10-30: the calculation keeps a copy of the vessel, so a
+  // vessel edited or deleted in the library leaves it as it was.
+  it('copies what the calculation shows of the vessel, and a saved vessel\'s load zones in the deck\'s unit', () => {
+    expect(deckForVessel(kuznetsov, old).vesselInfo).toEqual({
+      label: kuznetsov.label,
+      note: kuznetsov.note,
+      deckStrengthTPerM2: kuznetsov.limits!.deckStrengthTPerM2,
+      maxStackHeightM: 3,
+      bowFromData: true,
+    })
+    expect(deckForVessel(commander, old).vesselInfo).toMatchObject({ label: commander.label, bowFromData: false, deckStrengthTPerM2: undefined })
+    const own = { ...commander, id: 'user-1', loadZones: [{ id: 'z', x: 1, y: 2, width: 3, length: 4, maxLoadPerArea: 5 }] }
+    expect(deckForVessel(own, { ...old, unit: 'cm' }).loadZones).toEqual([{ id: 'z', x: 100, y: 200, width: 300, length: 400, maxLoadPerArea: 5 }])
+  })
 })
 
 describe('deckForVesselDrops', () => {

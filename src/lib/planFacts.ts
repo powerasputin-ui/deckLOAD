@@ -26,7 +26,7 @@ import {
 } from './packing'
 import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
 import { evaluateTripStability, stabilityMissing, weightlessUnits, type TripStabilityResult } from './stabilityConditions'
-import { vesselTemplateById } from './vesselTemplates'
+import { appliedVessel } from './vesselLibrary'
 import { UNIT_LABEL } from './units'
 import { fmtNumber } from './utils'
 import { autoPlacementKey } from './stackSelection'
@@ -210,7 +210,7 @@ export function deckStabilityMissing(deck: DeckConfig, t: PackingResult): string
 }
 
 function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {
-  if (!vesselTemplateById(deck.vesselTemplateId)?.limits?.deckStrengthTPerM2) return undefined
+  if (!appliedVessel(deck)?.deckStrengthTPerM2) return undefined
   if (deck.deckStrengthChoiceTPerM2 === undefined) return 'pending'
   return (deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length)) ? undefined : 'unchecked'
 }

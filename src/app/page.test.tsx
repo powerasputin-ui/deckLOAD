@@ -5,6 +5,8 @@ import Home from './page'
 import { clearCalculatorHistory, redoCalculator, undoCalculator, useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
 import { useVesselSteps } from '@/store/vesselSteps'
+import { useVesselLibrary } from '@/store/vesselLibrary'
+import { VESSEL_TEMPLATES } from '@/lib/vesselTemplates'
 import { buildPlanPdf, exportPlanPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
@@ -143,6 +145,8 @@ describe('Home (page.tsx)', () => {
     useProjects.setState({ projects: [], activeId: null, hydrated: false })
     // Which «Судно» blocks were opened lives for the session, per calculation.
     useVesselSteps.setState({ byProject: {} })
+    // The user's own vessels live in the browser, read afresh.
+    useVesselLibrary.setState({ vessels: [], hydrated: false, broken: false })
     // The deck's tools are the page's state, not the calculation's: loading
     // a project doesn't disarm one a test left armed.
     useCalculator.setState({
@@ -1189,6 +1193,79 @@ describe('Home (page.tsx)', () => {
   // Stage 4, group C2 (spec 8.1): the rest of «Судно» — the deck's shape back
   // to a rectangle, its photo, obstacles placed by X/Y, numbered zones and
   // the lashing points tied to no stack.
+  // Revision 2026-10-30 (spec 8.1): the user's own vessels in the library —
+  // saved from the open calculation, renamed, updated, copied, deleted. A
+  // calculation keeps its copy of the vessel, whatever the library does.
+  describe('the vessel library', () => {
+    const library = () => screen.getByRole('list', { name: 'Суда из библиотеки' })
+    const vesselRow = (name: RegExp) => within(library()).getByRole('button', { name })
+    const vesselAction = (vessel: string, action: string) => {
+      fireEvent.click(screen.getByRole('button', { name: `Действия с судном «${vessel}»` }))
+      fireEvent.click(screen.getByRole('button', { name: action }))
+    }
+    const saveDialog = (title: string, name: string, note?: string) => {
+      const dialog = screen.getByRole('dialog', { name: title })
+      fireEvent.change(within(dialog).getByLabelText('Название судна'), { target: { value: name } })
+      if (note !== undefined) fireEvent.change(within(dialog).getByLabelText('Откуда данные'), { target: { value: note } })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^(Сохранить|Обновить)$/ }))
+    }
+
+    it('saves the open deck as a vessel the calculation is then made with, and keeps it in the calculation once deleted', () => {
+      render(<Home />)
+      openSection('Судно')
+      act(() => useCalculator.getState().setDeck({ maxDeckCargoT: 900 }))
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить палубу как судно' }))
+      saveDialog('Сохранить палубу как судно', 'Нептун', 'Формуляр, ред. 2')
+      expect(toast.success).toHaveBeenCalledWith('Судно «Нептун» сохранено в библиотеку')
+      const row = vesselRow(/^Нептун/)
+      expect(row.getAttribute('aria-current')).toBe('true')
+      expect(row.textContent).toMatch(/своё/)
+      expect(row.textContent).toMatch(/Палуба 8×20 м · до 900 т/)
+      expect(screen.getByTestId('vessel-name').textContent).toBe('Нептун')
+      expect(JSON.parse(localStorage.getItem('deckload-vessels')!).vessels.map((v: { label: string }) => v.label)).toEqual(['Нептун'])
+
+      vesselAction('Нептун', 'Удалить…')
+      fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Удалить' }))
+      expect(within(library()).queryByRole('button', { name: /^Нептун/ })).toBeNull()
+      // The calculation keeps its copy.
+      expect(screen.getByTestId('vessel-name').textContent).toBe('Нептун')
+      const [message, options] = vi.mocked(toast.info).mock.calls.at(-1)!
+      expect(message).toBe('Судно «Нептун» удалено из библиотеки')
+      act(() => (options as unknown as { action: { onClick: () => void } }).action.onClick())
+      expect(vesselRow(/^Нептун/)).toBeTruthy()
+    })
+
+    it('copies a built-in vessel to be changed, and renames and updates the user\'s own', () => {
+      render(<Home />)
+      openSection('Судно')
+      vesselAction('Коммандер (IMO 9340609)', 'Сделать копию для правки')
+      const copy = 'Коммандер (IMO 9340609) — копия'
+      expect(vesselRow(new RegExp(`^${copy.replace(/[()]/g, '\\$&')}`)).textContent).toMatch(/своё/)
+      vesselAction(copy, 'Переименовать…')
+      saveDialog('Переименовать судно', 'Коммандер, наш')
+      expect(useVesselLibrary.getState().vessels.map((v) => v.label)).toEqual(['Коммандер, наш'])
+
+      // Updated from the open calculation: its deck now.
+      act(() => useCalculator.getState().setDeck({ width: 12 }))
+      vesselAction('Коммандер, наш', 'Обновить из текущего расчёта…')
+      saveDialog('Обновить судно из расчёта', 'Коммандер, наш')
+      expect(useVesselLibrary.getState().vessels[0].deck).toMatchObject({ width: 12, length: 20 })
+      expect(useCalculator.getState().deck.vesselTemplateId).toBe(useVesselLibrary.getState().vessels[0].id)
+    })
+
+    it('says when the vessel\'s stability data has no deck height, before saving it', () => {
+      render(<Home />)
+      openSection('Судно')
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, vessel: VESSEL_TEMPLATES[0].vessel, shipFrame: { originOffsetFromMidshipsM: 10 } } })
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить палубу как судно' }))
+      const dialog = screen.getByRole('dialog', { name: 'Сохранить палубу как судно' })
+      expect(within(dialog).getByText(/^Остойчивость: гидростатика 1 точка · предел · без KN · высота палубы не задана$/)).toBeTruthy()
+      expect(within(dialog).getByText(/^Высота палубы над килем не задана/)).toBeTruthy()
+    })
+  })
+
   // Revision 2026-10-30 (spec 8.1): «Судно» as steps, each block folded to
   // a line of what it holds; everything open at once lost new users.
   describe('«Судно» as steps', () => {

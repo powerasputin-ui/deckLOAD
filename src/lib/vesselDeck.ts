@@ -6,9 +6,10 @@
 // conditions. The vessel's figures are in metres; they come over in the
 // deck's unit. Pure, so the dialog can say what goes before anything does.
 import type { DeckConfig } from '@/store/calculator'
-import type { RestrictionZone } from './packing'
+import type { LoadZone, RestrictionZone } from './packing'
 import { convertLength } from './units'
 import { pluralRu } from './utils'
+import { appliedVesselOf } from './vesselLibrary'
 import type { VesselTemplate } from './vesselTemplates'
 
 export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckConfig {
@@ -32,6 +33,8 @@ export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckCon
     length: len(tpl.deck.length),
     outline: tpl.deck.outline?.map(point),
     restrictionZones: tpl.restrictionZones?.map(zone),
+    // A vessel saved from a calculation brings its load zones along.
+    loadZones: tpl.loadZones?.map((z: LoadZone): LoadZone => ({ ...z, x: len(z.x), y: len(z.y), width: len(z.width), length: len(z.length) })),
     // The vessel's own approved figures bind as soon as it is applied — the
     // library already promises them: a stack no higher than allowed, no more
     // cargo than the deck takes.
@@ -42,6 +45,7 @@ export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckCon
     shipFrame: tpl.shipFrame,
     deckForwardIsPositiveY: tpl.deckForwardIsPositiveY,
     vesselTemplateId: tpl.id,
+    vesselInfo: appliedVesselOf(tpl),
     // A new vessel's deck strength is chosen anew when its sources disagree.
     deckStrengthChoiceTPerM2: undefined,
   }

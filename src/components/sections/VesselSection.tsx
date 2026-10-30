@@ -14,7 +14,8 @@ import { DeckBlock } from '@/components/sections/vessel/DeckBlock'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { NO_DECK_HEIGHT, STATE_LABEL } from '@/lib/stabilityConditions'
 import { firstOpenStep, REQUIRED_STEPS, vesselSteps, type VesselStepId } from '@/lib/vesselSteps'
-import { vesselTemplateById, type VesselTemplate } from '@/lib/vesselTemplates'
+import { appliedVessel } from '@/lib/vesselLibrary'
+import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { CheckStatus } from '@/lib/checks'
 import type { StatusLineInput } from '@/lib/statusLine'
 import type { ZoneLoadCheck } from '@/lib/packing'
@@ -63,17 +64,17 @@ export function VesselSection({
   onOpenStability: () => void
 }) {
   const deck = useCalculator((s) => s.deck)
-  const tpl = vesselTemplateById(deck.vesselTemplateId)
-  const strength = tpl?.limits?.deckStrengthTPerM2
+  const applied = appliedVessel(deck)
+  const strength = applied?.deckStrengthTPerM2
   const steps = vesselSteps({
-    vesselLabel: tpl?.label,
+    vesselLabel: applied?.label,
     fresh,
     deck: {
       width: deck.width,
       length: deck.length,
       unitLabel: UNIT_LABEL[deck.unit],
       bow: DRAWING_EDGE_WORD[hullSideEdges(deck.width, deck.length, deck.deckForwardIsPositiveY ?? true).bow],
-      bowAssumed: !!tpl && tpl.deckForwardIsPositiveY === undefined,
+      bowAssumed: !!applied && !applied.bowFromData,
       maxDeckCargoT: deck.maxDeckCargoT,
       strength: strength && { chosenTPerM2: deck.deckStrengthChoiceTPerM2, pending: deck.deckStrengthChoiceTPerM2 === undefined },
       zones: deck.loadZones?.length ?? 0,

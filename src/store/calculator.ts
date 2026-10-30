@@ -34,6 +34,7 @@ import {
   sanitizeCargoMaxStackHeightM,
   sanitizeCargoWeight,
 } from '@/lib/cargoValidation'
+import type { AppliedVessel } from '@/lib/vesselLibrary'
 import {
   DEFAULT_VESSEL_PARTICULARS,
   type VesselStabilityData,
@@ -157,6 +158,11 @@ export interface DeckConfig {
   // Which library vessel (VESSEL_TEMPLATES id) this deck was built from.
   // Undefined = the user's own deck, or one made before this was recorded.
   vesselTemplateId?: string
+  // The library vessel applied, as it was then: its name, where its data
+  // comes from, its disputed deck strength, its stack height limit, whether
+  // its data gives the bow (lib/vesselLibrary.ts). A copy — editing or
+  // deleting the vessel in the library leaves the calculation as it was.
+  vesselInfo?: AppliedVessel
   // The deck-strength limit (t/m²) picked for that vessel when its sources
   // disagree. Undefined = not chosen yet, which the sidebar and the stats
   // keep saying — the choice used to live only in a 20-second toast.

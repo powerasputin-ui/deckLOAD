@@ -5,6 +5,8 @@ import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacem
 import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrameInput, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
+import type { AppliedVessel } from '@/lib/vesselLibrary'
+import type { VesselTemplate } from '@/lib/vesselTemplates'
 import {
   sanitizeCargoWidth,
   sanitizeCargoLength,
@@ -448,6 +450,64 @@ function normalizeShipFrame(value: unknown): DeckShipFrameInput | undefined {
     originOffsetFromCenterlineM: offset(f.originOffsetFromCenterlineM),
     originOffsetFromMidshipsM: offset(f.originOffsetFromMidshipsM),
     heightAboveBaselineM: toOptionalPositive(f.heightAboveBaselineM),
+  }
+}
+
+function normalizeDeckStrengthRange(value: unknown): { min: number; max: number; sources: string } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const r = value as Record<string, unknown>
+  const min = toOptionalPositive(r.min)
+  const max = toOptionalPositive(r.max)
+  if (min === undefined || max === undefined) return undefined
+  return { min: Math.min(min, max), max: Math.max(min, max), sources: typeof r.sources === 'string' ? r.sources : '' }
+}
+
+// The calculation's copy of the library vessel applied (AppliedVessel).
+function normalizeAppliedVessel(value: unknown): AppliedVessel | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const label = toOptionalString(v.label)
+  if (!label) return undefined
+  return {
+    label,
+    note: toOptionalString(v.note),
+    deckStrengthTPerM2: normalizeDeckStrengthRange(v.deckStrengthTPerM2),
+    maxStackHeightM: toOptionalPositive(v.maxStackHeightM),
+    bowFromData: v.bowFromData === true,
+  }
+}
+
+// A vessel of the user's library, from the browser's storage or a library
+// file (spec 8.1, revision 2026-10-30). In metres, like the built-in ones;
+// anything that isn't a vessel — no id, no name, no deck size — is dropped.
+export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const id = toOptionalString(v.id)
+  const label = typeof v.label === 'string' ? v.label.trim() : ''
+  const deck = v.deck && typeof v.deck === 'object' ? (v.deck as Record<string, unknown>) : undefined
+  const width = toOptionalPositive(deck?.width)
+  const length = toOptionalPositive(deck?.length)
+  if (!id || !label || width === undefined || length === undefined) return undefined
+  const l = v.limits && typeof v.limits === 'object' ? (v.limits as Record<string, unknown>) : undefined
+  const limits = l && {
+    deckStrengthTPerM2: normalizeDeckStrengthRange(l.deckStrengthTPerM2),
+    maxDeckCargoT: toOptionalPositive(l.maxDeckCargoT),
+    maxStackHeightM: toOptionalPositive(l.maxStackHeightM),
+    tenFootContainerCapacity: toOptionalNonNegative(l.tenFootContainerCapacity),
+  }
+  return {
+    id,
+    label,
+    note: typeof v.note === 'string' ? v.note : '',
+    deck: { width, length, outline: normalizeOutline(deck?.outline) },
+    restrictionZones: normalizeRestrictionZones(v.restrictionZones),
+    loadZones: normalizeLoadZones(v.loadZones),
+    vessel: normalizeVessel(v.vessel),
+    shipFrame: normalizeShipFrame(v.shipFrame),
+    deckForwardIsPositiveY: typeof v.deckForwardIsPositiveY === 'boolean' ? v.deckForwardIsPositiveY : undefined,
+    limits: limits && Object.values(limits).some((x) => x !== undefined) ? limits : undefined,
+    savedAt: toOptionalString(v.savedAt),
   }
 }
 
@@ -986,6 +1046,7 @@ export function normalizeProject(p: Partial<Project>): Project {
       shipFrame: normalizeShipFrame(p.deck?.shipFrame),
       deckForwardIsPositiveY: toBool(p.deck?.deckForwardIsPositiveY, true),
       vesselTemplateId: toOptionalString(p.deck?.vesselTemplateId),
+      vesselInfo: normalizeAppliedVessel(p.deck?.vesselInfo),
       deckStrengthChoiceTPerM2: toOptionalPositive(p.deck?.deckStrengthChoiceTPerM2),
       icing: typeof p.deck?.icing === 'boolean' ? p.deck.icing : undefined,
     },
