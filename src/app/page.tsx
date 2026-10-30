@@ -77,7 +77,7 @@ import { usePlacementActions } from '@/hooks/usePlacementActions'
 import { useMergeActions } from '@/hooks/useMergeActions'
 import { isQuarantined, matchLashingCarryover } from '@/store/placementCarryover'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
-import { exportPlanPdf } from '@/lib/exportPdf'
+import { buildPlanPdf, CARGO_HEAD_FOR, exportPlanPdf, type PlanPdfInput } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { keptByVariants } from '@/lib/variantKeep'
 import { toast } from 'sonner'
@@ -142,6 +142,10 @@ function variantInputsOf(s: VariantSource, projectId: string | null, tripIndex: 
     s.mode === 'manual' ? s.manualPlacements : s.pinnedPlacementsByTrip[tripIndex],
   ]
 }
+
+// The «Отчёт» preview doesn't show the date: the PDF takes the moment it is
+// downloaded.
+const PREVIEW_DATE = new Date(0)
 
 // The five-step tour (spec 10.2). Each `selector` targets a `data-tour`
 // attribute on the real element in the frame — the tour never needs its own
@@ -1140,23 +1144,33 @@ export default function Home() {
   const openCheckDetails = useMemo(() => (openCheck ? checkDetails(planFacts, openCheck) : null), [planFacts, openCheck])
   const focusKeys = activeSection === 'checks' && openCheckDetails ? (openCheckDetails.stacks.get(clampedTripIndex) ?? null) : null
 
-  // The plan for the vessel (spec 11): every trip, drawn from the
+  // What the PDF is made of (spec 11): every trip, drawn from the
   // calculation — whatever the view, the trip on screen or the selection.
+  const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
+  const pdfData = useMemo(
+    (): Omit<PlanPdfInput, 'date'> => ({
+      projectName,
+      deck,
+      items,
+      mode,
+      trips: shownTrips,
+      manualPlacements,
+      pinnedPlacementsByTrip,
+      facts: planFacts,
+      numbers: cargoNumberByItemId,
+    }),
+    [projectName, deck, items, mode, shownTrips, manualPlacements, pinnedPlacementsByTrip, planFacts, cargoNumberByItemId]
+  )
+  const hasCargo = items.some((it) => it.quantity >= 1)
+  // «Отчёт» shows the sheets (8.8): worked out only while it is open.
+  const reportModel = useMemo(
+    () => (activeSection === 'report' && hasCargo ? buildPlanPdf({ ...pdfData, date: PREVIEW_DATE }) : null),
+    [activeSection, hasCargo, pdfData]
+  )
+
   const handleExportPdf = async () => {
-    const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
     try {
-      await exportPlanPdf({
-        projectName,
-        deck,
-        items,
-        mode,
-        trips: shownTrips,
-        manualPlacements,
-        pinnedPlacementsByTrip,
-        facts: planFacts,
-        numbers: cargoNumberByItemId,
-        date: new Date(),
-      })
+      await exportPlanPdf({ ...pdfData, date: new Date() })
       setPdfMadeFrom(calculation)
       toast.success('PDF скачан')
     } catch {
@@ -1495,7 +1509,14 @@ export default function Home() {
             />
           )}
           {activeSection === 'report' && (
-            <ReportSection hasCargo={items.some((it) => it.quantity >= 1)} onExportPdf={handleExportPdf} onSaveFile={handleExportJson} />
+            <ReportSection
+              hasCargo={hasCargo}
+              hasErrors={planChecks.some((c) => c.status === 'error')}
+              model={reportModel}
+              cargoHead={CARGO_HEAD_FOR(UNIT_LABEL[deck.unit])}
+              onExportPdf={handleExportPdf}
+              onSaveFile={handleExportJson}
+            />
           )}
         </SectionPanel>
 

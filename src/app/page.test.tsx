@@ -1601,6 +1601,51 @@ describe('Home (page.tsx)', () => {
       expect(sectionButton('Отчёт').textContent).not.toMatch(/готово/)
     })
 
+    // Spec 8.8: what the PDF will be — a trip's sheet as it prints, the
+    // sheets, what goes in, and a word when there are errors.
+    it('«Отчёт» previews a trip\'s sheet, lists the sheets and says what goes in', () => {
+      render(<Home />)
+      openSection('Отчёт')
+      expect(screen.getByRole('img', { name: 'Превью листа: Рейс 1 из 1' })).toBeTruthy()
+      const sheets = screen.getByRole('list', { name: 'Листы PDF' })
+      expect(within(sheets).getByRole('button', { name: /^Рейс 1 из 1/ }).getAttribute('aria-pressed')).toBe('true')
+      expect(within(sheets).getByText('Итого по операции')).toBeTruthy()
+      expect(screen.getByText(/^По листу на рейс: схема палубы, груз, сводка/)).toBeTruthy()
+      expect(screen.queryByText('В расчёте есть ошибки: они будут видны в PDF')).toBeNull()
+      const download = screen.getAllByRole('button', { name: /Скачать PDF/ }).at(-1)!
+      expect(download.hasAttribute('disabled')).toBe(false)
+    })
+
+    it('«Отчёт» shows the sheet of the trip picked in the list', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 4, length: 4, clearance: 0 } })
+        useCalculator.getState().addItem({ name: 'Ящик', width: 1, length: 1, height: 1, quantity: 30 })
+      })
+      openSection('Отчёт')
+      const sheets = screen.getByRole('list', { name: 'Листы PDF' })
+      const second = within(sheets).getByRole('button', { name: /^Рейс 2 из \d/ })
+      fireEvent.click(second)
+      expect(second.getAttribute('aria-pressed')).toBe('true')
+      expect(screen.getByRole('img', { name: /^Превью листа: Рейс 2 из \d/ })).toBeTruthy()
+    })
+
+    it('«Отчёт» warns that errors print too, and without cargo asks for it first', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        // Wider than the deck: it fits no trip.
+        useCalculator.getState().addItem({ name: 'Ферма', width: 30, length: 30, height: 1, quantity: 1 })
+      })
+      openSection('Отчёт')
+      expect(screen.getByText('В расчёте есть ошибки: они будут видны в PDF')).toBeTruthy()
+      clearDemoCargo()
+      expect(screen.getByText('Сначала добавьте груз.')).toBeTruthy()
+      expect(screen.queryByRole('img', { name: /^Превью листа/ })).toBeNull()
+      expect(screen.getAllByRole('button', { name: /Скачать PDF/ }).at(-1)!.hasAttribute('disabled')).toBe(true)
+    })
+
     it('the status line sums the trip up and each number opens its section', () => {
       render(<Home />)
       clearDemoCargo()
