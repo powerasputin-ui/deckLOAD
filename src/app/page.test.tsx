@@ -4968,6 +4968,24 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       expect(a().y).toBeCloseTo(14, 9)
     })
 
+    // A drawn outline: the stack used to be refused flush against its far
+    // edges, where the ray cast left the corners out.
+    it('put the stack flush against a drawn outline\'s far edge', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      act(() => {
+        useCalculator.setState({
+          deck: { ...useCalculator.getState().deck, outline: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 16 }, { x: 4, y: 20 }, { x: 0, y: 20 }] },
+        })
+      })
+      placeAB()
+      // 8 − 0.2 board offset − 2 wide: against the starboard side's offset line.
+      type('От левого борта, м', '5.8')
+      expect(a().x).toBeCloseTo(5.8, 9)
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+
     it('leave the stack where it is and say why when it can\'t stand there', () => {
       render(<Home />)
       clearDemoCargo()

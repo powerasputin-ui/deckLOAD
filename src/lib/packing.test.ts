@@ -1249,6 +1249,32 @@ describe('rectInsidePolygon', () => {
   it('rejects a rect that extends past the polygon boundary', () => {
     expect(rectInsidePolygon({ x: 3.5, y: 0, width: 1, length: 1 }, cutCorner)).toBe(false)
   })
+
+  // Touching the outline is inside, as touching is everywhere else: a stack
+  // pushed flush against the deck's usable outline — where clamping to the
+  // board offset puts it — stands on the deck. The ray cast used to leave a
+  // corner lying on the far edges out, so a stack against the right or the
+  // bottom of a drawn outline was refused as outside the deck.
+  it('accepts a rect flush against any straight edge or in a concave corner', () => {
+    expect(rectInsidePolygon({ x: 2, y: 0.5, width: 2, length: 2 }, cutCorner)).toBe(true)
+    expect(rectInsidePolygon({ x: 0.5, y: 2, width: 2, length: 2 }, cutCorner)).toBe(true)
+    expect(rectInsidePolygon({ x: 0, y: 0.5, width: 2, length: 2 }, cutCorner)).toBe(true)
+    expect(rectInsidePolygon({ x: 0.5, y: 0, width: 2, length: 2 }, cutCorner)).toBe(true)
+    expect(rectInsidePolygon({ x: 1, y: 1, width: 2, length: 2 }, cutCorner)).toBe(true)
+    expect(rectInsidePolygon({ x: 3, y: 0, width: 1, length: 3 }, cutCorner)).toBe(true)
+  })
+
+  it('still rejects a rect a millimetre past an edge', () => {
+    expect(rectInsidePolygon({ x: 2.001, y: 0.5, width: 2, length: 2 }, cutCorner)).toBe(false)
+    expect(rectInsidePolygon({ x: 0.5, y: 2.001, width: 2, length: 2 }, cutCorner)).toBe(false)
+    expect(rectInsidePolygon({ x: 3, y: 0, width: 1, length: 3.001 }, cutCorner)).toBe(false)
+  })
+
+  it('accepts a rect whose corner touches a slanted edge, and not one a millimetre past it', () => {
+    const triangle = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }]
+    expect(rectInsidePolygon({ x: 0, y: 0, width: 2, length: 2 }, triangle)).toBe(true)
+    expect(rectInsidePolygon({ x: 0, y: 0, width: 2.001, length: 2 }, triangle)).toBe(false)
+  })
 })
 
 describe('deckOutlineExclusionRects', () => {

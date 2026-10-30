@@ -1,6 +1,16 @@
 import { test, expect, type Page } from '@playwright/test'
 import { addOwnCargo, armCargo, clearCalculation, setNumber, openSection, pickVariants, tripSummaryValue } from './helpers'
 
+// The first hand-placed stack as saved: x across the deck from the port
+// side, y along it from the stern.
+async function savedManualStack(page: Page) {
+  return page.evaluate(() => {
+    const data = JSON.parse(localStorage.getItem('deckload-projects') ?? 'null')
+    const project = data?.projects?.find((p: { id: string }) => p.id === data.activeId)
+    return (project?.manualPlacements ?? [])[0] as { x: number; y: number; width: number; length: number } | undefined
+  })
+}
+
 // The outline's vertex handle at the top right of the drawing. Which deck
 // corner that is depends on how the deck is drawn (long side horizontal, bow
 // to the right), so it is found on screen.
@@ -105,16 +115,21 @@ test.describe('Non-rectangular deck outline', () => {
     if (!bgBox) throw new Error('deck background not found')
 
     // Right against the left/bottom edges (straight, unaffected by the
-    // top-right cut) — inside the 1m board-offset zone. Must be rejected.
+    // top-right cut) — inside the 1 m board-offset zone. The stack is put
+    // clear of the zone, flush against its line, as on a deck without an
+    // outline: 1 m from the stern (left) and from the starboard side
+    // (bottom). Flush against the outline used to count as outside it.
     await background.click({ position: { x: 3, y: bgBox.height - 3 }, force: true })
-    await expect(page.getByText(/0\/3 ед\./)).toBeVisible()
+    await expect(page.getByText(/1\/3 ед\./)).toBeVisible()
+    await expect.poll(async () => (await savedManualStack(page))?.y ?? -1).toBeCloseTo(1, 3)
+    const stack = (await savedManualStack(page))!
+    expect(stack.x + stack.width).toBeCloseTo(7, 3)
 
     // Well past the offset on both axes — must succeed. (Just below
     // mid-height: the stack stands centred on the click, clear of the
-    // diagonal cut above and of the offset line below, since a rect touching
-    // the outline counts as outside it.)
+    // diagonal cut above.)
     await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.55 }, force: true })
-    await expect(page.getByText(/1\/3 ед\./)).toBeVisible()
+    await expect(page.getByText(/2\/3 ед\./)).toBeVisible()
   })
 
   // Regression: handleAutoRedistribute (page.tsx) built packDeckVariants'

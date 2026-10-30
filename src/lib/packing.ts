@@ -3165,6 +3165,13 @@ export function polygonCentroid(poly: { x: number; y: number }[]): { x: number; 
 // Used to gate interactive cargo placement against a non-rectangular deck
 // outline — reuses pointInPolygon/segmentsIntersect directly, no new
 // geometry primitives.
+//
+// Touching the outline is inside, as touching is everywhere else in this
+// file. The corners are tested a hair inside the rect: one lying exactly on
+// the outline is in or out by pointInPolygon's half-open rule, which left
+// out the far edges — a stack pushed flush against the right or the bottom
+// of a drawn deck outline, where clamping to the board offset puts it, was
+// refused as outside the deck.
 export function rectInsidePolygon(
   rect: { x: number; y: number; width: number; length: number },
   poly: { x: number; y: number }[]
@@ -3175,7 +3182,14 @@ export function rectInsidePolygon(
     { x: rect.x + rect.width, y: rect.y + rect.length },
     { x: rect.x, y: rect.y + rect.length },
   ]
-  for (const c of corners) {
+  const inset = Math.min(1e-6, rect.width / 4, rect.length / 4)
+  const probes = [
+    { x: rect.x + inset, y: rect.y + inset },
+    { x: rect.x + rect.width - inset, y: rect.y + inset },
+    { x: rect.x + rect.width - inset, y: rect.y + rect.length - inset },
+    { x: rect.x + inset, y: rect.y + rect.length - inset },
+  ]
+  for (const c of probes) {
     if (!pointInPolygon(c, poly)) return false
   }
   for (let i = 0; i < corners.length; i++) {
