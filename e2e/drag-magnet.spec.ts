@@ -67,3 +67,61 @@ test('a stack let go near the deck edge stays where it was let go, locks on only
   const panel = (await page.getByRole('complementary', { name: 'Инспектор' }).boundingBox())!
   expect(panel.x + panel.width).toBeLessThan((await pallet.boundingBox())!.x)
 })
+
+// The user's case: a pallet pushed into the corner of a container and the
+// pallet beside it shook — it jumped back and forth every frame and never
+// settled there. Here a pallet is taken out of the column beside the last
+// container and pushed back past the corner of the container and the pallet
+// above it, the pointer wobbling at the end: it lands in that corner, the
+// deck's 0.1 m spacing from each.
+test('a pallet pushed into the corner of a container and a pallet settles flush in it', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Ручной').first().click()
+  await expect(page.getByRole('radio', { name: 'Ручной' })).toHaveAttribute('aria-checked', 'true')
+  const deck = (await page.locator('svg[data-deck-plan] [data-deck-background="true"]').first().boundingBox())!
+  const pxPerM = deck.width / 20
+  const boxesOf = async (name: string) => {
+    const groups = page.locator(`svg g[data-cargo-placement][data-cargo-name="${name}"]`)
+    const out: { key: string; box: { x: number; y: number; width: number; height: number } }[] = []
+    for (let i = 0; i < (await groups.count()); i++) {
+      const g = groups.nth(i)
+      out.push({ key: (await g.getAttribute('data-stack-key'))!, box: (await g.locator(':scope > rect').boundingBox())! })
+    }
+    return out
+  }
+  const containers = await boxesOf('Контейнер 20ft')
+  const lastContainer = containers.reduce((a, b) => (b.box.x > a.box.x ? b : a))
+  const containerRight = lastContainer.box.x + lastContainer.box.width
+  // The column of pallets right beside it, top to bottom.
+  const column = (await boxesOf('Паллета EUR'))
+    .filter((p) => p.box.x > containerRight && p.box.x - containerRight < 0.5 * pxPerM)
+    .sort((a, b) => a.box.y - b.box.y)
+  expect(column.length).toBeGreaterThanOrEqual(3)
+  const moved = column[1]
+  const home = moved.box
+  // The stack's own rect, not the selection halo drawn round it.
+  const rectOf = () => page.locator(`svg g[data-stack-key="${moved.key}"] > rect`)
+  const drag = async (dx: number, dy: number, wobble = false) => {
+    const r = (await rectOf().boundingBox())!
+    const from = { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 16 })
+    if (wobble) for (const [wx, wy] of [[2, -1], [-2, 1], [1, 2], [-1, -2]]) await page.mouse.move(from.x + dx + wx, from.y + dy + wy)
+    await page.mouse.up()
+  }
+
+  // Out to the open deck on the right…
+  await drag(deck.x + deck.width - 3 * pxPerM - home.x, 0)
+  await expect.poll(async () => (await rectOf().boundingBox())!.x).toBeGreaterThan(home.x + 2 * pxPerM)
+  // …and back, aimed 0.4 m past its old place into the container and the
+  // pallet above it.
+  const now = (await rectOf().boundingBox())!
+  await drag(home.x - now.x - 0.4 * pxPerM, home.y - now.y - 0.4 * pxPerM, true)
+  // The neighbours' 1 px strokes reach half a pixel past their edges, the
+  // selected pallet's 2 px one a whole pixel.
+  const spacing = 0.1 * pxPerM - 1.5
+  const above = column[0].box
+  await expect.poll(async () => Math.abs((await rectOf().boundingBox())!.x - containerRight - spacing)).toBeLessThan(1)
+  expect(Math.abs((await rectOf().boundingBox())!.y - (above.y + above.height) - spacing)).toBeLessThan(1)
+})

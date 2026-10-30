@@ -3472,11 +3472,20 @@ export function rotatePlacementAnywhere(
   return null
 }
 
-// Tetris-style drag resolution: snaps the dragged rect to the grid, then tries
-// to lock it flush (respecting `gap`) against nearby neighbours or the deck
-// margin when the raw drag target is close enough ("magnetic" threshold).
-// Falls back to a vector-slide + binary search (same as before) when nothing
-// is close enough to lock onto, so free positioning in open space still works.
+// Tetris-style drag resolution. Where the pointer wants the stack is free:
+// it goes there, locking flush (respecting `gap`) against a neighbour or the
+// deck margin on each axis that comes within the magnetic threshold — both
+// at once in a corner. Where that's taken: the nearest place to it the stack
+// can stand, which is against what is in the way, or in the corner of two
+// things.
+//
+// That second part used to try one axis at a time with the other left at
+// the pointer, then slide along the drag from wherever the stack last
+// stood. Pushed into the corner of a container and a pallet, every one of
+// those met the other neighbour, and the slide started from the previous
+// frame's spot, so the stack jumped back and forth by ~0.4 m every frame
+// and never settled in the corner. Reported live as «трясётся и не
+// встаёт». Now the answer depends on the pointer alone.
 export function resolveSnappedDragPosition(
   targetX: number,
   targetY: number,
@@ -3536,10 +3545,17 @@ export function resolveSnappedDragPosition(
     }
     return null
   }
-  const minX = edgePadding
-  const minY = edgePadding
-  const maxX = deckWidth - edgePadding - width
-  const maxY = deckLength - edgePadding - length
+  // Where the stack's own corner (x, y) may go: the deck less the board
+  // offset, its own margin included.
+  const minX = edgePadding + ml
+  const minY = edgePadding + mt
+  const maxX = deckWidth - edgePadding - width - mr
+  const maxY = deckLength - edgePadding - length - mb
+  // Lines x or y can stand on, flush against a neighbour with the gap
+  // between, the stack's own margin included (`others` already carry their
+  // own).
+  const xLinesOf = (o: { x: number; width: number }) => [o.x - gap - width - mr, o.x + o.width + gap + ml]
+  const yLinesOf = (o: { y: number; length: number }) => [o.y - gap - length - mb, o.y + o.length + gap + mt]
 
   // A margin's magnet zone reaches maxMagnetDistance from EACH edge — fine
   // for a normal item with plenty of free-slide room, but when the item's
@@ -3548,134 +3564,118 @@ export function resolveSnappedDragPosition(
   // zones can cover that entire range at once. Every drag target then falls
   // within range of at least one edge, so the item can only ever be
   // released flush against a margin — never anywhere in between, no matter
-  // where the cursor is. Capping each margin candidate's own radius to at
-  // most a third of that axis's free-slide room guarantees a real free
+  // where the cursor is. Capping each margin's own radius to at most a
+  // third of that axis's free-slide room guarantees a real free
   // (cursor-tracking) zone always survives in the middle; neighbour-flush
-  // candidates below are unaffected, since two placed items being nearly as
-  // large as the whole deck isn't the scenario this is guarding against.
-  const xRoom = Math.max(0, maxX - minX)
-  const yRoom = Math.max(0, maxY - minY)
-  const marginMagnetX = Math.min(maxMagnetDistance, xRoom / 3)
-  const marginMagnetY = Math.min(maxMagnetDistance, yRoom / 3)
+  // lines are unaffected, since two placed items being nearly as large as
+  // the whole deck isn't the scenario this is guarding against.
+  const marginMagnetX = Math.min(maxMagnetDistance, Math.max(0, maxX - minX) / 3)
+  const marginMagnetY = Math.min(maxMagnetDistance, Math.max(0, maxY - minY) / 3)
 
-  // Lock candidates: flush against the deck margin or a neighbour. These
-  // compete only against each other for "closest to the cursor, within
-  // maxDist" — the raw cursor position itself is deliberately NOT one of
-  // these candidates (see below), since it would trivially win every time
-  // (distance 0) and the neighbour/edge magnet would never fire.
-  const lockCandidates: { x: number; y: number; maxDist: number }[] = [
-    { x: minX, y: targetY, maxDist: marginMagnetX },
-    { x: maxX, y: targetY, maxDist: marginMagnetX },
-    { x: targetX, y: minY, maxDist: marginMagnetY },
-    { x: targetX, y: maxY, maxDist: marginMagnetY },
-  ]
-
-  for (const o of others) {
-    // Only snap horizontally to a neighbour if the rects would actually be
-    // vertically adjacent (span overlap) — otherwise you'd get a nonsensical
-    // snap to a neighbour clear across the deck. Uses the raw target so a
-    // small item dragged near a large neighbour is correctly detected as
-    // adjacent even when a grid-rounded position would have fallen outside
-    // the neighbour's span.
-    const vOverlap = targetY < o.y + o.length && targetY + length > o.y
-    if (vOverlap) {
-      lockCandidates.push({ x: o.x - gap - width, y: targetY, maxDist: maxMagnetDistance })
-      lockCandidates.push({ x: o.x + o.width + gap, y: targetY, maxDist: maxMagnetDistance })
+  const free = tryPos(targetX, targetY)
+  if (free) {
+    // Each axis locks on its own: to the nearest line within reach. A
+    // neighbour's x lines count only when the stack is beside it (their
+    // spans along y overlap), its y lines only when the stack is above or
+    // below it — otherwise a snap would go to something clear across the
+    // deck.
+    const xLocks = [
+      { at: minX, reach: marginMagnetX },
+      { at: maxX, reach: marginMagnetX },
+    ]
+    const yLocks = [
+      { at: minY, reach: marginMagnetY },
+      { at: maxY, reach: marginMagnetY },
+    ]
+    for (const o of others) {
+      if (free.y < o.y + o.length && free.y + length > o.y) {
+        for (const at of xLinesOf(o)) xLocks.push({ at, reach: maxMagnetDistance })
+      }
+      if (free.x < o.x + o.width && free.x + width > o.x) {
+        for (const at of yLinesOf(o)) yLocks.push({ at, reach: maxMagnetDistance })
+      }
     }
-    const hOverlap = targetX < o.x + o.width && targetX + width > o.x
-    if (hOverlap) {
-      lockCandidates.push({ x: targetX, y: o.y - gap - length, maxDist: maxMagnetDistance })
-      lockCandidates.push({ x: targetX, y: o.y + o.length + gap, maxDist: maxMagnetDistance })
+    const nearest = (locks: { at: number; reach: number }[], v: number): number | undefined => {
+      let best: number | undefined
+      for (const l of locks) {
+        const d = Math.abs(l.at - v)
+        if (d <= l.reach && (best === undefined || d < Math.abs(best - v))) best = l.at
+      }
+      return best
     }
+    const lockX = nearest(xLocks, free.x)
+    const lockY = nearest(yLocks, free.y)
+    for (const [x, y] of [
+      [lockX, lockY],
+      [lockX, free.y],
+      [free.x, lockY],
+    ]) {
+      if (x === undefined || y === undefined) continue
+      const locked = tryPos(x, y)
+      if (locked) return locked
+    }
+    return free
   }
 
+  // Taken: the nearest place to the pointer the stack can stand. For
+  // axis-aligned rects that place has its x on the pointer or on one of the
+  // lines above (the deck margin's or a neighbour's), and its y likewise, so
+  // those combinations are all there is to try — nearest first. Measured
+  // from the target kept on the deck: the pointer routinely goes past the
+  // deck's edge while dragging toward it.
+  const wideTarget = clampToDeck(
+    { x: targetX - ml, y: targetY - mt, width: width + ml + mr, length: length + mt + mb },
+    deckWidth,
+    deckLength,
+    edgePadding
+  )
+  const tx = wideTarget.x + ml
+  const ty = wideTarget.y + mt
+  // While dragging, no further than half again the stack's own size: past
+  // that the stack would leap across whatever it's being dragged over, so it
+  // stays where it last stood instead. A reflow (an unbounded magnet) takes
+  // the nearest free place however far.
+  const limit = Number.isFinite(maxMagnetDistance) ? Math.max(width, length) * 1.5 : Infinity
+  const xs = [tx, minX, maxX]
+  const ys = [ty, minY, maxY]
+  for (const o of others) {
+    const [left, right] = xLinesOf(o)
+    const [above, below] = yLinesOf(o)
+    if (left > tx + limit || right < tx - limit || above > ty + limit || below < ty - limit) continue
+    xs.push(left, right)
+    ys.push(above, below)
+  }
+  const byDistance = (vs: number[], from: number, lo: number, hi: number) =>
+    [...new Set(vs)].filter((v) => v >= lo - 1e-9 && v <= hi + 1e-9).sort((a, b) => Math.abs(a - from) - Math.abs(b - from))
+  const candidateXs = byDistance(xs, tx, minX, maxX)
+  const candidateYs = byDistance(ys, ty, minY, maxY)
   let best: { x: number; y: number } | null = null
-  let bestDist = Infinity
-  for (const c of lockCandidates) {
-    const res = tryPos(c.x, c.y)
-    if (!res) continue
-    const dist = Math.hypot(res.x - targetX, res.y - targetY)
-    if (dist <= c.maxDist && dist < bestDist) {
-      best = res
-      bestDist = dist
+  let bestDist = limit
+  for (const x of candidateXs) {
+    const dx = Math.abs(x - tx)
+    if (dx > bestDist) break
+    for (const y of candidateYs) {
+      const dist = Math.hypot(dx, y - ty)
+      if (dist > bestDist || (best && dist === bestDist)) break
+      const res = tryPos(x, y)
+      if (res) {
+        best = res
+        bestDist = dist
+        break
+      }
     }
   }
   if (best) return best
 
-  // Nothing to lock onto nearby — track the cursor exactly. Dragging over
-  // open deck space should feel 100% free, not teleport between grid cells.
-  const free = tryPos(targetX, targetY)
-  if (free) return free
-
-  // Fallback: X-only / Y-only, then binary search along the movement vector
-  // toward the raw cursor target (not a grid-rounded point), same behaviour
-  // as before snapping existed — a blocked drag eases up to exactly where
-  // the cursor is once the path clears rather than resting on a grid line
-  // short of it. (The exact target itself was already tried above as `free`.)
-  const fallbackCandidates: { x: number; y: number }[] = [
-    { x: targetX, y: currentY },
-    { x: currentX, y: targetY },
-  ]
-  for (const c of fallbackCandidates) {
-    const res = tryPos(c.x, c.y)
-    if (res) return res
-  }
-
-  let lo = 0
-  let hi = 1
-  let bestSlide: { x: number; y: number } | null = null
-  for (let i = 0; i < 10; i++) {
-    const mid = (lo + hi) / 2
-    const x = currentX + (targetX - currentX) * mid
-    const y = currentY + (targetY - currentY) * mid
-    const res = tryPos(x, y)
-    if (res) {
-      bestSlide = res
-      lo = mid
-    } else {
-      hi = mid
-    }
-  }
-  if (bestSlide) return bestSlide
-
-  // The straight line from where the drag started to the cursor is fully
-  // blocked end-to-end (typically: an immediately-adjacent neighbour sits
-  // right on that line, so even the smallest step along it collides) —
-  // every candidate above (lock, free, single-axis, vector binary search)
-  // only ever tries points ON that one line, so it can never route AROUND
-  // the obstacle. Without this, the item reads as permanently "stuck": no
-  // matter how far the cursor keeps moving, every subsequent frame's
-  // vector still passes near the same blocking neighbour close to its
-  // start, so the binary search above converges back to ~0 every time.
-  // Break out of the 1-D search here with a bounded local scan CENTRED ON
-  // THE CURSOR (not the blocked vector), so a position just to the side of
-  // the obstacle — which the cursor may already be well past — is found
-  // and the drag can "escape" instead of free-falling to a full freeze.
-  // Measure against the CLAMPED target, not the raw cursor position — the
-  // cursor routinely ends up past the deck edge (dragging toward open
-  // space beyond a small deck is normal), and "closest to an arbitrarily
-  // far-off-deck point" is a meaningless ranking; every in-bounds
-  // candidate would tie on "which direction is off-deck" instead of on
-  // genuine proximity to where the item could actually end up.
-  const clampedTarget = clampToDeck({ x: targetX, y: targetY, width, length }, deckWidth, deckLength, edgePadding)
-  const escapeRadius = Math.max(width, length) * 2
-  const escapeStep = Math.max(gridStep, 0.1)
-  let bestEscape: { x: number; y: number; dist: number } | null = null
-  for (let oy = -escapeRadius; oy <= escapeRadius; oy += escapeStep) {
-    for (let ox = -escapeRadius; ox <= escapeRadius; ox += escapeStep) {
-      if (Math.hypot(ox, oy) > escapeRadius) continue
-      const res = tryPos(clampedTarget.x + ox, clampedTarget.y + oy)
-      if (!res) continue
-      const resDist = Math.hypot(res.x - clampedTarget.x, res.y - clampedTarget.y)
-      if (!bestEscape || resDist < bestEscape.dist) bestEscape = { x: res.x, y: res.y, dist: resDist }
-    }
-  }
-  if (bestEscape) return { x: bestEscape.x, y: bestEscape.y }
-
-  // Last resort: never return a position outside the usable margin, even if
-  // it still collides — clampToDeck guarantees at least that much validity.
-  const clampedCurrent = clampToDeck({ x: currentX, y: currentY, width, length }, deckWidth, deckLength, edgePadding)
-  return { x: clampedCurrent.x, y: clampedCurrent.y }
+  // Nothing within reach: the stack stays where it last stood (kept inside
+  // the usable margin, whatever else).
+  const wideCurrent = clampToDeck(
+    { x: currentX - ml, y: currentY - mt, width: width + ml + mr, length: length + mt + mb },
+    deckWidth,
+    deckLength,
+    edgePadding
+  )
+  return { x: wideCurrent.x + ml, y: wideCurrent.y + mt }
 }
 
 // Each test pairs the one a drag in manual mode applies (DeckVisualization:

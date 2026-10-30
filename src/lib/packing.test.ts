@@ -1815,17 +1815,47 @@ describe('resolveSnappedDragPosition', () => {
     expect(result.y).toBeCloseTo(midY, 9)
   })
 
-  it('falls back to a vector slide when nothing is within the magnetic threshold', () => {
-    // Dense cluster of neighbours directly on the path; snap/lock candidates all
-    // collide, so it must fall back toward the last collision-free point along
-    // the drag vector instead of teleporting through the obstacle.
+  it('does not leap across a large obstacle under the pointer: it stays where it last stood', () => {
+    // The pointer deep inside a neighbour much larger than the stack: the
+    // nearest free place is 4 m away, past half again the stack's size, so
+    // the stack stays put instead of teleporting through the obstacle.
     const others = [{ x: 1, y: 0, width: 8, length: 8 }]
     const result = resolveSnappedDragPosition(
       5, 4, 1, 1, 0, 4, others, 20, 8, 0, 0, 1
     )
-    // Must not end up inside the obstacle (x in [1,9], y in [0,8]).
-    const collidesObstacle = result.x < 9 && result.x + 1 > 1 && result.y < 8 && result.y + 1 > 0
-    expect(collidesObstacle).toBe(false)
+    expect(result).toEqual({ x: 0, y: 4 })
+  })
+
+  // The user's case: a pallet pushed into the corner of a container and a
+  // pallet beside it used to jump back and forth by ~0.4 m every frame and
+  // never settle — each try left one axis at the pointer, where it met the
+  // other neighbour, and the slide started from the previous frame's spot.
+  it('settles a stack pushed into the corner of two neighbours in the corner, and keeps it there while the pointer wobbles', () => {
+    const container = { x: 0.2, y: 2.84, width: 6.06, length: 2.44 }
+    const pallet = { x: 0.2, y: 5.38, width: 0.8, length: 1.2 }
+    const corner = { x: pallet.x + pallet.width + 0.1, y: container.y + container.length + 0.1 }
+    let current = { x: 2.5, y: 6.2 }
+    const path: [number, number][] = []
+    for (let i = 1; i <= 12; i++) path.push([2.5 - (1.65 * i) / 12, 6.2 - (1.1 * i) / 12])
+    for (let i = 0; i < 8; i++) path.push([0.85 + (i % 2 ? 0.01 : -0.01), 5.1 + (i % 3 ? 0.01 : -0.01)])
+    const settled: { x: number; y: number }[] = []
+    for (const [tx, ty] of path) {
+      current = resolveSnappedDragPosition(tx, ty, 0.8, 1.2, current.x, current.y, [container, pallet], 8, 20, 0.2, 0.1, 1, 0.16)
+      settled.push(current)
+    }
+    for (const r of settled.slice(-9)) {
+      expect(r.x).toBeCloseTo(corner.x, 9)
+      expect(r.y).toBeCloseTo(corner.y, 9)
+    }
+  })
+
+  it('locks both axes at once when the pointer comes near a corner', () => {
+    const container = { x: 0.2, y: 2.84, width: 6.06, length: 2.44 }
+    const pallet = { x: 0.2, y: 5.38, width: 0.8, length: 1.2 }
+    // 0.1 m off the corner on each axis, within a 0.16 m magnet.
+    const result = resolveSnappedDragPosition(1.2, 5.48, 0.8, 1.2, 2, 6, [container, pallet], 8, 20, 0.2, 0.1, 1, 0.16)
+    expect(result.x).toBeCloseTo(1.1, 9)
+    expect(result.y).toBeCloseTo(5.38, 9)
   })
 
   it('is idempotent when already resting flush against a neighbour', () => {
