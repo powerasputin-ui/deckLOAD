@@ -5,8 +5,25 @@
 // combination for its own live verdict blocks; this file is the "PDF" half
 // of the mutation gate the review asked for.
 import { describe, it, expect } from 'vitest'
-import { buildLashingRequirementRows, buildStabilityPdfBlock, cargoTableRows, lashingPlacementsForPlan, pdfSectionTitles } from './exportPdf'
-import type { CargoItem, PackingResult, PinnedPlacement, PlacedItem } from './packing'
+import { readFileSync } from 'node:fs'
+import { jsPDF } from 'jspdf'
+import {
+  buildLashingRequirementRows,
+  buildPlanPdf,
+  buildStabilityPdfBlock,
+  CARGO_HEAD_FOR,
+  groupLashingRows,
+  lashingPlacementsForPlan,
+  layOutPlanPdf,
+  tripChecks,
+  type PlanPdfInput,
+} from './exportPdf'
+import { packMultiTrip, type CargoItem, type PackingResult, type PinnedPlacement, type PlacedItem } from './packing'
+import { cargoNumbers, cargoToneForNumber } from './cargoPalette'
+import { gatherPlanFacts } from './planFacts'
+import { deckForVessel } from './vesselDeck'
+import { VESSEL_TEMPLATES } from './vesselTemplates'
+import { createDemoItems, DEMO_DECK, type DeckConfig } from '@/store/calculator'
 import { evaluateTripStability, type TripStabilityInput } from './stabilityConditions'
 import type { VesselStabilityData } from './stability'
 import type { LashingCatalogItem } from './placementComposition'
@@ -115,6 +132,25 @@ describe('buildLashingRequirementRows', () => {
 // Phase 0, L16: in auto mode the lashing table took only pinned stacks, so
 // cargo the packer placed by itself fell out of it; the cargo table showed
 // one trip without saying which.
+describe('groupLashingRows', () => {
+  const row = (name: string, required: number, attached: number, justification?: string) => ({
+    name, requiredCount: required, attachedCount: attached, wireLabel: 'Канат', category: 'Металлопродукция', methodology: 'metal-rd' as const, justification,
+  })
+
+  it('takes the stacks of one cargo together, summing what they need and have', () => {
+    const rows = groupLashingRows([row('Труба', 2, 2), row('Ящик', 1, 0), row('Труба', 3, 1, 'по чертежу')])
+    expect(rows).toEqual([
+      { ...row('Труба', 5, 3, 'по чертежу'), stacks: 2 },
+      { ...row('Ящик', 1, 0), stacks: 1 },
+    ])
+  })
+
+  it('keeps a reason only for stacks short of points, each once', () => {
+    const rows = groupLashingRows([row('Труба', 2, 2, 'лишнее'), row('Труба', 2, 0, 'А'), row('Труба', 2, 0, 'А'), row('Труба', 2, 1, 'Б')])
+    expect(rows[0].justification).toBe('А; Б')
+  })
+})
+
 describe('lashingPlacementsForPlan', () => {
   const stack = (itemId: string, x: number, stackedCount: number): PlacedItem => ({
     itemId, name: itemId === 'A' ? 'Труба' : 'Ящик', x, y: 1, width: 1, length: 1, height: 1,
@@ -151,36 +187,124 @@ describe('lashingPlacementsForPlan', () => {
   })
 })
 
-describe('pdfSectionTitles', () => {
-  it('one trip: the plain titles', () => {
-    expect(pdfSectionTitles()).toEqual({ scheme: 'Схема палубы', cargo: 'Учёт по грузам', stability: 'Остойчивость', lashing: 'Крепление груза' })
+// Spec 11: what goes on the sheets — one per trip, then the totals.
+describe('buildPlanPdf', () => {
+  let n = 0
+  const genId = () => `id-${++n}`
+  const date = new Date('2026-10-30T09:15:00Z')
+
+  function input(deck: DeckConfig, items: CargoItem[], over: Partial<PlanPdfInput> = {}): PlanPdfInput {
+    const trips = packMultiTrip(deck.width, deck.length, items, {
+      gap: deck.gap,
+      boardOffset: deck.boardOffset,
+      clearance: deck.clearance,
+      unit: deck.unit,
+      maxTotalWeightKg: deck.maxDeckCargoT !== undefined ? deck.maxDeckCargoT * 1000 : undefined,
+    }).filter((t) => t.placedCount > 0)
+    const facts = gatherPlanFacts({ mode: 'auto', trips, pinnedPlacementsByTrip: {}, manualPlacements: [], items, deck, separationRules: [] })
+    return {
+      projectName: 'Рейс на Сабетту',
+      deck,
+      items,
+      mode: 'auto',
+      trips,
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      facts,
+      numbers: cargoNumbers(items),
+      date,
+      ...over,
+    }
+  }
+
+  it('gives each trip a sheet with its cargo: number, name, count, size, weights, tiers, stacks and the trip\'s total', () => {
+    const items = createDemoItems(genId)
+    const model = buildPlanPdf(input({ ...DEMO_DECK } as DeckConfig, items))
+    expect(model.trips).toHaveLength(1)
+    const sheet = model.trips[0]
+    expect(sheet.title).toBe('Рейс 1 из 1')
+    expect(CARGO_HEAD_FOR('м')).toEqual(['№', 'Груз', 'Кол-во, шт', 'Д×Ш×В, м', 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей'])
+    expect(sheet.cargo.map((r) => r.cells)).toEqual([
+      ['1', 'Контейнер 20ft', '4', '2.44×6.06×2.59', '2.2', '8.8', '1', '4'],
+      ['2', 'Паллета EUR', '12', '0.8×1.2×0.14', '0.5', '6', '1', '12'],
+      ['3', 'Ящик', '6', '1×1.5×1', '0.3', '1.8', '1', '6'],
+    ])
+    expect(sheet.cargo.map((r) => r.tone)).toEqual([cargoToneForNumber(1), cargoToneForNumber(2), cargoToneForNumber(3)])
+    expect(sheet.cargoTotal).toEqual(['', 'Итого по рейсу', '22', '', '', '16.6', '', '22'])
+    expect(model.fileName).toBe('deckload-рейс-на-сабетту-2026-10-30.pdf')
   })
 
-  it('several trips: which trip the plan shows, and that the lashing covers the whole operation', () => {
-    expect(pdfSectionTitles({ index: 1, count: 3 })).toEqual({
-      scheme: 'Схема палубы — рейс 2 из 3',
-      cargo: 'Учёт по грузам — рейс 2 из 3',
-      stability: 'Остойчивость — рейс 2 из 3',
-      lashing: 'Крепление груза — вся операция, 3 рейса',
-    })
-  })
-})
-
-// Stage 1 (spec 6.2): the cargo's number in the PDF's «Учёт по грузам».
-describe('cargoTableRows', () => {
-  const row = (itemId: string, name: string) => ({
-    itemId, name, color: '#000', requested: 2, placed: 2, footprints: 1, layers: 2, area: 3, weight: 1000, unitWeight: 500,
+  it('names the library vessel with its IMO, or the deck when it is the user\'s own', () => {
+    const items = createDemoItems(genId)
+    expect(buildPlanPdf(input({ ...DEMO_DECK } as DeckConfig, items)).vessel).toBe('Своя палуба 8 × 20 м')
+    const tpl = VESSEL_TEMPLATES[0]
+    const model = buildPlanPdf(input(deckForVessel(tpl, { ...DEMO_DECK } as DeckConfig), items))
+    expect(model.vessel).toBe(tpl.label)
+    expect(model.vessel).toMatch(/IMO \d{7}/)
   })
 
-  it('leads with the cargo number and lists cargo in list order', () => {
-    const rows = cargoTableRows([row('b', 'Ящик'), row('a', 'Труба')], new Map([['a', 1], ['b', 2]]))
-    expect(rows.map((r) => r.slice(0, 2))).toEqual([['1', 'Труба'], ['2', 'Ящик']])
-    expect(rows[0].slice(2)).toEqual(['×2', '1', '2/2', '3', '1000'])
+  it('sums the trip up: the weight against the vessel\'s limit, the area, its checks in words', () => {
+    const items = createDemoItems(genId)
+    const sheet = buildPlanPdf(input({ ...DEMO_DECK, maxDeckCargoT: 10 } as DeckConfig, items)).trips[0]
+    expect(sheet.weight.text).toMatch(/^Вес груза: [\d.]+ т из 10 т — лимит судна$/)
+    expect(sheet.area).toMatch(/^Загрузка площади: \d+% — занято [\d.]+ из 160 м²$/)
+    expect(sheet.checks.map((c) => c.title)).toEqual(['Вместимость и рейсы', 'Вес палубы', 'Зоны т/м²', 'Сепарация', 'Крепление', 'Остойчивость'])
+    expect(sheet.checks.find((c) => c.title === 'Остойчивость')).toMatchObject({ status: 'none', word: 'не проверялось', detail: 'Нет данных судна' })
+    expect(sheet.stability.only).toBe('Остойчивость не рассчитывалась: нет данных судна')
+    const unlimited = buildPlanPdf(input({ ...DEMO_DECK } as DeckConfig, items)).trips[0]
+    expect(unlimited.weight).toEqual({ text: 'Вес груза: 16.6 т — лимит судна не задан', over: false })
   })
 
-  it('a cargo missing from the list gets a dash and goes last', () => {
-    const rows = cargoTableRows([row('x', 'Старое'), row('a', 'Труба')], new Map([['a', 1]]))
-    expect(rows.map((r) => r[0])).toEqual(['1', '—'])
+  it('judges each trip on its own sheet, and lists every trip on the totals sheet with the operation\'s lashing', () => {
+    const items: CargoItem[] = [
+      { id: genId(), name: 'Труба', width: 1, length: 1, height: 1, quantity: 30, color: '#000', allowRotation: true, weight: 500, category: 'Металлопродукция' },
+    ]
+    const model = buildPlanPdf(input({ ...DEMO_DECK, width: 4, length: 4, clearance: 0 } as DeckConfig, items))
+    expect(model.trips.length).toBeGreaterThan(1)
+    expect(model.trips.map((t) => t.title)).toEqual(model.trips.map((_, i) => `Рейс ${i + 1} из ${model.trips.length}`))
+    // How the cargo goes into trips is the plan's matter, the same on every sheet.
+    for (const t of model.trips) expect(t.checks[0]).toMatchObject({ title: 'Вместимость и рейсы', status: 'ok' })
+    expect(model.totals.rows.map((r) => r[0])).toEqual(model.trips.map((_, i) => `Рейс ${i + 1}`))
+    expect(model.totals.total.slice(0, 3)).toEqual(['Всего', '30', '15'])
+    // Each stack's lashing on its trip's sheet; all of them for the operation,
+    // one row for the one cargo.
+    expect(model.trips.reduce((n, t) => n + t.lashing.rows.reduce((m, r) => m + r.stacks, 0), 0)).toBe(30)
+    expect(model.totals.lashing.rows).toHaveLength(1)
+    expect(model.totals.lashing.rows[0]).toMatchObject({ name: 'Труба', stacks: 30 })
+  })
+
+  it('a trip\'s overloaded zone is that trip\'s error, not the others\'', () => {
+    const facts = {
+      mode: 'auto' as const,
+      totalUnits: 2,
+      unplacedUnits: 0,
+      trips: [
+        { weightKg: 1000, overloadedZones: 1, separationViolations: 0 },
+        { weightKg: 1000, overloadedZones: 0, separationViolations: 0 },
+      ],
+      zoneCount: 1,
+      separationRuleCount: 0,
+      lashing: { securedStacks: 0, shortStacks: 0, dangerousGoodsStacks: 0 },
+      hasVessel: false,
+      attention: { malformed: 0, legacyUnknown: 0, rejectedPins: 0, manualConflicts: 0 },
+    }
+    expect(tripChecks(facts, 0).find((c) => c.id === 'zones')?.status).toBe('error')
+    expect(tripChecks(facts, 1).find((c) => c.id === 'zones')?.status).toBe('ok')
+  })
+
+  it('lays the sheets out: a sheet per trip and the totals, each numbered «Лист K из L»', () => {
+    const items: CargoItem[] = [
+      { id: genId(), name: 'Труба', width: 1, length: 1, height: 1, quantity: 30, color: '#000', allowRotation: true, weight: 500, category: 'Металлопродукция' },
+    ]
+    const model = buildPlanPdf(input({ ...DEMO_DECK, width: 4, length: 4, clearance: 0 } as DeckConfig, items))
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+    const font = (f: string) => readFileSync(`${process.cwd()}/public/fonts/${f}`).toString('base64')
+    pdf.addFileToVFS('PTSans-Regular.ttf', font('PTSans-Regular.ttf'))
+    pdf.addFont('PTSans-Regular.ttf', 'PTSans', 'normal')
+    pdf.addFileToVFS('PTSans-Bold.ttf', font('PTSans-Bold.ttf'))
+    pdf.addFont('PTSans-Bold.ttf', 'PTSans', 'bold')
+    layOutPlanPdf(pdf, model, CARGO_HEAD_FOR('м'))
+    expect(pdf.getNumberOfPages()).toBeGreaterThanOrEqual(model.trips.length + 1)
   })
 })
 
@@ -218,15 +342,15 @@ describe('buildStabilityPdfBlock', () => {
   }
 
   it('is one line without the vessel\'s data or its hydrostatics', () => {
-    expect(buildStabilityPdfBlock(undefined, undefined)).toMatchObject({ only: 'Остойчивость: данные судна не заданы', rows: [] })
+    expect(buildStabilityPdfBlock(undefined, undefined)).toMatchObject({ only: 'Остойчивость не рассчитывалась: нет данных судна', rows: [] })
     const noHydro = vessel({ hydrostatics: { points: [] } })
-    expect(buildStabilityPdfBlock(evaluate(noHydro), noHydro)).toMatchObject({ only: 'Остойчивость: гидростатика судна не задана' })
+    expect(buildStabilityPdfBlock(evaluate(noHydro), noHydro)).toMatchObject({ only: 'Остойчивость не рассчитывалась: нет гидростатики судна' })
   })
 
   it('gives departure and arrival a row each, the verdict in words', () => {
     const v = vessel()
-    const block = buildStabilityPdfBlock(evaluate(v), v, { index: 1, count: 2 })
-    expect(block.title).toBe('Остойчивость — рейс 2 из 2')
+    const block = buildStabilityPdfBlock(evaluate(v), v)
+    expect(block.title).toBe('Остойчивость')
     expect(block.head).toEqual(['Состояние', 'Водоизм., т', 'Осадка ср. / нос / корма, м', 'Крен, °', 'Дифферент, м', 'GM, м', 'Предел GM, м', 'Вода в трубах, т', 'Лёд, т', 'Итог'])
     expect(block.rows).toEqual([
       ['Отход', '1600', '3.20 / 3.20 / 3.20', '0', '0', '4.13', '1.00', '0', '—', 'выполнено'],

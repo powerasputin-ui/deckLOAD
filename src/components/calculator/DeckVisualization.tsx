@@ -94,9 +94,6 @@ interface DeckVisualizationProps {
   // Pixels at the right of the deck's box covered by an overlay — the
   // inspector (spec 5.4) — that the selected stack is moved out from under.
   coveredRight?: number
-  // Drawn for the PDF: light colours whatever the theme, the whole deck in
-  // view, labels sized for print rather than for this window.
-  printMode?: boolean
   // Which end of the deck length is the bow (stability.ts's convention) —
   // for the side labels around the deck.
   deckForwardIsPositiveY?: boolean
@@ -260,7 +257,6 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   selectionAnchor,
   selectionMenu,
   coveredRight = 0,
-  printMode = false,
   deckForwardIsPositiveY = true,
   gap,
   boardOffset,
@@ -340,10 +336,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   onSetDrawingRestrictionZoneFreeform,
 }: DeckVisualizationProps, forwardedRef) {
   const { deckWidth, deckLength } = result
-  // The deck's own colours are values from the theme, not CSS variables: the
-  // PDF rasterizes this SVG without the page's stylesheet. Print is light.
+  // The deck's own colours are values from the theme, not CSS variables.
   const { resolved: screenTheme } = useTheme()
-  const palette = THEME_TOKENS[printMode ? 'light' : screenTheme]
+  const palette = THEME_TOKENS[screenTheme]
   const svgRef = useRef<SVGSVGElement>(null)
   // The SVG's size on screen: the canvas frame, and it places the mini-panel
   // over a stack.
@@ -385,13 +380,13 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // The canvas: on screen the SVG's own box, a viewBox unit to a screen pixel
   // at zoom 1, so the deck takes the whole area whatever its proportions
   // (spec 5.4, 12.5). The PDF and the tests draw the fixed frame.
-  const frame = !printMode && svgBox ? { w: svgBox.width, h: svgBox.height } : { w: CANVAS_W, h: CANVAS_H }
+  const frame = svgBox ? { w: svgBox.width, h: svgBox.height } : { w: CANVAS_W, h: CANVAS_H }
   const frameW = frame.w
   const frameH = frame.h
   // Screen pixels per viewBox unit at zoom 1. The drawing's labels are sized
   // in screen pixels (spec 9.5: 12 px) whatever the window.
   const measuredScreenPx = svgBox ? Math.min(svgBox.width / frame.w, svgBox.height / frame.h) : 1
-  const screenPx = printMode ? 1 : measuredScreenPx
+  const screenPx = measuredScreenPx
   const setSvgRef = useCallback(
     (node: SVGSVGElement | null) => {
       svgRef.current = node
@@ -981,7 +976,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       (box.h - pads.top - pads.bottom) / Math.max(rDeckHeight, 1)
     )
   // As fitted, and never larger than the canvas can show.
-  const scale = printMode || !fitBox ? fitScale(frame) : Math.min(fitScale(fitBox), fitScale(frame))
+  const scale = !fitBox ? fitScale(frame) : Math.min(fitScale(fitBox), fitScale(frame))
   const w = rDeckWidth * scale
   const h = rDeckHeight * scale
   // Centred in the room the labels leave.
@@ -1189,7 +1184,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   const fmt = fmtNumber
   // ViewBox units per screen pixel: labels drawn on the deck are sized in
   // screen pixels (12 px), whatever the window and zoom.
-  const labelPx = 1 / (screenPx * (printMode ? 1 : zoom))
+  const labelPx = 1 / (screenPx * zoom)
   // The selected stack in the SVG box's own pixels, for the mini-panel and
   // for moving the view from under the inspector. The SVG keeps the canvas's
   // proportions centred in its box, so a viewBox point maps to the box by
@@ -1213,7 +1208,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // show beside it, and no further than its own left edge allows (spec 5.4).
   // The scale stays.
   const viewShift = (() => {
-    if (!coveredRight || !selectionRect || printMode) return 0
+    if (!coveredRight || !selectionRect) return 0
     const MARGIN = 16
     const need = selectionRect.left + selectionRect.width + MARGIN - (box.width - coveredRight)
     return Math.max(0, Math.min(need, selectionRect.left - MARGIN))
@@ -1221,7 +1216,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
   // The scale bar under the deck: whole grid steps, about 96 px on screen,
   // and the grid step named next to it (spec 6.1).
-  const scaleBarStepCount = scaleBarSteps(gridStep * scale * screenPx * (printMode ? 1 : zoom))
+  const scaleBarStepCount = scaleBarSteps(gridStep * scale * screenPx * zoom)
   const shortNumber = (v: number) => String(Math.round(v * 100) / 100)
   const scaleBar = {
     stepUnits: gridStep * scale,
@@ -2508,7 +2503,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       <svg
         ref={setSvgRef}
         data-deck-plan="true"
-        viewBox={printMode ? `0 0 ${CANVAS_W} ${CANVAS_H}` : `${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
+        viewBox={`${pan.x} ${pan.y} ${viewBoxW} ${viewBoxH}`}
         // The whole area the page gives the deck (spec 5.4).
         className="block h-full w-full font-sans"
         // For the PDF, which draws this SVG without the page's fonts.
@@ -3510,8 +3505,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               scale={scale}
               deckTransposed={rotated}
               hovered={isHover}
-              // The PDF prints the plan, not what is selected on screen.
-              selected={isSelected && !printMode}
+              selected={isSelected}
               selectionColor={palette.accent}
               showLabels={showLabels}
               onHover={onHover}
@@ -3601,7 +3595,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               (selectedPinIds.some((id) => pinnedPlacements.some((pin) => pin.id === id && pin.itemId === p.itemId && Math.abs(pin.x - p.x) < 0.01 && Math.abs(pin.y - p.y) < 0.01)) ||
                 selectedAutoKeys.includes(autoPlacementKey(p))))
           const hoveredHere = plan.kind === 'none' && hoveredItemId === p.itemId
-          if ((!selectedHere && !hoveredHere) || printMode) return null
+          if (!selectedHere && !hoveredHere) return null
           const spread = pipePyramidSpreadMargin(p, p.stackedCount)
           const visWidth = p.width + spread.onWidth * 2
           const visLength = p.length + spread.onLength * 2
@@ -3842,14 +3836,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
                 }
               />
-              {/* Pure-SVG label (icon + number) — deliberately NOT a
-                  foreignObject. A foreignObject anywhere in this SVG taints
-                  the canvas the PDF exporter rasterizes it onto (browsers
-                  block toDataURL on a canvas that ever drew embedded HTML,
-                  regardless of same-origin), which silently broke "Скачать
-                  PDF" for any project with a power socket. lucide-react
-                  icons are themselves plain <svg>/<path> markup, so nesting
-                  one directly is just as valid SVG as everything else here. */}
+              {/* Pure-SVG label (icon + number), not a foreignObject:
+                  lucide-react icons are plain <svg>/<path> markup, valid
+                  inside this SVG like everything else here. */}
               <g className="pointer-events-none">
                 <rect
                   x={labelX - 13}
@@ -3985,7 +3974,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       </svg>
       {/* The selected stack's mini-panel (spec 6.6), above the stack or
           under it when there's no room above; hidden while it is dragged. */}
-      {selectionTools && selectionRect && !printMode && !dragState?.moved && !pinDrag?.moved && (() => {
+      {selectionTools && selectionRect && !dragState?.moved && !pinDrag?.moved && (() => {
         const PANEL_H = 44
         const above = selectionRect.top - PANEL_H - 6 >= 0
         // Kept within what is in sight — the box after the shift, short of

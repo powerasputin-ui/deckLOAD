@@ -66,6 +66,7 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
       weightKg: t.totalWeight,
       overloadedZones: found.zones.length,
       overPressureStacks: found.pressure.length,
+      securedStacks: tripRecords.filter((r) => lashingVerdict(r, deck, items) !== 'none').length,
       separationViolations: found.separation.length,
       stability: tripStability(t, deck, items),
       found,

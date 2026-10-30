@@ -1,9 +1,9 @@
 import jsPDF from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import type { ManualPlacement, PackingResult, PinnedPlacement } from './packing'
-import { assessLashingRequirement, DEFAULT_WIRE_ROPE_TYPE, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
-import type { DeckConfig, Unit } from '@/store/calculator'
-import { UNIT_LABEL } from '@/store/calculator'
+import type { CargoItem, ManualPlacement, PackingResult, PinnedPlacement } from './packing'
+import { assessLashingRequirement, computeZoneLoads, DEFAULT_WIRE_ROPE_TYPE, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
+import type { DeckConfig } from '@/store/calculator'
+import { UNIT_LABEL } from './units'
 import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import { G_METACENTRIC_MIN_SAFE, type VesselStabilityData } from './stability'
 import {
@@ -15,20 +15,43 @@ import {
   type StateStability,
   type TripStabilityResult,
 } from './stabilityConditions'
-import { sortByCargoNumber } from './cargoPalette'
+import { cargoToneForNumber, sortByCargoNumber } from './cargoPalette'
 import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
+import { buildChecks, type Check, type CheckStatus, type PlanFacts } from './checks'
+import { evaluateDeckTripStability } from './planFacts'
+import { buildPlanDrawing, type PlanDrawing } from './planDrawing'
+import { drawPlanOnPdf } from './planToPdf'
+import { vesselTemplateById } from './vesselTemplates'
 
-// App palette (mirrors the colors already used on-screen: slate-900 ink,
-// sky-500 accent, slate-100/200 for card backgrounds/borders).
-const INK: [number, number, number] = [15, 23, 42]
-const CARD_BG: [number, number, number] = [241, 245, 249]
-const BORDER: [number, number, number] = [226, 232, 240]
-const MUTED: [number, number, number] = [100, 116, 139]
-const GOOD: [number, number, number] = [5, 150, 105]
-const WARN: [number, number, number] = [217, 119, 6]
-const DANGER: [number, number, number] = [220, 38, 38]
+// The plan for the vessel (spec 11): A4 landscape, a sheet per trip — the
+// header, the deck drawn from the calculation, the trip's cargo, its summary
+// with the checks and stability, its lashing, the signatures — and a last
+// sheet with the operation's totals. What goes on the sheets is worked out
+// first (buildPlanPdf, pure and tested), then laid out with jsPDF.
+
+// The screen's light theme (theme.ts): dark ink, light rules and heads, so
+// it prints legibly in black and white.
+const INK = '#10243A'
+const INK_2 = '#4B5D70'
+const LINE = '#D6DEE6'
+const HEAD_BG = '#E9EEF3'
+const OK = '#1E7B4F'
+const WARN = '#8F5300'
+const DANGER = '#B42318'
 
 const FONT_FAMILY = 'PTSans'
+
+// A4 landscape in points, and where things go on a sheet.
+export const PAGE = { w: 841.89, h: 595.28 }
+const MARGIN = 28
+const CONTENT_W = PAGE.w - 2 * MARGIN
+// Under the header on every sheet.
+const CONTENT_TOP = 66
+// Above the footer.
+const CONTENT_BOTTOM = PAGE.h - 34
+// The deck drawing: the full width between the margins, down to about 60%
+// of the sheet.
+export const SCHEME_FRAME = { x: MARGIN, y: CONTENT_TOP, w: CONTENT_W, h: 292 }
 
 // jsPDF's built-in fonts (helvetica/times/courier) only cover WinAnsi/Latin
 // glyphs — any Cyrillic text renders as garbage. PT Sans is a Cyrillic-native
@@ -64,43 +87,6 @@ async function registerFonts(pdf: jsPDF): Promise<void> {
   pdf.addFont('PTSans-Regular.ttf', FONT_FAMILY, 'normal')
   pdf.addFileToVFS('PTSans-Bold.ttf', bold)
   pdf.addFont('PTSans-Bold.ttf', FONT_FAMILY, 'bold')
-}
-
-// Serializes the already-mounted deck SVG (all fills/strokes are inline hex
-// attributes, not Tailwind classes, so it's self-contained) and rasterizes it
-// to a JPEG data URL via an offscreen canvas — no separate "print mode"
-// rendering path needed, we just capture what's already on screen. JPEG
-// (rather than PNG) keeps the embedded image from ballooning the file size.
-async function rasterizeSvg(svgEl: SVGSVGElement, scale = 2): Promise<{ dataUrl: string; width: number; height: number }> {
-  const clone = svgEl.cloneNode(true) as SVGSVGElement
-  const viewBox = svgEl.viewBox.baseVal
-  const width = (viewBox && viewBox.width) || svgEl.clientWidth || 900
-  const height = (viewBox && viewBox.height) || svgEl.clientHeight || 560
-  clone.setAttribute('width', String(width))
-  clone.setAttribute('height', String(height))
-
-  const svgString = new XMLSerializer().serializeToString(clone)
-  const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
-  const url = URL.createObjectURL(svgBlob)
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image()
-      image.onload = () => resolve(image)
-      image.onerror = () => reject(new Error('Не удалось растрировать схему палубы'))
-      image.src = url
-    })
-    const canvas = document.createElement('canvas')
-    canvas.width = width * scale
-    canvas.height = height * scale
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Canvas 2D недоступен в этом браузере')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    return { dataUrl: canvas.toDataURL('image/jpeg', 0.92), width: canvas.width, height: canvas.height }
-  } finally {
-    URL.revokeObjectURL(url)
-  }
 }
 
 function slugify(name: string): string {
@@ -197,58 +183,23 @@ type LashingPlacement = ComposablePlacement & {
 // quarantined placement isn't on the deck and isn't counted.
 export function lashingPlacementsForPlan(
   mode: 'auto' | 'manual',
-  manualPlacements: ManualPlacement[],
-  trips: PackingResult[],
-  pinnedPlacementsByTrip: Record<number, PinnedPlacement[]>
+  manualPlacements: readonly ManualPlacement[],
+  trips: readonly PackingResult[],
+  pinnedPlacementsByTrip: Readonly<Record<number, readonly PinnedPlacement[]>>
 ): LashingPlacement[] {
   if (mode === 'manual') return manualPlacements.filter((m) => !(m.malformed && !m.composition))
-  return trips.flatMap((trip, tripIndex) =>
-    trip.placed.map((p, i): LashingPlacement => {
-      const pin = (pinnedPlacementsByTrip[tripIndex] ?? []).find(
-        (pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01
-      )
-      const placed = { itemId: p.itemId, name: p.name, layers: p.stackedCount, composition: p.composition }
-      return pin
-        ? { ...placed, id: pin.id, lashingWireType: pin.lashingWireType, lashingJustification: pin.lashingJustification }
-        : { ...placed, id: `trip-${tripIndex}-${i}` }
-    })
-  )
+  return trips.flatMap((trip, tripIndex) => lashingPlacementsForTrip(trip, tripIndex, pinnedPlacementsByTrip[tripIndex] ?? []))
 }
 
-// The «Учёт по грузам» rows: the cargo's number first (the same number as on
-// the deck and in the list), in list order.
-export function cargoTableRows(
-  breakdown: PackingResult['breakdown'],
-  cargoNumberByItemId: Map<string, number>
-): string[][] {
-  return sortByCargoNumber(breakdown, cargoNumberByItemId).map((b) => [
-    String(cargoNumberByItemId.get(b.itemId) ?? '—'),
-    b.name,
-    b.layers > 1 ? `×${b.layers}` : '1',
-    String(b.footprints),
-    `${b.placed}/${b.requested}`,
-    fmtNumber(b.area),
-    b.weight > 0 ? fmtNumber(b.weight) : '—',
-  ])
-}
-
-// Which trip the deck image and the cargo table show, and what the lashing
-// table covers — said in the section titles when there is more than one
-// trip (L16: the cargo table showed one trip with no word of which).
-export function pdfSectionTitles(trip?: { index: number; count: number }): {
-  scheme: string
-  cargo: string
-  stability: string
-  lashing: string
-} {
-  if (!trip || trip.count <= 1) return { scheme: 'Схема палубы', cargo: 'Учёт по грузам', stability: 'Остойчивость', lashing: 'Крепление груза' }
-  const which = `рейс ${trip.index + 1} из ${trip.count}`
-  return {
-    scheme: `Схема палубы — ${which}`,
-    cargo: `Учёт по грузам — ${which}`,
-    stability: `Остойчивость — ${which}`,
-    lashing: `Крепление груза — вся операция, ${trip.count} ${pluralRu(trip.count, 'рейс', 'рейса', 'рейсов')}`,
-  }
+// One trip's stacks for the lashing table, in auto mode.
+function lashingPlacementsForTrip(trip: PackingResult, tripIndex: number, pins: readonly PinnedPlacement[]): LashingPlacement[] {
+  return trip.placed.map((p, i): LashingPlacement => {
+    const pin = pins.find((pp) => pp.itemId === p.itemId && Math.abs(pp.x - p.x) < 0.01 && Math.abs(pp.y - p.y) < 0.01)
+    const placed = { itemId: p.itemId, name: p.name, layers: p.stackedCount, composition: p.composition }
+    return pin
+      ? { ...placed, id: pin.id, lashingWireType: pin.lashingWireType, lashingJustification: pin.lashingJustification }
+      : { ...placed, id: `trip-${tripIndex}-${i}` }
+  })
 }
 
 // The PDF's «Остойчивость» block (spec 2026-10-24, 7): the open trip at
@@ -269,15 +220,11 @@ export interface StabilityPdfBlock {
 const STABILITY_HEAD = ['Состояние', 'Водоизм., т', 'Осадка ср. / нос / корма, м', 'Крен, °', 'Дифферент, м', 'GM, м', 'Предел GM, м', 'Вода в трубах, т', 'Лёд, т', 'Итог']
 const VERDICT_IN_WORDS: Record<StabilityVerdict, string> = { ok: 'выполнено', warn: 'нужна проверка', error: 'не выполнено' }
 
-export function buildStabilityPdfBlock(
-  evaluation: TripStabilityResult | undefined,
-  vessel: VesselStabilityData | undefined,
-  trip?: { index: number; count: number }
-): StabilityPdfBlock {
-  const title = pdfSectionTitles(trip).stability
+export function buildStabilityPdfBlock(evaluation: TripStabilityResult | undefined, vessel: VesselStabilityData | undefined): StabilityPdfBlock {
+  const title = 'Остойчивость'
   const empty = (only: string): StabilityPdfBlock => ({ title, only, head: STABILITY_HEAD, rows: [], verdicts: [], notes: [] })
-  if (!vessel) return empty('Остойчивость: данные судна не заданы')
-  if (!evaluation) return empty('Остойчивость: гидростатика судна не задана')
+  if (!vessel) return empty('Остойчивость не рассчитывалась: нет данных судна')
+  if (!evaluation) return empty('Остойчивость не рассчитывалась: нет гидростатики судна')
   const m2 = (v: number) => v.toFixed(2)
   // Numbers read off the edge of the hydrostatic table carry a star.
   const row = (s: StateStability): string[] => {
@@ -319,308 +266,515 @@ export function buildStabilityPdfBlock(
   return { title, head: STABILITY_HEAD, rows: states.map(row), verdicts: states.map((s) => s.verdict), notes }
 }
 
-interface ExportDeckPlanToPdfOptions {
-  svgEl: SVGSVGElement
-  deck: DeckConfig
-  unit: Unit
-  result: PackingResult
+
+export interface PlanPdfInput {
   projectName: string
-  lashingRequirements?: LashingRequirementRow[]
-  // Names of placed cargo whose category routes to the dangerous-goods
-  // methodology (assessLashingRequirement returns 'not-applicable' for
-  // these) — listed by name in the PDF instead of getting a fabricated
-  // number, so the report doesn't silently drop them either.
-  dangerousGoodsNames?: string[]
-  // The trip `result` and the deck image belong to, when there are several.
-  trip?: { index: number; count: number }
-  // That trip's stability block (buildStabilityPdfBlock).
-  stability?: StabilityPdfBlock
-  // Cargo id → number in the list, for the «№» column.
-  cargoNumberByItemId?: Map<string, number>
+  deck: DeckConfig
+  items: CargoItem[]
+  mode: 'auto' | 'manual'
+  // The trips shown (an empty trailing trip left out).
+  trips: readonly PackingResult[]
+  manualPlacements: readonly ManualPlacement[]
+  pinnedPlacementsByTrip: Readonly<Record<number, readonly PinnedPlacement[]>>
+  // The plan's facts (gatherPlanFacts), for each trip's checks and marks.
+  facts: PlanFacts
+  // Cargo id → its number in the list.
+  numbers: Map<string, number>
+  date: Date
 }
 
-export async function exportDeckPlanToPdf({
-  svgEl,
-  deck,
-  unit,
-  result,
-  projectName,
-  lashingRequirements,
-  dangerousGoodsNames,
-  trip,
-  stability,
-  cargoNumberByItemId = new Map(),
-}: ExportDeckPlanToPdfOptions): Promise<void> {
-  const titles = pdfSectionTitles(trip)
-  const { dataUrl: img, width: imgWidthPx, height: imgHeightPx } = await rasterizeSvg(svgEl)
-  const unitLabel = UNIT_LABEL[unit]
-  const utilPct = Math.round(result.utilization * 100)
-  const utilColor = utilPct >= 85 ? GOOD : utilPct >= 60 ? WARN : MUTED
+// A row of a trip's cargo table: its cargo's number and tone for the swatch.
+export interface PdfCargoRow {
+  number?: number
+  tone?: string
+  cells: string[]
+}
 
+export interface PdfCheckLine {
+  title: string
+  status: CheckStatus
+  word: string
+  detail: string
+}
+
+// A lashing row for the sheets: the stacks of one cargo with the same wire
+// and footing taken together — a row per stack ran to pages of identical
+// lines. Required and attached are the sums over those stacks.
+export interface PdfLashingRow extends LashingRequirementRow {
+  stacks: number
+}
+
+export interface PdfLashing {
+  rows: PdfLashingRow[]
+  dangerousGoodsNames: string[]
+}
+
+export function groupLashingRows(rows: readonly LashingRequirementRow[]): PdfLashingRow[] {
+  const groups = new Map<string, PdfLashingRow>()
+  for (const r of rows) {
+    const key = [r.name, r.category ?? '', r.methodology, r.wireLabel].join('|')
+    const g = groups.get(key)
+    if (!g) {
+      groups.set(key, { ...r, stacks: 1, justification: r.attachedCount < r.requiredCount ? r.justification : undefined })
+      continue
+    }
+    g.stacks += 1
+    g.requiredCount += r.requiredCount
+    g.attachedCount += r.attachedCount
+    // The reasons given for stacks short of points, each once.
+    const reason = r.attachedCount < r.requiredCount ? r.justification : undefined
+    if (reason && !(g.justification ?? '').split('; ').includes(reason)) g.justification = g.justification ? `${g.justification}; ${reason}` : reason
+  }
+  return [...groups.values()]
+}
+
+export interface PdfTripSheet {
+  // «Рейс 1 из 2».
+  title: string
+  drawing: PlanDrawing
+  cargo: PdfCargoRow[]
+  cargoTotal: string[]
+  units: number
+  weightKg: number
+  stacks: number
+  weight: { text: string; over: boolean }
+  area: string
+  checks: PdfCheckLine[]
+  stability: StabilityPdfBlock
+  lashing: PdfLashing
+}
+
+export interface PlanPdfModel {
+  fileName: string
+  // «Алексей Кузнецов (IMO 9692648)» or «Своя палуба 8 × 20 м».
+  vessel: string
+  name: string
+  date: string
+  trips: PdfTripSheet[]
+  totals: { rows: string[][]; total: string[]; lashing: PdfLashing }
+}
+
+export const CARGO_HEAD_FOR = (unit: string) => ['№', 'Груз', 'Кол-во, шт', `Д×Ш×В, ${unit}`, 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей']
+// The cargo table's columns, pt: «Груз» takes the rest. Numbers are right-aligned.
+export const CARGO_COLUMN_WIDTHS: (number | undefined)[] = [34, undefined, 62, 110, 62, 70, 52, 60]
+export const CARGO_RIGHT_ALIGNED = [0, 2, 3, 4, 5, 6, 7]
+export const TOTALS_HEAD = ['Рейс', 'Груз, шт', 'Вес груза, т', 'Штабелей', 'Загрузка площади']
+const LASHING_HEAD = ['Груз', 'Штабелей', 'Категория', 'Статус', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']
+
+// Tonnes to 10 kg: «2.2», «0.5», «0.01».
+const tonnes = (kg: number) => String(Math.round(kg / 10) / 100)
+// Sizes as the cargo table shows them: «0.8», «2.44».
+const short = (v: number) => String(Math.round(v * 100) / 100)
+
+// The check's status in words: the PDF's font has no ✓ ⚠ ✕.
+export const CHECK_STATUS_WORD: Record<CheckStatus, string> = { ok: 'в норме', warn: 'внимание', error: 'ошибка', none: 'не проверялось' }
+
+export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
+  const { deck, items, trips, numbers } = input
+  const unit = UNIT_LABEL[deck.unit]
+  const tpl = vesselTemplateById(deck.vesselTemplateId)
+  const vessel = tpl ? tpl.label : `Своя палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
+  const count = trips.length
+  const lashingOf = (placements: LashingPlacement[]): PdfLashing => {
+    const { rows, dangerousGoodsNames } = buildLashingRequirementRows(placements, items, deck.lashingPoints ?? [])
+    return { rows: groupLashingRows(rows), dangerousGoodsNames: [...new Set(dangerousGoodsNames)] }
+  }
+
+  const sheets = trips.map((t, i): PdfTripSheet => {
+    const found = input.facts.trips[i]?.found
+    const zoneLoads =
+      deck.loadZones && deck.loadZones.length > 0
+        ? computeZoneLoads(
+            t.placed.map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, totalWeightKg: (p.weight ?? 0) * p.stackedCount })),
+            deck.loadZones,
+            deck.outline,
+            deck.unit
+          )
+        : []
+    const drawing = buildPlanDrawing({
+      deck,
+      placed: t.placed,
+      numbers,
+      zoneLoads,
+      lashingShort: new Set(found?.lashingShort.map((s) => s.stack.key)),
+      unknownMakeup: new Set(found?.unknownMakeup.map((s) => s.stack.key)),
+      frame: SCHEME_FRAME,
+    })
+    const rows = sortByCargoNumber(
+      t.breakdown.filter((b) => b.placed > 0),
+      numbers
+    )
+    const cargo = rows.map((b): PdfCargoRow => {
+      const n = numbers.get(b.itemId)
+      const item = items.find((it) => it.id === b.itemId)
+      const dims = item ? `${short(item.length)}×${short(item.width)}×${item.height > 0 ? short(item.height) : '—'}` : '—'
+      return {
+        number: n,
+        tone: n ? cargoToneForNumber(n) : undefined,
+        cells: [
+          n ? String(n) : '—',
+          b.name,
+          String(b.placed),
+          dims,
+          b.unitWeight > 0 ? tonnes(b.unitWeight) : '—',
+          b.weight > 0 ? tonnes(b.weight) : '—',
+          String(b.layers),
+          String(b.footprints),
+        ],
+      }
+    })
+    const units = rows.reduce((n, b) => n + b.placed, 0)
+    const stacks = rows.reduce((n, b) => n + b.footprints, 0)
+    const limit = deck.maxDeckCargoT
+    const placements =
+      input.mode === 'manual' ? lashingPlacementsForPlan('manual', input.manualPlacements, [], {}) : lashingPlacementsForTrip(t, i, input.pinnedPlacementsByTrip[i] ?? [])
+    return {
+      title: `Рейс ${i + 1} из ${count}`,
+      drawing,
+      cargo,
+      cargoTotal: ['', 'Итого по рейсу', String(units), '', '', tonnes(t.totalWeight), '', String(stacks)],
+      units,
+      weightKg: t.totalWeight,
+      stacks,
+      weight: {
+        text:
+          limit !== undefined
+            ? `Вес груза: ${tonnes(t.totalWeight)} т из ${fmtNumber(limit)} т — лимит судна`
+            : `Вес груза: ${tonnes(t.totalWeight)} т — лимит судна не задан`,
+        over: limit !== undefined && t.totalWeight / 1000 > limit + 1e-9,
+      },
+      area: `Загрузка площади: ${Math.round(t.utilization * 100)}% — занято ${fmtNumber(t.usedArea)} из ${fmtNumber(t.totalArea)} ${unit}²`,
+      checks: tripChecks(input.facts, i).map((c) => ({ title: c.title, status: c.status, word: CHECK_STATUS_WORD[c.status], detail: c.detail })),
+      stability: buildStabilityPdfBlock(evaluateDeckTripStability(deck, t, items), deck.vessel),
+      lashing: lashingOf(placements),
+    }
+  })
+
+  const totalUnits = sheets.reduce((n, s) => n + s.units, 0)
+  const totalKg = sheets.reduce((n, s) => n + s.weightKg, 0)
+  const totalStacks = sheets.reduce((n, s) => n + s.stacks, 0)
+  return {
+    fileName: `deckload-${slugify(input.projectName)}-${input.date.toISOString().slice(0, 10)}.pdf`,
+    vessel,
+    name: input.projectName,
+    date: new Intl.DateTimeFormat('ru', { dateStyle: 'medium', timeStyle: 'short' }).format(input.date),
+    trips: sheets,
+    totals: {
+      rows: sheets.map((s, i) => [`Рейс ${i + 1}`, String(s.units), tonnes(s.weightKg), String(s.stacks), `${Math.round(trips[i].utilization * 100)}%`]),
+      total: ['Всего', String(totalUnits), tonnes(totalKg), String(totalStacks), ''],
+      lashing: lashingOf(lashingPlacementsForPlan(input.mode, input.manualPlacements, trips, input.pinnedPlacementsByTrip)),
+    },
+  }
+}
+
+// One trip's checks, for its sheet: the trip's own findings, judged as if it
+// were the whole plan — except how the cargo goes into trips, which is the
+// plan's matter and reads the same on every sheet.
+export function tripChecks(f: PlanFacts, tripIndex: number): Check[] {
+  const trip = f.trips[tripIndex]
+  const plan = buildChecks(f)
+  if (!trip) return plan
+  const found = trip.found
+  const one = buildChecks({
+    ...f,
+    trips: [trip],
+    tenFoot: f.tenFoot ? { capacity: f.tenFoot.capacity, byTrip: [f.tenFoot.byTrip[tripIndex] ?? 0] } : undefined,
+    lashing: found
+      ? { securedStacks: trip.securedStacks ?? f.lashing.securedStacks, shortStacks: found.lashingShort.length, dangerousGoodsStacks: found.dangerousGoods.length }
+      : f.lashing,
+    attention: found
+      ? {
+          malformed: found.quarantined.length,
+          legacyUnknown: found.unknownMakeup.length,
+          rejectedPins: found.rejectedPins.length,
+          manualConflicts: found.conflicts.length,
+        }
+      : f.attention,
+  })
+  return one.map((c) => (c.id === 'capacity' ? (plan.find((p) => p.id === 'capacity') ?? c) : c))
+}
+
+// ---- Laying the sheets out ----
+
+const STATUS_COLOR: Record<CheckStatus, string> = { ok: OK, warn: WARN, error: DANGER, none: INK_2 }
+
+// What each sheet is, for its header: a trip's first sheet, its
+// continuation, or the totals.
+type SheetKind = { trip: number; continued: boolean } | { totals: true }
+
+export async function exportPlanPdf(input: PlanPdfInput): Promise<void> {
+  const model = buildPlanPdf(input)
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerFonts(pdf)
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const margin = 32
-  const contentWidth = pageWidth - margin * 2
-  // A new page when what's next doesn't fit above the footer.
+  layOutPlanPdf(pdf, model, CARGO_HEAD_FOR(UNIT_LABEL[input.deck.unit]))
+  pdf.save(model.fileName)
+}
+
+export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string[]): void {
+  const sheets = new Map<number, SheetKind>()
+  let current: SheetKind = { trip: 0, continued: false }
+  // Sheets a table spilled onto continue the trip it belongs to.
+  const claimSheets = () => {
+    for (let n = 1; n <= pdf.getNumberOfPages(); n++)
+      if (!sheets.has(n)) sheets.set(n, 'trip' in current ? { trip: current.trip, continued: true } : current)
+  }
+  let y = CONTENT_TOP
+  const newSheet = () => {
+    pdf.addPage()
+    claimSheets()
+    y = CONTENT_TOP
+  }
   const makeRoom = (height: number) => {
-    if (y + height > pageHeight - 36) {
-      pdf.addPage()
-      y = 40
-    }
+    if (y + height > CONTENT_BOTTOM) newSheet()
   }
   const lastTableEnd = () => (pdf as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY
-
-  // --- Header band ---
-  const headerHeight = 56
-  pdf.setFillColor(...INK)
-  pdf.rect(0, 0, pageWidth, headerHeight, 'F')
-  pdf.setTextColor(255, 255, 255)
-  pdf.setFont(FONT_FAMILY, 'bold')
-  pdf.setFontSize(16)
-  pdf.text('DeckLoad', margin, 24)
-  pdf.setFont(FONT_FAMILY, 'normal')
-  pdf.setFontSize(11)
-  pdf.text(projectName, margin, 42)
-  const date = new Intl.DateTimeFormat('ru', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())
-  pdf.setFontSize(9)
-  pdf.setTextColor(203, 213, 225)
-  pdf.text(date, pageWidth - margin, 24, { align: 'right' })
-  pdf.text(`Палуба ${fmtNumber(deck.width)}×${fmtNumber(deck.length)} ${unitLabel}`, pageWidth - margin, 38, { align: 'right' })
-
-  let y = headerHeight + 22
-
-  // --- Stat cards ---
-  const cards: { label: string; value: string; color: [number, number, number] }[] = [
-    { label: 'ЗАГРУЗКА ПАЛУБЫ', value: `${utilPct}%`, color: utilColor },
-    { label: 'РАЗМЕЩЕНО', value: `${result.placedCount}/${result.requestedCount} ед.`, color: INK },
-    { label: 'ОБЩИЙ ВЕС', value: `${fmtNumber(result.totalWeight)} кг`, color: INK },
-    { label: 'РАЗМЕР ПАЛУБЫ', value: `${fmtNumber(deck.width)}×${fmtNumber(deck.length)} ${unitLabel}`, color: INK },
-  ]
-  const cardGap = 12
-  const cardWidth = (contentWidth - cardGap * (cards.length - 1)) / cards.length
-  const cardHeight = 46
-  cards.forEach((card, i) => {
-    const x = margin + i * (cardWidth + cardGap)
-    pdf.setFillColor(...CARD_BG)
-    pdf.setDrawColor(...BORDER)
-    pdf.roundedRect(x, y, cardWidth, cardHeight, 4, 4, 'FD')
-    pdf.setFont(FONT_FAMILY, 'normal')
-    pdf.setFontSize(7.5)
-    pdf.setTextColor(...MUTED)
-    pdf.text(card.label, x + 10, y + 16)
-    pdf.setFont(FONT_FAMILY, 'bold')
-    pdf.setFontSize(15)
-    pdf.setTextColor(...card.color)
-    pdf.text(card.value, x + 10, y + 34)
-  })
-  y += cardHeight + 20
-
-  // --- Deck layout image ---
-  pdf.setFont(FONT_FAMILY, 'bold')
-  pdf.setFontSize(10)
-  pdf.setTextColor(...INK)
-  pdf.text(titles.scheme, margin, y)
-  y += 10
-
-  const maxImgWidth = contentWidth
-  const maxImgHeight = 260
-  const imgScale = Math.min(maxImgWidth / imgWidthPx, maxImgHeight / imgHeightPx)
-  const imgWidth = imgWidthPx * imgScale
-  const imgHeight = imgHeightPx * imgScale
-  const imgX = margin + (contentWidth - imgWidth) / 2
-  pdf.setDrawColor(...BORDER)
-  pdf.setFillColor(255, 255, 255)
-  pdf.roundedRect(imgX - 4, y - 4, imgWidth + 8, imgHeight + 8, 3, 3, 'FD')
-  pdf.addImage(img, 'JPEG', imgX, y, imgWidth, imgHeight)
-  y += imgHeight + 26
-
-  // --- Breakdown table ---
-  pdf.setFont(FONT_FAMILY, 'bold')
-  pdf.setFontSize(10)
-  pdf.setTextColor(...INK)
-  pdf.text(titles.cargo, margin, y)
-  y += 8
-
-  autoTable(pdf, {
-    startY: y,
-    margin: { left: margin, right: margin, bottom: 36 },
-    head: [['№', 'Груз', 'Ярусы', 'Размещено', 'Всего ед.', 'Площадь', 'Вес']],
-    body: cargoTableRows(result.breakdown, cargoNumberByItemId),
-    theme: 'grid',
-    styles: {
-      font: FONT_FAMILY,
-      fontSize: 9,
-      cellPadding: 6,
-      lineColor: BORDER,
-      lineWidth: 0.5,
-      textColor: INK,
-    },
-    headStyles: {
-      font: FONT_FAMILY,
-      fillColor: INK,
-      textColor: 255,
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    alternateRowStyles: { fillColor: CARD_BG },
-    columnStyles: {
-      0: { halign: 'right', cellWidth: 28 },
-      1: { halign: 'left' },
-      2: { halign: 'right' },
-      3: { halign: 'right' },
-      4: { halign: 'right', fontStyle: 'bold' },
-      5: { halign: 'right' },
-      6: { halign: 'right' },
-    },
-  })
-
-  y = lastTableEnd() + 22
-
-  // --- Stability of the open trip (spec 2026-10-24, 7) ---
-  if (stability) {
+  const tableStyles = {
+    theme: 'grid' as const,
+    margin: { left: MARGIN, right: MARGIN, top: CONTENT_TOP, bottom: PAGE.h - CONTENT_BOTTOM },
+    styles: { font: FONT_FAMILY, fontSize: 8.5, cellPadding: 4, lineColor: LINE, lineWidth: 0.5, textColor: INK },
+    headStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' as const, halign: 'left' as const },
+  }
+  const title = (text: string) => {
+    makeRoom(40)
     pdf.setFont(FONT_FAMILY, 'bold')
     pdf.setFontSize(10)
-    pdf.setTextColor(...INK)
+    pdf.setTextColor(INK)
+    pdf.text(text, MARGIN, y + 10)
+    y += 16
+  }
+  const lines = (texts: string[], size: number, color: string, bold = false) => {
+    pdf.setFont(FONT_FAMILY, bold ? 'bold' : 'normal')
+    pdf.setFontSize(size)
+    pdf.setTextColor(color)
+    for (const text of texts) {
+      const wrapped = pdf.splitTextToSize(text, CONTENT_W) as string[]
+      makeRoom(wrapped.length * size * 1.3)
+      pdf.setFont(FONT_FAMILY, bold ? 'bold' : 'normal')
+      pdf.setFontSize(size)
+      pdf.setTextColor(color)
+      pdf.text(wrapped, MARGIN, y + size)
+      y += wrapped.length * size * 1.3 + 2
+    }
+  }
+
+  model.trips.forEach((sheet, i) => {
+    if (i > 0) pdf.addPage()
+    current = { trip: i, continued: false }
+    sheets.set(pdf.getNumberOfPages(), current)
+    drawPlanOnPdf(pdf, sheet.drawing, FONT_FAMILY)
+    y = SCHEME_FRAME.y + SCHEME_FRAME.h + 6
+
+    // The trip's cargo, the swatch of its tone beside each number.
+    autoTable(pdf, {
+      ...tableStyles,
+      startY: y,
+      head: [cargoHead],
+      body: sheet.cargo.map((r) => r.cells),
+      foot: [sheet.cargoTotal],
+      footStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' },
+      showFoot: 'lastPage',
+      columnStyles: Object.fromEntries(
+        CARGO_COLUMN_WIDTHS.map((w, i) => [i, { ...(w ? { cellWidth: w } : {}), ...(CARGO_RIGHT_ALIGNED.includes(i) ? { halign: 'right' as const } : {}) }])
+      ),
+      didParseCell: (data) => {
+        if (data.section === 'foot' && [2, 5, 7].includes(data.column.index)) data.cell.styles.halign = 'right'
+      },
+      didDrawCell: (data) => {
+        if (data.section !== 'body' || data.column.index !== 0) return
+        const tone = sheet.cargo[data.row.index]?.tone
+        if (!tone) return
+        pdf.setFillColor(tone)
+        pdf.setDrawColor(INK)
+        pdf.setLineWidth(0.5)
+        pdf.rect(data.cell.x + 4, data.cell.y + data.cell.height / 2 - 4, 8, 8, 'FD')
+      },
+    })
+    claimSheets()
+    y = lastTableEnd() + 12
+
+    // The summary — weight, area, the checks — kept on one sheet.
+    makeRoom(16 + 2 * 14 + (sheet.checks.length + 1) * 19 + 8)
+    title('Сводка рейса')
+    lines([sheet.weight.text], 9, sheet.weight.over ? DANGER : INK)
+    lines([sheet.area], 9, INK)
+    y += 2
+    autoTable(pdf, {
+      ...tableStyles,
+      startY: y,
+      head: [['Проверка', 'Итог', 'Что найдено']],
+      body: sheet.checks.map((c) => [c.title, c.word, c.detail]),
+      pageBreak: 'avoid',
+      rowPageBreak: 'avoid',
+      columnStyles: { 0: { cellWidth: 130, fontStyle: 'bold' }, 1: { cellWidth: 90 } },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 1) {
+          data.cell.styles.textColor = STATUS_COLOR[sheet.checks[data.row.index].status]
+          data.cell.styles.fontStyle = 'bold'
+        }
+      },
+    })
+    claimSheets()
+    y = lastTableEnd() + 12
+
+    // Stability of the trip.
+    const stability = sheet.stability
     if (stability.only) {
-      makeRoom(14)
-      pdf.text(stability.only, margin, y)
-      y += 22
-    } else {
-      makeRoom(80)
-      pdf.text(stability.title, margin, y)
+      makeRoom(20)
+      lines([stability.only], 9, INK, true)
       y += 8
+    } else {
+      makeRoom(16 + (stability.rows.length + 1) * 19)
+      title(stability.title)
       autoTable(pdf, {
+        ...tableStyles,
         startY: y,
-        margin: { left: margin, right: margin, bottom: 36 },
         head: [stability.head],
         body: stability.rows,
-        theme: 'grid',
-        styles: { font: FONT_FAMILY, fontSize: 8.5, cellPadding: 5, lineColor: BORDER, lineWidth: 0.5, textColor: INK },
-        headStyles: { font: FONT_FAMILY, fillColor: INK, textColor: 255, fontStyle: 'bold', halign: 'left' },
+        pageBreak: 'avoid',
+        styles: { ...tableStyles.styles, fontSize: 8 },
         columnStyles: { 0: { fontStyle: 'bold' }, 9: { fontStyle: 'bold' } },
         didParseCell: (data) => {
           if (data.section === 'body' && data.column.index === 9) {
             const verdict = stability.verdicts[data.row.index]
-            data.cell.styles.textColor = verdict === 'error' ? DANGER : verdict === 'warn' ? WARN : GOOD
+            data.cell.styles.textColor = verdict === 'error' ? DANGER : verdict === 'warn' ? WARN : OK
           }
         },
       })
-      y = lastTableEnd() + 12
-      pdf.setFont(FONT_FAMILY, 'normal')
-      pdf.setFontSize(8)
-      pdf.setTextColor(...INK)
-      for (const note of stability.notes) {
-        const lines = pdf.splitTextToSize(note, contentWidth) as string[]
-        makeRoom(lines.length * 10)
-        pdf.text(lines, margin, y)
-        y += lines.length * 10 + 3
-      }
-      y += 16
+      claimSheets()
+      y = lastTableEnd() + 8
+      lines(stability.notes, 7.5, INK)
+      y += 8
     }
+
+    // Lashing of the trip's cargo.
+    drawLashing(sheet.lashing, `Крепление груза рейса ${i + 1}`)
+
+    // Signatures.
+    makeRoom(44)
+    y += 18
+    pdf.setFont(FONT_FAMILY, 'normal')
+    pdf.setFontSize(9)
+    pdf.setTextColor(INK)
+    const third = CONTENT_W / 3
+    ;['Составил', 'Проверил', 'Дата'].forEach((label, k) => {
+      const x = MARGIN + k * third
+      pdf.text(label, x, y)
+      pdf.setDrawColor(INK)
+      pdf.setLineWidth(0.5)
+      pdf.line(x + pdf.getTextWidth(label) + 6, y + 1, x + third - 24, y + 1)
+    })
+    y += 12
+  })
+
+  // The operation's totals.
+  pdf.addPage()
+  current = { totals: true }
+  sheets.set(pdf.getNumberOfPages(), current)
+  y = CONTENT_TOP
+  title('Груз по рейсам')
+  autoTable(pdf, {
+    ...tableStyles,
+    startY: y,
+    head: [TOTALS_HEAD],
+    body: model.totals.rows,
+    foot: [model.totals.total],
+    footStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' },
+    showFoot: 'lastPage',
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+    didParseCell: (data) => {
+      if (data.section === 'foot' && data.column.index > 0) data.cell.styles.halign = 'right'
+    },
+  })
+  claimSheets()
+  y = lastTableEnd() + 14
+  drawLashing(model.totals.lashing, 'Крепление на всю операцию', true)
+
+  // Headers and footers, now that the sheets are counted.
+  const total = pdf.getNumberOfPages()
+  for (let n = 1; n <= total; n++) {
+    pdf.setPage(n)
+    const kind = sheets.get(n) ?? { totals: true }
+    const right = 'totals' in kind ? 'Итого по операции' : `${model.trips[kind.trip].title}${kind.continued ? ' (продолжение)' : ''}`
+    pdf.setFont(FONT_FAMILY, 'bold')
+    pdf.setFontSize(11)
+    pdf.setTextColor(INK)
+    pdf.text(model.vessel, MARGIN, 30)
+    pdf.text(right, PAGE.w - MARGIN, 30, { align: 'right' })
+    pdf.setFont(FONT_FAMILY, 'normal')
+    pdf.setFontSize(9)
+    pdf.setTextColor(INK_2)
+    pdf.text(model.name, MARGIN, 44)
+    pdf.text(`${model.date} · Лист ${n} из ${total}`, PAGE.w - MARGIN, 44, { align: 'right' })
+    pdf.setDrawColor(LINE)
+    pdf.setLineWidth(0.75)
+    pdf.line(MARGIN, 52, PAGE.w - MARGIN, 52)
+    pdf.line(MARGIN, PAGE.h - 24, PAGE.w - MARGIN, PAGE.h - 24)
+    pdf.setFontSize(8)
+    pdf.text('DeckLoad', MARGIN, PAGE.h - 12)
+    pdf.text(`Лист ${n} из ${total}`, PAGE.w - MARGIN, PAGE.h - 12, { align: 'right' })
   }
 
-  // --- Lashing count table + dangerous-goods notice. Runs whenever there's
-  // something to report — a calculated row, a dangerous-goods cargo name,
-  // or both — so a project with ONLY dangerous-goods cargo (no calculable
-  // rows at all) still gets the warning instead of silently showing nothing.
-  const hasLashingRows = !!lashingRequirements && lashingRequirements.length > 0
-  const hasDangerousGoods = !!dangerousGoodsNames && dangerousGoodsNames.length > 0
-  if (hasLashingRows || hasDangerousGoods) {
-    makeRoom(40)
-    pdf.setFont(FONT_FAMILY, 'bold')
-    pdf.setFontSize(10)
-    pdf.setTextColor(...INK)
-    pdf.text(titles.lashing, margin, y)
-    y += 8
-
-    if (hasLashingRows && lashingRequirements) {
+  // The lashing table with its footnote, and the dangerous goods the app
+  // doesn't calculate, in red. The operation's table ends with the totals:
+  // the gear is bought for the whole operation.
+  function drawLashing(lashing: PdfLashing, heading: string, withTotal = false) {
+    const hasRows = lashing.rows.length > 0
+    const hasDangerous = lashing.dangerousGoodsNames.length > 0
+    if (!hasRows && !hasDangerous) return
+    title(heading)
+    if (hasRows) {
+      const required = lashing.rows.reduce((n, r) => n + r.requiredCount, 0)
+      const attached = lashing.rows.reduce((n, r) => n + r.attachedCount, 0)
       autoTable(pdf, {
+        ...tableStyles,
         startY: y,
-        margin: { left: margin, right: margin, bottom: 36 },
-        head: [['Груз', 'Категория', 'Статус', 'Канат', 'Требуется', 'Прикреплено', 'Обоснование']],
-        body: lashingRequirements.map((r) => [
+        head: [LASHING_HEAD],
+        body: lashing.rows.map((r) => [
           r.name,
+          String(r.stacks),
           r.category || '—',
           r.methodology === 'metal-rd' ? 'Норматив (РД 31.11.21.23-96)' : 'Инженерная оценка',
           r.wireLabel,
           String(r.requiredCount),
           String(r.attachedCount),
-          r.attachedCount < r.requiredCount ? (r.justification || '—') : '—',
+          r.attachedCount < r.requiredCount ? r.justification || '—' : '—',
         ]),
-        theme: 'grid',
-        styles: {
-          font: FONT_FAMILY,
-          fontSize: 9,
-          cellPadding: 6,
-          lineColor: BORDER,
-          lineWidth: 0.5,
-          textColor: INK,
-        },
-        headStyles: {
-          font: FONT_FAMILY,
-          fillColor: INK,
-          textColor: 255,
-          fontStyle: 'bold',
-          halign: 'left',
-        },
-        alternateRowStyles: { fillColor: CARD_BG },
-        columnStyles: {
-          0: { halign: 'left' },
-          1: { halign: 'left' },
-          2: { halign: 'left' },
-          3: { halign: 'left' },
-          4: { halign: 'right' },
-          5: { halign: 'right' },
-          6: { halign: 'left' },
-        },
+        ...(withTotal
+          ? {
+              foot: [['Всего', String(lashing.rows.reduce((n, r) => n + r.stacks, 0)), '', '', '', String(required), String(attached), '']],
+              footStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' as const },
+              showFoot: 'lastPage' as const,
+            }
+          : {}),
+        columnStyles: { 1: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
         didParseCell: (data) => {
-          if (data.section === 'body' && data.column.index === 5) {
-            const row = lashingRequirements[data.row.index]
+          if (data.section === 'foot' && [1, 5, 6].includes(data.column.index)) data.cell.styles.halign = 'right'
+          if (data.section === 'body' && data.column.index === 6) {
+            const row = lashing.rows[data.row.index]
             if (row && row.attachedCount < row.requiredCount) data.cell.styles.textColor = WARN
           }
         },
       })
-
-      y = lastTableEnd() + 14
-      pdf.setFont(FONT_FAMILY, 'normal')
-      pdf.setFontSize(7.5)
-      pdf.setTextColor(...MUTED)
-      pdf.text(
-        '* «Норматив» — формула РД 31.11.21.23-96 применена по назначению (категория «Металлопродукция»). «Инженерная оценка» — та же формула как ориентир для другого груза, не нормативный расчёт крепления.',
-        margin,
-        y
+      claimSheets()
+      y = lastTableEnd() + 6
+      lines(
+        [
+          '* «Норматив» — формула РД 31.11.21.23-96 применена по назначению (категория «Металлопродукция»). «Инженерная оценка» — та же формула как ориентир для другого груза, не нормативный расчёт крепления.',
+        ],
+        7.5,
+        INK_2
       )
     }
-
-    if (hasDangerousGoods && dangerousGoodsNames) {
-      y += hasLashingRows ? 11 : 0
-      pdf.setFont(FONT_FAMILY, 'bold')
-      pdf.setFontSize(hasLashingRows ? 7.5 : 9)
-      pdf.setTextColor(...DANGER)
-      pdf.text(
-        `РАСЧЁТ НЕ ВЫПОЛНЕН — ТРЕБУЕТСЯ ОТДЕЛЬНАЯ ПРОВЕРКА: ${dangerousGoodsNames.join(', ')}. Классификация, сегрегация и документация — по IMDG Code (вне этого приложения); прочность крепления — отдельная проверка, число не подменяет ни то, ни другое.`,
-        margin,
-        y,
-        { maxWidth: contentWidth }
+    if (hasDangerous) {
+      lines(
+        [
+          `РАСЧЁТ НЕ ВЫПОЛНЕН — ТРЕБУЕТСЯ ОТДЕЛЬНАЯ ПРОВЕРКА: ${lashing.dangerousGoodsNames.join(', ')}. Классификация, сегрегация и документация — по IMDG Code (вне этого приложения); прочность крепления — отдельная проверка, число не подменяет ни то, ни другое.`,
+        ],
+        8,
+        DANGER,
+        true
       )
     }
+    y += 6
   }
-
-  // --- Footer on every page ---
-  const pageCount = pdf.getNumberOfPages()
-  for (let i = 1; i <= pageCount; i++) {
-    pdf.setPage(i)
-    pdf.setDrawColor(...BORDER)
-    pdf.line(margin, pageHeight - 24, pageWidth - margin, pageHeight - 24)
-    pdf.setFont(FONT_FAMILY, 'normal')
-    pdf.setFontSize(8)
-    pdf.setTextColor(...MUTED)
-    pdf.text('DeckLoad', margin, pageHeight - 12)
-    pdf.text(`Стр. ${i} из ${pageCount}`, pageWidth - margin, pageHeight - 12, { align: 'right' })
-  }
-
-  const fileDate = new Date().toISOString().slice(0, 10)
-  pdf.save(`deckload-${slugify(projectName)}-${fileDate}.pdf`)
 }

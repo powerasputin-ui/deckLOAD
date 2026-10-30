@@ -46,6 +46,9 @@ export interface TripFacts {
   // (computeFootprintPressures): a zone's average can hide a heavy stack on
   // a small footprint.
   overPressureStacks?: number
+  // The trip's stacks with lashing points attached (the plan counts its own
+  // in PlanFacts.lashing): the PDF judges each trip on its sheet.
+  securedStacks?: number
   separationViolations: number
   stability?: TripStability
   // What the checks found, stack by stack — the counts above, itemised.

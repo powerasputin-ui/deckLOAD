@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { flushSync } from 'react-dom'
 import { v4 as uuid } from 'uuid'
 import {
   AlertTriangle,
@@ -78,7 +77,7 @@ import { usePlacementActions } from '@/hooks/usePlacementActions'
 import { useMergeActions } from '@/hooks/useMergeActions'
 import { isQuarantined, matchLashingCarryover } from '@/store/placementCarryover'
 import { ProductTour, type TourStep } from '@/components/onboarding/ProductTour'
-import { exportDeckPlanToPdf, buildLashingRequirementRows, buildStabilityPdfBlock, lashingPlacementsForPlan } from '@/lib/exportPdf'
+import { exportPlanPdf } from '@/lib/exportPdf'
 import { wouldExceedDeckCapacity } from '@/lib/cargoValidation'
 import { keptByVariants } from '@/lib/variantKeep'
 import { toast } from 'sonner'
@@ -185,7 +184,6 @@ const TOUR_STEPS: TourStep[] = [
 
 export default function Home() {
   const { clientReady, entered, handleEnterIntro, handleReplayIntro, tourActive, handleCloseTour, handleShowTour } = useFirstRun()
-  const deckSvgRef = useRef<SVGSVGElement>(null)
   const { canUndo, canRedo } = useUndoRedo()
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
@@ -692,20 +690,6 @@ export default function Home() {
     return { valueM: worst.stability.GM_fluid, status: tripStability.verdict, estimated: worst.stability.extrapolated, state: worst.state }
   }, [tripStability])
 
-  // The 2D deck's <svg>, once mounted — right away when it already is, a few
-  // frames after leaving 3D otherwise. Gives up after ~3 s so a deck that
-  // never mounts can't hang the export.
-  const waitForDeckSvg = () =>
-    new Promise<SVGSVGElement | null>((resolve) => {
-      const started = performance.now()
-      const poll = () => {
-        if (deckSvgRef.current) return resolve(deckSvgRef.current)
-        if (performance.now() - started > 3000) return resolve(null)
-        requestAnimationFrame(poll)
-      }
-      poll()
-    })
-
   // «Отчёт» is ticked while the PDF downloaded in this tab still matches the
   // calculation (spec 5.3). The store replaces a slice whenever it changes, so
   // the references a download was made from tell whether anything changed since.
@@ -713,63 +697,6 @@ export default function Home() {
   const [pdfMadeFrom, setPdfMadeFrom] = useState<typeof calculation | null>(null)
   const pdfUpToDate =
     pdfMadeFrom !== null && (Object.keys(calculation) as (keyof typeof calculation)[]).every((k) => pdfMadeFrom[k] === calculation[k])
-
-  // The PDF gets the deck as drawn for print — light colours whatever the
-  // theme, the whole deck, labels sized for paper (DeckVisualization's
-  // printMode). It is switched on only for the moment of copying the SVG:
-  // flushSync renders it, the copy is taken, flushSync switches it back, all
-  // before the browser paints, so the screen never shows it.
-  const [deckPrintMode, setDeckPrintMode] = useState(false)
-  const copyDeckForPrint = (svgEl: SVGSVGElement): SVGSVGElement => {
-    flushSync(() => setDeckPrintMode(true))
-    const copy = svgEl.cloneNode(true) as SVGSVGElement
-    flushSync(() => setDeckPrintMode(false))
-    return copy
-  }
-
-  const handleExportPdf = async () => {
-    // The plan is rasterized from the 2D <svg>, which doesn't exist in 3D
-    // or while the stability workspace stands in the deck's place —
-    // exporting from 3D used to fail with «Схема палубы ещё не готова».
-    // Switch to the 2D deck for the export and come back afterwards.
-    const from3d = viewMode === '3d'
-    const fromStability = workspace === 'stability'
-    const comeBack = () => {
-      if (from3d) setViewMode('3d')
-      if (fromStability) setWorkspace('stability')
-    }
-    if (from3d) setViewMode('2d')
-    if (fromStability) setWorkspace('deck')
-    const svgEl = await waitForDeckSvg()
-    if (!svgEl) {
-      comeBack()
-      toast.error('Схема палубы ещё не готова')
-      return
-    }
-    const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
-    const points = deck.lashingPoints ?? []
-    // Mode-scoped: pins left over from an earlier auto session are not part
-    // of a manual plan. In auto mode every stack placed in any trip counts,
-    // pinned or not (see lashingPlacementsForPlan).
-    const allPlacements = lashingPlacementsForPlan(mode, manualPlacements, shownTrips, pinnedPlacementsByTrip)
-    // Round 19: composition-aware, per-segment row expansion — see
-    // buildLashingRequirementRows's own doc comment (exportPdf.ts) for the
-    // full contract. Pulled out as its own pure function specifically so it
-    // can be unit-tested without jsPDF/canvas.
-    const { rows: lashingRequirements, dangerousGoodsNames } = buildLashingRequirementRows(allPlacements, items, points)
-    const trip = mode === 'auto' && shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined
-    try {
-      const stability = buildStabilityPdfBlock(tripStability, deck.vessel, trip)
-      await exportDeckPlanToPdf({ svgEl: copyDeckForPrint(svgEl), deck, unit: deck.unit, result, projectName, lashingRequirements, dangerousGoodsNames, trip, stability, cargoNumberByItemId })
-      setPdfMadeFrom(calculation)
-      toast.success('PDF скачан')
-    } catch {
-      toast.error('Не удалось собрать PDF')
-    } finally {
-      comeBack()
-    }
-  }
-
 
   // Raw drawn points (deck-meter coords, click order) -> a normalized outline
   // whose bounding box starts at (0,0), which is what CargoItem.outline
@@ -1213,6 +1140,30 @@ export default function Home() {
   const openCheckDetails = useMemo(() => (openCheck ? checkDetails(planFacts, openCheck) : null), [planFacts, openCheck])
   const focusKeys = activeSection === 'checks' && openCheckDetails ? (openCheckDetails.stacks.get(clampedTripIndex) ?? null) : null
 
+  // The plan for the vessel (spec 11): every trip, drawn from the
+  // calculation — whatever the view, the trip on screen or the selection.
+  const handleExportPdf = async () => {
+    const projectName = projects.find((p) => p.id === activeId)?.name ?? 'DeckLoad'
+    try {
+      await exportPlanPdf({
+        projectName,
+        deck,
+        items,
+        mode,
+        trips: shownTrips,
+        manualPlacements,
+        pinnedPlacementsByTrip,
+        facts: planFacts,
+        numbers: cargoNumberByItemId,
+        date: new Date(),
+      })
+      setPdfMadeFrom(calculation)
+      toast.success('PDF скачан')
+    } catch {
+      toast.error('Не удалось собрать PDF')
+    }
+  }
+
   // Esc closes the inspector by dropping the selection (spec 5.4). An armed
   // tool takes Esc first (above), and so do fields, dialogs and menus.
   const hasSelection = selectedPinIds.length + selectedAutoKeys.length + selectedManualIds.length > 0
@@ -1608,7 +1559,6 @@ export default function Home() {
                 />
               ) : (
               <DeckVisualization
-                ref={deckSvgRef}
                 toolbarContainer={canvasToolsEl}
                 selectionTools={inspected && <MiniPanel stack={inspected.stack} actions={inspectedActions!} />}
                 selectionAnchor={inspected?.anchor}
@@ -1616,7 +1566,6 @@ export default function Home() {
                 // The inspector covers the deck area's right 320 px; its own
                 // 16 px padding (px-4) is part of that.
                 coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
-                printMode={deckPrintMode}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
                 result={result}
                 unit={deck.unit}

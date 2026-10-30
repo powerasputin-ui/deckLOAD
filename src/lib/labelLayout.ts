@@ -18,9 +18,8 @@ import { edgeDistance } from './packing'
 
 export const NUMBER_FONT_SIZES = [20, 16, 14, 12, 11] as const
 export const NAME_FONT_SIZE = 12
-// The deck's font (DeckVisualization's <svg>). The PDF draws the deck as an
-// image, where Arial stands in for it — narrower, so what fits here fits
-// there.
+// The deck's font (DeckVisualization's <svg>). The plan on paper is drawn
+// in PT Sans (planDrawing.ts) — narrower, so what fits here fits there.
 export const LABEL_FONT_FAMILY = "'IBM Plex Sans', Arial, sans-serif"
 const NUMBER_WEIGHT = 600
 const NAME_WEIGHT = 400

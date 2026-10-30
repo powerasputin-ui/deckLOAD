@@ -1,7 +1,6 @@
 // Interface colour tokens (spec 9.1) — the same values globals.css declares,
 // kept in step by theme.test.ts. Components styled with classes read the CSS
-// variables; the deck SVG takes these values directly, because the PDF
-// rasterizes that SVG on its own, without the page's stylesheet.
+// variables; the deck SVG takes these values directly.
 export type ThemeName = 'light' | 'dark'
 export type ThemePreference = ThemeName | 'system'
 

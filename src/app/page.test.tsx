@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import Home from './page'
 import { clearCalculatorHistory, redoCalculator, undoCalculator, useCalculator } from '@/store/calculator'
 import { useProjects } from '@/store/projects'
-import { exportDeckPlanToPdf } from '@/lib/exportPdf'
+import { buildPlanPdf, exportPlanPdf } from '@/lib/exportPdf'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { CARGO_INK, cargoToneForNumber } from '@/lib/cargoPalette'
 import { SELECTION_HALO_WIDTH } from '@/components/calculator/deckMarks'
@@ -14,7 +14,7 @@ import type { VesselStabilityData } from '@/lib/stability'
 // The PDF itself needs a real canvas; tests check what the page hands over.
 vi.mock('@/lib/exportPdf', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/exportPdf')>()),
-  exportDeckPlanToPdf: vi.fn(async () => {}),
+  exportPlanPdf: vi.fn(async () => {}),
 }))
 
 // page.tsx's orchestration logic (handleRemovePinned, handleModeChange,
@@ -395,10 +395,10 @@ describe('Home (page.tsx)', () => {
   })
 
   // Stage 2 (spec 6.3): the selected stack is outlined twice — its own dark
-  // line and an accent band outside it. The PDF prints the plan, not what is
-  // selected on screen.
+  // line and an accent band outside it. The PDF draws the plan from the
+  // calculation (spec 11), so nothing selected on screen reaches it.
   it('outlines the selected stack with a dark line and an accent band, and leaves the selection out of the PDF', async () => {
-    vi.mocked(exportDeckPlanToPdf).mockClear()
+    vi.mocked(exportPlanPdf).mockClear()
     render(<Home />)
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
@@ -421,9 +421,11 @@ describe('Home (page.tsx)', () => {
     expect(ownLine.getAttribute('stroke-width')).toBe('2')
 
     fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
-    await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
-    const printed = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].svgEl
-    expect(printed.querySelector('[data-selection-halo]')).toBeNull()
+    await waitFor(() => expect(exportPlanPdf).toHaveBeenCalled())
+    const sheet = buildPlanPdf(vi.mocked(exportPlanPdf).mock.calls[0][0]).trips[0]
+    expect(sheet.cargo.map((r) => r.cells[1])).toEqual(['A'])
+    const colours = sheet.drawing.shapes.flatMap((s) => ('stroke' in s && s.stroke ? [s.stroke.color] : []))
+    expect(colours).not.toContain(THEME_TOKENS.light.accent)
     expect(screenSvg.querySelector('[data-selection-halo]')).toBeTruthy()
   })
 
@@ -885,21 +887,21 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByTestId('stability-workspace')).toBeTruthy()
     })
 
-    it('puts the open trip\'s stability in the PDF, exported from the workspace, and comes back to it', async () => {
-      vi.mocked(exportDeckPlanToPdf).mockClear()
+    it('puts each trip\'s stability in the PDF, exported from the workspace without leaving it', async () => {
+      vi.mocked(exportPlanPdf).mockClear()
       render(<Home />)
       clearDemoCargo()
       seedVessel()
       openWorkspace()
       fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
-      await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
-      const block = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].stability!
+      await waitFor(() => expect(exportPlanPdf).toHaveBeenCalled())
+      const block = buildPlanPdf(vi.mocked(exportPlanPdf).mock.calls[0][0]).trips[0].stability
       expect(block.title).toBe('Остойчивость')
       expect(block.rows.map((r) => [r[0], r[5], r.at(-1)])).toEqual([
         ['Отход', '4.33', 'нужна проверка'],
         ['Приход', '4.33', 'нужна проверка'],
       ])
-      await waitFor(() => expect(screen.getByTestId('stability-workspace')).toBeTruthy())
+      expect(screen.getByTestId('stability-workspace')).toBeTruthy()
     })
 
     it('keeps arrival\'s tanks apart from departure\'s once arrival is edited', () => {
@@ -979,8 +981,8 @@ describe('Home (page.tsx)', () => {
       expect(scaleBar()).toBe('2 м')
     })
 
-    it('draws the deck in the dark theme on screen and in light colours for the PDF', async () => {
-      vi.mocked(exportDeckPlanToPdf).mockClear()
+    it('draws the deck in the dark theme on screen and in paper\'s colours for the PDF', async () => {
+      vi.mocked(exportPlanPdf).mockClear()
       render(
         <ThemeProvider>
           <Home />
@@ -995,11 +997,11 @@ describe('Home (page.tsx)', () => {
       expect(bowFill(screenSvg)).toBe(THEME_TOKENS.dark.ink)
 
       fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
-      await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
-      const printed = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0].svgEl
-      expect(printed).not.toBe(screenSvg)
-      expect(deckFill(printed)).toBe(THEME_TOKENS.light.deck)
-      expect(bowFill(printed)).toBe(THEME_TOKENS.light.ink)
+      await waitFor(() => expect(exportPlanPdf).toHaveBeenCalled())
+      const shapes = buildPlanPdf(vi.mocked(exportPlanPdf).mock.calls[0][0]).trips[0].drawing.shapes
+      // The deck light and the bow's name in the light theme's ink, whatever the screen.
+      expect(shapes[0]).toMatchObject({ kind: 'rect', fill: '#F1F4F7' })
+      expect(shapes.find((s) => s.kind === 'text' && s.text === 'НОС')).toMatchObject({ color: THEME_TOKENS.light.ink })
       // The screen stays dark.
       expect(deckFill(document.querySelector('svg[data-deck-plan]')!)).toBe(THEME_TOKENS.dark.deck)
     })
@@ -5095,7 +5097,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // stacks — cargo the packer placed by itself fell out of it — and the
   // cargo table showed one trip without saying which.
   it('the PDF lashing table covers every trip\'s auto-placed cargo, and the trip is named', async () => {
-    vi.mocked(exportDeckPlanToPdf).mockClear()
+    vi.mocked(exportPlanPdf).mockClear()
     render(<Home />)
     clearDemoCargo()
     act(() => {
@@ -5104,12 +5106,15 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
     expect(Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()).toHaveLength(0)
     fireEvent.click(screen.getByRole('button', { name: /Скачать PDF/ }))
-    await waitFor(() => expect(exportDeckPlanToPdf).toHaveBeenCalled())
-    const args = vi.mocked(exportDeckPlanToPdf).mock.calls[0][0]
-    // 30 single-tier stacks over several trips, one lashing row each.
-    expect(args.lashingRequirements).toHaveLength(30)
-    expect(args.trip).toEqual({ index: 0, count: expect.any(Number) })
-    expect(args.trip!.count).toBeGreaterThan(1)
+    await waitFor(() => expect(exportPlanPdf).toHaveBeenCalled())
+    const model = buildPlanPdf(vi.mocked(exportPlanPdf).mock.calls[0][0])
+    // 30 single-tier stacks over several trips: a sheet per trip, named, its
+    // own stacks' lashing on it, and every one of them on the totals sheet.
+    expect(model.trips.length).toBeGreaterThan(1)
+    expect(model.trips.map((t) => t.title)).toEqual(model.trips.map((_, i) => `Рейс ${i + 1} из ${model.trips.length}`))
+    const stacks = (rows: { stacks: number }[]) => rows.reduce((n, r) => n + r.stacks, 0)
+    expect(model.trips.reduce((n, t) => n + stacks(t.lashing.rows), 0)).toBe(30)
+    expect(stacks(model.totals.lashing.rows)).toBe(30)
   })
 
   // Phase 0, L14: in manual mode an obstacle moved onto standing cargo (or a

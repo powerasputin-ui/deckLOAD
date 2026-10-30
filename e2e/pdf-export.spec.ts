@@ -1,21 +1,29 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Download } from '@playwright/test'
 import { clearCalculation, openSection } from './helpers'
 
+// The sheets in a downloaded PDF: jsPDF writes one «/Type /Page» object each.
+async function sheetCount(download: Download): Promise<number> {
+  const bytes = Buffer.concat(await (await download.createReadStream()).toArray()).toString('latin1')
+  return (bytes.match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length
+}
+
 test.describe('PDF export', () => {
-  test('downloading the deck plan produces a deckload-*.pdf file', async ({ page }) => {
+  // Spec 11: a sheet per trip — the demo is one — and the totals.
+  test('downloading the deck plan produces a deckload-*.pdf file with the trip\'s sheet and the totals', async ({ page }) => {
     await page.goto('/')
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),
       page.getByRole('button', { name: 'Скачать PDF' }).click(),
     ])
     expect(download.suggestedFilename()).toMatch(/^deckload-.*\.pdf$/)
+    expect(await sheetCount(download)).toBeGreaterThanOrEqual(2)
     await expect(page.getByText('PDF скачан')).toBeVisible()
   })
 
-  // Phase 0, L15: the plan is rasterized from the 2D <svg>, which the 3D
-  // view doesn't have — exporting from 3D failed with «Схема палубы ещё не
-  // готова». It now switches to 2D for the export and back afterwards.
-  test('exporting from the 3D view still downloads the plan and returns to 3D', async ({ page }) => {
+  // Phase 0, L15: exporting from 3D failed with «Схема палубы ещё не
+  // готова» when the plan was a snapshot of the 2D <svg>. It is drawn from
+  // the calculation now, so the view stays as it is.
+  test('exporting from the 3D view still downloads the plan and stays in 3D', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('radio', { name: '3D' }).click()
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 15000 })
@@ -37,7 +45,7 @@ test.describe('PDF export', () => {
     expect(download.suggestedFilename()).toMatch(/^deckload-.*\.pdf$/)
   })
 
-  test('exporting with a power-socket marker on the deck still works (regression: foreignObject tainted the rasterization canvas)', async ({ page }) => {
+  test('exporting with a power-socket marker on the deck still works', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
     await openSection(page, 'Судно')
