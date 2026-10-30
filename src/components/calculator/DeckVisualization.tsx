@@ -91,9 +91,10 @@ interface DeckVisualizationProps {
   // The right-click menu of a stack: the inspector's actions. A right-click
   // selects the stack first, so they act on it.
   selectionMenu?: React.ReactNode
-  // Pixels at the right of the deck's box covered by an overlay — the
-  // inspector (spec 5.4) — that the selected stack is moved out from under.
-  coveredRight?: number
+  // Pixels of the deck's box the inspector covers while it is open (spec
+  // 5.4), on the side this view picks for it — reported by onInspectorSide.
+  inspectorWidth?: number
+  onInspectorSide?: (side: 'left' | 'right') => void
   // Which end of the deck length is the bow (stability.ts's convention) —
   // for the side labels around the deck.
   deckForwardIsPositiveY?: boolean
@@ -260,7 +261,8 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   selectionTools,
   selectionAnchor,
   selectionMenu,
-  coveredRight = 0,
+  inspectorWidth = 0,
+  onInspectorSide,
   deckForwardIsPositiveY = true,
   gap,
   boardOffset,
@@ -1208,14 +1210,39 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       height: screenSpanH(anchor.width, anchor.length) * k,
     }
   })()
-  // Under the inspector the selected stack moves left just far enough to
-  // show beside it, and no further than its own left edge allows (spec 5.4).
-  // The scale stays.
+  // The inspector opens on the side away from the selected stack (spec
+  // 5.4): on the right unless the stack is more under the right than under
+  // the left. It always opened on the right and slid the plan left from
+  // under the stack, so after a drop on the right of the deck the plan —
+  // and the stack just put down — jumped by up to the inspector's width.
+  // While a stack is dragged the inspector is hidden, and the side follows
+  // where the drag started.
+  const inspectorSide: 'left' | 'right' = (() => {
+    if (!inspectorWidth || !selectionRect) return 'right'
+    const underRight = selectionRect.left + selectionRect.width - (box.width - inspectorWidth)
+    const underLeft = inspectorWidth - selectionRect.left
+    return underRight > 0 && underRight > underLeft ? 'left' : 'right'
+  })()
+  useEffect(() => {
+    onInspectorSide?.(inspectorSide)
+  }, [inspectorSide, onInspectorSide])
+  const coveredLeft = inspectorSide === 'left' ? inspectorWidth : 0
+  const coveredRight = inspectorSide === 'right' ? inspectorWidth : 0
+  // A stack too wide for the part the inspector leaves open still shows as
+  // much as it can: the view moves it out from under the inspector just far
+  // enough, and no further than its own far edge allows. The scale stays.
   const viewShift = (() => {
-    if (!coveredRight || !selectionRect) return 0
+    if (!selectionRect) return 0
     const MARGIN = 16
-    const need = selectionRect.left + selectionRect.width + MARGIN - (box.width - coveredRight)
-    return Math.max(0, Math.min(need, selectionRect.left - MARGIN))
+    if (coveredRight) {
+      const need = selectionRect.left + selectionRect.width + MARGIN - (box.width - coveredRight)
+      return Math.max(0, Math.min(need, selectionRect.left - MARGIN))
+    }
+    if (coveredLeft) {
+      const need = coveredLeft + MARGIN - selectionRect.left
+      return -Math.max(0, Math.min(need, box.width - MARGIN - (selectionRect.left + selectionRect.width)))
+    }
+    return 0
   })()
 
   // The scale bar under the deck: whole grid steps, about 96 px on screen,
@@ -2508,7 +2535,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         )}
       <div
         className="relative h-full transition-transform duration-150 motion-reduce:transition-none"
-        style={viewShift > 0 ? { transform: `translateX(${-viewShift}px)` } : undefined}
+        style={viewShift !== 0 ? { transform: `translateX(${-viewShift}px)` } : undefined}
       >
       <svg
         ref={setSvgRef}
@@ -3990,7 +4017,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         // Kept within what is in sight — the box after the shift, short of
         // the inspector — about a panel's half-width from either side.
         const HALF = 100
-        const visibleLeft = viewShift + HALF
+        const visibleLeft = coveredLeft + viewShift + HALF
         const visibleRight = box.width - coveredRight + viewShift - HALF
         const centre = Math.min(Math.max(selectionRect.left + selectionRect.width / 2, visibleLeft), Math.max(visibleLeft, visibleRight))
         return (

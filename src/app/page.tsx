@@ -337,6 +337,8 @@ export default function Home() {
   // A stack is being dragged on the deck: the inspector steps aside until the
   // drop, so it doesn't cover where the stack may go.
   const [stackDragging, setStackDragging] = useState(false)
+  // The side the 2D plan picks for the inspector: away from the selected stack.
+  const [inspectorSide2d, setInspectorSide2d] = useState<'left' | 'right'>('right')
   const loadedProjectId = useRef<string | null>(null)
   // Baseline for the load-zone overload toast below — reset whenever the
   // project's cargo/deck gets wholesale-replaced (loaded, "new calculation",
@@ -1635,7 +1637,8 @@ export default function Home() {
                 selectionMenu={inspected && <StackMenuItems stack={inspected.stack} actions={inspectedActions!} />}
                 // The inspector covers the deck area's right 320 px; its own
                 // 16 px padding (px-4) is part of that.
-                coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
+                inspectorWidth={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
+                onInspectorSide={setInspectorSide2d}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
                 result={result}
                 unit={deck.unit}
@@ -1772,10 +1775,11 @@ export default function Home() {
               )}
             </div>
           </div>
-          {/* Over the right of the deck while stacks are selected (spec 5.4),
-              after it in the tab order. */}
+          {/* Over the deck while stacks are selected (spec 5.4), on the side
+              away from the selected stack in 2D, after it in the tab order. */}
           {(inspected || inspectedSelection) && !stackDragging && (
             <Inspector
+              side={viewMode === '3d' ? 'right' : inspectorSide2d}
               stack={inspected?.stack}
               actions={inspectedActions}
               selection={inspectedSelection}

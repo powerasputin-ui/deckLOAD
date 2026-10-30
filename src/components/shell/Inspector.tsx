@@ -95,6 +95,7 @@ export function Inspector({
   lashing,
   onShowChecks,
   onClose,
+  side = 'right',
 }: {
   stack?: InspectedStack
   selection?: InspectedSelection
@@ -104,11 +105,16 @@ export function Inspector({
   // Opens «Проверки», where the problems are.
   onShowChecks: () => void
   onClose: () => void
+  // The side of the deck it stands over: the one away from the selected
+  // stack (DeckVisualization picks it).
+  side?: 'left' | 'right'
 }) {
   return (
     <aside
       aria-label="Инспектор"
-      className="absolute inset-y-0 right-0 z-20 flex flex-col border-l bg-surface shadow-lg"
+      className={
+        'absolute inset-y-0 z-20 flex flex-col bg-surface shadow-lg ' + (side === 'left' ? 'left-0 border-r' : 'right-0 border-l')
+      }
       style={{ width: INSPECTOR_WIDTH_PX }}
     >
       {stack && actions ? (

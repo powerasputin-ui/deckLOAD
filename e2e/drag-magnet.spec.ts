@@ -40,6 +40,10 @@ test('a stack let go near the deck edge stays where it was let go, locks on only
     return (await usableRightEdge(page)) - (r.x + r.width - 0.5)
   }
   const letGoShort = async (px: number, alt = false) => letGoAt(page, pallet, (await usableRightEdge(page)) - px, alt)
+  // The plan itself never moves: the inspector opens on the left for a stack
+  // on the right instead of sliding the plan from under it.
+  const deckLeft = async () => (await page.locator('svg[data-deck-plan] [data-deck-background="true"]').first().boundingBox())!.x
+  const planAt = await deckLeft()
 
   // About half a metre short of the edge: it stays there.
   await letGoShort(25)
@@ -57,4 +61,9 @@ test('a stack let go near the deck edge stays where it was let go, locks on only
   await letGoShort(4, true)
   await expect.poll(gapToEdge).toBeGreaterThan(2.5)
   expect(await gapToEdge()).toBeLessThan(5.5)
+
+  await expect(page.getByRole('complementary', { name: 'Инспектор' })).toBeVisible()
+  expect(Math.abs((await deckLeft()) - planAt)).toBeLessThan(0.5)
+  const panel = (await page.getByRole('complementary', { name: 'Инспектор' }).boundingBox())!
+  expect(panel.x + panel.width).toBeLessThan((await pallet.boundingBox())!.x)
 })

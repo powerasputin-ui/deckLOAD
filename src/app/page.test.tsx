@@ -5802,7 +5802,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       expect(screen.queryByRole('menu', { name: 'Действия со штабелем' })).toBeNull()
     })
 
-    it('moves the view so a stack under the inspector stays in sight, the scale kept', () => {
+    // It used to open on the right and slide the plan left from under the
+    // stack, so a stack dropped on the right of the deck jumped away from
+    // where it was put.
+    it('opens on the side away from the selected stack, so the plan stays where it is', () => {
       render(<Home />)
       clearDemoCargo()
       setup(['BoxA', 'BoxB'])
@@ -5810,12 +5813,14 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       const right = pinBox('BoxB', 8)
       // The SVG and its mini-panel move together.
       const shifted = () => (document.querySelector('[data-mini-panel]')!.parentElement as HTMLElement).style.transform
+      const side = () => (inspector()!.className.includes('left-0') ? 'left' : 'right')
+      const viewBox = document.querySelector('svg[data-deck-plan]')!.getAttribute('viewBox')
       act(() => useCalculator.setState({ selectedPinIds: [left] }))
+      expect(side()).toBe('right')
       expect(shifted()).toBe('')
       act(() => useCalculator.setState({ selectedPinIds: [right] }))
-      expect(shifted()).toMatch(/^translateX\(-\d+(\.\d+)?px\)$/)
-      const viewBox = document.querySelector('svg[data-deck-plan]')!.getAttribute('viewBox')
-      act(() => useCalculator.setState({ selectedPinIds: [] }))
+      expect(side()).toBe('left')
+      expect(shifted()).toBe('')
       expect(document.querySelector('svg[data-deck-plan]')!.getAttribute('viewBox')).toBe(viewBox)
     })
 
