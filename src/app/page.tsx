@@ -11,6 +11,7 @@ import { fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
 import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, PALETTE, autoPlacementKey, DEMO_DECK } from '@/store/calculator'
+import { toMillimetre } from '@/lib/units'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import {
   AlertDialog,
@@ -844,6 +845,7 @@ export default function Home() {
 
   const {
     rotationBlockReason,
+    moveStackTo,
     handleRotatePinned,
     handleRotateManual,
     pinAutoStack,
@@ -1263,11 +1265,29 @@ export default function Home() {
         layers: seg.layers,
       })),
       state: kind === 'manual' ? 'manual' : kind === 'auto' ? 'auto' : selectedPin?.locked ? 'locked' : 'layout',
+      position: {
+        fromStern: toMillimetre((deck.deckForwardIsPositiveY ?? true) ? source.y : deck.length - source.y - source.length, deck.unit),
+        fromPort: toMillimetre(source.x, deck.unit),
+        unit,
+        step: convertLength(0.1, 'm', deck.unit),
+      },
       units: record ? placementTotalLayers(record) : layers,
       problems: stackProblems({ placed, record, trip: result, deck, items, separationRules: separationRulesInUnit }),
     }
     return { stack, anchor: placed ?? source }
   })()
+  // A typed position (spec 6.5) as the deck's x and y of the stack's corner
+  // nearest the origin: its port side from the port edge, its aft end from
+  // the stern edge — which end of the length that is follows the bow.
+  const deckPointFor = (current: { x: number; y: number; length: number }, to: { fromStern?: number; fromPort?: number }) => ({
+    x: to.fromPort ?? current.x,
+    y:
+      to.fromStern === undefined
+        ? current.y
+        : (deck.deckForwardIsPositiveY ?? true)
+          ? to.fromStern
+          : deck.length - to.fromStern - current.length,
+  })
   // Built here rather than inside the function above: an auto stack's
   // actions go through a ref (actOnAutoStack), and a function called during
   // render mustn't hold them.
@@ -1278,6 +1298,7 @@ export default function Home() {
           rotate: () => handleRotateManual(selectedManual.id),
           addLayer: () => handleLayerChangeManual(selectedManual.id, 1),
           removeLayer: () => handleLayerChangeManual(selectedManual.id, -1),
+          moveTo: (to) => moveStackTo(selectedManual.id, deckPointFor(selectedManual, to), false),
           remove: () => {
             removeManualPlacement(selectedManual.id)
             clearManualSelection()
@@ -1288,6 +1309,7 @@ export default function Home() {
             rotate: () => handleRotatePinned(selectedPin.id),
             addLayer: () => handleLayerChangePinned(selectedPin.id, 1),
             removeLayer: () => handleLayerChangePinned(selectedPin.id, -1),
+            moveTo: (to) => moveStackTo(selectedPin.id, deckPointFor(selectedPin, to), false),
             pin: () => handleTogglePinLock(selectedPin.id, true),
             unpin: () => removePinned(clampedTripIndex, selectedPin.id),
             remove: () => handleRemovePinned(selectedPin.id),
@@ -1297,6 +1319,11 @@ export default function Home() {
               rotate: () => rotateAutoStack(selectedAutoStack),
               addLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: 1 }),
               removeLayer: () => actOnAutoStack(selectedAutoStack, { kind: 'layers', delta: -1 }),
+              // Pinned first; the answer comes as a toast once it has moved.
+              moveTo: (to) => {
+                actOnAutoStack(selectedAutoStack, { kind: 'moveTo', ...deckPointFor(selectedAutoStack, to) })
+                return undefined
+              },
               pin: () => {
                 pinAutoStack(selectedAutoStack)
               },

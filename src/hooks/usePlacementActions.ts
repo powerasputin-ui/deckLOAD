@@ -335,7 +335,12 @@ export function usePlacementActions({
   // and then act on that pin. The handlers below read placements and the
   // packing result from this render, which doesn't have the new pin yet, so
   // the action waits for the render that does (runPendingPinAction).
-  type PinAction = { kind: 'rotate' } | { kind: 'layers'; delta: number } | { kind: 'remove' } | { kind: 'nudge'; dx: number; dy: number }
+  type PinAction =
+    | { kind: 'rotate' }
+    | { kind: 'layers'; delta: number }
+    | { kind: 'remove' }
+    | { kind: 'nudge'; dx: number; dy: number }
+    | { kind: 'moveTo'; x: number; y: number }
   const pendingPinActionRef = useRef<{ id: string; action: PinAction } | null>(null)
   const pinAutoStack = (placed: PlacedItem) =>
     pinFromPlaced(clampedTripIndex, {
@@ -878,10 +883,15 @@ export function usePlacementActions({
     if (action.kind === 'rotate') handleRotatePinned(id)
     else if (action.kind === 'layers') handleLayerChangePinned(id, action.delta)
     else if (action.kind === 'remove') handleRemovePinned(id)
-    else nudgePlacement(id, action.dx, action.dy)
+    else if (action.kind === 'nudge') nudgePlacement(id, action.dx, action.dy)
+    else {
+      const reason = moveStackTo(id, { x: action.x, y: action.y }, false)
+      if (reason) toast.warning(`Туда нельзя — ${reason}`)
+    }
   })
   return {
     rotationBlockReason,
+    moveStackTo,
     handleRotatePinned,
     handleRotateManual,
     pinAutoStack,

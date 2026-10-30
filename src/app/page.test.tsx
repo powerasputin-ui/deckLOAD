@@ -4912,6 +4912,82 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
   })
 
+  // Spec 6.5, «Положение»: a stack can be put exactly where it should stand,
+  // to the millimetre, measured as on deck — from the stern and from the
+  // port side. Before, a drag and the arrows were the only ways to move it.
+  describe('the inspector\'s position fields', () => {
+    function placeAB() {
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 2 })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'm1', itemId: itemA.id, name: 'A', x: 4, y: 3, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+        useCalculator.getState().addManualPlacement({
+          id: 'm2', itemId: itemA.id, name: 'A', x: 4, y: 8, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+        useCalculator.setState({ selectedManualIds: ['m1'] })
+      })
+    }
+    const a = () => useCalculator.getState().manualPlacements.find((m) => m.id === 'm1')!
+    const field = (label: string) => within(screen.getByRole('region', { name: 'Положение' })).getByLabelText(label) as HTMLInputElement
+    const type = (label: string, value: string) => {
+      fireEvent.change(field(label), { target: { value } })
+      fireEvent.keyDown(field(label), { key: 'Enter' })
+    }
+
+    it('show where the stack stands and put it exactly where it is typed', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      placeAB()
+      // The demo deck's bow is at +y: the stern is y = 0, the port side x = 0.
+      expect(field('От кормы, м').value).toBe('3')
+      expect(field('От левого борта, м').value).toBe('4')
+      type('От кормы, м', '5,125')
+      expect(a().y).toBeCloseTo(5.125, 9)
+      expect(a().x).toBe(4)
+      type('От левого борта, м', '1.5')
+      expect(a().x).toBeCloseTo(1.5, 9)
+      expect(field('От кормы, м').value).toBe('5.125')
+    })
+
+    it('measure from the stern at the far end when the bow is at −y', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, deckForwardIsPositiveY: false } })
+      })
+      placeAB()
+      // 20 − 3 − 1: the stack's aft end is its far end along y.
+      expect(field('От кормы, м').value).toBe('16')
+      type('От кормы, м', '5')
+      expect(a().y).toBeCloseTo(14, 9)
+    })
+
+    it('leave the stack where it is and say why when it can\'t stand there', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      placeAB()
+      // The other stack stands 8 m from the stern.
+      type('От кормы, м', '7.5')
+      expect(a().y).toBe(3)
+      expect(field('От кормы, м').value).toBe('3')
+      expect(screen.getByRole('alert').textContent).toBe('Туда нельзя — место занято другим грузом')
+      // Past the deck: it isn't pulled back to the edge.
+      type('От левого борта, м', '7')
+      expect(a().x).toBe(4)
+      expect(screen.getByRole('alert').textContent).toBe('Туда нельзя — груз выходит за пределы палубы')
+      type('От кормы, м', '4')
+      expect(a().y).toBeCloseTo(4, 9)
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
+
   // Phase 0, L9: Space on a focused toolbar button used to be swallowed, so
   // no button could be pressed from the keyboard. It now goes to the button;
   // Space anywhere else still rotates the selected cargo.
@@ -5706,6 +5782,19 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       const units = Number(inspectorButton(/^Удалить/).textContent!.match(/−(\d+)/)![1])
       fireEvent.click(inspectorButton(/^Удалить/))
       expect(quantityOf('BoxA')).toBe(2 - units)
+    })
+
+    it('puts an auto-placed stack at a typed position, pinned there', () => {
+      render(<Home />)
+      clearDemoCargo()
+      setup(['BoxA'], 1)
+      press('BoxA')
+      const fromPort = within(inspector()!).getByLabelText('От левого борта, м')
+      fireEvent.change(fromPort, { target: { value: '6' } })
+      fireEvent.keyDown(fromPort, { key: 'Enter' })
+      expect(pins()).toHaveLength(1)
+      expect(pins()[0].x).toBeCloseTo(6, 9)
+      expect(pins()[0].locked).toBe(true)
     })
 
     it('rotates a stack and changes its layers from the mini-panel', () => {

@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
+import { NumberField } from '@/components/calculator/NumberField'
 import { pluralRu } from '@/lib/utils'
 
 // The selected stack as the inspector and the mini-panel show it (spec 6.5,
@@ -40,6 +41,10 @@ export interface InspectedStack {
   // Locked by the user, a layout pin left by a variant, placed by the
   // auto-packer, or placed by hand.
   state: 'locked' | 'layout' | 'auto' | 'manual'
+  // Where it stands (spec 6.5): its aft end from the deck's stern edge and
+  // its port side from the deck's port edge, in the deck's unit to the
+  // millimetre; `step` is 10 cm in that unit, for the arrows in the fields.
+  position: { fromStern: number; fromPort: number; unit: string; step: number }
   // Units the stack holds: what «Удалить» takes off the cargo's quantity.
   units: number
   // What is wrong with this stack, in a line each.
@@ -55,6 +60,10 @@ export interface StackActions {
   pin?: () => void
   unpin?: () => void
   remove: () => void
+  // Puts the stack at a typed position. Returns why it can't go there, null
+  // once it has moved, or undefined when the answer comes later (a stack the
+  // auto-packer placed is pinned first, then moved).
+  moveTo: (to: { fromStern?: number; fromPort?: number }) => string | null | undefined
 }
 
 // Several stacks selected (Shift or Ctrl + click).
@@ -144,6 +153,50 @@ function Header({ children, onClose }: { children: React.ReactNode; onClose: () 
   )
 }
 
+// «Положение» (spec 6.5): where the stack stands, typed exactly — to the
+// millimetre, what a drag or the arrows can't give. A position it can't take
+// leaves it where it is and says why; the fields show where it really is.
+function PositionFields({ position, moveTo }: { position: InspectedStack['position']; moveTo: StackActions['moveTo'] }) {
+  // The reason holds only while the stack stands where it was refused.
+  const [refused, setRefused] = useState<{ reason: string; fromStern: number; fromPort: number } | null>(null)
+  const move = (to: { fromStern?: number; fromPort?: number }) => {
+    const reason = moveTo(to)
+    setRefused(reason ? { reason, fromStern: position.fromStern, fromPort: position.fromPort } : null)
+  }
+  const reason =
+    refused && refused.fromStern === position.fromStern && refused.fromPort === position.fromPort ? refused.reason : null
+  const field = (label: string, value: number, to: (v: number) => { fromStern?: number; fromPort?: number }) => (
+    <label className="space-y-1">
+      <span className="block text-xs text-ink-2">
+        {label}, {position.unit}
+      </span>
+      <NumberField
+        value={value}
+        min={0}
+        step={position.step}
+        selectOnFocus
+        className="h-8 tabular-nums pointer-coarse:h-11"
+        onCommit={(v) => move(to(v))}
+      />
+    </label>
+  )
+  return (
+    <section className="space-y-1.5 border-b px-4 py-3" aria-label="Положение">
+      <h3 className="text-sm font-medium">Положение</h3>
+      <p className="text-xs text-ink-2">От края палубы до ближнего края штабеля</p>
+      <div className="grid grid-cols-2 gap-2">
+        {field('От кормы', position.fromStern, (v) => ({ fromStern: v }))}
+        {field('От левого борта', position.fromPort, (v) => ({ fromPort: v }))}
+      </div>
+      {reason && (
+        <p role="alert" className="text-xs text-danger">
+          Туда нельзя — {reason}
+        </p>
+      )}
+    </section>
+  )
+}
+
 function StackDetails({
   stack,
   actions,
@@ -190,6 +243,8 @@ function StackDetails({
           <dt className="text-ink-2">Вес штабеля</dt>
           <dd className="tabular-nums">{stack.stackWeight}</dd>
         </dl>
+
+        <PositionFields position={stack.position} moveTo={actions.moveTo} />
 
         <section className="space-y-1.5 border-b px-4 py-3" aria-label="Ярусы">
           <div className="flex items-center gap-2">

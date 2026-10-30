@@ -21,6 +21,12 @@ const UNIT_PER_METER: Record<Unit, number> = {
   ft: 1 / 0.3048,
 }
 
+// A length in the deck's unit, to the millimetre: what the inspector shows
+// of a stack's position (spec 6.5).
+export function toMillimetre(value: number, unit: Unit): number {
+  return Number(value.toFixed(unit === 'cm' ? 1 : 3))
+}
+
 export function convertLength(value: number, from: Unit, to: Unit): number {
   if (from === to) return value
   // value is in `from` units; convert to meters then to `to` units
