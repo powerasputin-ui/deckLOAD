@@ -10,7 +10,8 @@ import { DeckPhotoBlock } from '@/components/sections/vessel/DeckPhotoBlock'
 import { VesselLibrary } from '@/components/sections/vessel/VesselLibrary'
 import { VesselCard } from '@/components/sections/vessel/VesselCard'
 import { DeckBlock } from '@/components/sections/vessel/DeckBlock'
-import { STATE_LABEL } from '@/lib/stabilityConditions'
+import { NO_DECK_HEIGHT, STATE_LABEL } from '@/lib/stabilityConditions'
+import { cn } from '@/lib/utils'
 import type { StatusLineInput } from '@/lib/statusLine'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { ZoneLoadCheck } from '@/lib/packing'
@@ -25,6 +26,7 @@ export function VesselSection({
   onApplyVesselToCurrent,
   zoneLoads,
   stability,
+  stabilityMissing,
   hasVessel,
   onOpenStability,
 }: {
@@ -34,6 +36,8 @@ export function VesselSection({
   // The open trip's worse state, as the status line shows it; unset
   // without the vessel's data.
   stability: StatusLineInput['gm']
+  // Why it isn't worked out though the vessel's data is there.
+  stabilityMissing?: string
   hasVessel: boolean
   onOpenStability: () => void
 }) {
@@ -61,8 +65,8 @@ export function VesselSection({
             </div>
           </div>
         ) : (
-          <p className="text-sm text-ink-2" data-testid="vessel-stability-summary">
-            {hasVessel ? 'Нет гидростатики судна' : 'Нет данных судна'}
+          <p className={cn('text-sm', stabilityMissing === NO_DECK_HEIGHT ? 'text-warn' : 'text-ink-2')} data-testid="vessel-stability-summary">
+            {hasVessel ? (stabilityMissing === NO_DECK_HEIGHT ? `${NO_DECK_HEIGHT} — GM не посчитана` : 'Нет гидростатики судна') : 'Нет данных судна'}
           </p>
         )}
         <Button variant="outline" size="sm" className="w-full" onClick={onOpenStability}>

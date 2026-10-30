@@ -6,7 +6,11 @@ import {
   iceLoad,
   knReference,
   limitAt,
+  NO_DECK_HEIGHT,
+  NO_HYDROSTATICS,
   reasonText,
+  resolveShipFrame,
+  stabilityMissing,
   stackWater,
   trappedWaterShare,
   type TripStabilityInput,
@@ -282,6 +286,68 @@ describe('the verdict', () => {
     const hydroOnePoint = vessel({ hydrostatics: { points: [{ displacementKg: 1_000_000, draftM: 2, KM: 8 }] } })
     expect(texts(input({ vessel: hydroOnePoint }))).toContain('Водоизмещение 1600 т вне таблицы гидростатики — числа оценочные')
     expect(texts(input({ vessel: vessel({ variableWeights: [], arrivalWeights: undefined }) }))).toContain('Танки и запасы не заданы')
+  })
+
+  // Every tonne on a deck whose height above the keel isn't given counted as
+  // lying on the keel: 2244 t of pipes on the library vessel gave GM 4.63 m
+  // for 1.90 m, and nothing said so.
+  it('works nothing out with cargo on a deck whose height above the keel isn\'t given, and says why', () => {
+    const unset = input({ shipFrame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 30 } })
+    expect(stabilityMissing(unset)).toBe(NO_DECK_HEIGHT)
+    expect(evaluateTripStability(unset)).toBeUndefined()
+    // Older calculations saved 0 for «not entered»: no deck lies on the keel.
+    expect(evaluateTripStability(input({ shipFrame: { originOffsetFromMidshipsM: 30, heightAboveBaselineM: 0 } }))).toBeUndefined()
+    // The bare ship needs no deck height — unless ice can form on the deck.
+    expect(evaluateTripStability(input({ shipFrame: {}, placements: [] }))?.verdict).toBe('ok')
+    expect(stabilityMissing(input({ shipFrame: {}, placements: [], icing: true }))).toBe(NO_DECK_HEIGHT)
+    expect(stabilityMissing(input({ vessel: vessel({ hydrostatics: { points: [] } }) }))).toBe(NO_HYDROSTATICS)
+    expect(stabilityMissing(input())).toBeUndefined()
+  })
+
+  it('takes an offset across left unset as the centreline, and keeps unset what else wasn\'t entered', () => {
+    expect(resolveShipFrame(undefined)).toEqual({
+      frame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 },
+      heightMissing: true,
+      alongMissing: true,
+    })
+    expect(resolveShipFrame({ originOffsetFromMidshipsM: 0, heightAboveBaselineM: 6 })).toEqual({
+      frame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 6 },
+      heightMissing: false,
+      alongMissing: false,
+    })
+  })
+
+  it('says when the deck\'s place along the hull isn\'t given, as the trim hangs on it — not when it is 0', () => {
+    const texts = (shipFrame: TripStabilityInput['shipFrame']) => evaluateTripStability(input({ shipFrame }))!.reasons.map((x) => x.text)
+    const note = 'Положение палубы по длине судна не задано — дифферент и осадки носом и кормой неточны'
+    expect(texts({ heightAboveBaselineM: 6 })).toContain(note)
+    expect(texts({ heightAboveBaselineM: 6, originOffsetFromMidshipsM: 0 })).not.toContain(note)
+    // Without cargo there is nothing on the deck for it to move.
+    expect(evaluateTripStability(input({ shipFrame: { heightAboveBaselineM: 6 }, placements: [] }))!.reasons.map((x) => x.text)).not.toContain(note)
+  })
+
+  // Past the table's heaviest row the draught is that row's: a table ending
+  // at the mark never showed a draught over it, however heavy the ship.
+  it('judges the load line by displacement past the hydrostatic table', () => {
+    // 2500 t on deck: 4000 t at departure, 3600 t at arrival — the table
+    // ends at 3000 t and a draught of 6 m.
+    const heavy = { ...box, weight: 2_500_000 }
+    const texts = (maxDraftM: number) =>
+      evaluateTripStability(
+        input({
+          vessel: vessel({ particulars: { ...vessel().particulars, maxDraftM } }),
+          items: [heavy],
+          placements: [{ itemId: 'box', x: 4, y: 9, width: 2, length: 2, height: 2, layers: 1, weight: 2_500_000 }],
+        })
+      )!.reasons.map((x) => x.text)
+    // The table reaches the mark: past it is over it.
+    for (const mark of [6, 5]) {
+      expect(texts(mark)).toContain(`Водоизмещение 4000 т больше, чем при осадке по грузовой марке ${mark.toFixed(2)} м`)
+      expect(texts(mark)).toContain(`Водоизмещение 3600 т больше, чем при осадке по грузовой марке ${mark.toFixed(2)} м`)
+    }
+    // The table stops short of the mark: nothing to tell by.
+    expect(texts(7)).toContain('Осадку по грузовой марке не проверить: таблица гидростатики кончается на осадке 6.00 м, марка — 7.00 м')
+    expect(texts(7).some((t) => t.startsWith('Водоизмещение 4000 т больше'))).toBe(false)
   })
 
   it('warns about pipes it can\'t count, and about icing without the vessel\'s areas', () => {

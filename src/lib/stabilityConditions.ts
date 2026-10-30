@@ -27,6 +27,7 @@ import {
   variableWeightsToMoments,
   weightsInState,
   type DeckShipFrame,
+  type DeckShipFrameInput,
   type GZCurveResult,
   type LoadingCondition,
   type LoadingState,
@@ -265,11 +266,45 @@ export function limitAt(limit: StabilityLimit, draftM: number, displacementKg: n
   return { kind: limit.kind, arg, range: [lo, hi], inRange, gmMinM: limit.kind === 'min-gm-by-draft' ? value : KM - value }
 }
 
+// ---- The deck on the hull ----
+
+// The frame the arithmetic runs on, and what of it wasn't entered. A deck
+// off the centreline is rare and 0 the usual, right answer, so an offset
+// across left unset is taken as 0 without a word; a height of 0 or less is
+// no height at all — older calculations saved 0 for «not entered».
+export function resolveShipFrame(frame: DeckShipFrameInput | undefined): { frame: DeckShipFrame; heightMissing: boolean; alongMissing: boolean } {
+  const height = frame?.heightAboveBaselineM
+  const heightMissing = !(height !== undefined && height > 0)
+  return {
+    frame: {
+      originOffsetFromCenterlineM: frame?.originOffsetFromCenterlineM ?? 0,
+      originOffsetFromMidshipsM: frame?.originOffsetFromMidshipsM ?? 0,
+      heightAboveBaselineM: heightMissing ? 0 : height,
+    },
+    heightMissing,
+    alongMissing: frame?.originOffsetFromMidshipsM === undefined,
+  }
+}
+
+export const NO_HYDROSTATICS = 'Нет гидростатики судна'
+export const NO_DECK_HEIGHT = 'Не задана высота палубы над килем'
+
+// Why a trip's stability isn't worked out though the vessel's data is
+// there, or unset when it is. Without hydrostatics nothing is; without the
+// deck's height above the keel nothing lying on the deck is — every tonne
+// of cargo or ice would count as lying on the keel, and GM come out metres
+// too high (2244 t of pipes on the library vessel: 4.63 m for 1.90 m).
+export function stabilityMissing(input: Pick<TripStabilityInput, 'vessel' | 'shipFrame' | 'placements' | 'icing'>): string | undefined {
+  if (input.vessel.hydrostatics.points.length === 0) return NO_HYDROSTATICS
+  if (resolveShipFrame(input.shipFrame).heightMissing && (input.placements.length > 0 || input.icing)) return NO_DECK_HEIGHT
+  return undefined
+}
+
 // ---- One state, one trip ----
 
 export interface TripStabilityInput {
   vessel: VesselStabilityData
-  shipFrame: DeckShipFrame
+  shipFrame: DeckShipFrameInput
   deck: { width: number; length: number; unit: Unit; outline?: { x: number; y: number }[] }
   deckForwardIsPositiveY: boolean
   placements: (StabilityPlacement & { itemId: string })[]
@@ -307,7 +342,7 @@ function vcgOf(moments: WeightMoment[]): number | undefined {
 
 // Units on the deck the stability arithmetic can't weigh: a stack whose
 // weight isn't given, or the layers of a composed stack whose cargo has none.
-function weightlessUnits(placements: TripStabilityInput['placements'], items: CargoItem[]): number {
+export function weightlessUnits(placements: TripStabilityInput['placements'], items: CargoItem[]): number {
   return placements.reduce((n, p) => {
     if (!p.composition) return n + ((p.weight ?? 0) > 0 ? 0 : p.layers)
     return n + p.composition.filter((seg) => !((items.find((it) => it.id === seg.itemId)?.weight ?? 0) > 0)).reduce((sum, seg) => sum + seg.layers, 0)
@@ -316,7 +351,8 @@ function weightlessUnits(placements: TripStabilityInput['placements'], items: Ca
 
 function evaluateState(input: TripStabilityInput, state: LoadingState): StateStability | null {
   const vessel: VesselStabilityData = { ...input.vessel, variableWeights: weightsInState(input.vessel, state) }
-  const { shipFrame: frame, deckForwardIsPositiveY: fwd } = input
+  const { frame, alongMissing } = resolveShipFrame(input.shipFrame)
+  const fwd = input.deckForwardIsPositiveY
   const unit = input.deck.unit
   const deckW = toMeters(input.deck.width, unit)
   const deckL = toMeters(input.deck.length, unit)
@@ -401,9 +437,25 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
       `GM ${m2(gm)} м ниже предела ${m2(limit.gmMinM)} м при ${limit.kind === 'min-gm-by-draft' ? `осадке ${m2(limit.arg)} м` : `водоизмещении ${tonnes(limit.arg)} т`}`
     )
   const maxDraft = vessel.particulars.maxDraftM
-  if (maxDraft !== undefined && draughts.midM !== null && draughts.midM > maxDraft + 1e-9)
-    errors.push(`Осадка ${m2(draughts.midM)} м больше предельной ${m2(maxDraft)} м по грузовой марке`)
+  if (maxDraft !== undefined) {
+    // Past the table's heaviest row the draught is that row's own, so a
+    // table ending at the mark never showed a draught over it, however
+    // heavy the ship: judged by displacement there instead.
+    const top = vessel.hydrostatics.points.reduce((a, b) => (b.displacementKg > a.displacementKg ? b : a))
+    if (stability.displacementKg > top.displacementKg) {
+      if (top.draftM >= maxDraft - 1e-9)
+        errors.push(`Водоизмещение ${tonnes(stability.displacementKg)} т больше, чем при осадке по грузовой марке ${m2(maxDraft)} м`)
+      else
+        warnings.push(`Осадку по грузовой марке не проверить: таблица гидростатики кончается на осадке ${m2(top.draftM)} м, марка — ${m2(maxDraft)} м`)
+    } else if (draughts.midM !== null && draughts.midM > maxDraft + 1e-9)
+      errors.push(`Осадка ${m2(draughts.midM)} м больше предельной ${m2(maxDraft)} м по грузовой марке`)
+  }
   if (stability.extrapolated) warnings.push(`Водоизмещение ${tonnes(stability.displacementKg)} т вне таблицы гидростатики — числа оценочные`)
+  // Where the deck stands along the hull only moves the cargo's LCG — the
+  // trim, and the draughts at the ends. «0 from midships» is a real place,
+  // so only an offset never entered is said.
+  if (alongMissing && input.placements.length > 0 && stability.trimM !== null)
+    warnings.push('Положение палубы по длине судна не задано — дифферент и осадки носом и кормой неточны')
   if (input.vessel.variableWeights.length === 0 && (input.vessel.arrivalWeights ?? []).length === 0) warnings.push('Танки и запасы не заданы')
   // An empty free-surface moment means a pressed-full or empty tank, but a
   // state with none on any tank is most likely one where they weren't
@@ -460,6 +512,7 @@ export function gmMargin(s: StateStability): number {
 }
 
 export function evaluateTripStability(input: TripStabilityInput): TripStabilityResult | undefined {
+  if (stabilityMissing(input)) return undefined
   const departure = evaluateState(input, 'departure')
   const arrival = evaluateState(input, 'arrival')
   if (!departure || !arrival) return undefined

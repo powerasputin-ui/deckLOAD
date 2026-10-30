@@ -86,6 +86,17 @@ describe('buildChecks', () => {
     it('accepts exactly the limit', () => {
       expect(check(facts({ maxDeckCargoT: 16.6 }), 'deck-weight')).toMatchObject({ status: 'ok' })
     })
+
+    // Cargo with no weight weighs nothing in the total: under the limit is
+    // no pass while some of it isn't counted.
+    it('warns under the limit while some cargo has no weight', () => {
+      const trips = [trip({ weightlessUnits: 3 })]
+      expect(check(facts({ maxDeckCargoT: 2550, trips }), 'deck-weight')).toMatchObject({
+        status: 'warn',
+        detail: '16.6 из 2550 т · без веса не учтено 3 ед.',
+      })
+      expect(check(facts({ maxDeckCargoT: 15, trips }), 'deck-weight')).toMatchObject({ status: 'error' })
+    })
   })
 
   describe('zones', () => {
@@ -107,6 +118,13 @@ describe('buildChecks', () => {
 
     it('is fine when every zone is within its limit', () => {
       expect(check(facts({ zoneCount: 2 }), 'zones')).toMatchObject({ status: 'ok', detail: 'Все зоны в лимите' })
+    })
+
+    it('warns while some cargo has no weight, the zones reading it as nothing', () => {
+      expect(check(facts({ zoneCount: 2, trips: [trip({ weightlessUnits: 2 })] }), 'zones')).toMatchObject({
+        status: 'warn',
+        detail: 'Зоны в лимите · без веса не учтено 2 ед.',
+      })
     })
 
     // Stage 4, group B: the load statistics said so in red; the check didn't.
@@ -154,6 +172,14 @@ describe('buildChecks', () => {
     const both: ('departure' | 'arrival')[] = ['departure', 'arrival']
     const fine = { verdict: 'ok' as const, reasons: [] }
     const noLimit = { verdict: 'warn' as const, reasons: [{ status: 'warn' as const, text: 'Предел по формуляру не задан', states: both }] }
+
+    // Worked out without it, every tonne on the deck lay on the keel.
+    it('warns when the deck\'s height above the keel isn\'t given, as nothing with cargo is worked out', () => {
+      expect(check(facts({ hasVessel: true, trips: [trip({ stabilityMissing: 'Не задана высота палубы над килем' })] }), 'stability')).toMatchObject({
+        status: 'warn',
+        detail: 'Не задана высота палубы над килем — остойчивость с грузом не считается',
+      })
+    })
 
     it('needs the vessel\'s data and its hydrostatics', () => {
       expect(check(facts({ hasVessel: true }), 'stability')).toMatchObject({ status: 'none', detail: 'Нет гидростатики судна' })

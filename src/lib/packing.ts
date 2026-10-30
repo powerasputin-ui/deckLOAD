@@ -608,10 +608,19 @@ export interface LashingCheck {
 
 const G = 9.80665
 
+// IMO CSS Code Annex 13: a securing device counts in a balance of forces at
+// its calculated strength, CS = MSL / 1.5 — the margin for the load shared
+// unevenly between devices and for imperfect fitting. Taking MSL at face
+// value overstated the securing by half again.
+export const CSS_SAFETY_FACTOR = 1.5
+
 // Simplified static-equivalent method (IMO CSS Code Annex 13 style): for each
 // direction, the weight's own inertial force under the vessel's motion
 // coefficient must be resisted by friction plus every attached lashing's
-// component in that direction. Non-blocking — same contract as
+// component in that direction, each lashing at CS = MSL / 1.5. Still
+// simpler than Annex 13 itself: the motion presets stand in for its
+// acceleration tables, and neither tipping nor wind and sea on deck cargo
+// is counted. Non-blocking — same contract as
 // checkZoneLoads: pure function, returns a descriptive struct, never
 // mutates, caller decides how (or whether) to surface it. Returns null when
 // there's nothing attached to check (an unsecured item isn't a "failure",
@@ -643,14 +652,14 @@ export function checkLashingBalance(
     const dist = Math.hypot(dx, dy)
     if (dist <= 1e-9) continue
     const verticalRad = ((l.verticalAngleDeg ?? 45) * Math.PI) / 180
-    const horizontalComponent = Math.cos(verticalRad) // fraction of MSL acting in the deck plane
+    const horizontalComponent = Math.cos(verticalRad) // fraction of the device's strength acting in the deck plane
     // Deck-plane direction of the lashing, split into transverse (X, relative
     // to the ship's centerline running along Y) and longitudinal (Y) parts.
     const ux = Math.abs(dx / dist)
     const uy = Math.abs(dy / dist)
-    const mslPlane = (l.mslKg ?? 0) * horizontalComponent * G
-    transverseAvail += mslPlane * ux
-    longitudinalAvail += mslPlane * uy
+    const csPlane = ((l.mslKg ?? 0) / CSS_SAFETY_FACTOR) * horizontalComponent * G
+    transverseAvail += csPlane * ux
+    longitudinalAvail += csPlane * uy
   }
   const transverseRequired = weightKg * G * motion.ay
   const longitudinalRequired = weightKg * G * motion.ax

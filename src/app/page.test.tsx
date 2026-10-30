@@ -870,6 +870,33 @@ describe('Home (page.tsx)', () => {
       expect(within(shownState()).getByText('Вода в трубах')).toBeTruthy()
     })
 
+    // Every tonne on a deck of no given height above the keel counted as
+    // lying on the keel: GM came out metres too high, and nothing said so.
+    it('works nothing out with cargo on a deck of no height above the keel, says why everywhere, and leads to the field', () => {
+      render(<Home />)
+      seedVessel()
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, shipFrame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 30 } } })
+      })
+      openSection('Судно')
+      expect(screen.getByTestId('vessel-stability-summary').textContent).toBe('Не задана высота палубы над килем — GM не посчитана')
+      openSection('Проверки')
+      expect(screen.getByText('Не задана высота палубы над килем — остойчивость с грузом не считается')).toBeTruthy()
+
+      fireEvent.click(within(screen.getByRole('status', { name: 'Итог расчёта' })).getByText('GM — ⚠'))
+      const workspace = within(screen.getByTestId('stability-workspace'))
+      expect(workspace.queryByTestId('stability-gm')).toBeNull()
+      expect(workspace.getByTestId('stability-missing').textContent).toMatch(/^Не задана высота палубы над килем\. Без неё груз на палубе не посчитать/)
+      fireEvent.click(workspace.getByRole('button', { name: 'Задать высоту палубы' }))
+      const height = screen.getByLabelText('Высота палубы над килем, м')
+      expect(document.activeElement).toBe(height)
+      fireEvent.change(height, { target: { value: '6' } })
+      fireEvent.keyDown(height, { key: 'Enter' })
+      expect(useCalculator.getState().deck.shipFrame?.heightAboveBaselineM).toBe(6)
+      expect(screen.getByTestId('stability-gm')).toBeTruthy()
+      expect(screen.queryByTestId('stability-missing')).toBeNull()
+    })
+
     it('opens from the GM in the status line and from «Проверки», which lists the reasons', () => {
       render(<Home />)
       clearDemoCargo()

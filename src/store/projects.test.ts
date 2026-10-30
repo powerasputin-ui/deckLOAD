@@ -1436,6 +1436,43 @@ describe('projects store', () => {
     expect(reloaded.deck.deckForwardIsPositiveY).toBe(true) // default
   })
 
+  // A deck height never entered was saved as 0, and 0 read back as a deck
+  // lying on the keel: GM metres too high. What wasn't entered stays unset.
+  it('keeps a frame figure never entered unset, and reads a saved height of 0 as not entered', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: {
+        width: 20,
+        length: 8,
+        unit: 'm',
+        gap: 0.1,
+        boardOffset: 0.2,
+        clearance: 0,
+        shipFrame: { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 },
+      },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    expect(useProjects.getState().projects[0].deck.shipFrame).toEqual({
+      originOffsetFromCenterlineM: 0,
+      originOffsetFromMidshipsM: 0,
+      heightAboveBaselineM: undefined,
+    })
+  })
+
   it('drops an individual malformed KN row without discarding the rest of the table', () => {
     useProjects.getState().hydrate()
     const project = useProjects.getState().projects[0]

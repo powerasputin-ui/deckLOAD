@@ -22,6 +22,7 @@ import {
   checkZoneLoads,
   zoneIdsOverlapping,
   checkLashingBalance,
+  CSS_SAFETY_FACTOR,
   DEFAULT_VESSEL_MOTION,
   violatesSeparationForCategories,
   pipePyramidSpreadMargin,
@@ -3740,7 +3741,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               >
                 {check && (
                   <title>
-                    {`Груз ${check.ok ? 'закреплён' : 'НЕ закреплён'} — поперечно: ${check.transverse.availableKg.toFixed(0)}/${check.transverse.requiredKg.toFixed(0)} кг, продольно: ${check.longitudinal.availableKg.toFixed(0)}/${check.longitudinal.requiredKg.toFixed(0)} кг`}
+                    {`Груз ${check.ok ? 'закреплён' : 'НЕ закреплён'} — поперечно: ${check.transverse.availableKg.toFixed(0)}/${check.transverse.requiredKg.toFixed(0)} кг, продольно: ${check.longitudinal.availableKg.toFixed(0)}/${check.longitudinal.requiredKg.toFixed(0)} кг (крепление — MSL ÷ ${CSS_SAFETY_FACTOR} по CSS Code)`}
                   </title>
                 )}
               </circle>

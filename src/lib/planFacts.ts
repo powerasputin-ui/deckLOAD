@@ -25,8 +25,7 @@ import {
   type SeparationRule,
 } from './packing'
 import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
-import type { DeckShipFrame } from './stability'
-import { evaluateTripStability, type TripStabilityResult } from './stabilityConditions'
+import { evaluateTripStability, stabilityMissing, weightlessUnits, type TripStabilityResult } from './stabilityConditions'
 import { vesselTemplateById } from './vesselTemplates'
 import { UNIT_LABEL } from './units'
 import { fmtNumber } from './utils'
@@ -44,8 +43,6 @@ export interface PlanInput {
   // In the deck's unit, like the placements.
   separationRules: readonly SeparationRule[]
 }
-
-const NO_SHIP_FRAME: DeckShipFrame = { originOffsetFromCenterlineM: 0, originOffsetFromMidshipsM: 0, heightAboveBaselineM: 0 }
 
 export function gatherPlanFacts(p: PlanInput): PlanFacts {
   const { mode, trips, deck, items } = p
@@ -69,6 +66,8 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
       securedStacks: tripRecords.filter((r) => lashingVerdict(r, deck, items) !== 'none').length,
       separationViolations: found.separation.length,
       stability: tripStability(t, deck, items),
+      stabilityMissing: deckStabilityMissing(deck, t),
+      weightlessUnits: weightlessUnits(t.placed, items),
       found,
     }
   })
@@ -194,13 +193,20 @@ export function evaluateDeckTripStability(deck: DeckConfig, t: PackingResult, it
   if (!deck.vessel) return undefined
   return evaluateTripStability({
     vessel: deck.vessel,
-    shipFrame: deck.shipFrame ?? NO_SHIP_FRAME,
+    shipFrame: deck.shipFrame ?? {},
     deck: { width: deck.width, length: deck.length, unit: deck.unit, outline: deck.outline },
     deckForwardIsPositiveY: deck.deckForwardIsPositiveY ?? true,
     placements: t.placed,
     items,
     icing: deck.icing ?? false,
   })
+}
+
+// Why the trip's stability isn't worked out though the vessel's data is
+// there (stabilityMissing), for the places that say so.
+export function deckStabilityMissing(deck: DeckConfig, t: PackingResult): string | undefined {
+  if (!deck.vessel) return undefined
+  return stabilityMissing({ vessel: deck.vessel, shipFrame: deck.shipFrame ?? {}, placements: t.placed, icing: deck.icing ?? false })
 }
 
 function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {

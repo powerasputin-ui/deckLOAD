@@ -62,7 +62,8 @@ import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
-import { evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
+import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
+import { NO_DECK_HEIGHT } from '@/lib/stabilityConditions'
 import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedStack, type StackActions } from '@/components/shell/Inspector'
 import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
@@ -690,6 +691,8 @@ export default function Home() {
   // stability workspace shows it, the status line (spec 8.3) and «Судно»
   // take its worse state, as «Проверки» judges it.
   const tripStability = useMemo(() => evaluateDeckTripStability(deck, result, items), [deck, result, items])
+  // Why it isn't worked out though the vessel's data is there.
+  const stabilityMissing = useMemo(() => deckStabilityMissing(deck, result), [deck, result])
   const statusGm = useMemo(() => {
     if (!tripStability) return undefined
     const { worst } = tripStability
@@ -1390,6 +1393,7 @@ export default function Home() {
     totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
     tripCount: shownTrips.length,
     gm: statusGm,
+    gmMissing: stabilityMissing === NO_DECK_HEIGHT ? stabilityMissing : undefined,
     checks: planChecks,
   }
   const marks = sectionMarks({
@@ -1519,6 +1523,7 @@ export default function Home() {
               onApplyVesselToCurrent={handleApplyVesselToCurrent}
               zoneLoads={zoneLoads}
               stability={statusGm}
+              stabilityMissing={stabilityMissing}
               hasVessel={!!deck.vessel}
               onOpenStability={() => setWorkspace('stability')}
             />
@@ -1612,6 +1617,7 @@ export default function Home() {
           {workspace === 'stability' ? (
             <StabilityWorkspace
               evaluation={tripStability}
+              missing={stabilityMissing}
               trip={shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined}
               onClose={() => setWorkspace('deck')}
               onChooseVessel={() => {

@@ -9,6 +9,7 @@ import { G_METACENTRIC_MIN_SAFE, type LoadingState } from '@/lib/stability'
 import {
   gmMargin,
   knReference,
+  NO_DECK_HEIGHT,
   NOT_CHECKED,
   STABILITY_DISCLAIMER,
   STATE_LABEL,
@@ -43,11 +44,14 @@ export function VerdictIcon({ verdict, className }: { verdict: StabilityVerdict;
 export function StabilityResults({
   evaluation,
   hasVessel,
+  missing,
   onChooseVessel,
   onFillData,
 }: {
   evaluation: TripStabilityResult | undefined
   hasVessel: boolean
+  // Why it isn't worked out though the vessel's data is there.
+  missing?: string
   onChooseVessel?: () => void
   onFillData?: () => void
 }) {
@@ -60,7 +64,21 @@ export function StabilityResults({
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {STABILITY_DISCLAIMER}
       </p>
-      {!evaluation && hasVessel ? (
+      {!evaluation && hasVessel && missing === NO_DECK_HEIGHT ? (
+        // Worked out without it, every tonne on the deck would lie on the
+        // keel and GM come out metres too high: nothing is shown instead.
+        <div className="space-y-3" data-testid="stability-missing">
+          <p className="flex gap-2 text-sm">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
+            <span>
+              {NO_DECK_HEIGHT}. Без неё груз на палубе не посчитать: GM вышла бы завышенной на метры. Она в «Системе координат палубы».
+            </span>
+          </p>
+          <Button variant="outline" size="sm" onClick={onFillData}>
+            Задать высоту палубы
+          </Button>
+        </div>
+      ) : !evaluation && hasVessel ? (
         <p className="text-sm text-ink-2">Добавьте гидростатику судна — без неё остойчивость не считается.</p>
       ) : !evaluation ? (
         // Without the vessel's data (spec 10.3): the two ways to it.

@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StabilityData } from '@/components/stability/StabilityData'
 import { StabilityResults } from '@/components/stability/StabilityResults'
-import type { TripStabilityResult } from '@/lib/stabilityConditions'
+import { NO_DECK_HEIGHT, type TripStabilityResult } from '@/lib/stabilityConditions'
 import { useCalculator } from '@/store/calculator'
 
 // The stability workspace (spec 2026-10-24, 6.1; redesign spec 8.5): in
@@ -13,12 +13,15 @@ import { useCalculator } from '@/store/calculator'
 // result on the right. «← К палубе» or Esc goes back.
 export function StabilityWorkspace({
   evaluation,
+  missing,
   trip,
   onClose,
   onChooseVessel,
 }: {
   // The open trip by the booklet check; unset without the vessel's data.
   evaluation: TripStabilityResult | undefined
+  // Why it isn't worked out though the vessel's data is there.
+  missing?: string
   trip?: { index: number; count: number }
   onClose: () => void
   // Without the vessel's data (spec 10.3): the library, in «Судно».
@@ -31,6 +34,13 @@ export function StabilityWorkspace({
     const first = dataRef.current?.querySelector<HTMLElement>('input, select, textarea')
     first?.scrollIntoView({ block: 'center' })
     first?.focus()
+  }
+  // The deck's height above the keel, when that is what's missing.
+  const fillDeckHeight = () => {
+    const label = Array.from(dataRef.current?.querySelectorAll('label') ?? []).find((l) => l.textContent?.startsWith('Высота палубы над килем'))
+    const field = label?.control as HTMLElement | null | undefined
+    field?.scrollIntoView({ block: 'center' })
+    field?.focus()
   }
 
   return (
@@ -48,7 +58,13 @@ export function StabilityWorkspace({
           <StabilityData />
         </div>
         <div className="px-4 py-3 lg:min-h-0 lg:overflow-auto">
-          <StabilityResults evaluation={evaluation} hasVessel={hasVessel} onChooseVessel={onChooseVessel} onFillData={fillData} />
+          <StabilityResults
+            evaluation={evaluation}
+            hasVessel={hasVessel}
+            missing={missing}
+            onChooseVessel={onChooseVessel}
+            onFillData={missing === NO_DECK_HEIGHT ? fillDeckHeight : fillData}
+          />
         </div>
       </div>
     </section>

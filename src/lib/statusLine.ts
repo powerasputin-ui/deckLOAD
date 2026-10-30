@@ -19,6 +19,9 @@ export interface StatusLineInput {
   // the state it's judged by (the worse of departure and arrival) and the
   // booklet check's verdict on it — a tick only against the booklet's limit.
   gm?: { valueM: number; status: 'ok' | 'warn' | 'error'; estimated: boolean; state: 'departure' | 'arrival' }
+  // Why GM isn't worked out though the vessel's data is there — said in
+  // its place rather than a GM it would get wrong.
+  gmMissing?: string
   // The whole plan's checks (checks.ts): their ✕ and ⚠ are counted here.
   checks?: readonly Check[]
 }
@@ -82,6 +85,8 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
       target: 'stability',
       tone: s.gm.status === 'error' ? 'danger' : s.gm.status === 'warn' ? 'warn' : undefined,
     })
+  } else if (s.gmMissing) {
+    items.push({ id: 'gm', text: 'GM — ⚠', title: s.gmMissing, label: `GM не посчитана: ${s.gmMissing.toLowerCase()}`, target: 'stability', tone: 'warn' })
   }
 
   // «✕ 1 · ⚠ 2»: shown as far as there is any.

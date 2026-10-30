@@ -7,6 +7,7 @@ import { UNIT_LABEL } from './units'
 import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import { G_METACENTRIC_MIN_SAFE, type VesselStabilityData } from './stability'
 import {
+  NO_DECK_HEIGHT,
   NOT_CHECKED,
   prefixedReason,
   STABILITY_DISCLAIMER,
@@ -18,7 +19,7 @@ import {
 import { cargoToneForNumber, sortByCargoNumber } from './cargoPalette'
 import { segmentLashingInputs, type ComposablePlacement, type LashingCatalogItem } from './placementComposition'
 import { buildChecks, type Check, type CheckStatus, type PlanFacts } from './checks'
-import { evaluateDeckTripStability } from './planFacts'
+import { deckStabilityMissing, evaluateDeckTripStability } from './planFacts'
 import { buildPlanDrawing, type PlanDrawing } from './planDrawing'
 import { drawPlanOnPdf } from './planToPdf'
 import { vesselTemplateById } from './vesselTemplates'
@@ -222,10 +223,17 @@ export interface StabilityPdfBlock {
 const STABILITY_HEAD = ['Состояние', 'Водоизм., т', 'Осадка ср. / нос / корма, м', 'Крен, °', 'Дифферент, м', 'GM, м', 'Предел GM, м', 'Вода в трубах, т', 'Лёд, т', 'Итог']
 const VERDICT_IN_WORDS: Record<StabilityVerdict, string> = { ok: 'выполнено', warn: 'нужна проверка', error: 'не выполнено' }
 
-export function buildStabilityPdfBlock(evaluation: TripStabilityResult | undefined, vessel: VesselStabilityData | undefined): StabilityPdfBlock {
+export function buildStabilityPdfBlock(
+  evaluation: TripStabilityResult | undefined,
+  vessel: VesselStabilityData | undefined,
+  // Why it isn't worked out though the vessel's data is there.
+  missing?: string
+): StabilityPdfBlock {
   const title = 'Остойчивость'
   const empty = (only: string): StabilityPdfBlock => ({ title, only, head: STABILITY_HEAD, rows: [], verdicts: [], notes: [] })
   if (!vessel) return empty('Остойчивость не рассчитывалась: нет данных судна')
+  if (!evaluation && missing === NO_DECK_HEIGHT)
+    return empty('Остойчивость не рассчитывалась: не задана высота палубы над килем — без неё груз на палубе не посчитать')
   if (!evaluation) return empty('Остойчивость не рассчитывалась: нет гидростатики судна')
   const m2 = (v: number) => v.toFixed(2)
   // Numbers read off the edge of the hydrostatic table carry a star.
@@ -447,7 +455,7 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
       },
       area: `Загрузка площади: ${Math.round(t.utilization * 100)}% — занято ${fmtNumber(t.usedArea)} из ${fmtNumber(t.totalArea)} ${unit}²`,
       checks: tripChecks(input.facts, i).map((c) => ({ title: c.title, status: c.status, word: CHECK_STATUS_WORD[c.status], detail: c.detail })),
-      stability: buildStabilityPdfBlock(evaluateDeckTripStability(deck, t, items), deck.vessel),
+      stability: buildStabilityPdfBlock(evaluateDeckTripStability(deck, t, items), deck.vessel, deckStabilityMissing(deck, t)),
       lashing: lashingOf(placements),
     }
   })

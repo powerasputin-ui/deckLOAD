@@ -32,6 +32,9 @@ describe('status line', () => {
     expect(texts({ ...base, gm: { valueM: 2.771, status: 'ok', estimated: false, state: 'departure' } })).toContain('GM 2.77 м (отход) ✓')
     expect(texts({ ...base, gm: { valueM: 1.5, status: 'warn', estimated: false, state: 'arrival' } })).toContain('GM 1.50 м (приход) ⚠')
     expect(texts({ ...base, gm: { valueM: 0.1, status: 'error', estimated: true, state: 'arrival' } })).toContain('GM ≈0.10 м (приход) ✕')
+    // Not worked out though the vessel's data is there: said, not guessed.
+    const missing = statusItems({ ...base, gmMissing: 'Не задана высота палубы над килем' }).find((i) => i.id === 'gm')!
+    expect(missing).toMatchObject({ text: 'GM — ⚠', title: 'Не задана высота палубы над килем', tone: 'warn', target: 'stability' })
     const tone = (status: 'ok' | 'warn' | 'error') =>
       statusItems({ ...base, gm: { valueM: 1, status, estimated: false, state: 'arrival' } }).find((i) => i.id === 'gm')!.tone
     expect([tone('ok'), tone('warn'), tone('error')]).toEqual([undefined, 'warn', 'danger'])

@@ -21,6 +21,7 @@ import {
   zoneAreaWithinOutline,
   zoneIdsOverlapping,
   checkLashingBalance,
+  CSS_SAFETY_FACTOR,
   requiredLashingCount,
   lashingMethodologyFor,
   assessLashingRequirement,
@@ -2420,6 +2421,17 @@ describe('checkLashingBalance', () => {
     const result = checkLashingBalance(heavy, weak, DEFAULT_VESSEL_MOTION)
     expect(result).not.toBeNull()
     expect(result!.ok).toBe(false)
+  })
+
+  // CSS Code Annex 13: a device counts at CS = MSL / 1.5. 2000 kg under
+  // «coastal» needs 700 kg across; friction gives 600 kg, so a horizontal
+  // lashing must give 100 kg — an MSL of 150 kg, not 100.
+  it('counts each lashing at its calculated strength, MSL / 1.5', () => {
+    const across = (mslKg: number) => checkLashingBalance(placement, [lashing({ id: 'l1', mslKg })], DEFAULT_VESSEL_MOTION)!.transverse
+    expect(CSS_SAFETY_FACTOR).toBe(1.5)
+    expect(across(150).availableKg).toBeCloseTo(700, 6)
+    expect(across(149).ok).toBe(false)
+    expect(across(151).ok).toBe(true)
   })
 
   it('a marginal transverse case passes under "coastal" but fails under "open-sea" (higher ay)', () => {

@@ -36,9 +36,9 @@ import {
 } from '@/lib/cargoValidation'
 import {
   DEFAULT_VESSEL_PARTICULARS,
-  DEFAULT_SHIP_FRAME,
   type VesselStabilityData,
   type DeckShipFrame,
+  type DeckShipFrameInput,
   type VesselParticulars,
   type HydrostaticPoint,
   type KNCrossCurves,
@@ -146,7 +146,8 @@ export interface DeckConfig {
   // midships/baseline reference. Both undefined = feature untouched, no
   // computation attempted anywhere.
   vessel?: VesselStabilityData
-  shipFrame?: DeckShipFrame
+  // A figure not entered is unset, never 0 (DeckShipFrameInput).
+  shipFrame?: DeckShipFrameInput
   // true (default) = deck-local +y points toward the bow. Explicit, not
   // assumed — this is exactly the kind of ambiguous-semantics field that
   // has twice this session burned a user (density vs total, per-unit vs
@@ -2161,7 +2162,7 @@ export const useCalculator = create<CalculatorState>()(
     set((s) => ({
       deck: {
         ...s.deck,
-        shipFrame: { ...(s.deck.shipFrame ?? DEFAULT_SHIP_FRAME), ...patch },
+        shipFrame: { ...s.deck.shipFrame, ...patch },
       },
     })),
   setDeckForwardIsPositiveY: (v) =>

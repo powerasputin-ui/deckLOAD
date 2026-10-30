@@ -362,6 +362,14 @@ describe('buildStabilityPdfBlock', () => {
     expect(block.notes.at(-1)).toMatch(/^Не проверяется: критерий погоды/)
   })
 
+  it('says why stability wasn\'t worked out though the vessel\'s data is there', () => {
+    const v = vessel()
+    expect(buildStabilityPdfBlock(undefined, v, 'Не задана высота палубы над килем').only).toBe(
+      'Остойчивость не рассчитывалась: не задана высота палубы над килем — без неё груз на палубе не посчитать'
+    )
+    expect(buildStabilityPdfBlock(undefined, v).only).toBe('Остойчивость не рассчитывалась: нет гидростатики судна')
+  })
+
   it('says when there is no limit, and gives the reasons with what they mean', () => {
     const v = vessel({ limit: undefined, arrivalWeights: [] })
     const block = buildStabilityPdfBlock(evaluate(v), v)

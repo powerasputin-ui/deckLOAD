@@ -211,6 +211,12 @@ export interface DeckShipFrame {
   heightAboveBaselineM: number // deck surface (deck-local z=0) is this high above the keel/baseline
 }
 
+// The frame as a calculation keeps it: a figure not entered is unset, not
+// 0. A 0 standing in for «not entered» put every tonne on the deck at the
+// keel's height — GM came out metres too high, with no word said
+// (resolveShipFrame, stabilityConditions.ts, reads it back).
+export type DeckShipFrameInput = Partial<DeckShipFrame>
+
 // Seed values when the user first opens the "Остойчивость судна" section —
 // deliberately generic/zeroed rather than a plausible-looking guess, so an
 // unfilled field reads as "you haven't entered this yet," not as data.
@@ -222,12 +228,6 @@ export const DEFAULT_VESSEL_PARTICULARS: VesselParticulars = {
   lightshipLCG: 0,
   lightshipTCG: 0,
   longitudinalOrigin: 'midships',
-}
-
-export const DEFAULT_SHIP_FRAME: DeckShipFrame = {
-  originOffsetFromCenterlineM: 0,
-  originOffsetFromMidshipsM: 0,
-  heightAboveBaselineM: 0,
 }
 
 // ---- Cargo VCG ----

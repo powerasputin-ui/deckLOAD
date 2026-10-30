@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import type { CargoItem, CargoShape, ManualPlacement, SortStrategy, PinnedPlacement, SeparationRule, VesselMotionPreset, RestrictionZoneShape, StabilityOverride, ClearanceMargin, WireRopeType, AnnotationKind, LashingDeviceType, CompositionSegment } from '@/lib/packing'
 import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
-import type { VesselStabilityData, DeckShipFrame, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
+import type { VesselStabilityData, DeckShipFrameInput, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
 import {
   sanitizeCargoWidth,
   sanitizeCargoLength,
@@ -437,13 +437,17 @@ function normalizeVessel(value: unknown): VesselStabilityData | undefined {
   }
 }
 
-function normalizeShipFrame(value: unknown): DeckShipFrame | undefined {
+// A figure not entered stays unset rather than becoming 0. Older saves wrote
+// 0 for a height never entered — no deck lies on the keel, so it reads as
+// unset too.
+function normalizeShipFrame(value: unknown): DeckShipFrameInput | undefined {
   if (!value || typeof value !== 'object') return undefined
   const f = value as Record<string, unknown>
+  const offset = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
   return {
-    originOffsetFromCenterlineM: toFinite(f.originOffsetFromCenterlineM, 0),
-    originOffsetFromMidshipsM: toFinite(f.originOffsetFromMidshipsM, 0),
-    heightAboveBaselineM: toFiniteNonNegative(f.heightAboveBaselineM, 0),
+    originOffsetFromCenterlineM: offset(f.originOffsetFromCenterlineM),
+    originOffsetFromMidshipsM: offset(f.originOffsetFromMidshipsM),
+    heightAboveBaselineM: toOptionalPositive(f.heightAboveBaselineM),
   }
 }
 

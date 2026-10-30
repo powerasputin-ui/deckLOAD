@@ -12,7 +12,6 @@ import { ValueTable, type CellValue, type ValueColumn } from '@/components/stabi
 import { TextField } from '@/components/calculator/TextField'
 import { useCalculator } from '@/store/calculator'
 import {
-  DEFAULT_SHIP_FRAME,
   DEFAULT_VESSEL_PARTICULARS,
   G_METACENTRIC_MIN_SAFE,
   knCurvesProblem,
@@ -449,33 +448,49 @@ function IcingGroup({ particulars: p, open }: { particulars: VesselParticulars; 
 }
 
 function FrameGroup({ particulars: p, open }: { particulars: VesselParticulars; open: boolean }) {
-  const frame = useCalculator((s) => s.deck.shipFrame) ?? DEFAULT_SHIP_FRAME
+  const frame = useCalculator((s) => s.deck.shipFrame)
   const setFrame = useCalculator((s) => s.setShipFrame)
+  // Without it each tonne on the deck counts as lying on the keel: the
+  // stability isn't worked out with cargo until it is given.
+  const height = frame?.heightAboveBaselineM
+  const heightMissing = !(height !== undefined && height > 0)
   const forward = useCalculator((s) => s.deck.deckForwardIsPositiveY ?? true)
   const width = useCalculator((s) => s.deck.width)
   const length = useCalculator((s) => s.deck.length)
   const bow = DRAWING_EDGE_WORD[hullSideEdges(width, length, forward).bow]
   return (
-    <Group title="Система координат палубы" summary={`нос ${bow}`} open={open}>
+    <Group
+      title="Система координат палубы"
+      summary={[heightMissing ? 'высота над килем не задана' : `${fmtNumber(height!)} м над килем`, `нос ${bow}`].join(' · ')}
+      open={open || heightMissing}
+    >
       <div className="grid grid-cols-2 gap-2">
         <NumberInput
           label="Центр палубы от ДП, + правый борт"
           unit="м"
-          value={frame.originOffsetFromCenterlineM}
+          value={frame?.originOffsetFromCenterlineM}
           onCommit={(v) => setFrame({ originOffsetFromCenterlineM: v })}
+          onClear={() => setFrame({ originOffsetFromCenterlineM: undefined })}
+          placeholder="0 — по ДП"
         />
         <NumberInput
           label={p.longitudinalOrigin === 'aft-perpendicular' ? 'Центр палубы от КП' : 'Центр палубы от миделя'}
           unit="м"
-          value={frame.originOffsetFromMidshipsM}
+          value={frame?.originOffsetFromMidshipsM}
           onCommit={(v) => setFrame({ originOffsetFromMidshipsM: v })}
+          onClear={() => setFrame({ originOffsetFromMidshipsM: undefined })}
+          placeholder="не задано"
+          hint="Нужно для дифферента"
         />
         <NumberInput
           label="Высота палубы над килем"
           unit="м"
-          value={frame.heightAboveBaselineM}
+          value={heightMissing ? undefined : height}
           onCommit={(v) => setFrame({ heightAboveBaselineM: v })}
-          hint="Она же высота борта для надводного борта"
+          onClear={() => setFrame({ heightAboveBaselineM: undefined })}
+          min={0.01}
+          placeholder="не задана"
+          hint={heightMissing ? 'Без неё остойчивость с грузом на палубе не считается' : 'Она же высота борта для надводного борта'}
         />
       </div>
       {/* Set with the deck, in «Судно» → «Палуба» (spec 8.1, A.6). */}

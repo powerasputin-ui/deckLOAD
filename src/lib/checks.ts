@@ -9,7 +9,7 @@
 // is the plan's problem while trip 1 is on screen. A detail names the trips
 // when there is more than one.
 import type { LoadingState } from './stability'
-import { prefixedReason } from './stabilityConditions'
+import { NO_DECK_HEIGHT, NO_HYDROSTATICS, prefixedReason } from './stabilityConditions'
 import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
@@ -51,6 +51,12 @@ export interface TripFacts {
   securedStacks?: number
   separationViolations: number
   stability?: TripStability
+  // Why stability isn't worked out though the vessel's data is there
+  // (stabilityMissing): no hydrostatics, or no deck height under cargo.
+  stabilityMissing?: string
+  // Units on the trip with no weight given: the weight and the zones read
+  // them as nothing.
+  weightlessUnits?: number
   // What the checks found, stack by stack — the counts above, itemised.
   found?: TripFindings
 }
@@ -126,6 +132,8 @@ export interface PlanFacts {
 }
 
 const stacksWord = (n: number) => pluralRu(n, 'штабель', 'штабеля', 'штабелей')
+// «без веса не учтено 3 ед.» — the units of a trip whose weight isn't given.
+const weightlessWords = (n: number) => `без веса не учтено ${n} ед.`
 
 export function buildChecks(f: PlanFacts): Check[] {
   const multiTrip = f.trips.length > 1
@@ -162,10 +170,13 @@ export function buildChecks(f: PlanFacts): Check[] {
     else {
       const heaviest = Math.max(0, ...f.trips.map((t) => t.weightKg))
       const over = tripsWhere((t) => t.weightKg / 1000 > limit + 1e-9)
+      // Cargo with no weight weighs nothing here: the total under the limit
+      // is no pass while some of it isn't counted.
+      const weightless = Math.max(0, ...f.trips.map((t) => t.weightlessUnits ?? 0))
       checks.push({
         ...base,
-        status: over.length > 0 ? 'error' : 'ok',
-        detail: `${fmtTonnes(heaviest)} из ${limit} т${onTrips(over)}`,
+        status: over.length > 0 ? 'error' : weightless > 0 ? 'warn' : 'ok',
+        detail: `${fmtTonnes(heaviest)} из ${limit} т${onTrips(over)}${weightless > 0 ? ` · ${weightlessWords(weightless)}` : ''}`,
       })
     }
   }
@@ -188,7 +199,11 @@ export function buildChecks(f: PlanFacts): Check[] {
     else if (f.deckStrength === 'unchecked')
       checks.push({ ...base, status: 'warn', detail: 'Нет зоны на всю палубу — прочность не проверяется' })
     else if (f.zoneCount === 0) checks.push({ ...base, status: 'none', detail: 'Зон нет' })
-    else checks.push({ ...base, status: 'ok', detail: 'Все зоны в лимите' })
+    else {
+      const weightless = Math.max(0, ...f.trips.map((t) => t.weightlessUnits ?? 0))
+      if (weightless > 0) checks.push({ ...base, status: 'warn', detail: `Зоны в лимите · ${weightlessWords(weightless)}` })
+      else checks.push({ ...base, status: 'ok', detail: 'Все зоны в лимите' })
+    }
   }
 
   // Сепарация.
@@ -221,7 +236,11 @@ export function buildChecks(f: PlanFacts): Check[] {
     const judged = f.trips.filter((t) => t.stability)
     const worst = judged.some((t) => t.stability!.verdict === 'error') ? 'error' : judged.some((t) => t.stability!.verdict === 'warn') ? 'warn' : 'ok'
     if (!f.hasVessel) checks.push({ ...base, status: 'none', detail: 'Нет данных судна' })
-    else if (judged.length === 0) checks.push({ ...base, status: 'none', detail: 'Нет гидростатики судна' })
+    // The deck's height is the deck's, so it is missing on every trip with
+    // cargo — the only trips the plan has.
+    else if (f.trips.some((t) => t.stabilityMissing === NO_DECK_HEIGHT))
+      checks.push({ ...base, status: 'warn', detail: `${NO_DECK_HEIGHT} — остойчивость с грузом не считается` })
+    else if (judged.length === 0) checks.push({ ...base, status: 'none', detail: NO_HYDROSTATICS })
     else if (worst === 'ok') checks.push({ ...base, status: 'ok', detail: 'Выполнено по формуляру' })
     else {
       const lines = stabilityLines(f.trips, multiTrip)
