@@ -68,6 +68,7 @@ import { Inspector, INSPECTOR_WIDTH_PX, type InspectedSelection, type InspectedS
 import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
 import { StartScreen } from '@/components/intro/StartScreen'
+import { EmptyDeck } from '@/components/shell/EmptyDeck'
 import { useFirstRun } from '@/hooks/useFirstRun'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
 import { useTrips } from '@/hooks/useTrips'
@@ -1525,6 +1526,7 @@ export default function Home() {
           {activeSection === 'checks' && (
             <ChecksSection
               checks={planChecks}
+              hasCargo={hasCargo}
               openCheck={openCheck}
               openDetails={openCheckDetails}
               onToggleCheck={(id) => setOpenCheck((open) => (open === id ? null : id))}
@@ -1585,11 +1587,27 @@ export default function Home() {
               evaluation={tripStability}
               trip={shownTrips.length > 1 ? { index: clampedTripIndex, count: shownTrips.length } : undefined}
               onClose={() => setWorkspace('deck')}
+              onChooseVessel={() => {
+                setWorkspace('deck')
+                openSection('vessel')
+              }}
             />
           ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
           {activeStamp && viewMode === '2d' && (
             <StampHint name={activeStamp.name} onRotate={toggleStampRotation} onCancel={() => setActiveStamp(null)} />
+          )}
+          {/* The empty deck's next steps (spec 10.3) — not while «Судно» is
+              open: there the deck itself is being set up. */}
+          {!hasCargo && !toolArmed && activeSection !== 'vessel' && (
+            <EmptyDeck
+              onChooseVessel={() => openSection('vessel')}
+              onAddCargo={() => openSection('cargo')}
+              onOpenExample={() => {
+                createProject('Демо-расчёт', { demo: true })
+                toast.success('Пример открыт новым расчётом')
+              }}
+            />
           )}
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-4 py-3" data-tour="deck-view">
             <div className={viewMode === '3d' ? 'my-auto w-full' : 'min-h-0 w-full flex-1'}>

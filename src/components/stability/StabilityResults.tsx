@@ -1,6 +1,7 @@
 'use client'
 
 import { useId, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { AlertTriangle, Check, CircleCheck, CircleX, TriangleAlert, X } from 'lucide-react'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { GzChart } from '@/components/stability/GzChart'
@@ -39,7 +40,17 @@ export function VerdictIcon({ verdict, className }: { verdict: StabilityVerdict;
 
 // The right column of the stability workspace (spec 2026-10-24, 6.1): the
 // open trip at departure and at arrival, each judged against the booklet.
-export function StabilityResults({ evaluation, hasVessel }: { evaluation: TripStabilityResult | undefined; hasVessel: boolean }) {
+export function StabilityResults({
+  evaluation,
+  hasVessel,
+  onChooseVessel,
+  onFillData,
+}: {
+  evaluation: TripStabilityResult | undefined
+  hasVessel: boolean
+  onChooseVessel?: () => void
+  onFillData?: () => void
+}) {
   const [chosen, setChosen] = useState<LoadingState | null>(null)
   const labelId = useId()
 
@@ -49,12 +60,21 @@ export function StabilityResults({ evaluation, hasVessel }: { evaluation: TripSt
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {STABILITY_DISCLAIMER}
       </p>
-      {!evaluation ? (
-        <p className="text-sm text-ink-2">
-          {hasVessel
-            ? 'Добавьте гидростатику судна — без неё остойчивость не считается.'
-            : 'Данных судна нет. Выберите судно в библиотеке или заполните группы слева, начиная с гидростатики.'}
-        </p>
+      {!evaluation && hasVessel ? (
+        <p className="text-sm text-ink-2">Добавьте гидростатику судна — без неё остойчивость не считается.</p>
+      ) : !evaluation ? (
+        // Without the vessel's data (spec 10.3): the two ways to it.
+        <div className="space-y-3">
+          <p className="text-sm text-ink-2">Выберите судно из библиотеки или заполните данные</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={onChooseVessel}>
+              Выбрать судно
+            </Button>
+            <Button variant="outline" size="sm" onClick={onFillData}>
+              Заполнить данные
+            </Button>
+          </div>
+        </div>
       ) : (
         <>
           <span id={labelId} className="sr-only">

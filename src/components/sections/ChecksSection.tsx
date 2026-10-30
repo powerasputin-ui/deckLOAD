@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 // stack's lashing points are its inspector's.
 export function ChecksSection({
   checks,
+  hasCargo,
   openCheck,
   openDetails,
   onToggleCheck,
@@ -25,6 +26,10 @@ export function ChecksSection({
   onCheckAction,
 }: {
   checks: readonly Check[]
+  // Without cargo there is little to check (spec 10.3): the section says
+  // so and leaves out the checks with nothing to say («—»). What a vessel
+  // already has to say stays — its strength limit, its stability.
+  hasCargo: boolean
   openCheck: CheckId | null
   openDetails: CheckDetails | null
   onToggleCheck: (id: CheckId) => void
@@ -35,11 +40,14 @@ export function ChecksSection({
   onOpenStability: () => void
   onCheckAction: (action: CheckAction) => void
 }) {
+  const shown = hasCargo ? checks : checks.filter((c) => c.status !== 'none')
   return (
     <>
       <PanelBlock>
+        {!hasCargo && <p className="text-sm text-ink-2">Добавьте груз — здесь появятся проверки</p>}
+        {shown.length > 0 && (
         <ul className="-mx-2 space-y-0.5" aria-label="Список проверок">
-          {checks.map((c) => {
+          {shown.map((c) => {
             const open = c.id === openCheck
             const detailsId = `check-details-${c.id}`
             return (
@@ -88,6 +96,7 @@ export function ChecksSection({
             )
           })}
         </ul>
+        )}
       </PanelBlock>
     </>
   )

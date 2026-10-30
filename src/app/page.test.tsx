@@ -1629,6 +1629,47 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
     })
 
+    // Spec 10.3: an empty deck says what to do next.
+    it('an empty deck offers a vessel, cargo and the example, and steps aside while «Судно» is open', () => {
+      render(<Home />)
+      clearDemoCargo()
+      openSection('Размещение')
+      const card = () => screen.queryByRole('region', { name: 'На палубе пока нет груза' })
+      expect(card()).toBeTruthy()
+      fireEvent.click(within(card()!).getByRole('button', { name: 'Добавить груз' }))
+      expect(screen.getByRole('heading', { name: 'Грузы' })).toBeTruthy()
+      fireEvent.click(within(card()!).getByRole('button', { name: 'Выбрать судно' }))
+      expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
+      expect(card()).toBeNull()
+      openSection('Проверки')
+      const projects = useProjects.getState().projects.length
+      fireEvent.click(within(card()!).getByRole('button', { name: 'Открыть пример' }))
+      expect(useProjects.getState().projects).toHaveLength(projects + 1)
+      expect(useProjects.getState().getActive()?.name).toBe('Демо-расчёт')
+    })
+
+    it('«Проверки» without cargo asks for it and leaves out the checks with nothing to say', () => {
+      render(<Home />)
+      clearDemoCargo()
+      openSection('Проверки')
+      expect(screen.getByText('Добавьте груз — здесь появятся проверки')).toBeTruthy()
+      expect(screen.queryByRole('list', { name: 'Список проверок' })).toBeNull()
+    })
+
+    it('stability without the vessel\'s data offers the library or the data', () => {
+      render(<Home />)
+      openSection('Проверки')
+      openCheckRow('stability')
+      fireEvent.click(screen.getByRole('button', { name: 'Остойчивость: открыть панель остойчивости' }))
+      const workspace = screen.getByTestId('stability-workspace')
+      expect(within(workspace).getByText('Выберите судно из библиотеки или заполните данные')).toBeTruthy()
+      fireEvent.click(within(workspace).getByRole('button', { name: 'Заполнить данные' }))
+      expect(workspace.contains(document.activeElement) && document.activeElement?.tagName).toBe('INPUT')
+      fireEvent.click(within(workspace).getByRole('button', { name: 'Выбрать судно' }))
+      expect(screen.queryByTestId('stability-workspace')).toBeNull()
+      expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
+    })
+
     // Spec 8.8: what the PDF will be — a trip's sheet as it prints, the
     // sheets, what goes in, and a word when there are errors.
     it('«Отчёт» previews a trip\'s sheet, lists the sheets and says what goes in', () => {
