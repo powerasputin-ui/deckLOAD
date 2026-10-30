@@ -63,8 +63,10 @@ test.describe('Non-rectangular deck outline', () => {
     // was rejected, not silently accepted.
     await expect(page.getByText(/0\/5 ед\./)).toBeVisible()
 
-    // A click well inside the remaining polygon succeeds.
-    await background.click({ position: { x: 60, y: 60 }, force: true })
+    // A click well inside the remaining polygon succeeds. The cut runs
+    // diagonally along most of the top edge, and the stack stands centred on
+    // the click: halfway down, it is clear of it.
+    await background.click({ position: { x: bgBox.width * 0.1, y: bgBox.height * 0.5 }, force: true })
     await expect(page.getByText(/1\/5 ед\./)).toBeVisible()
 
     // 3D view renders without crashing when the deck has a custom outline.
@@ -107,10 +109,11 @@ test.describe('Non-rectangular deck outline', () => {
     await background.click({ position: { x: 3, y: bgBox.height - 3 }, force: true })
     await expect(page.getByText(/0\/3 ед\./)).toBeVisible()
 
-    // Well past the offset on both axes — must succeed. (Mid-height: lower
-    // down, the 2 m item is pushed back against the offset line, and a rect
-    // touching the outline counts as outside it.)
-    await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.4 }, force: true })
+    // Well past the offset on both axes — must succeed. (Just below
+    // mid-height: the stack stands centred on the click, clear of the
+    // diagonal cut above and of the offset line below, since a rect touching
+    // the outline counts as outside it.)
+    await background.click({ position: { x: bgBox.width * 0.3, y: bgBox.height * 0.55 }, force: true })
     await expect(page.getByText(/1\/3 ед\./)).toBeVisible()
   })
 

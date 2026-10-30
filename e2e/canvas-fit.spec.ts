@@ -67,7 +67,7 @@ async function storedPin(page: Page) {
   return page.evaluate(() => {
     const data = JSON.parse(localStorage.getItem('deckload-projects') ?? 'null')
     const project = data?.projects?.find((p: { id: string }) => p.id === data.activeId)
-    return (project?.pinnedPlacementsByTrip?.['0'] ?? [])[0] as { x: number; y: number } | undefined
+    return (project?.pinnedPlacementsByTrip?.['0'] ?? [])[0] as { x: number; y: number; width: number; length: number } | undefined
   })
 }
 
@@ -94,14 +94,14 @@ test('a stamp lands where the deck is clicked and a drag moves it as far as the 
     const rect = (await deckRect(page).boundingBox())!
     const pxPerM = rect.width / 20
     expect(rect.height / 8).toBeCloseTo(pxPerM, 0)
-    await page.mouse.click(rect.x + 4 * pxPerM, rect.y + 1 * pxPerM)
+    await page.mouse.click(rect.x + 8 * pxPerM, rect.y + 4 * pxPerM)
     await page.keyboard.press('Escape')
     const stack = page.locator('svg g[data-cargo-placement="true"]')
     await expect(stack).toHaveCount(1)
-    // The stamp's corner nearest the deck's origin goes where it was clicked.
+    // The stamp's centre goes where it was clicked.
     const placed = await storedPin(page)
-    expect(placed!.y).toBeCloseTo(4, 1)
-    expect(placed!.x).toBeCloseTo(1, 1)
+    expect(placed!.y + placed!.length / 2).toBeCloseTo(8, 1)
+    expect(placed!.x + placed!.width / 2).toBeCloseTo(4, 1)
 
     // 6 m to the right on screen is 6 m along the deck.
     const s = (await stack.boundingBox())!

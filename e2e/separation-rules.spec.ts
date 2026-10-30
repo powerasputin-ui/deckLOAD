@@ -47,7 +47,9 @@ test.describe('Category separation rules', () => {
     const placedRect = page.locator('svg rect[fill="#B0E0F8"]').first()
     const rectBox = await placedRect.boundingBox()
     if (!rectBox) throw new Error('placed item 1 rect not found')
-    const nearX = rectBox.x - freshBg.x + rectBox.width + 20
+    // The new stack stands centred on the click, and it is as wide as this
+    // one: its centre goes half a width further.
+    const nearX = rectBox.x - freshBg.x + rectBox.width + 20 + rectBox.width / 2
     const nearY = rectBox.y - freshBg.y + rectBox.height / 2
     await background.click({ position: { x: nearX, y: nearY }, force: true })
     await expect(page.getByText(/нарушена сепарация груза/)).toBeVisible()

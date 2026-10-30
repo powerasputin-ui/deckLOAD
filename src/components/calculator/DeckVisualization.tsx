@@ -1273,6 +1273,14 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       : { w: activeStamp.width, l: activeStamp.length }
     : null
 
+  // Where a click puts the armed cargo (spec 7.1): centred on the pointer,
+  // then inside the deck less the board offset. The shadow under the cursor
+  // stands at the same place. It used to hang from the pointer by its corner
+  // nearest the deck's origin, so a container clicked onto a spot sat
+  // mostly beside it.
+  const stampCornerAt = (pos: { x: number; y: number }, dims: { w: number; l: number }) =>
+    clampToDeck({ x: pos.x - dims.w / 2, y: pos.y - dims.l / 2, width: dims.w, length: dims.l }, deckWidth, deckLength, edgePad)
+
   // First click of lashing placement: if it lands on a pinned (auto mode) or
   // manual placement, return that placement's stable id + nearest corner so
   // the lashing can be attached to it. A still-auto-placed (unpinned) item
@@ -1578,13 +1586,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     if (!activeStamp || !stampDims || !onPlace) return
     const pos = screenToDeck(e.clientX, e.clientY)
     if (!pos) return
-    // Snap so the item's top-left is at the cursor, then clamp inside deck
-    const clamped = clampToDeck(
-      { x: pos.x, y: pos.y, width: stampDims.w, length: stampDims.l },
-      deckWidth,
-      deckLength,
-      edgePad
-    )
+    const clamped = stampCornerAt(pos, stampDims)
     // The same question the shadow under the cursor asks (spec 7.1): a
     // click is refused for exactly the reason the shadow shows in red.
     const problem = placementProblem(stampTarget(clamped), stampSurroundings())
@@ -3965,7 +3967,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {/* The shadow of the armed cargo under the cursor (spec 7.1): red,
             with the reason over it, where a click would be refused. */}
         {activeStamp && stampDims && hoverPos && !dragState && (() => {
-          const clamped = clampToDeck({ x: hoverPos.x, y: hoverPos.y, width: stampDims.w, length: stampDims.l }, deckWidth, deckLength, edgePad)
+          const clamped = stampCornerAt(hoverPos, stampDims)
           const { sx: stampSx, sy: stampSy } = deckToScreen(clamped.x, clamped.y)
           const tw = screenSpanW(stampDims.w, stampDims.l)
           const th = screenSpanH(stampDims.w, stampDims.l)
