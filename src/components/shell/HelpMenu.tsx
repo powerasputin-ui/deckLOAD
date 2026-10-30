@@ -13,7 +13,8 @@ import { MENU_CLOSES_AT_ONCE, MenuItem } from './menu'
 const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Ctrl+Z', action: 'Отменить' },
   { keys: 'Ctrl+Y, Ctrl+Shift+Z', action: 'Повторить' },
-  { keys: 'Стрелки', action: 'Сдвинуть выделенный штабель на четверть шага сетки' },
+  { keys: 'Стрелки', action: 'Сдвинуть выделенный штабель на 10 см' },
+  { keys: 'Shift+стрелки', action: 'Сдвинуть выделенный штабель на 1 м' },
   { keys: 'Пробел', action: 'Повернуть выделенный штабель' },
   { keys: 'Esc', action: 'Снять инструмент, выбранный для постановки груз или выделение (закрывает инспектор)' },
 ]

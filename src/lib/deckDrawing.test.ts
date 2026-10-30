@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from './deckDrawing'
+import { deckDrawnTransposed, drawingToDeckMove, hullSideEdges, scaleBarSteps } from './deckDrawing'
 
 describe('hull sides on the drawing', () => {
   it('a deck wider than long (20 m across, 8 m fore and aft) keeps bow and stern on its long edges, top and bottom', () => {
@@ -16,6 +16,18 @@ describe('hull sides on the drawing', () => {
 
   it('a square deck is not transposed', () => {
     expect(hullSideEdges(10, 10, true).bow).toBe('bottom')
+  })
+})
+
+describe('a move on the drawing', () => {
+  it('on a deck drawn transposed, right on screen is along the deck and down is across it', () => {
+    expect(drawingToDeckMove(0.1, 0, 8, 20)).toEqual({ dx: 0, dy: 0.1 })
+    expect(drawingToDeckMove(0, -1, 8, 20)).toEqual({ dx: -1, dy: 0 })
+  })
+
+  it('on a deck drawn as it is, the screen and the deck agree', () => {
+    expect(drawingToDeckMove(0.1, 0, 20, 8)).toEqual({ dx: 0.1, dy: 0 })
+    expect(drawingToDeckMove(0, 1, 20, 8)).toEqual({ dx: 0, dy: 1 })
   })
 })
 

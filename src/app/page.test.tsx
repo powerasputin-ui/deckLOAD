@@ -4839,7 +4839,77 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     })
 
     expect(fireEvent.keyDown(document.body, { key: 'ArrowRight', code: 'ArrowRight' })).toBe(false)
-    expect(useCalculator.getState().manualPlacements[0].x).toBeGreaterThan(4)
+    // The demo deck is longer than wide and drawn turned: → is along it.
+    expect(useCalculator.getState().manualPlacements[0].y).toBeGreaterThan(3)
+  })
+
+  // The arrows used to move along the deck's own axes a quarter of the grid
+  // a press: on a deck drawn turned → went down the screen, and on a 50 m
+  // deck one press was 1.25 m.
+  describe('the arrow keys on a selected stack', () => {
+    function placeA(x: number, y: number) {
+      act(() => {
+        useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, quantity: 2 })
+      })
+      const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'm1', itemId: itemA.id, name: 'A', x, y, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+        useCalculator.setState({ selectedManualIds: ['m1'] })
+      })
+      return itemA
+    }
+    const press = (key: string, shiftKey = false) => fireEvent.keyDown(document.body, { key, code: key, shiftKey })
+    const a = () => useCalculator.getState().manualPlacements.find((m) => m.id === 'm1')!
+
+    it('move the stack the way they point on the plan, 10 cm a press and 1 m with Shift', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      placeA(4, 3)
+      press('ArrowRight')
+      expect(a().x).toBeCloseTo(4, 9)
+      expect(a().y).toBeCloseTo(3.1, 9)
+      press('ArrowDown')
+      expect(a().x).toBeCloseTo(4.1, 9)
+      press('ArrowLeft', true)
+      expect(a().y).toBeCloseTo(2.1, 9)
+      press('ArrowUp')
+      expect(a().x).toBeCloseTo(4, 9)
+      expect(toast.warning).not.toHaveBeenCalledWith(expect.stringMatching(/^Дальше нельзя/), expect.anything())
+    })
+
+    it('stop at the deck edge and say so', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      // The port side is at the top of the plan; 0.2 m is the board offset.
+      placeA(0.25, 3)
+      press('ArrowUp')
+      expect(a().x).toBeCloseTo(0.2, 9)
+      press('ArrowUp')
+      expect(a().x).toBeCloseTo(0.2, 9)
+      expect(toast.warning).toHaveBeenCalledWith('Дальше нельзя — край палубы', { id: 'nudge-refused' })
+    })
+
+    it('go up to the spacing next to another stack, then say the spacing is what stops them', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      const itemA = placeA(4, 3)
+      // B 0.15 m further along the deck: 0.05 m more than the spacing.
+      act(() => {
+        useCalculator.getState().addManualPlacement({
+          id: 'm2', itemId: itemA.id, name: 'A', x: 4, y: 4.15, width: 2, length: 1, layers: 1, rotated: false, color: itemA.color,
+        })
+      })
+      press('ArrowRight')
+      expect(a().y).toBeCloseTo(3.05, 3)
+      press('ArrowRight')
+      expect(a().y).toBeCloseTo(3.05, 3)
+      expect(toast.warning).toHaveBeenCalledWith('Дальше нельзя — отступ между грузами 0.10 м («Размещение»)', { id: 'nudge-refused' })
+    })
   })
 
   // Phase 0, L9: Space on a focused toolbar button used to be swallowed, so

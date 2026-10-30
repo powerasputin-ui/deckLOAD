@@ -36,6 +36,18 @@ export function deckDrawnTransposed(deckWidth: number, deckLength: number): bool
   return deckLength > deckWidth
 }
 
+// A move the way it points on the drawing, as a move along the deck's own
+// axes: on a deck drawn transposed the screen's x is the deck's y (its
+// length) and the screen's y its x.
+export function drawingToDeckMove(
+  screenX: number,
+  screenY: number,
+  deckWidth: number,
+  deckLength: number
+): { dx: number; dy: number } {
+  return deckDrawnTransposed(deckWidth, deckLength) ? { dx: screenY, dy: screenX } : { dx: screenX, dy: screenY }
+}
+
 export function hullSideEdges(
   deckWidth: number,
   deckLength: number,

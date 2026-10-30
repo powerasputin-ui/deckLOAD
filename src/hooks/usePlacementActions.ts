@@ -7,7 +7,6 @@ import {
   clampToDeck,
   collidesWithClearance,
   computeFreeRects,
-  computeGridStep,
   lashingPointExclusionRects,
   maxLayersFor,
   pyramidSpreadAsClearance,
@@ -33,8 +32,16 @@ import {
   placementTotalWeightKg,
   stackHeight,
 } from '@/lib/placementComposition'
-import { pluralRu } from '@/lib/utils'
+import { drawingToDeckMove } from '@/lib/deckDrawing'
+import { placementProblem } from '@/lib/placementProblem'
+import { convertLength } from '@/lib/units'
+import { fmtNumber, pluralRu } from '@/lib/utils'
 import { roundForDisplay, UNIT_LABEL, useCalculator } from '@/store/calculator'
+
+// An arrow press moves a stack 10 cm, with Shift 1 m, whatever the deck's
+// size; an exact position is typed in the inspector.
+const NUDGE_STEP_M = 0.1
+const NUDGE_STEP_BIG_M = 1
 
 // What is done to one stack on the deck: turning it, moving it with the
 // arrow keys, adding and taking layers, removing it, locking it. Auto-placed
@@ -218,72 +225,109 @@ export function usePlacementActions({
     )
   }
 
-  // Moves the selected placement a quarter grid step (arrow keys), with the
-  // same edge, outline and collision checks as a drag. A pin moved this way
-  // becomes «Закреплён».
-  const nudgePlacement = (selectedId: string, dx: number, dy: number) => {
-    const step = computeGridStep(deck.width, deck.length, deck.unit) / 4
+  // Moves a placement so its corner nearest the deck's origin is at `to` (the
+  // deck's unit), with the same edge, outline and collision checks as a drag.
+  // Returns why it can't, worded as a click placement words it, or null when
+  // it moved. A pin moved this way becomes «Закреплён».
+  //
+  // `slide`: the arrows — a move past the deck's edge stops at the edge, and
+  // one that meets other cargo goes as far as it can; refused only when it
+  // can't go at all. Otherwise (a typed position) the stack goes exactly
+  // there or not at all.
+  const moveStackTo = (selectedId: string, to: { x: number; y: number }, slide: boolean): string | null => {
     const placements = mode === 'manual' ? manualPlacements : pinnedPlacements
     const current = placements.find((p) => p.id === selectedId)
-    if (!current) return
-    const nudgedItem = items.find((it) => it.id === current.itemId)
-    const target2 = {
-      x: current.x + dx * step,
-      y: current.y + dy * step,
-      width: current.width,
-      length: current.length,
-    }
+    if (!current) return null
+    const movedItem = items.find((it) => it.id === current.itemId)
     // Clamp the WIDENED footprint (own clearanceMargin + a pipe pyramid's
     // own base-row spread) against the deck edge/board-offset, not just
-    // the raw single-unit rect — otherwise a nudge can walk the raw rect
+    // the raw single-unit rect — otherwise a move can walk the raw rect
     // flush against the edge while the wider footprint actually drawn on
     // screen sticks out past it. Same reasoning as resolveSnappedDragPosition's
     // selfMargin handling.
-    const nudgeMargin = addClearanceMargins(
+    const margin = addClearanceMargins(
       current.clearanceMargin,
-      nudgedItem ? pyramidSpreadAsClearance(nudgedItem, current.layers) : undefined
+      movedItem ? pyramidSpreadAsClearance(movedItem, current.layers) : undefined
     )
-    const ml = nudgeMargin?.left ?? 0
-    const mr = nudgeMargin?.right ?? 0
-    const mt = nudgeMargin?.top ?? 0
-    const mb = nudgeMargin?.bottom ?? 0
+    const ml = margin?.left ?? 0
+    const mr = margin?.right ?? 0
+    const mt = margin?.top ?? 0
+    const mb = margin?.bottom ?? 0
     const wideClamped = clampToDeck(
-      { x: target2.x - ml, y: target2.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
+      { x: to.x - ml, y: to.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
       deck.width,
       deck.length,
       deck.boardOffset
     )
-    const clamped = { x: wideClamped.x + ml, y: wideClamped.y + mt }
-    if (
-      usableOutline &&
-      !rectInsidePolygon(
-        { x: clamped.x - ml, y: clamped.y - mt, width: current.width + ml + mr, length: current.length + mt + mb },
-        usableOutline
-      )
-    )
-      return
+    const target = { x: wideClamped.x + ml, y: wideClamped.y + mt }
+    const pastEdge = Math.abs(target.x - to.x) > 1e-9 || Math.abs(target.y - to.y) > 1e-9
+    if (pastEdge && !slide) return 'груз выходит за пределы палубы'
+    if (Math.abs(target.x - current.x) < 1e-9 && Math.abs(target.y - current.y) < 1e-9) {
+      return pastEdge ? 'край палубы' : null
+    }
     // Single check (bbox + outline + both-direction clearance margin) —
     // sourced from result.placed like the rotate handlers above, since
     // raw ManualPlacement/PinnedPlacement never carry outline data.
-    type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: CargoShape; height?: number; stackedCount?: number }
-    const placedRects: CollisionCandidate[] =
+    type CollisionCandidate = { x: number; y: number; width: number; length: number; rotated?: boolean; outline?: { x: number; y: number }[]; clearanceMargin?: ClearanceMargin; shape?: CargoShape; height?: number; stackedCount?: number; category?: string }
+    const placedRects: CollisionCandidate[] = (
       mode === 'manual'
-        ? result.placed
-            .filter((p) => manualPlacements[p.index]?.id !== selectedId)
-            .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
-        : result.placed
-            .filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
-            .map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
-    const lashingRects3: CollisionCandidate[] = lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap)
-    const zoneRects3: CollisionCandidate[] = restrictionZoneExclusions(deck.restrictionZones ?? [])
-    const preciseOthers = [...placedRects, ...lashingRects3, ...zoneRects3]
+        ? result.placed.filter((p) => manualPlacements[p.index]?.id !== selectedId)
+        : result.placed.filter((p) => !(p.itemId === current.itemId && Math.abs(p.x - current.x) < 0.01 && Math.abs(p.y - current.y) < 0.01))
+    ).map((p) => ({ x: p.x, y: p.y, width: p.width, length: p.length, rotated: p.rotated, outline: p.outline, clearanceMargin: p.clearanceMargin, shape: p.shape, height: p.height, stackedCount: p.stackedCount }))
+    const preciseOthers: CollisionCandidate[] = [
+      ...placedRects,
+      ...lashingPointExclusionRects(deck.lashingPoints ?? [], deck.gap),
+      ...restrictionZoneExclusions(deck.restrictionZones ?? []),
+    ]
     // Same pipe-pyramid self-widening as the rotate handlers above, so a
-    // nudged pipe stack can't be walked closer to a neighbour than its
-    // own pyramid base actually allows.
-    const target3 = { x: clamped.x, y: clamped.y, width: current.width, length: current.length, rotated: current.rotated, outline: nudgedItem?.outline, clearanceMargin: current.clearanceMargin, shape: nudgedItem?.shape, height: nudgedItem?.height, stackedCount: current.layers }
-    if (collidesWithClearance(target3, preciseOthers, deck.gap)) return
-    if (mode === 'manual') updateManualPlacement(selectedId, { x: clamped.x, y: clamped.y })
-    else updatePinned(clampedTripIndex, selectedId, { x: clamped.x, y: clamped.y, locked: true })
+    // moved pipe stack can't be walked closer to a neighbour than its own
+    // pyramid base actually allows.
+    const at = (x: number, y: number) => ({ x, y, width: current.width, length: current.length, rotated: current.rotated, outline: movedItem?.outline, clearanceMargin: current.clearanceMargin, shape: movedItem?.shape, height: movedItem?.height, stackedCount: current.layers })
+    const fits = (x: number, y: number) =>
+      (!usableOutline || rectInsidePolygon({ x: x - ml, y: y - mt, width: current.width + ml + mr, length: current.length + mt + mb }, usableOutline)) &&
+      !collidesWithClearance(at(x, y), preciseOthers, deck.gap)
+    let landing = fits(target.x, target.y) ? target : null
+    if (!landing && slide) {
+      // As far along the move as it goes.
+      let lo = 0
+      let hi = 1
+      for (let i = 0; i < 16; i++) {
+        const mid = (lo + hi) / 2
+        if (fits(current.x + (target.x - current.x) * mid, current.y + (target.y - current.y) * mid)) lo = mid
+        else hi = mid
+      }
+      if (lo * Math.hypot(target.x - current.x, target.y - current.y) > 1e-4) {
+        landing = { x: current.x + (target.x - current.x) * lo, y: current.y + (target.y - current.y) * lo }
+      }
+    }
+    if (!landing) {
+      const footprint = { x: target.x - ml, y: target.y - mt, width: current.width + ml + mr, length: current.length + mt + mb }
+      if (usableOutline && !rectInsidePolygon(footprint, usableOutline)) return 'груз выходит за пределы палубы'
+      const reason = placementProblem(at(target.x, target.y), {
+        others: placedRects,
+        gap: deck.gap,
+        lashingPoints: deck.lashingPoints,
+        restrictionZones: deck.restrictionZones,
+        unitLabel: UNIT_LABEL[deck.unit],
+      })
+      // Only the spacing stands in the way: say so, since it reads as the
+      // stack stopping short for no reason.
+      if (reason === 'место занято другим грузом' && !collidesWithClearance(at(target.x, target.y), placedRects, 0)) {
+        return `отступ между грузами ${fmtNumber(deck.gap)} ${UNIT_LABEL[deck.unit]} («Размещение»)`
+      }
+      return reason ?? 'место занято другим грузом'
+    }
+    if (mode === 'manual') updateManualPlacement(selectedId, { x: landing.x, y: landing.y })
+    else updatePinned(clampedTripIndex, selectedId, { x: landing.x, y: landing.y, locked: true })
+    return null
+  }
+
+  // The arrow keys: `dx`, `dy` in the deck's unit along its own axes.
+  const nudgePlacement = (selectedId: string, dx: number, dy: number) => {
+    const current = (mode === 'manual' ? manualPlacements : pinnedPlacements).find((p) => p.id === selectedId)
+    if (!current) return
+    const reason = moveStackTo(selectedId, { x: current.x + dx, y: current.y + dy }, true)
+    if (reason) toast.warning(`Дальше нельзя — ${reason}`, { id: 'nudge-refused' })
   }
 
   // Buttons and keys that change a purely auto-placed stack (see the store's
@@ -367,13 +411,18 @@ export function usePlacementActions({
       // the keyboard (L9). A click on the deck moves focus off the toolbar,
       // so Space still rotates the selection after working on the deck.
       if (isSpace && target?.closest('button, a[href], [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], summary')) return
-      let dx = 0
-      let dy = 0
-      if (e.key === 'ArrowLeft') dx = -1
-      else if (e.key === 'ArrowRight') dx = 1
-      else if (e.key === 'ArrowUp') dy = -1
-      else if (e.key === 'ArrowDown') dy = 1
+      // The way the arrow points on the plan, 10 cm a press or 1 m with
+      // Shift on any deck. The plan draws a deck longer than wide turned,
+      // its length across the screen, so → is along it there.
+      let sx = 0
+      let sy = 0
+      if (e.key === 'ArrowLeft') sx = -1
+      else if (e.key === 'ArrowRight') sx = 1
+      else if (e.key === 'ArrowUp') sy = -1
+      else if (e.key === 'ArrowDown') sy = 1
       else if (!isSpace) return
+      const step = convertLength(e.shiftKey ? NUDGE_STEP_BIG_M : NUDGE_STEP_M, 'm', deck.unit)
+      const { dx, dy } = drawingToDeckMove(sx * step, sy * step, deck.width, deck.length)
 
       // A purely auto-placed stack selected (no pin yet): the key changes
       // it, so it's pinned first and the change follows (actOnAutoStack).
