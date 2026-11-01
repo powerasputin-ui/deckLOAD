@@ -1582,6 +1582,7 @@ export function packDeck(
     weight: it.weight === undefined || it.weight < 0 ? undefined : toFinite(it.weight, 0),
   }))
   const heightByItemId = new Map(items.map((it) => [it.id, it.height]))
+  const weightByItemId = new Map(items.map((it) => [it.id, it.weight]))
   const outlineByItemId = new Map(items.map((it) => [it.id, it.outline]))
   const contentsByItemId = new Map(items.map((it) => [it.id, it.contents]))
   const stabilityOverrideByItemId = new Map(items.map((it) => [it.id, it.stabilityOverride]))
@@ -1914,7 +1915,10 @@ export function packDeck(
     // consumers (stability.ts) read `pin.composition` directly instead.
     const pinWeight = pin.composition
       ? placementTotalWeightKg({ itemId: pin.itemId, layers: pin.layers, composition: pin.composition }, items) / Math.max(1, layers)
-      : pin.weight
+      : // A pin saved without its own weight weighs what its cargo does, not
+        // nothing: counted as 0 kg it let the hard limit pass cargo packed
+        // beside it (audit check of 2026-11-01, F-PK-4).
+        (pin.weight ?? weightByItemId.get(pin.itemId))
     const pinHeight = pin.composition
       ? placementTotalHeightM({ itemId: pin.itemId, layers: pin.layers, composition: pin.composition }, items) / Math.max(1, layers)
       : (heightByItemId.get(pin.itemId) ?? 0)

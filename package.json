@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | bun scripts/tee.js dev.log",
+    "dev": "bun scripts/logged.js dev.log bun next dev -p 3000",
     "build": "next build && bun scripts/copy-standalone.js",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | bun scripts/tee.js server.log",
+    "start": "NODE_ENV=production bun scripts/logged.js server.log bun .next/standalone/server.js",
     "lint": "eslint .",
     "test": "vitest",
     "test:ci": "vitest run",

@@ -34,4 +34,31 @@ describe('packDeck maxTotalWeightKg already respects a composed pin\'s true weig
     expect(res.totalWeight).toBe(4000)
     expect(cLayers).toBe(6)
   })
+
+  // Audit check of 2026-11-01, F-PK-4. A pin saved without its own weight
+  // (the app always writes one; an older or hand-made file may not) used to
+  // count as 0 kg, so cargo was packed beside it past the hard limit.
+  const A = catalogItem({ id: 'A', quantity: 2, weight: 2000 })
+  const C = catalogItem({ id: 'C', quantity: 5, weight: 100 })
+  const pin = (id: string, x: number, weight?: number): PinnedPlacement => ({
+    id, itemId: 'A', name: 'A', x, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#0ea5e9', weight,
+  })
+
+  it('counts a pin without its own weight at its cargo\'s weight', () => {
+    const res = packDeck(20, 20, [A, C], { pinned: [pin('p1', 1)], maxTotalWeightKg: 2000 })
+    expect(res.placed.map((p) => p.itemId)).toEqual(['A'])
+    expect(res.totalWeight).toBe(2000)
+    // Its own weight, when it has one, is what counts.
+    expect(packDeck(20, 20, [A, C], { pinned: [pin('p1', 1, 1500)], maxTotalWeightKg: 2000 }).totalWeight).toBe(2000)
+  })
+
+  // Pins are where the user put the cargo. Heavier together than the hard
+  // limit, they all stay where they are and nothing is auto-packed beside
+  // them; the deck weight check reports the overload. The packer doesn't
+  // quietly move one of them to another trip.
+  it('keeps pins heavier than the limit where the user put them, and auto-packs nothing beside them', () => {
+    const res = packDeck(20, 20, [A, C], { pinned: [pin('p1', 1), pin('p2', 3, 2000)], maxTotalWeightKg: 2000 })
+    expect(res.placed.map((p) => p.itemId)).toEqual(['A', 'A'])
+    expect(res.totalWeight).toBe(4000)
+  })
 })

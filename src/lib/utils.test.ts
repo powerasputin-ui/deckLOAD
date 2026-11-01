@@ -24,4 +24,9 @@ describe('fmtTonnes', () => {
     expect([fmtTonnes(16_600), fmtTonnes(2_550_000), fmtTonnes(0)]).toEqual(['16.6', '2550', '0'])
     expect([fmtTonnes(NaN), fmtTonnes(Infinity), fmtNumber(NaN)]).toEqual(['—', '—', '—'])
   })
+
+  // A finite number past what can be scaled by 100 used to read «Infinity».
+  it('writes a huge but finite number as itself', () => {
+    expect([fmtNumber(1e308), fmtNumber(-1e308), fmtNumber(1.5e306)]).toEqual(['1e+308', '-1e+308', '1.5e+306'])
+  })
 })

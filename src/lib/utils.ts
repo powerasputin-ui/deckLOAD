@@ -13,7 +13,8 @@ export function fmtNumber(value: number): string {
   if (!Number.isFinite(value)) return '—'
   // Normalize -0 to 0 so it doesn't render as "-0"
   const v = value === 0 ? 0 : value
-  const r = Math.round(v * 100) / 100
+  // A number too large to scale by 100 has no hundredths to round to.
+  const r = Number.isFinite(v * 100) ? Math.round(v * 100) / 100 : v
   const rounded = r === 0 ? 0 : r
   return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(2)
 }
