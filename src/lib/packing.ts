@@ -13,6 +13,7 @@ import {
   placementTotalWeightKg,
   placementTotalHeightM,
   placementTotalLayers,
+  placementLayersOfItem,
   placementConstituents,
   placementCategorySet,
   segmentsOf,
@@ -1619,11 +1620,20 @@ export function packDeck(
   // first item at the boundary would sit at `boardOffset + gap/2` instead of
   // exactly `boardOffset`, which would disagree with manual/pinned placements
   // (validated and clamped to exactly `boardOffset`, see below and clampToDeck).
+  //
+  // The cells span [boardOffset − gap/2, size − boardOffset + gap/2]. Under
+  // half the gap the near edge is held at 0 — and the far one stays where it
+  // is: the width used to stay `size − 2·boardOffset + gap` from the held
+  // edge, which pushed the last stack over the side by gap/2 − boardOffset
+  // (0.25 m with a 0.5 m gap and no board offset).
+  // (Written so that, the near edge not held, the width is the very same
+  // float as ever — a last-bit difference reshuffles a whole layout.)
   const halfGap = gap / 2
-  const ux = Math.max(0, boardOffset - halfGap)
-  const uy = Math.max(0, boardOffset - halfGap)
-  const uw = Math.max(0, safeDeckWidth - boardOffset * 2 + gap)
-  const ul = Math.max(0, safeDeckLength - boardOffset * 2 + gap)
+  const near = boardOffset - halfGap
+  const ux = Math.max(0, near)
+  const uy = Math.max(0, near)
+  const uw = Math.max(0, safeDeckWidth - boardOffset * 2 + gap - (ux - near))
+  const ul = Math.max(0, safeDeckLength - boardOffset * 2 + gap - (uy - near))
 
   // Non-rectangular deck: board offset is an inset along the real contour
   // (erodePolygon), not the bounding box — otherwise a cut/diagonal edge
@@ -2530,22 +2540,17 @@ export function packMultiTrip(
     trips.push(result)
     if (result.unplaced.length === 0) break
     if (result.placedCount === 0) break // no progress — avoid an infinite loop
-    // Carry the unplaced remainder into the next trip as fresh CargoItems,
-    // preserving each source item's dimensions/category/etc via a lookup,
-    // and using the unplaced count as the next trip's quantity.
-    const byId = new Map(remaining.map((it) => [it.id, it]))
-    remaining = result.unplaced
-      .map((u) => {
-        const src = byId.get(u.itemId)
-        if (!src) return null
-        const placedForItem = result.placed
-          .filter((p) => p.itemId === u.itemId)
-          .reduce((s, p) => s + p.stackedCount, 0)
-        const stillNeeded = src.quantity - placedForItem
-        if (stillNeeded <= 0) return null
-        return { ...src, quantity: stillNeeded }
-      })
-      .filter((it): it is CargoItem => it !== null)
+    // Carry what each item still needs into the next trip as fresh
+    // CargoItems: the source item's own dimensions/category/etc, with the
+    // units this trip didn't place as its quantity. Units are counted per
+    // segment (placementLayersOfItem): a pinned mixed stack [A×2, B×3] holds
+    // 2 of A and 3 of B, not 5 of its nominal item. Counted whole, the next
+    // trip packed 3 more B than requested, or dropped what B still needed
+    // when B was the nominal item.
+    const placedOf = (itemId: string) => result.placed.reduce((n, p) => n + placementLayersOfItem(p, itemId), 0)
+    remaining = remaining
+      .map((src) => ({ ...src, quantity: src.quantity - placedOf(src.id) }))
+      .filter((it) => it.quantity > 0)
   }
   // No cargo at all (e.g. every item removed/zeroed) — still return one
   // empty trip so callers can always safely index trips[0].
@@ -2573,10 +2578,11 @@ export function computeFreeRects(
   // Same gap/2 compensation as packDeck, so the free-space overlay matches the
   // actual edge clearance (exactly `boardOffset`) rather than `boardOffset + gap/2`.
   const halfGap = g / 2
-  const ux = Math.max(0, off - halfGap)
-  const uy = Math.max(0, off - halfGap)
-  const uw = Math.max(0, dw - off * 2 + g)
-  const ul = Math.max(0, dl - off * 2 + g)
+  const near = off - halfGap
+  const ux = Math.max(0, near)
+  const uy = Math.max(0, near)
+  const uw = Math.max(0, dw - off * 2 + g - (ux - near))
+  const ul = Math.max(0, dl - off * 2 + g - (uy - near))
   // Non-rectangular deck: same contour-following board-offset inset as
   // packDeck (erodePolygon), not a bounding-box inset — and, like packDeck,
   // the FULL strict boardOffset erosion (not the gap/2-permissive one used
@@ -3704,20 +3710,18 @@ function markManualConflicts(
 ): void {
   const pad = toFinite(checks.boardOffset ?? 0, 0)
   const gap = toFinite(checks.gap ?? 0, 0)
-  const halfGap = gap / 2
   const eps = 1e-6
   const usableOutline = outline && outline.length >= 3 ? erodePolygon(outline, pad) : undefined
   const outlineSlabs = usableOutline ? deckOutlineExclusionRects(usableOutline, deckWidth, deckLength) : []
   const zones = checks.restrictionZones ?? []
   const zonesExact = restrictionZoneExclusions(zones)
   const zoneSlabs = zones.flatMap((z) => polygonInsideRects(restrictionZonePolygon(z), deckWidth, deckLength))
-  // A rectangular deck: a drag keeps cargo within [pad, size - pad]; the
-  // packer's cells carry half the gap on each side, which (when the board
-  // offset is under half the gap) lets cargo reach a little further on the
-  // far side.
-  const farEdge = (size: number) => Math.max(size - pad, Math.max(0, pad - halfGap) + size - 2 * pad + halfGap)
-  const maxX = farEdge(deckWidth)
-  const maxY = farEdge(deckLength)
+  // A rectangular deck: cargo stands within [pad, size - pad], as a drag
+  // keeps it and the packer lays it out. (This once let the far side reach
+  // further, to pass what the packer laid out over the side when the board
+  // offset was under half the gap.)
+  const maxX = deckWidth - pad
+  const maxY = deckLength - pad
   // The packer's own staircase leaks by about a centimetre around round
   // zones; a stack it laid out there mustn't be flagged. Relative to the
   // deck, so it holds in any unit (1 cm on a 20 m deck).

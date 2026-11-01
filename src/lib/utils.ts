@@ -37,6 +37,8 @@ export function pluralRu(n: number, one: string, few: string, many: string): str
  * «.0»: 16 600 → «16.6», 2 550 000 → «2550».
  */
 export function fmtTonnes(kg: number): string {
+  // As fmtNumber: no «NaN» or «Infinity» on screen or in the PDF.
+  if (!Number.isFinite(kg)) return '—'
   const t = Math.round(kg / 100) / 10
   return Number.isInteger(t) ? `${t}` : t.toFixed(1)
 }

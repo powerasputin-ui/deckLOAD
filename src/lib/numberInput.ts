@@ -31,6 +31,9 @@ export type ParsedNumberInput =
     }
 
 function round6(v: number): number {
+  // Past ~1e302 scaling by a million overflows to Infinity, which a field
+  // then committed; such a number has nothing below a millionth to round.
+  if (!Number.isFinite(v * 1e6)) return v
   const r = Math.round(v * 1e6) / 1e6
   return r === 0 ? 0 : r
 }

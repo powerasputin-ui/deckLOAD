@@ -62,7 +62,7 @@ import {
   type RestrictionZone,
   computeGridStep,
 } from './packing'
-import { placementCategorySet, resolveUniformOutline, resolveUniformShape, segmentsOf } from './placementComposition'
+import { placementCategorySet, placementLayersOfItem, resolveUniformOutline, resolveUniformShape, segmentsOf } from './placementComposition'
 
 function item(partial: Partial<CargoItem> & { id: string }): CargoItem {
   return {
@@ -693,6 +693,37 @@ describe('packDeck', () => {
       (p) => p.itemId === 'b' && p.x < 7 && p.x + p.width > 4 && p.y < 7 && p.y + p.length > 4
     )
     expect(anyInsideZone).toBe(false)
+  })
+})
+
+// Audit 2026-11-01, F-PK-2: with the board offset under half the gap the
+// usable area's near edge was held at 0 but its width kept, so the last
+// stack stood over the far side — 0.25 m with a 0.5 m gap and no offset.
+describe('packDeck keeps every stack within the board offset, whatever the gap', () => {
+  for (const [gap, boardOffset] of [[0.5, 0], [0.1, 0], [0.5, 0.1], [0.1, 0.2]]) {
+    it(`gap ${gap} m, board offset ${boardOffset} m`, () => {
+      const W = 10.9
+      const res = packDeck(W, W, [item({ id: 'a', width: 1, length: 1, quantity: 200 })], { gap, boardOffset })
+      expect(res.placed.length).toBeGreaterThan(40)
+      for (const p of res.placed) {
+        expect(p.x).toBeGreaterThanOrEqual(boardOffset - 1e-9)
+        expect(p.y).toBeGreaterThanOrEqual(boardOffset - 1e-9)
+        expect(p.x + p.width).toBeLessThanOrEqual(W - boardOffset + 1e-9)
+        expect(p.y + p.length).toBeLessThanOrEqual(W - boardOffset + 1e-9)
+      }
+      // The free-space overlay stops where the packer's cells do.
+      for (const r of computeFreeRects(W, W, res.placed, gap, boardOffset)) {
+        expect(r.x + r.width).toBeLessThanOrEqual(W - boardOffset + gap / 2 + 1e-9)
+        expect(r.y + r.height).toBeLessThanOrEqual(W - boardOffset + gap / 2 + 1e-9)
+      }
+    })
+  }
+
+  it('and the recheck of standing cargo no longer lets a stack over the far side pass', () => {
+    const box = { id: 'a', name: 'Ящик', width: 1, length: 1, height: 1, quantity: 1, color: '#000', allowRotation: true }
+    const over: ManualPlacement = { id: 'm', itemId: 'a', name: 'Ящик', x: 9.2, y: 1, width: 1, length: 1, layers: 1, rotated: false, color: '#000' }
+    const r = packingResultFromManual(10, 10, [over], 1, [box], 0, undefined, { boardOffset: 0, gap: 0.5, restrictionZones: [] })
+    expect(r.placed[0].conflict).toBe('Вне палубы')
   })
 })
 
@@ -2553,6 +2584,28 @@ describe('packMultiTrip', () => {
     const totalPlaced = trips.reduce((s, t) => s + t.placedCount, 0)
     expect(totalPlaced).toBe(10)
     expect(trips[trips.length - 1].unplaced).toHaveLength(0)
+  })
+
+  // Audit 2026-11-01, F-PK-1: the next trip's cargo was what each item
+  // asked for less its stacks counted whole by their nominal item. A pinned
+  // mixed stack [A×2, B×3] counted as 5 of its nominal item: nominal A, the
+  // next trip packed 5 more B (8 of 5); nominal B, the 2 B still needed were
+  // dropped, the plan one trip short.
+  it('carries what each item still needs, counting a pinned mixed stack\'s layers to their own cargo', () => {
+    const A = item({ id: 'A', width: 1, length: 1, height: 1, quantity: 4, weight: 100 })
+    const B = item({ id: 'B', width: 1, length: 1, height: 1, quantity: 5, weight: 200 })
+    for (const nominal of ['A', 'B']) {
+      const pin: PinnedPlacement = {
+        id: 'p1', itemId: nominal, name: 'Смешанный', x: 0, y: 0, width: 1, length: 1,
+        layers: 5, rotated: false, color: '#000', weight: 160,
+        composition: [{ itemId: 'A', layers: 2 }, { itemId: 'B', layers: 3 }],
+      }
+      // Room for the pinned stack and one more beside it on each trip.
+      const trips = packMultiTrip(2, 1, [A, B], { gap: 0, boardOffset: 0, clearance: 5 }, 10, { 0: [pin] })
+      const placed = (id: string) => trips.reduce((n, t) => n + t.placed.reduce((m, p) => m + placementLayersOfItem(p, id), 0), 0)
+      expect([nominal, placed('A'), placed('B')]).toEqual([nominal, 4, 5])
+      expect(trips.at(-1)!.unplaced).toEqual([])
+    }
   })
 
   it('stops without an infinite loop when an item is oversized for every deck', () => {

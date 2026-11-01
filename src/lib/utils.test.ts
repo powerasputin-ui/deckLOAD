@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pluralRu } from './utils'
+import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 
 describe('pluralRu', () => {
   it('picks the Russian form by the last one or two digits', () => {
@@ -14,5 +14,14 @@ describe('pluralRu', () => {
     expect(f(11)).toBe('уходят')
     expect(f(14)).toBe('уходят')
     expect(f(111)).toBe('уходят')
+  })
+})
+
+// Audit 2026-11-01, F-UT-1: a weight that isn't a number showed as «NaN»,
+// where fmtNumber shows «—».
+describe('fmtTonnes', () => {
+  it('shows tonnes to one decimal, and a dash for what isn\'t a number', () => {
+    expect([fmtTonnes(16_600), fmtTonnes(2_550_000), fmtTonnes(0)]).toEqual(['16.6', '2550', '0'])
+    expect([fmtTonnes(NaN), fmtTonnes(Infinity), fmtNumber(NaN)]).toEqual(['—', '—', '—'])
   })
 })

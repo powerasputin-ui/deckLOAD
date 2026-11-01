@@ -51,6 +51,15 @@ describe('isAllowedNumberInput', () => {
 })
 
 describe('parseNumberInput', () => {
+  // Audit 2026-11-01, F-UT-2: a finite number past ~1e302 overflowed to
+  // Infinity in rounding, and a field without a maximum committed it.
+  it('never gives an infinite value, however many digits are typed', () => {
+    const big = parseNumberInput('1' + '0'.repeat(305))
+    expect(big.kind).toBe('ok')
+    expect(big.kind === 'ok' && Number.isFinite(big.value) && Number.isFinite(big.typed)).toBe(true)
+    expect(parseNumberInput('1' + '0'.repeat(400))).toEqual({ kind: 'invalid' })
+  })
+
   it('reads plain numbers with either decimal separator', () => {
     expect(parseNumberInput('24')).toEqual({ kind: 'ok', value: 24, typed: 24 })
     expect(parseNumberInput('0,4')).toEqual({ kind: 'ok', value: 0.4, typed: 0.4 })
