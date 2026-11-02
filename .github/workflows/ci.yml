@@ -1,0 +1,89 @@
+# Every push to main: types, lint, unit tests, the browser scenarios, no
+# critical advisory in the dependencies — and on Windows, with Bun installed
+# through npm as on the owner's machine, that `bun run start` serves the app
+# and writes server.log (it once didn't, and nothing here could tell).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.2
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun run lint
+      - run: bun run test:ci
+      - name: No critical advisory
+        run: bun audit --audit-level=critical
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      # Playwright builds the app and starts it itself (playwright.config.ts).
+      - run: bun run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
+
+  windows-start:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bun through npm (a .cmd shim on the PATH)
+        run: npm install -g bun@${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: bun run start answers and writes server.log
+        shell: pwsh
+        env:
+          PORT: '3123'
+          HOSTNAME: '0.0.0.0'
+        run: |
+          $server = Start-Process -FilePath cmd.exe -ArgumentList '/c', 'bun run start' -PassThru -NoNewWindow
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 2
+            try { $ok = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri http://localhost:3123/).StatusCode -eq 200 } catch {}
+          }
+          taskkill /PID $server.Id /T /F | Out-Null
+          $global:LASTEXITCODE = 0
+          if (-not $ok) { throw 'bun run start did not answer on port 3123' }
+          if (-not (Test-Path server.log) -or (Get-Item server.log).Length -eq 0) { throw 'server.log is empty' }
+          Get-Content server.log
