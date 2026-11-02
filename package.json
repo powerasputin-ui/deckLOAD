@@ -59,10 +59,10 @@
     "debug": "^4.4.3",
     "eslint": "^9",
     "eslint-config-next": "^16.4.3",
-    "happy-dom": "20.11.1",
+    "happy-dom": "21.0.4",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
-    "vitest": "4.1.10"
+    "vitest": "4.1.12"
   }
 }
