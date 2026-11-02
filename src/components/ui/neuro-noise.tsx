@@ -338,6 +338,19 @@ const UNIFORMS = {
 
 const pendingContextReleases = new WeakMap<HTMLCanvasElement, number>()
 
+// WebGL drawn on the CPU, where there is no GPU to draw it: a virtual
+// machine, a remote desktop, a headless browser. The full-screen shader then
+// takes most of every frame and starves the page — clicks and keys wait for
+// seconds (the start screen's e2e test timed out that way in CI).
+export function isSoftwareRenderer(renderer: string): boolean {
+  return /swiftshader|llvmpipe|softpipe|basic render|software/i.test(renderer)
+}
+
+function softwareRendered(gl: WebGLRenderingContext): boolean {
+  const info = gl.getExtension("WEBGL_debug_renderer_info")
+  return !!info && isSoftwareRenderer(String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)))
+}
+
 export function ShaderBackground({ className }: { className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -440,10 +453,11 @@ export function ShaderBackground({ className }: { className?: string }) {
     let inView = true
     let disposed = false
     const start = performance.now()
-    // No animation under «уменьшить движение» (spec 9.6): one still frame,
-    // drawn again only when the size changes.
+    // No animation under «уменьшить движение» (spec 9.6), nor where WebGL is
+    // drawn on the CPU: one still frame, drawn again only when the size
+    // changes.
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
-    const timeAnimated = !reduceMotion && Math.abs(UNIFORMS.timeScale) > 0.0001
+    const timeAnimated = !reduceMotion && !softwareRendered(gl) && Math.abs(UNIFORMS.timeScale) > 0.0001
 
     const resizeCanvas = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
