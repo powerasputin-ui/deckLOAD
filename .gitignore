@@ -67,3 +67,6 @@ db/*.db-journal
 # Platform deploy scripts (not part of the app)
 /.zscripts/
 .vercel
+
+# One lockfile: bun.lock (every script runs on Bun).
+package-lock.json
