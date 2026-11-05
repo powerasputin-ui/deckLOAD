@@ -18,6 +18,11 @@ export interface PlaceRefusal {
   text: string
 }
 
+// The row's one button keeps one width whatever it says («Поставить»,
+// «Убрать», «Открепить»): the buttons stand in one column down the list, and
+// the names and weights beside them end on one edge.
+const ROW_BUTTON = 'h-8 w-24 shrink-0 px-2'
+
 // «Грузы» → the compact list (spec 7.1): the number on its tone, the name
 // and the weight, «размещено из всего». «Всего» is edited where it stands,
 // a hovered row lights up the cargo's stacks. Everything else is edited in
@@ -88,9 +93,13 @@ export function CargoList({
                   {it.name}
                 </p>
                 {it.weight !== undefined && it.weight > 0 ? (
-                  <span className="shrink-0 text-xs text-ink-2 tabular-nums">{fmtTonnes(it.weight * it.quantity)} т</span>
+                  <span data-testid="cargo-list-weight" className="shrink-0 text-xs text-ink-2 tabular-nums">
+                    {fmtTonnes(it.weight * it.quantity)} т
+                  </span>
                 ) : (
-                  <span className="shrink-0 text-xs text-warn">без веса</span>
+                  <span data-testid="cargo-list-weight" className="shrink-0 text-xs text-warn">
+                    без веса
+                  </span>
                 )}
               </div>
               <p className="flex items-center gap-x-1 text-xs text-ink-2 tabular-nums">
@@ -107,7 +116,7 @@ export function CargoList({
                 aria-label={manual ? `Убрать «${it.name}» с палубы` : `Открепить «${it.name}»`}
                 title={manual ? `Убрать с палубы: ${own} ед.` : `Открепить: ${own} ед. разложит программа`}
                 onClick={() => takeOff(it)}
-                className="h-8 shrink-0 px-2.5"
+                className={ROW_BUTTON}
               >
                 {manual ? 'Убрать' : 'Открепить'}
               </Button>
@@ -125,7 +134,7 @@ export function CargoList({
                   else setActiveStamp(armed ? null : it.id)
                 }}
                 className={cn(
-                  'h-8 shrink-0 px-2.5',
+                  ROW_BUTTON,
                   armed && 'border-primary bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary',
                   refusal && 'cursor-not-allowed text-ink-2 opacity-60'
                 )}
