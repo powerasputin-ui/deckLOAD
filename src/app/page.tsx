@@ -72,6 +72,7 @@ import { StackLashing } from '@/components/shell/StackLashing'
 import { MiniPanel, StackMenuItems } from '@/components/shell/MiniPanel'
 import { StartScreen } from '@/components/intro/StartScreen'
 import { EmptyDeck } from '@/components/shell/EmptyDeck'
+import { appliedVessel } from '@/lib/vesselLibrary'
 import { useFirstRun } from '@/hooks/useFirstRun'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
 import { useTrips } from '@/hooks/useTrips'
@@ -1654,6 +1655,7 @@ export default function Home() {
               open: there the deck itself is being set up. */}
           {!hasCargo && !toolArmed && activeSection !== 'vessel' && (
             <EmptyDeck
+              vesselChosen={appliedVessel(deck) !== undefined}
               onChooseVessel={() => openSection('vessel', 'library')}
               onAddCargo={() => openSection('cargo')}
               onOpenExample={() => {

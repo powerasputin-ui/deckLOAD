@@ -7,10 +7,14 @@ import { Button } from '@/components/ui/button'
 // or the example. A bar along the top of the deck view, like the stamp's
 // hint, so the deck itself stays free for its outline, obstacles and photo.
 export function EmptyDeck({
+  vesselChosen = false,
   onChooseVessel,
   onAddCargo,
   onOpenExample,
 }: {
+  // A vessel from the library is already on the deck: the step is to change
+  // it, not to choose one.
+  vesselChosen?: boolean
   onChooseVessel: () => void
   onAddCargo: () => void
   onOpenExample: () => void
@@ -26,7 +30,7 @@ export function EmptyDeck({
         </h2>
         <Button variant="outline" size="sm" className="h-7" onClick={onChooseVessel}>
           <Ship className="mr-1 h-4 w-4" aria-hidden="true" />
-          Выбрать судно
+          {vesselChosen ? 'Сменить судно' : 'Выбрать судно'}
         </Button>
         <Button variant="outline" size="sm" className="h-7" onClick={onAddCargo}>
           <PackagePlus className="mr-1 h-4 w-4" aria-hidden="true" />

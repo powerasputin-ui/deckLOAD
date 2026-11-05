@@ -75,23 +75,26 @@ export function VesselCard() {
               Наибольший вес груза на палубе
             </label>
           </dt>
-          <dd className="flex items-center gap-1.5">
-            <NumberField
-              id={`${uid}-cargo`}
-              aria-describedby={`${uid}-cargo-hint`}
-              min={0.1}
-              step={10}
-              value={deck.maxDeckCargoT}
-              onCommit={(v) => setDeck({ maxDeckCargoT: v })}
-              onClear={() => setDeck({ maxDeckCargoT: undefined })}
-              placeholder="не задан"
-              className="h-8 flex-1 text-xs"
-            />
-            <span className="w-6 text-xs text-ink-2">т</span>
+          {/* The hint inside the <dd>: a <dl> group holds only <dt> and <dd>. */}
+          <dd className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <NumberField
+                id={`${uid}-cargo`}
+                aria-describedby={`${uid}-cargo-hint`}
+                min={0.1}
+                step={10}
+                value={deck.maxDeckCargoT}
+                onCommit={(v) => setDeck({ maxDeckCargoT: v })}
+                onClear={() => setDeck({ maxDeckCargoT: undefined })}
+                placeholder="не задан"
+                className="h-8 flex-1 text-xs"
+              />
+              <span className="w-6 text-xs text-ink-2">т</span>
+            </div>
+            <p id={`${uid}-cargo-hint`} className="text-xs text-ink-2">
+              На рейс. Пусто — лимита нет, вес не проверяется
+            </p>
           </dd>
-          <p id={`${uid}-cargo-hint`} className="text-xs text-ink-2">
-            На рейс. Пусто — лимита нет, вес не проверяется
-          </p>
         </div>
         {deck.tenFootContainerCapacity !== undefined && (
           <Row term="Вместимость 10-футовых контейнеров" value={fmtNumber(deck.tenFootContainerCapacity)} />

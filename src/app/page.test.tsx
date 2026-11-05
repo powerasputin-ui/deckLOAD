@@ -1828,6 +1828,20 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
     })
 
+    // Audit 2026-11-05: with a library vessel already on the deck it still said
+    // «Выбрать судно».
+    it('the empty deck offers to change the vessel once one is chosen', () => {
+      render(<Home />)
+      clearDemoCargo()
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, vesselTemplateId: 'aleksey-kuznetsov' } })
+      })
+      openSection('Размещение')
+      const card = screen.getByRole('region', { name: 'На палубе пока нет груза' })
+      expect(within(card).getByRole('button', { name: 'Сменить судно' })).toBeTruthy()
+      expect(within(card).queryByRole('button', { name: 'Выбрать судно' })).toBeNull()
+    })
+
     // Spec 10.3: an empty deck says what to do next.
     it('an empty deck offers a vessel, cargo and the example, and steps aside while «Судно» is open', () => {
       render(<Home />)
@@ -4950,6 +4964,18 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // into them (and snap an emptied field to the minimum), so typing "24" over
   // "20" passed through a deck 2 m wide and shoved the cargo around for good.
   // NumberField now applies the value only on blur/Enter.
+  // Audit 2026-11-05: a 0 pulled the deck to its 0.1 minimum in silence (the
+  // maximum always said so) and every stack then hung off the 0.1 m strip.
+  it('says so when a deck size typed below the minimum is pulled up to it', () => {
+    render(<Home />)
+    const widthInput = deckWidthInput()
+    vi.mocked(toast.warning).mockClear()
+    fireEvent.change(widthInput, { target: { value: '0' } })
+    fireEvent.blur(widthInput)
+    expect(useCalculator.getState().deck.width).toBe(0.1)
+    expect(toast.warning).toHaveBeenCalledWith('Минимальная ширина палубы — 0.10 м')
+  })
+
   it('Round 31: typing a new deck width never reflows the layout mid-edit — it applies on blur', () => {
     render(<Home />)
     clearDemoCargo()

@@ -28,11 +28,10 @@ import type { StabilityOverride } from './packing'
 
 // Default: half the stacked height above the deck surface — a conservative
 // flat-centroid assumption, correct for a plain column of identical units.
-// A real nested pipe штабель (src/lib/pipeNest.ts) is NOT a uniform
-// column — its true weighted centroid sits well below half the stack
-// height, since more pipes sit in the lower, wider rows — so a nest's own
-// computed VCG (`nestVcgAboveDeckM`) takes precedence over this default
-// whenever it's present. An explicit user override always wins over both.
+// A pipe штабель built in src/lib/pipeNest.ts sits on a timber crib, so its
+// centroid is the crib plus half the pipe tiers, not half the whole height —
+// a nest's own computed VCG (`nestVcgAboveDeckM`) takes precedence over this
+// default whenever it's present. An explicit user override always wins over both.
 export function computeItemVCG(p: {
   height: number
   layers: number

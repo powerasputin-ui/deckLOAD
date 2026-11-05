@@ -54,7 +54,8 @@ export function DeckBlock() {
               step={0.1}
               value={deck.width}
               onClamp={({ bound, limit }) => {
-                if (bound === 'max') toast.warning(`Максимальная ширина палубы — ${fmtNumber(limit)} ${u}`)
+                // A 0 typed by mistake used to shrink the deck to its minimum without a word.
+                toast.warning(`${bound === 'max' ? 'Максимальная' : 'Минимальная'} ширина палубы — ${fmtNumber(limit)} ${u}`)
               }}
               onCommit={(v) => setDeck({ width: v })}
               className="h-8 text-xs"
@@ -68,7 +69,8 @@ export function DeckBlock() {
               step={0.1}
               value={deck.length}
               onClamp={({ bound, limit }) => {
-                if (bound === 'max') toast.warning(`Максимальная длина палубы — ${fmtNumber(limit)} ${u}`)
+                // A 0 typed by mistake used to shrink the deck to its minimum without a word.
+                toast.warning(`${bound === 'max' ? 'Максимальная' : 'Минимальная'} длина палубы — ${fmtNumber(limit)} ${u}`)
               }}
               onCommit={(v) => setDeck({ length: v })}
               className="h-8 text-xs"

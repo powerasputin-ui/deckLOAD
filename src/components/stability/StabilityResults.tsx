@@ -272,6 +272,12 @@ function StateResult({ s }: { s: StateStability }) {
             {s.vessel.particulars.downfloodingAngleDeg === undefined && (
               <p className="text-xs text-ink-2">Угол заливания не задан — площади считаются до 30° и 40°, что завышает их, если судно заливает раньше.</p>
             )}
+            {osvOutsideItsLengths(s.vessel.particulars) && (
+              <p className="text-xs text-warn">
+                Критерии B 2.4.5 написаны для судов снабжения длиной от 24 до 100 м. Для судна длиной {fmtNumber(s.vessel.particulars.lengthBpp)} м
+                применимость решает Администрация.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-xs text-ink-2">Кривых KN нет — справка по кривой GZ недоступна.</p>
@@ -282,6 +288,13 @@ function StateResult({ s }: { s: StateStability }) {
 }
 
 // What the draughts fore and aft wait for.
+// IS Code 2008 part B 2.4 covers supply vessels of 24 to 100 m; for longer
+// ones the alternative criteria are the Administration's call (UK MCA MGN
+// 516). Said where they are picked, not enforced: the reference is advisory.
+export function osvOutsideItsLengths(p: { criteriaSet?: string; lengthBpp: number }): boolean {
+  return p.criteriaSet === 'osv-b245' && p.lengthBpp > 0 && (p.lengthBpp < 24 || p.lengthBpp > 100)
+}
+
 function foreAftMissing(s: StateStability): string {
   const hydro = [s.stability.LCF === undefined && 'LCF', s.stability.trimM === null && 'LCB и MTC'].filter(Boolean).join(', ')
   const parts = [hydro && `${hydro} в гидростатике`, !(s.vessel.particulars.lengthBpp > 0) && 'LBP'].filter(Boolean)

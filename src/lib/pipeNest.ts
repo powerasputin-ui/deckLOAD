@@ -138,10 +138,11 @@ export function computePipeNest(input: ComputePipeNestInput): PipeNestSpec {
 
   const tiers = tierCounts.length
   const heightM = tiers > 0 ? crateHeightM + tiers * OD : 0
-  // Every tier weighs the same (equal pipe count, equal diameter), so the
-  // uniform-column centroid — crib height plus half the stacked pipe
-  // height — is exact here, not an approximation the way it would be for
-  // a tapering pile.
+  // Every full tier weighs the same (equal pipe count, equal diameter), so
+  // the uniform-column centroid — crib height plus half the stacked pipe
+  // height — is exact for full tiers. A part-filled top tier is lighter,
+  // which puts the true centroid lower than this: the figure errs on the
+  // safe (higher) side then, never the other way.
   const vcgAboveDeckM = tiers > 0 ? crateHeightM + (tiers * OD) / 2 : 0
 
   return {
