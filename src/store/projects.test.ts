@@ -112,6 +112,80 @@ describe('projects store', () => {
     expect(state.activeId).toBe('good-1')
   })
 
+  // Audit 2026-11-05: a `null` INSIDE a project's lists threw the same way,
+  // so the whole project was skipped — and the next autosave wrote the list
+  // back without it. Now the empty entry alone is dropped.
+  it('drops a null entry inside a project instead of the project, and keeps it through the next save', () => {
+    const deck = {
+      width: 10,
+      length: 20,
+      unit: 'm',
+      gap: 0.1,
+      boardOffset: 0.2,
+      clearance: 0,
+      restrictionZones: [null, { id: 'z', name: 'Люк', shapeType: 'rect', x: 1, y: 1, width: 2, length: 2 }],
+      loadZones: [null, { id: 'lz', x: 0, y: 0, width: 10, length: 20, maxLoadPerArea: 5 }],
+      lashingPoints: [null, { id: 'l', x: 0.5, y: 0.5 }],
+      powerSockets: [null, { id: 's', x: 1, y: 1 }],
+      annotations: [null, { id: 'a', x: 3, y: 3, text: 'Заметка' }],
+    }
+    const box = { id: 'A', name: 'Ящик', width: 1, length: 1, height: 1, quantity: 2, color: '#000', allowRotation: true, weight: 100 }
+    const at = (x: number) => ({ id: `m${x}`, itemId: 'A', name: 'Ящик', x, y: 0, width: 1, length: 1, height: 1, layers: 1, rotated: false, color: '#000', index: 0 })
+    storage['deckload-projects'] = JSON.stringify({
+      projects: [
+        {
+          id: 'p1',
+          name: 'С пустыми записями',
+          createdAt: null,
+          deck,
+          items: [null, box],
+          manualPlacements: [at(0), null, { ...at(3), composition: [{ itemId: 'A', layers: 1 }, null] }],
+          pinnedPlacementsByTrip: { 0: [null, { ...at(5), locked: true }] },
+          separationRules: [null, { id: 'r', categoryA: 'Опасный груз', categoryB: 'Обычный', minDistance: 3 }],
+          mode: 'manual',
+        },
+      ],
+      activeId: 'p1',
+    })
+    useProjects.getState().hydrate()
+    const [p] = useProjects.getState().projects
+    expect(p?.name).toBe('С пустыми записями')
+    expect(p.items.map((it) => it.id)).toEqual(['A'])
+    expect(p.manualPlacements.map((m) => m.x)).toEqual([0, 3])
+    // A segment that isn't one makes the composition unreadable, like any bad segment.
+    expect(p.manualPlacements[1].composition).toBeUndefined()
+    expect(p.pinnedPlacementsByTrip[0].map((m) => m.x)).toEqual([5])
+    expect(p.separationRules.map((r) => r.id)).toEqual(['r'])
+    expect(p.deck.restrictionZones?.map((z) => z.id)).toEqual(['z'])
+    expect(p.deck.loadZones?.map((z) => z.id)).toEqual(['lz'])
+    expect(p.deck.lashingPoints?.map((l) => l.id)).toEqual(['l'])
+    expect(p.deck.powerSockets?.map((s) => s.id)).toEqual(['s'])
+    expect(p.deck.annotations?.map((a) => a.id)).toEqual(['a'])
+    expect(Number.isFinite(p.createdAt)).toBe(true)
+
+    useProjects.getState().renameProject('p1', 'Сохранён')
+    const saved = JSON.parse(storage['deckload-projects']) as { projects: { id: string; name: string }[] }
+    expect(saved.projects.map((s) => [s.id, s.name])).toEqual([['p1', 'Сохранён']])
+  })
+
+  it('a stack whose composition did not read stays that on every reload, never «legacy, unknown composition»', () => {
+    const deck = { width: 10, length: 20, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 }
+    const box = { id: 'A', name: 'Ящик', width: 1, length: 1, height: 1, quantity: 3, color: '#000', allowRotation: true, weight: 100 }
+    const pin = { id: 'p', itemId: 'A', name: 'Ящик', x: 0, y: 0, width: 1, length: 1, height: 1, layers: 2, rotated: false, color: '#000', index: 0, locked: true, weight: 250, composition: [{ itemId: 'A', layers: 2 }, { itemId: 'A', layers: 0 }] }
+    storage['deckload-projects'] = JSON.stringify({ projects: [{ id: 'p1', name: 'П', deck, items: [box], pinnedPlacementsByTrip: { 0: [pin] }, mode: 'auto' }], activeId: 'p1' })
+    useProjects.getState().hydrate()
+    const first = useProjects.getState().projects[0].pinnedPlacementsByTrip[0][0]
+    expect(first.malformed?.invalidComposition).toBe(true)
+    expect(first.legacyUnknownComposition).toBeUndefined()
+
+    useProjects.getState().renameProject('p1', 'П2')
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const second = useProjects.getState().projects[0].pinnedPlacementsByTrip[0][0]
+    expect(second.malformed?.invalidComposition).toBe(true)
+    expect(second.legacyUnknownComposition).toBeUndefined()
+  })
+
   // Phase 0, L11: which library vessel a deck came from and the deck-strength
   // limit picked for it. Without them a reload can't tell whether a limit
   // was ever chosen.

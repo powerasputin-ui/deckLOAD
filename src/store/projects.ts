@@ -166,6 +166,15 @@ function toOptionalNonNegative(value: unknown): number | undefined {
 }
 
 const VALID_SHAPES = new Set<CargoShape>(['box', 'cylinder', 'circle', 'oval', 'triangle', 'diamond', 'custom', 'pipe-nest'])
+// An entry of a stored list that can hold data at all. A `null` (or a
+// number, a string) in a list of cargo, placements or rules is dropped on
+// its own: before, reading its fields threw, and loadFromStorage then
+// skipped the WHOLE project — and the next autosave wrote the list back
+// without it, losing the project for good.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function normalizeShape(value: unknown): CargoShape | undefined {
   return typeof value === 'string' && VALID_SHAPES.has(value as CargoShape) ? (value as CargoShape) : undefined
 }
@@ -193,6 +202,7 @@ function normalizeOutline(value: unknown): { x: number; y: number }[] | undefine
 function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
   if (!Array.isArray(value)) return undefined
   const zones = value
+    .filter(isRecord)
     .map((z) => {
       const zone = z as Record<string, unknown>
       return {
@@ -596,7 +606,7 @@ function normalizeOptionalWeight(value: unknown): number | undefined {
 
 function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
   if (!Array.isArray(value)) return undefined
-  const points = value.map((p) => {
+  const points = value.filter(isRecord).map((p) => {
     const point = p as Record<string, unknown>
     return {
       id: typeof point.id === 'string' && point.id ? point.id : uuid(),
@@ -626,7 +636,7 @@ function normalizeLashingPoints(value: unknown): DeckConfig['lashingPoints'] {
 
 function normalizePowerSockets(value: unknown): DeckConfig['powerSockets'] {
   if (!Array.isArray(value)) return undefined
-  const sockets = value.map((s) => {
+  const sockets = value.filter(isRecord).map((s) => {
     const socket = s as Record<string, unknown>
     return {
       id: typeof socket.id === 'string' && socket.id ? socket.id : uuid(),
@@ -646,7 +656,7 @@ function normalizeOptionalCoord(value: unknown): number | undefined {
 
 function normalizeAnnotations(value: unknown): DeckConfig['annotations'] {
   if (!Array.isArray(value)) return undefined
-  const annotations = value.map((a) => {
+  const annotations = value.filter(isRecord).map((a) => {
     const ann = a as Record<string, unknown>
     const leaderX = normalizeOptionalCoord(ann.leaderX)
     const leaderY = normalizeOptionalCoord(ann.leaderY)
@@ -674,7 +684,7 @@ const RESTRICTION_ZONE_SHAPES = new Set(['rect', 'triangle', 'oval', 'diamond', 
 
 function normalizeRestrictionZones(value: unknown): DeckConfig['restrictionZones'] {
   if (!Array.isArray(value)) return undefined
-  const zones = value.map((z) => {
+  const zones = value.filter(isRecord).map((z) => {
     const zone = z as Record<string, unknown>
     return {
       id: typeof zone.id === 'string' && zone.id ? zone.id : uuid(),
@@ -711,7 +721,8 @@ function normalizeComposition(value: unknown, items: CargoItem[]): CompositionSe
   const validIds = new Set(items.map((it) => it.id))
   const segments: CompositionSegment[] = []
   for (const raw of value) {
-    const seg = raw as Record<string, unknown>
+    // Not a segment at all: the composition is unreadable, as with any bad segment.
+    const seg: Record<string, unknown> = isRecord(raw) ? raw : {}
     const itemId = typeof seg.itemId === 'string' ? seg.itemId : undefined
     const layers = typeof seg.layers === 'number' && Number.isInteger(seg.layers) && seg.layers > 0 ? seg.layers : undefined
     if (!itemId || !validIds.has(itemId) || !layers) return undefined
@@ -764,6 +775,13 @@ function detectLegacyUnknownComposition(itemId: string, weight: number | undefin
 // regardless of what the current raw input alone would compute, and
 // `rawComposition` must keep whatever value was captured the first time a
 // fresh one isn't available this pass.
+// The record was already quarantined for a composition that didn't read: its
+// `composition` key is gone from the saved JSON (undefined isn't written),
+// which on the next load looks like a plain stack — not a legacy one.
+function hadInvalidComposition(existingMalformed: unknown): boolean {
+  return isRecord(existingMalformed) && existingMalformed.invalidComposition === true
+}
+
 function computeMalformed(
   itemId: string,
   rawComposition: unknown,
@@ -784,7 +802,7 @@ function computeMalformed(
 
 function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacement[] {
   if (!Array.isArray(value)) return []
-  return value.map((pp) => {
+  return value.filter(isRecord).map((pp) => {
     const pin = pp as Record<string, unknown>
     const itemId = typeof pin.itemId === 'string' ? pin.itemId : ''
     const weight = normalizeOptionalWeight(pin.weight)
@@ -809,7 +827,7 @@ function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacemen
       lashingJustification: typeof pin.lashingJustification === 'string' ? pin.lashingJustification : undefined,
       rotationLocked: typeof pin.rotationLocked === 'boolean' ? pin.rotationLocked : undefined,
       composition,
-      legacyUnknownComposition: rawComposition === undefined && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      legacyUnknownComposition: rawComposition === undefined && !hadInvalidComposition(pin.malformed) && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
       malformed: computeMalformed(itemId, rawComposition, composition, items, pin.malformed),
     } as PinnedPlacement
   })
@@ -825,7 +843,7 @@ function normalizePinnedList(value: unknown, items: CargoItem[]): PinnedPlacemen
 // in the app, that crashes the entire tree, not just one placement.
 function normalizeManualPlacements(value: unknown, items: CargoItem[]): ManualPlacement[] {
   if (!Array.isArray(value)) return []
-  return value.map((mm) => {
+  return value.filter(isRecord).map((mm) => {
     const m = mm as Record<string, unknown>
     const itemId = typeof m.itemId === 'string' ? m.itemId : ''
     const weight = normalizeOptionalWeight(m.weight)
@@ -850,7 +868,7 @@ function normalizeManualPlacements(value: unknown, items: CargoItem[]): ManualPl
       lashingJustification: typeof m.lashingJustification === 'string' ? m.lashingJustification : undefined,
       rotationLocked: typeof m.rotationLocked === 'boolean' ? m.rotationLocked : undefined,
       composition,
-      legacyUnknownComposition: rawComposition === undefined && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
+      legacyUnknownComposition: rawComposition === undefined && !hadInvalidComposition(m.malformed) && detectLegacyUnknownComposition(itemId, weight, items) ? true : undefined,
       malformed: computeMalformed(itemId, rawComposition, composition, items, m.malformed),
     } as ManualPlacement
   })
@@ -880,7 +898,7 @@ function normalizePinnedPlacementsByTrip(
 
 function normalizeSeparationRules(value: unknown): SeparationRule[] {
   if (!Array.isArray(value)) return []
-  return value.map((r) => {
+  return value.filter(isRecord).map((r) => {
     const rule = r as Record<string, unknown>
     return {
       id: typeof rule.id === 'string' && rule.id ? rule.id : uuid(),
@@ -984,7 +1002,7 @@ export function normalizeProject(p: Partial<Project>): Project {
   // against and to run the legacy-detection weight comparison — both need
   // real CargoItem records, not the raw unsanitized input.
   const items: CargoItem[] = Array.isArray(p.items)
-    ? p.items.map((it) => ({
+    ? (p.items as unknown[]).filter(isRecord).map((it) => ({
         id: typeof it.id === 'string' && it.id ? it.id : uuid(),
         name: typeof it.name === 'string' ? it.name : 'Груз',
         width: sanitizeCargoWidth(it.width, 1),
@@ -1021,8 +1039,10 @@ export function normalizeProject(p: Partial<Project>): Project {
   return {
     id: typeof p.id === 'string' && p.id ? p.id : uuid(),
     name: typeof p.name === 'string' ? p.name : 'Без названия',
-    createdAt: typeof p.createdAt === 'number' ? p.createdAt : now,
-    updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : now,
+    // Finite only: a NaN survived here, was saved as null and came back as
+    // «now» on the next load — the project's dates changed on every reload.
+    createdAt: typeof p.createdAt === 'number' && Number.isFinite(p.createdAt) ? p.createdAt : now,
+    updatedAt: typeof p.updatedAt === 'number' && Number.isFinite(p.updatedAt) ? p.updatedAt : now,
     deck: {
       width: toFinitePositive(p.deck?.width, DEMO_DECK.width),
       length: toFinitePositive(p.deck?.length, DEMO_DECK.length),
