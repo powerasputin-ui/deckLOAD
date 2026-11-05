@@ -36,6 +36,7 @@ import {
   separationViolations,
 } from '@/lib/packing'
 import { placementLayersOfItem, placementTotalLayers, placementTotalWeightKg, placementCategorySet, placementCategoryLabel } from '@/lib/placementComposition'
+import { unitsOfItemIn } from '@/lib/ownPlacements'
 import { DeckVisualization } from '@/components/calculator/DeckVisualization'
 const Deck3DView = dynamic(() => import('@/components/calculator/Deck3DView'), {
   ssr: false,
@@ -766,7 +767,7 @@ export default function Home() {
   // wherever it lands: all of it is placed, or the deck's cargo limit is
   // reached. The click is refused with it, and the shadow under the cursor
   // turns red with it (spec 7.1).
-  const stampRefusal = (itemId: string): { text: string; level: 'warning' | 'error' } | null => {
+  const stampRefusal = (itemId: string): { kind: 'all-placed' | 'limit'; text: string; level: 'warning' | 'error' } | null => {
     // Scoped to THIS item, not a global sum across every
     // cargo type — an aggregate check let a fully-placed
     // item keep being over-placed by clicking its own
@@ -809,10 +810,10 @@ export default function Home() {
             .flat()
             .reduce((s, pin) => s + layersOfIdIn(pin), 0)
     if (itemPlaced >= itemRequested) {
-      return { text: `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте «всего» в списке`, level: 'warning' }
+      return { kind: 'all-placed', text: `Все ${itemRequested} ед. груза «${item?.name ?? ''}» уже размещены — увеличьте «всего» в списке`, level: 'warning' }
     }
     if (wouldExceedMaxDeckCargo(item?.weight ?? 0)) {
-      return { text: `Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`, level: 'error' }
+      return { kind: 'limit', text: `Превышен лимит груза на палубе (${deck.maxDeckCargoT} т)`, level: 'error' }
     }
     return null
   }
@@ -1553,6 +1554,7 @@ export default function Home() {
               hoveredItemId={hoveredItemId}
               onHover={handleHover}
               onPlaceCustomShape={handlePlaceCustomShape}
+              placeRefusal={stampRefusal}
             />
           )}
           {activeSection === 'placement' && (
@@ -1731,6 +1733,15 @@ export default function Home() {
                   } else {
                     pinFromPlaced(clampedTripIndex, { ...p, locked: true })
                   }
+                  // The last unit of it is on the deck: the stamp ends, and
+                  // the cargo's «Поставить» turns into «Убрать» (spec 7.1).
+                  const after = useCalculator.getState()
+                  const quantity = after.items.find((it) => it.id === p.itemId)?.quantity ?? 0
+                  const onDeck =
+                    mode === 'manual'
+                      ? unitsOfItemIn(after.manualPlacements, p.itemId)
+                      : Object.values(after.pinnedPlacementsByTrip).reduce((n, pins) => n + unitsOfItemIn(pins, p.itemId), 0)
+                  if (onDeck >= quantity) setActiveStamp(null)
                 }}
                 onMoveManual={(id, x, y) => updateManualPlacement(id, { x, y })}
                 onUpdateManualClearance={(id, margin) => updateManualPlacement(id, { clearanceMargin: margin })}

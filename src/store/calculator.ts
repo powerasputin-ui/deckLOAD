@@ -53,6 +53,7 @@ import { keptByVariants } from '@/lib/variantKeep'
 import { deckForVessel } from '@/lib/vesselDeck'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import { autoPlacementKey } from '@/lib/stackSelection'
+import { ownUnitsOfItem } from '@/lib/ownPlacements'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
@@ -302,6 +303,9 @@ interface CalculatorState {
   updateManualPlacement: (id: string, patch: Partial<ManualPlacement>) => void
   removeManualPlacement: (id: string) => void
   clearManualPlacements: () => void
+  // «Убрать» / «Открепить» on a cargo's row (spec 7.1): the units of it the
+  // user stood on the deck come off it (ownPlacements.ts). Returns how many.
+  takeOffDeck: (itemId: string) => number
   // Pinned (interactive auto mode) — all keyed by trip index
   // `locked` marks a position the user chose (drag, «Закрепить», a stamp
   // click, a layer/rotate edit): shown with a lock, kept by «Автораспределение».
@@ -1708,6 +1712,34 @@ export const useCalculator = create<CalculatorState>()(
       manualPlacements: [],
       deck: pruneOrphanLashingPoints(s.deck, [], s.pinnedPlacementsByTrip),
     })),
+  takeOffDeck: (itemId) => {
+    const units = ownUnitsOfItem(itemId, get().mode, get().manualPlacements, get().pinnedPlacementsByTrip)
+    if (units === 0) return 0
+    set((s) => {
+      // A mixed stack keeps its other cargo (removeItemFromPlacements).
+      const manualPlacements = s.mode === 'manual' ? removeItemFromPlacements(s.manualPlacements, itemId, s.items) : s.manualPlacements
+      // In auto only the user's own pinned stacks, on every trip: the packer
+      // lays those units out again itself.
+      const pinnedPlacementsByTrip =
+        s.mode === 'manual'
+          ? s.pinnedPlacementsByTrip
+          : Object.fromEntries(
+              Object.entries(s.pinnedPlacementsByTrip).map(([trip, pins]) => [
+                trip,
+                pins.flatMap((p) => (p.locked ? removeItemFromPlacements([p], itemId, s.items) : [p])),
+              ])
+            )
+      const allPins = Object.values(pinnedPlacementsByTrip).flat()
+      return {
+        manualPlacements,
+        pinnedPlacementsByTrip,
+        deck: pruneOrphanLashingPoints(s.deck, manualPlacements, pinnedPlacementsByTrip),
+        selectedPinIds: s.selectedPinIds.filter((sid) => allPins.some((p) => p.id === sid)),
+        selectedManualIds: s.selectedManualIds.filter((mid) => manualPlacements.some((m) => m.id === mid)),
+      }
+    })
+    return units
+  },
 
   pinFromPlaced: (tripIndex, placed) => {
     const id = uuid()

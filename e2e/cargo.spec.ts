@@ -18,6 +18,29 @@ test.describe('Cargo management', () => {
     await expect(page.getByText('Превышает размеры палубы')).toBeVisible()
   })
 
+  // Revision 2026-11-05: one button follows the cargo's state. «Поставить»,
+  // and once all of the cargo is on the deck the stamp ends by itself and the
+  // button is «Убрать»; that takes the cargo off, and «Поставить» is back.
+  test('«Поставить» turns into «Убрать» once the cargo is on the deck, and back', async ({ page }) => {
+    await page.goto('/')
+    await clearCalculation(page)
+    await page.getByText('Ручной').first().click()
+    await addOwnCargo(page)
+    await armCargo(page, 'Груз 1')
+    const place = page.getByRole('button', { name: 'Поставить «Груз 1»', exact: true })
+    await expect(place).toHaveAttribute('aria-pressed', 'true')
+    await page.locator('svg [data-deck-background="true"]').first().click({ position: { x: 60, y: 60 }, force: true })
+    await expect(page.getByText(/1\/1 ед\./)).toBeVisible()
+    await expect(page.getByTestId('stamp-hint')).toHaveCount(0)
+    await expect(place).toHaveCount(0)
+    const takeOff = page.getByRole('button', { name: 'Убрать «Груз 1» с палубы', exact: true })
+    await takeOff.click()
+    await expect(page.getByText(/0\/1 ед\./)).toBeVisible()
+    await expect(takeOff).toHaveCount(0)
+    await expect(place).toBeVisible()
+    await expect(place).toHaveAttribute('aria-pressed', 'false')
+  })
+
   // Stage 2: the cargo list sits in the left panel with no scroll box of its
   // own — the panel scrolls. That replaced the list's inner scroll and its
   // «Наверх» button, so every card is reached by scrolling the panel.

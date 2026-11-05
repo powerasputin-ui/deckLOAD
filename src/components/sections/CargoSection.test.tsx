@@ -250,6 +250,77 @@ describe('CargoSection', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Таблица' }))
       expect(onOpenTable).toHaveBeenCalled()
     })
+
+    // Revision 2026-11-05: one button follows the cargo's state — a
+    // «Поставить» that looked ready but placed nothing read as broken.
+    describe('its button', () => {
+      const byHand = (layers: number) => [
+        { id: 'm1', itemId: 'a', name: 'Контейнер 20ft', x: 0, y: 0, width: 6.06, length: 2.44, layers, rotated: false, color: '#000', weight: 2200 },
+      ]
+      const allPlaced = () => ({ kind: 'all-placed' as const, text: 'Все 4 ед. груза «Контейнер 20ft» уже размещены — увеличьте «всего» в списке' })
+      const buttons = () => within(screen.getByTestId('cargo-list-row')).queryAllByRole('button').map((b) => b.textContent)
+
+      it('is «Поставить» while some of the cargo is still off the deck', () => {
+        reset({ items: [cargo], mode: 'manual', manualPlacements: byHand(2) })
+        section()
+        expect(buttons()).toEqual(['Поставить'])
+      })
+
+      it('turns into «Убрать» once all of it is on the deck; that takes it off, with an undo in the toast', () => {
+        reset({ items: [cargo], mode: 'manual', manualPlacements: byHand(4) })
+        const { view } = section({ placeRefusal: allPlaced })
+        expect(buttons()).toEqual(['Убрать'])
+        fireEvent.click(screen.getByRole('button', { name: 'Убрать «Контейнер 20ft» с палубы' }))
+        expect(useCalculator.getState().manualPlacements).toEqual([])
+        expect(toast.success).toHaveBeenCalledWith(
+          '«Контейнер 20ft» убран с палубы: 4 ед.',
+          expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) })
+        )
+        // Off the deck, it can be placed again.
+        view.rerender(<CargoSection onOpenTable={vi.fn()} placedAcrossTrips={[]} hoveredItemId={null} onHover={vi.fn()} onPlaceCustomShape={vi.fn()} />)
+        expect(buttons()).toEqual(['Поставить'])
+      })
+
+      it('in auto mode turns into «Открепить» once the user pinned all of it', () => {
+        reset({ items: [{ ...cargo, quantity: 1 }], mode: 'auto', pinnedPlacementsByTrip: { 0: [{ ...byHand(1)[0], id: 'p1', locked: true }] } })
+        section({ placeRefusal: allPlaced })
+        fireEvent.click(screen.getByRole('button', { name: 'Открепить «Контейнер 20ft»' }))
+        expect(useCalculator.getState().pinnedPlacementsByTrip[0]).toEqual([])
+        expect(toast.success).toHaveBeenCalledWith('«Контейнер 20ft» откреплён: 1 ед. разложит программа', expect.anything())
+      })
+
+      it('greys «Поставить» with the reason when nothing of it is the user\'s to take off, and a click says it instead of arming', () => {
+        vi.spyOn(toast, 'error').mockImplementation(() => '')
+        vi.spyOn(toast, 'warning').mockImplementation(() => '')
+        reset({ items: [cargo], mode: 'manual' })
+        const { view } = section({ placeRefusal: () => ({ kind: 'limit', text: 'Превышен лимит груза на палубе (10 т)' }) })
+        const place = screen.getByRole('button', { name: 'Поставить «Контейнер 20ft»' })
+        expect(place.getAttribute('aria-disabled')).toBe('true')
+        expect(place.getAttribute('title')).toBe('Превышен лимит груза на палубе (10 т)')
+        fireEvent.click(place)
+        expect(useCalculator.getState().activeStampId).toBeNull()
+        expect(toast.error).toHaveBeenCalledWith('Превышен лимит груза на палубе (10 т)')
+        view.unmount()
+        // All of it pinned by the packer (an applied variant): nothing the
+        // user stood there to take off.
+        reset({ items: [cargo], mode: 'auto', pinnedPlacementsByTrip: { 0: [{ ...byHand(4)[0], id: 'p1' }] } })
+        section({ placeRefusal: allPlaced })
+        expect(buttons()).toEqual(['Поставить'])
+        fireEvent.click(screen.getByRole('button', { name: 'Поставить «Контейнер 20ft»' }))
+        expect(toast.warning).toHaveBeenCalledWith(allPlaced().text)
+      })
+
+      it('armed, «Поставить» is outlined in orange and a second click disarms it', () => {
+        reset({ items: [cargo], mode: 'manual', activeStampId: 'a' })
+        section()
+        const place = screen.getByRole('button', { name: 'Поставить «Контейнер 20ft»' })
+        expect(place.getAttribute('aria-pressed')).toBe('true')
+        expect(place.className).toContain('border-primary')
+        fireEvent.click(place)
+        expect(useCalculator.getState().activeStampId).toBeNull()
+        expect(place.className).not.toContain('border-primary')
+      })
+    })
   })
 
   it('a drawn outline asks for its name and weight, then is placed where it was drawn', () => {

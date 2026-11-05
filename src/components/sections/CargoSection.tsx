@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { BookOpen, Plus, Table2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { CargoList } from '@/components/cargo/CargoList'
+import { CargoList, type PlaceRefusal } from '@/components/cargo/CargoList'
 import { CargoCatalog, CustomShapeForm } from '@/components/cargo/CargoCatalog'
 import { OwnCargoForm } from '@/components/cargo/OwnCargoForm'
 import { useCalculator } from '@/store/calculator'
@@ -20,6 +20,7 @@ export function CargoSection({
   hoveredItemId,
   onHover,
   onPlaceCustomShape,
+  placeRefusal,
 }: {
   // Opens the cargo table across the bottom (spec 5.4).
   onOpenTable: () => void
@@ -28,6 +29,8 @@ export function CargoSection({
   onHover: (id: string | null) => void
   // A drawn outline, once named, placed where it was drawn.
   onPlaceCustomShape: (name: string, weightKg?: number) => void
+  // Why another unit of a cargo can't go on the deck, if it can't.
+  placeRefusal?: (itemId: string) => PlaceRefusal | null
 }) {
   const items = useCalculator((s) => s.items)
   const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
@@ -88,7 +91,7 @@ export function CargoSection({
       )}
       {!empty && (
         <div className="pt-2">
-          <CargoList placedAcrossTrips={placedAcrossTrips} hoveredItemId={hoveredItemId} onHover={onHover} />
+          <CargoList placedAcrossTrips={placedAcrossTrips} hoveredItemId={hoveredItemId} onHover={onHover} placeRefusal={placeRefusal} />
         </div>
       )}
     </>

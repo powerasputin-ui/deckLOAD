@@ -126,6 +126,9 @@ test('A.8: variants and the trips in «Размещение», placing by hand f
   await openSection(page, 'Размещение')
   await expect(page.getByRole('button', { name: 'Очистить расстановку' })).toBeVisible()
   await openSection(page, 'Грузы')
+  // All of the demo stands on the deck, so its row offers «Убрать»; once
+  // that takes it off, «Поставить» (revision 2026-11-05).
+  await page.getByRole('button', { name: 'Убрать «Контейнер 20ft» с палубы' }).click()
   await expect(page.getByRole('button', { name: 'Поставить «Контейнер 20ft»' })).toBeVisible()
   await page.getByRole('button', { name: 'Справка' }).click()
   await page.getByRole('button', { name: 'Горячие клавиши' }).click()

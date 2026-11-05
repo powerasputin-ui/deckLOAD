@@ -23,14 +23,14 @@ test.describe('Click-to-place quantity cap', () => {
     await background.click({ position: { x: 40, y: 40 }, force: true })
     await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
-    // Item 1's stamp stays armed — click empty deck elsewhere to try placing
-    // a SECOND unit of item 1, whose own quantity (1) is already satisfied.
-    // The shadow already says so (spec 7.1), and the click is refused.
-    const bgBox = (await background.boundingBox())!
-    await page.mouse.move(bgBox.x + 300, bgBox.y + 200)
-    await expect(page.locator('[data-stamp-problem]')).toHaveAttribute('data-stamp-problem', 'Все 1 ед. груза «Груз 1» уже размещены — увеличьте «всего» в списке')
+    // Item 1's own quantity (1) is satisfied, though item 2's isn't: its
+    // stamp ends by itself (revision 2026-11-05 — an aggregate count, 1 of 2,
+    // would have kept it armed), and its row offers «Убрать» instead of
+    // «Поставить». A click on the deck places nothing more.
+    await expect(page.getByTestId('stamp-hint')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Поставить «Груз 1»', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Убрать «Груз 1» с палубы', exact: true })).toBeVisible()
     await background.click({ position: { x: 300, y: 200 }, force: true })
-    await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Все 1 ед\. груза «Груз 1» уже размещены/ })).toBeVisible()
     await expect(page.getByText(/1\/2 ед\./)).toBeVisible()
 
     // Item 2 is unaffected — still places normally.

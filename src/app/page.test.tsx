@@ -3585,6 +3585,33 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
   })
 
+  // Revision 2026-11-05: the last unit placed ends the stamp — nothing more
+  // of it to place — and the cargo's «Поставить» turns into «Убрать».
+  it('the last unit placed ends the stamp, and the cargo\'s row offers «Убрать»', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.getState().addItem({ name: 'Box', width: 1, length: 1, height: 1, quantity: 2 })
+    })
+    openSection('Грузы')
+    fireEvent.click(screen.getByRole('button', { name: 'Поставить «Box»' }))
+    const clickAt = (clientX: number) =>
+      withIdentitySvgTransform(() => {
+        fireEvent.click(document.querySelector('svg[data-deck-plan]')!, { clientX, clientY: DECK_CLICK_CLIENT_Y })
+      })
+    clickAt(DECK_CLICK_CLIENT_X)
+    expect(useCalculator.getState().manualPlacements).toHaveLength(1)
+    expect(useCalculator.getState().activeStampId).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Поставить «Box»' })).toBeTruthy()
+    clickAt(DECK_CLICK_CLIENT_X + 150)
+    expect(useCalculator.getState().manualPlacements).toHaveLength(2)
+    expect(useCalculator.getState().activeStampId).toBeNull()
+    expect(screen.queryByTestId('stamp-hint')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Убрать «Box» с палубы' })).toBeTruthy()
+  })
+
   // The presets keep a long item's long side in «ширина», across the ship:
   // on the 8 m wide deck a 9.5 m pipe fits only turned fore and aft.
   it('a stamp that fits the deck only turned is placed turned', () => {
