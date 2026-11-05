@@ -737,6 +737,21 @@ function reflowResizedItem<T extends { x: number; y: number; width: number; leng
   return { list: result, moved, stillColliding }
 }
 
+// A EUR pallet WITH its load. It used to be 1.2 × 0.8 × 0.14 m at 500 kg:
+// the empty pallet's own height (EN 13698-1: 144 mm, ≈ 25 kg empty) under a
+// loaded pallet's weight — so on a deck with a height limit the packer stood
+// twenty 500 kg «pallets» 0.14 m thick in one stack. The footprint is the
+// standard's; the height is the same example as «Паллета IND».
+const EUR_PALLET: Partial<CargoItem> = {
+  name: 'Паллета EUR',
+  width: 1.2,
+  length: 0.8,
+  height: 1.5,
+  allowRotation: true,
+  weight: 500,
+  contents: 'Паллета 1200×800 мм (EN 13698-1) с грузом: высота и масса — пример, поставьте свои',
+}
+
 // The cargo templates of «Каталог» (spec 7.2, CargoCatalog.tsx), grouped by
 // category and written in metres. Choosing one adds it to the cargo list,
 // or 1 more of the same (addOrIncrementCargoFromTemplate).
@@ -744,15 +759,17 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   containers: {
     label: 'Контейнеры',
     items: [
-      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200 },
-      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800 },
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, allowRotation: true, weight: 500 },
+      // ISO 668 sizes; the weight is the EMPTY box (tare) — say so, as the
+      // registry rows below do, or 2.2 t reads as a container's weight.
+      { name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2200, contents: 'Масса пустого (тара) — добавьте массу груза' },
+      { name: 'Контейнер 40ft', width: 12.19, length: 2.44, height: 2.59, allowRotation: true, weight: 3800, contents: 'Масса пустого (тара) — добавьте массу груза' },
+      { ...EUR_PALLET },
       // Offshore/DNV 2.7-1 20ft unit — no real registry equivalent on file,
       // kept generic (see the note above the real registry block below for
       // why 10ft/20ft real units replaced their generic namesakes instead).
-      { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400 },
-      { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900 },
-      { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650 },
+      { name: 'Офшорный контейнер 20ft (DNV 2.7-1)', width: 6.06, length: 2.44, height: 2.59, allowRotation: true, weight: 2400, contents: 'Масса пустого (тара) — добавьте массу груза' },
+      { name: 'Полувысокая корзина 20ft', width: 6.1, length: 2.44, height: 1.27, allowRotation: true, weight: 2900, contents: 'Масса пустой (тара) — добавьте массу груза' },
+      { name: 'Химический танк-контейнер 2500л', width: 1.8, length: 1.8, height: 2.36, allowRotation: true, weight: 650, contents: 'Масса пустого (тара) — добавьте массу 2500 л содержимого' },
       // Real certified offshore tare from the operator's own RMRS registry
       // («Схемы укладки ТП … + тара + модули + МГС», лист «ТАРА»). Merged
       // directly into this tab (not a separate "Тара (реестр)" category)
@@ -780,8 +797,8 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
   pallets: {
     label: 'Паллеты',
     items: [
-      { name: 'Паллета EUR', width: 1.2, length: 0.8, height: 0.14, allowRotation: true, weight: 500 },
-      { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, allowRotation: true, weight: 700 },
+      { ...EUR_PALLET },
+      { name: 'Паллета IND', width: 1.0, length: 1.2, height: 1.5, allowRotation: true, weight: 700, contents: 'Паллета 1200×1000 мм с грузом: высота и масса — пример, поставьте свои' },
     ],
   },
   mixed: {
@@ -791,7 +808,9 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Ящик M', width: 1.2, length: 0.9, height: 0.8, allowRotation: true, weight: 350 },
       // Realistic offshore pipe types replace the old generic "Бочка"/"Труба".
       { name: 'Скип для бурового шлама', width: 2.4, length: 1.5, height: 1.6, allowRotation: true, weight: 1400 },
-      { name: 'Бурильная труба (свеча, Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: true, weight: 400, shape: 'cylinder', color: '#334155' },
+      // One joint, not a «свеча» (a stand of 2–3 joints). API 5DP Range 2 is
+      // 27–30 ft (8.2–9.1 m); 9.5 m leaves room for the thread protectors.
+      { name: 'Бурильная труба (Range 2)', width: 9.5, length: 0.15, height: 0.15, allowRotation: true, weight: 400, shape: 'cylinder', color: '#334155' },
       { name: 'Обсадная труба', width: 9.5, length: 0.25, height: 0.25, allowRotation: true, weight: 700, shape: 'cylinder', color: '#57534e' },
       { name: 'Генераторная установка (энергоблок)', width: 3.0, length: 1.5, height: 1.8, allowRotation: false, weight: 3000 },
       { name: 'Якорная цепь в корзине', width: 1.5, length: 1.5, height: 1.2, allowRotation: false, weight: 3000 },
@@ -872,8 +891,8 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
 // (freshProject in src/store/projects.ts) and "Сбросить к примеру" /
 // handleResetCurrent (src/app/page.tsx). Previously each of those two call
 // sites hardcoded its own independent copy of this data — they had already
-// drifted (one used a real EUR-pallet height of 0.14m, matching the
-// standard's real ~144mm; the other used 1.6m, and even the deck's own
+// drifted (one used 0.14 m, the EMPTY EUR pallet's own 144 mm, the other
+// 1.6 m, and even the deck's own
 // `clearance` differed, 0 vs 5.2) — so a user hitting "Сбросить к примеру"
 // got a visibly different demo than a first-time visitor did, changing
 // stacking-layer counts, 3D render height, and the stability VCG estimate
