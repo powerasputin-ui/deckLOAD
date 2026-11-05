@@ -1152,14 +1152,36 @@ function placeRect(used: Rect, freeRects: FreeRect[]): void {
 //
 // Vertical scanline decomposition: slice the bounding box into vertical
 // strips at each distinct outline-vertex X (deduped within EPS), then for
-// each strip cast a ray at its horizontal midpoint against every polygon
-// edge, collect the Y crossings, sort them, and pair them up even/odd
-// (standard scanline-fill rule) to get the polygon's inside-Y span(s) in
-// that strip. Everything above the first span and below the last (plus any
-// gaps between multiple spans, for a shape that's concave top-to-bottom) is
-// excluded. Correct for any simple polygon, convex or concave — O(n²)
-// worst case (n = vertex count), trivial for hand-drawn outlines.
+// each strip find the polygon edges crossing it, sort them, and pair them up
+// even/odd (standard scanline-fill rule) to get the polygon's inside-Y
+// span(s) in that strip. Everything above the first span and below the last
+// (plus any gaps between multiple spans, for a shape that's concave
+// top-to-bottom) is excluded. Correct for any simple polygon, convex or
+// concave — O(n²) worst case (n = vertex count), trivial for hand-drawn
+// outlines.
 const SCANLINE_EPS = 1e-6
+
+// The polygon edges crossing the vertical strip [xLo, xHi], bottom to top,
+// each as its height at the strip's two sides. No vertex lies strictly
+// inside a strip (strips are cut at every vertex X), so each edge is one
+// straight segment across it and its extreme heights are at the two sides —
+// which is what lets a span be taken on the safe side over the whole strip
+// rather than at one sample point (audit 2026-11-05: sampled at the strip's
+// midpoint, a stack reached up to half a strip's rise past a sloped edge —
+// 15 cm on a 16 × 49.1 m deck, 35 cm on a 30 × 150 m one).
+function stripCrossings(polygon: { x: number; y: number }[], xLo: number, xHi: number): { atLo: number; atHi: number }[] {
+  const xMid = (xLo + xHi) / 2
+  const crossings: { atMid: number; atLo: number; atHi: number }[] = []
+  for (let j = 0; j < polygon.length; j++) {
+    const p1 = polygon[j]
+    const p2 = polygon[(j + 1) % polygon.length]
+    if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
+      const at = (x: number) => p1.y + ((x - p1.x) / (p2.x - p1.x)) * (p2.y - p1.y)
+      crossings.push({ atMid: at(xMid), atLo: at(xLo), atHi: at(xHi) })
+    }
+  }
+  return crossings.sort((a, b) => a.atMid - b.atMid)
+}
 export function deckOutlineExclusionRects(
   outline: { x: number; y: number }[],
   width: number,
@@ -1200,23 +1222,17 @@ export function deckOutlineExclusionRects(
     for (let s = 0; s < subCount; s++) {
       const xLo = stripLo + s * subWidth
       const xHi = s === subCount - 1 ? stripHi : xLo + subWidth
-      const xMid = (xLo + xHi) / 2
-
-      const ys: number[] = []
-      for (let j = 0; j < outline.length; j++) {
-        const p1 = outline[j]
-        const p2 = outline[(j + 1) % outline.length]
-        if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
-          const t = (xMid - p1.x) / (p2.x - p1.x)
-          ys.push(p1.y + t * (p2.y - p1.y))
-        }
-      }
-      ys.sort((a, b) => a - b)
-
+      // The deck inside this sub-strip, on the safe side: where it is deck at
+      // BOTH of the sub-strip's sides (the higher of each lower edge, the
+      // lower of each upper edge). A span that closes up — a tip — is gone.
+      const edges = stripCrossings(outline, xLo, xHi)
       let prevY = 0
-      for (let k = 0; k < ys.length; k += 2) {
-        const yLo = ys[k]
-        const yHi = ys[k + 1] ?? length
+      for (let k = 0; k < edges.length; k += 2) {
+        const lower = edges[k]
+        const upper = edges[k + 1]
+        const yLo = Math.max(lower.atLo, lower.atHi)
+        const yHi = upper ? Math.min(upper.atLo, upper.atHi) : length
+        if (yHi - yLo <= SCANLINE_EPS) continue
         if (yLo - prevY > SCANLINE_EPS) {
           out.push({ x: xLo, y: prevY, width: xHi - xLo, height: yLo - prevY })
         }
@@ -1264,23 +1280,16 @@ export function polygonInsideRects(
     for (let s = 0; s < subCount; s++) {
       const xLo = stripLo + s * subWidth
       const xHi = s === subCount - 1 ? stripHi : xLo + subWidth
-      const xMid = (xLo + xHi) / 2
-
-      const ys: number[] = []
-      for (let j = 0; j < polygon.length; j++) {
-        const p1 = polygon[j]
-        const p2 = polygon[(j + 1) % polygon.length]
-        if ((p1.x <= xMid && p2.x > xMid) || (p2.x <= xMid && p1.x > xMid)) {
-          const t = (xMid - p1.x) / (p2.x - p1.x)
-          ys.push(p1.y + t * (p2.y - p1.y))
-        }
-      }
-      ys.sort((a, b) => a - b)
-
-      for (let k = 0; k < ys.length; k += 2) {
-        const yLo = ys[k]
-        const yHi = ys[k + 1]
-        if (yHi === undefined) break
+      // The zone inside this sub-strip, on the safe side: wherever it is zone
+      // at EITHER of the sub-strip's sides (the lower of each lower edge, the
+      // higher of each upper edge), so no stack reaches into it.
+      const edges = stripCrossings(polygon, xLo, xHi)
+      for (let k = 0; k < edges.length; k += 2) {
+        const lower = edges[k]
+        const upper = edges[k + 1]
+        if (!upper) break
+        const yLo = Math.max(0, Math.min(lower.atLo, lower.atHi))
+        const yHi = Math.min(length, Math.max(upper.atLo, upper.atHi))
         if (yHi - yLo > SCANLINE_EPS) {
           out.push({ x: xLo, y: yLo, width: xHi - xLo, height: yHi - yLo })
         }
@@ -1294,7 +1303,7 @@ export interface PackOptions {
   sortStrategy?: SortStrategy
   gap?: number // spacing between items
   boardOffset?: number // margin from the ship's board (deck edge)
-  clearance?: number // max stack height above deck (0 = single tier)
+  clearance?: number // max stack height above deck; 0 = not set: an item stacks to its own maxLayers, else one tier
   pinned?: PinnedPlacement[] // user-pinned stacks that must keep their positions
   separationRules?: SeparationRule[] // category-pair minimum-distance rules
   outline?: { x: number; y: number }[] // non-rectangular deck silhouette, see deckOutlineExclusionRects
@@ -1468,11 +1477,12 @@ export interface PinnedPlacement {
 // taking the minimum of the two — whichever is more restrictive wins, since
 // both are then real physical constraints. But clearance = 0 isn't itself a
 // physical "only 1 fits" fact — it's the deck-wide default for "no height
-// budget was ever configured" (see the deck settings' own "0 = один ярус"
-// hint). An explicit per-item maxLayers is a much more specific, deliberate
-// signal than that blanket default, so it wins outright when clearance is
-// unset — previously it was silently intersected down to 1 regardless of
-// what the user typed, which read as "the Ярусов field does nothing."
+// budget was ever configured" (the deck settings' hint: «Пусто или 0 —
+// палуба высоту не ограничивает»). An explicit per-item maxLayers is a much
+// more specific, deliberate signal than that blanket default, so it wins
+// outright when clearance is unset — previously it was silently intersected
+// down to 1 regardless of what the user typed, which read as "the Ярусов
+// field does nothing."
 // A per-item stack-height ceiling in METRES — e.g. "трубы этого типа
 // нельзя штабелировать выше 3,0 м" (ДВТК п. 2.1.2), which is a fact about
 // the cargo/method, not about the deck. Deliberately separate from the

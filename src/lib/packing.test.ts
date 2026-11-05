@@ -1379,6 +1379,80 @@ describe('deckOutlineExclusionRects', () => {
   })
 })
 
+// Audit 2026-11-05: the staircase was taken at each strip's midpoint, so
+// stacks reached past a sloped deck edge (14.7 cm on 16 × 49.1 m, 35.4 cm on
+// 30 × 150 m) and into a sloped obstacle. Checked here without the packer's
+// own geometry: a convex polygon holds a rectangle when it holds its four
+// corners (half-planes), and two convex shapes are apart when an axis
+// separates them.
+describe('auto placement stays inside sloped deck edges and out of sloped obstacles', () => {
+  type Pt = { x: number; y: number }
+  const corners = (p: { x: number; y: number; width: number; length: number }): Pt[] => [
+    { x: p.x, y: p.y },
+    { x: p.x + p.width, y: p.y },
+    { x: p.x + p.width, y: p.y + p.length },
+    { x: p.x, y: p.y + p.length },
+  ]
+  // Signed area > 0: counter-clockwise. A point is inside a convex polygon
+  // when it is on the inner side of every edge.
+  const ccw = (poly: Pt[]) => (poly.reduce((a, p, i) => { const q = poly[(i + 1) % poly.length]; return a + p.x * q.y - q.x * p.y }, 0) > 0 ? poly : [...poly].reverse())
+  const reachOutside = (poly: Pt[], pt: Pt) => {
+    const c = ccw(poly)
+    let worst = -Infinity
+    for (let i = 0; i < c.length; i++) {
+      const a = c[i]
+      const b = c[(i + 1) % c.length]
+      const len = Math.hypot(b.x - a.x, b.y - a.y)
+      if (len < 1e-9) continue // a repeated vertex (the 30 m deck's bow comes to a point)
+      // Distance to the outer side of edge a→b (positive = outside).
+      worst = Math.max(worst, ((b.x - a.x) * (a.y - pt.y) - (b.y - a.y) * (a.x - pt.x)) / len)
+    }
+    return worst
+  }
+  const separated = (a: Pt[], b: Pt[]) => {
+    for (const poly of [a, b]) {
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i]
+        const q = poly[(i + 1) % poly.length]
+        const n = { x: q.y - p.y, y: p.x - q.x }
+        const proj = (pts: Pt[]) => pts.map((v) => v.x * n.x + v.y * n.y)
+        const pa = proj(a)
+        const pb = proj(b)
+        const scale = Math.hypot(n.x, n.y)
+        if (Math.max(...pa) <= Math.min(...pb) + 1e-6 * scale || Math.max(...pb) <= Math.min(...pa) + 1e-6 * scale) return true
+      }
+    }
+    return false
+  }
+
+  for (const [W, L, k] of [[16, 49.1, 6], [30, 150, 15]] as const) {
+    it(`no stack reaches past the sloped bow of a ${W} × ${L} m deck`, () => {
+      const outline = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: L - k }, { x: W - k, y: L }, { x: k, y: L }, { x: 0, y: L - k }]
+      const items = [{ id: 'b', name: 'b', width: 1, length: 1, height: 1, quantity: 5000, color: '#000', allowRotation: true }]
+      const r = packDeck(W, L, items, { gap: 0, boardOffset: 0, outline, sortStrategy: 'area-desc' })
+      expect(r.placed.length).toBeGreaterThan(0)
+      const worst = Math.max(...r.placed.flatMap((p) => corners(p).map((c) => reachOutside(outline, c))))
+      expect(worst).toBeLessThanOrEqual(1e-6)
+    })
+  }
+
+  it('no stack reaches into a triangle, a diamond or an oval obstacle', () => {
+    const zones = [
+      { id: 't', name: 'Треугольник', shapeType: 'triangle' as const, x: 2, y: 3, width: 6, length: 7 },
+      { id: 'd', name: 'Ромб', shapeType: 'diamond' as const, x: 11, y: 4, width: 6, length: 9 },
+      { id: 'o', name: 'Овал', shapeType: 'oval' as const, x: 5, y: 15, width: 9, length: 5 },
+    ]
+    const items = [{ id: 'b', name: 'b', width: 0.5, length: 0.5, height: 1, quantity: 3000, color: '#000', allowRotation: true }]
+    const r = packDeck(20, 24, items, { gap: 0, boardOffset: 0, restrictionZones: zones, sortStrategy: 'area-desc' })
+    expect(r.placed.length).toBeGreaterThan(0)
+    for (const z of zones) {
+      const poly = restrictionZonePolygon(z)
+      const intruders = r.placed.filter((p) => !separated(corners(p), poly))
+      expect(intruders, z.name).toEqual([])
+    }
+  })
+})
+
 describe('polygonInsideRects', () => {
   it('decomposes a plain rectangle into exactly its own bbox', () => {
     const rect = restrictionZonePolygon({ shapeType: 'rect', x: 2, y: 1, width: 3, length: 2 })
