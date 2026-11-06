@@ -42,6 +42,7 @@ export function DeckDrawingFrame({
   verticalDimension,
   scaleBar,
   palette,
+  labels = HULL_SIDE_LABEL,
 }: {
   // The deck rectangle in viewBox units.
   offX: number
@@ -55,6 +56,8 @@ export function DeckDrawingFrame({
   verticalDimension: string
   scaleBar: ScaleBar | null
   palette: ThemeTokens
+  // The sides' names: the hull's, or a fixed platform's compass (sideLabels).
+  labels?: Record<HullSide, string>
 }) {
   const font = FONT * px
   // Row positions outward from each edge.
@@ -115,7 +118,7 @@ export function DeckDrawingFrame({
             fill={palette.ink}
             transform={vertical ? `rotate(-90 ${x} ${y})` : undefined}
           >
-            {side === 'bow' ? `${BOW_ARROW[edge]} ${HULL_SIDE_LABEL[side]}` : HULL_SIDE_LABEL[side]}
+            {side === 'bow' ? `${BOW_ARROW[edge]} ${labels[side]}` : labels[side]}
           </text>
         )
       })}

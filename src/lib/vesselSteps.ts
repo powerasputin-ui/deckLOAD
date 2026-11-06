@@ -7,12 +7,24 @@
 import type { CheckStatus } from './checks'
 import { NO_DECK_HEIGHT, STATE_LABEL } from './stabilityConditions'
 import { fmtNumber, pluralRu } from './utils'
+import { deckWords } from './deckDrawing'
+import { OBJECT_KIND_LABEL, type ObjectKind } from './objectKind'
 
 export type VesselStepId = 'library' | 'deck' | 'card' | 'zones' | 'stability' | 'obstacles' | 'photo' | 'sockets' | 'lashing' | 'marks'
 
 // The steps in the order they are filled in; the rest are optional.
 export const REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'deck', 'card', 'zones', 'stability']
 export const OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 'sockets', 'lashing', 'marks']
+
+// A platform's (spec 2026-11-06, 5): its card first — what it is and what it
+// is called — then its deck and zones; the library keeps it for the next
+// calculation. No vessel stability, no lashing points.
+export const PLATFORM_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'library']
+export const PLATFORM_OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 'sockets', 'marks']
+
+export function requiredSteps(kind: ObjectKind = 'vessel'): readonly VesselStepId[] {
+  return kind === 'vessel' ? REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
+}
 
 export interface VesselStep {
   // One line for the folded header.
@@ -22,6 +34,10 @@ export interface VesselStep {
 }
 
 export interface VesselStepsInput {
+  // What the deck is of; unset — a vessel.
+  kind?: ObjectKind
+  // A platform's name, as its card gives it.
+  platformName?: string
   // The library vessel applied; unset for the user's own deck.
   vesselLabel?: string
   // Nothing is chosen for the vessel yet: no library vessel, the new
@@ -63,7 +79,18 @@ const fromCheck = (status: CheckStatus | undefined) => (status === 'error' || st
 export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselStep> {
   const d = s.deck
   const strength = d.strength
-  const card: VesselStep = {
+  const kind = s.kind ?? 'vessel'
+  const platform = kind !== 'vessel'
+  const name = s.platformName ?? s.vesselLabel
+  const card: VesselStep = platform
+    ? {
+        summary: [
+          name ? `${OBJECT_KIND_LABEL[kind]} «${name}»` : OBJECT_KIND_LABEL[kind],
+          d.maxDeckCargoT !== undefined ? `до ${fmtNumber(d.maxDeckCargoT)} т` : 'нагрузка не ограничена',
+        ].join(' · '),
+        status: fromCheck(s.checks.deckWeight) ?? (name ? 'ok' : undefined),
+      }
+    : {
     summary: [
       d.maxDeckCargoT !== undefined ? `до ${fmtNumber(d.maxDeckCargoT)} т` : 'вес груза не ограничен',
       strength?.pending ? 'прочность палубы не выбрана' : strength?.chosenTPerM2 !== undefined && `${fmtNumber(strength.chosenTPerM2)} т/м²`,
@@ -88,9 +115,11 @@ export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselSte
       : { summary: s.stability.hasVessel ? 'нет гидростатики судна' : 'нет данных судна' }
   return {
     // A calculation under way has its vessel and deck, if only its own.
-    library: { summary: s.vesselLabel ?? 'Своя палуба', status: s.fresh ? undefined : 'ok' },
+    library: platform
+      ? { summary: s.vesselLabel ? `из библиотеки: ${s.vesselLabel}` : 'не сохранена в библиотеку' }
+      : { summary: s.vesselLabel ?? 'Своя палуба', status: s.fresh ? undefined : 'ok' },
     deck: {
-      summary: `${fmtNumber(d.width)} × ${fmtNumber(d.length)} ${d.unitLabel} · нос ${d.bow}`,
+      summary: `${fmtNumber(d.width)} × ${fmtNumber(d.length)} ${d.unitLabel} · ${deckWords(kind).bow} ${d.bow}`,
       status: d.bowAssumed ? 'warn' : s.fresh ? undefined : 'ok',
     },
     card,
@@ -111,7 +140,8 @@ export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselSte
 // The step open on entering the section: the first step with a problem,
 // else the first step of a calculation nothing is chosen for yet, else none
 // — every block folded to its line.
-export function firstOpenStep(steps: Record<VesselStepId, VesselStep>, fresh: boolean): VesselStepId | undefined {
-  const problem = REQUIRED_STEPS.find((id) => steps[id].status === 'error' || steps[id].status === 'warn')
-  return problem ?? (fresh ? 'library' : undefined)
+export function firstOpenStep(steps: Record<VesselStepId, VesselStep>, fresh: boolean, kind: ObjectKind = 'vessel'): VesselStepId | undefined {
+  const required = requiredSteps(kind)
+  const problem = required.find((id) => steps[id].status === 'error' || steps[id].status === 'warn')
+  return problem ?? (fresh ? required[0] : undefined)
 }

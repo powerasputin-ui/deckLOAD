@@ -8,7 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { convertLength, undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
-import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
+import { deckWords, DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import { fmtNumber } from '@/lib/utils'
 
@@ -41,12 +41,15 @@ export function DeckBlock() {
   const forward = deck.deckForwardIsPositiveY ?? true
   const bow = DRAWING_EDGE_WORD[hullSideEdges(deck.width, deck.length, forward).bow]
   const applied = appliedVessel(deck)
+  // A fixed platform's deck goes by the compass, a vessel's and a
+  // semi-submersible's by their hull.
+  const words = deckWords(deck.objectKind)
 
   return (
     <PanelBlock title="Палуба" fold="deck">
       <div data-tour="deck-settings" className="space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
-          <Field id={`${uid}-width`} label="Ширина (борт–борт)">
+          <Field id={`${uid}-width`} label={words.width}>
             <NumberField
               id={`${uid}-width`}
               min={0.1}
@@ -61,7 +64,7 @@ export function DeckBlock() {
               className="h-8 text-xs"
             />
           </Field>
-          <Field id={`${uid}-length`} label="Длина (нос–корма)">
+          <Field id={`${uid}-length`} label={words.length}>
             <NumberField
               id={`${uid}-length`}
               min={0.1}
@@ -99,7 +102,7 @@ export function DeckBlock() {
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
-        <Field id={`${uid}-offset`} label="Отступ от борта" unit={u}>
+        <Field id={`${uid}-offset`} label={words.offset} unit={u}>
           <NumberField
             id={`${uid}-offset`}
             min={0}
@@ -128,7 +131,7 @@ export function DeckBlock() {
         </p>
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-ink-2">
-            Нос на схеме: <span className="font-medium text-ink">{bow}</span>
+            {words.bowOnDrawing}: <span className="font-medium text-ink">{bow}</span>
             {applied && !applied.bowFromData && <span className="text-warn"> — по умолчанию, проверьте</span>}
           </span>
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setForward(!forward)}>

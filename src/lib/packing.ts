@@ -3,6 +3,7 @@
 // Best Short Side Fit (BSSF) heuristic and optional 90deg rotation.
 // Reference: Jukka Jylänki - "A Thousand Ways to Pack the Bin".
 
+import type { PlatformStatus } from './objectKind'
 import type { PipeNestSpec } from './pipeNest'
 import { type Unit, toMeters, convertLength } from './units'
 // Value-level import from placementComposition.ts, which only imports TYPES
@@ -96,6 +97,10 @@ export interface CargoItem {
   // nest), when the transport project states it. Replaces the IS Code
   // estimate for this cargo.
   trappedWaterT?: number
+  // A platform's cargo only (objectKind.ts): on its deck already, arriving
+  // with the supply vessel (unset), or leaving with it. A vessel's cargo
+  // ignores it.
+  platformStatus?: PlatformStatus
 }
 
 // Overrides the stability calculator's geometric default for a cargo unit's

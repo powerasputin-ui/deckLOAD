@@ -1,19 +1,27 @@
 'use client'
 
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { isWholeDeckZone, useCalculator, UNIT_LABEL, convertLength } from '@/store/calculator'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import { cn, fmtNumber } from '@/lib/utils'
+import { isObjectKind, objectKindOf, type ObjectKind } from '@/lib/objectKind'
 
 // The vessel's card (spec 8.1): what the calculation is planned for and the
 // limits that hold for it — the library vessel's, or the user's own deck's.
 // The deck-strength limit is chosen here when the vessel's sources disagree
 // (it used to wait in «Зоны нагрузки»); the cargo limit can be changed and
 // cleared; «Откуда данные» says what is real and what estimated.
+//
+// What the deck is of is chosen here too (spec 2026-11-06, 4): a vessel, a
+// semi-submersible or a fixed platform. A platform's card has its name and
+// the deck's allowed load in place of the vessel's figures; changing the
+// kind keeps the deck, the cargo and the other kind's data.
 export function VesselCard() {
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
@@ -27,14 +35,33 @@ export function VesselCard() {
   // The choice made, but the zone over the whole deck that carries it gone.
   const zoneMissing = !!strength && choice !== undefined && !(deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length))
   const stackHeightM = applied?.maxStackHeightM
+  const kind = objectKindOf(deck)
+  const platform = kind !== 'vessel'
 
   return (
-    <PanelBlock title="Карточка судна" fold="card">
-      <p className="text-sm font-medium" data-testid="vessel-name">
-        {applied ? applied.label : 'Своя палуба'}
-      </p>
+    <PanelBlock title={platform ? 'Карточка платформы' : 'Карточка судна'} fold="card">
+      <ToggleGroup
+        type="single"
+        value={kind}
+        onValueChange={(v) => isObjectKind(v) && setDeck({ objectKind: v === 'vessel' ? undefined : v })}
+        aria-label="Тип объекта"
+        className="grid w-full grid-cols-3 gap-1"
+      >
+        {KIND_CHOICES.map(([value, label]) => (
+          <ToggleGroupItem key={value} value={value} className="h-8 text-xs">
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {platform ? (
+        <PlatformName key={deck.platformName ?? applied?.label ?? ''} id={`${uid}-name`} value={deck.platformName ?? applied?.label ?? ''} onCommit={(v) => setDeck({ platformName: v || undefined })} />
+      ) : (
+        <p className="text-sm font-medium" data-testid="vessel-name">
+          {applied ? applied.label : 'Своя палуба'}
+        </p>
+      )}
       <dl className="space-y-1.5 text-sm">
-        {strength && (
+        {!platform && strength && (
           <div className={cn('space-y-1.5 rounded-md border p-2', pending ? 'border-warn bg-warn-bg' : 'border-line')}>
             <dt className="flex items-center justify-between gap-2">
               <span className="text-ink-2">Прочность палубы</span>
@@ -72,7 +99,7 @@ export function VesselCard() {
         <div className="space-y-1">
           <dt>
             <label htmlFor={`${uid}-cargo`} className="text-ink-2">
-              Наибольший вес груза на палубе
+              {platform ? 'Допускаемая нагрузка на палубу' : 'Наибольший вес груза на палубе'}
             </label>
           </dt>
           {/* The hint inside the <dd>: a <dl> group holds only <dt> and <dd>. */}
@@ -92,11 +119,11 @@ export function VesselCard() {
               <span className="w-6 text-xs text-ink-2">т</span>
             </div>
             <p id={`${uid}-cargo-hint`} className="text-xs text-ink-2">
-              На рейс. Пусто — лимита нет, вес не проверяется
+              {platform ? 'Весь груз на палубе после рейса. Пусто — не проверяется' : 'На рейс. Пусто — лимита нет, вес не проверяется'}
             </p>
           </dd>
         </div>
-        {deck.tenFootContainerCapacity !== undefined && (
+        {!platform && deck.tenFootContainerCapacity !== undefined && (
           <Row term="Вместимость 10-футовых контейнеров" value={fmtNumber(deck.tenFootContainerCapacity)} />
         )}
         {stackHeightM !== undefined && (
@@ -105,14 +132,14 @@ export function VesselCard() {
             value={`${fmtNumber(convertLength(stackHeightM, 'm', deck.unit))} ${UNIT_LABEL[deck.unit]}`}
           />
         )}
-        {applied && (
+        {!platform && applied && (
           <Row
             term="Направление носа"
             value={applied.bowFromData ? 'из данных судна' : 'по умолчанию — проверьте'}
             tone={applied.bowFromData ? undefined : 'text-warn'}
           />
         )}
-        {!applied && <Row term="Данные остойчивости" value={deck.vessel ? 'заданы' : 'не заданы'} />}
+        {!platform && !applied && <Row term="Данные остойчивости" value={deck.vessel ? 'заданы' : 'не заданы'} />}
       </dl>
       {applied?.note && (
         <details className="text-xs">
@@ -123,6 +150,38 @@ export function VesselCard() {
         </details>
       )}
     </PanelBlock>
+  )
+}
+
+const KIND_CHOICES: readonly [ObjectKind, string][] = [
+  ['vessel', 'Судно'],
+  ['semi-sub', 'ППБУ'],
+  ['fixed', 'Стационарная'],
+]
+
+// The platform's name, applied on Enter or on leaving the field.
+function PlatformName({ id, value, onCommit }: { id: string; value: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  const commit = () => {
+    if (text.trim() !== value) onCommit(text.trim())
+  }
+  return (
+    <div className="space-y-1">
+      <label htmlFor={id} className="block text-xs text-ink-2">
+        Название
+      </label>
+      <Input
+        id={id}
+        value={text}
+        placeholder="Например, «Полярная звезда»"
+        className="h-8 text-sm"
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+        }}
+      />
+    </div>
   )
 }
 

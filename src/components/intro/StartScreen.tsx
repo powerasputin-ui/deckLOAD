@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef } from 'react'
-import { Ship } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Factory, Ship } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ShaderBackground } from '@/components/ui/neuro-noise'
 import { PlanShapes } from '@/components/report/PlanDrawingSvg'
@@ -9,24 +9,34 @@ import { buildPlanDrawing } from '@/lib/planDrawing'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { packMultiTrip } from '@/lib/packing'
 import { createDemoItems, DEMO_DECK } from '@/store/calculator'
+import { OBJECT_KIND_HINT, OBJECT_KIND_LABEL } from '@/lib/objectKind'
 
 // The start screen (spec 10.1), in place of the intro video: what DeckLoad
-// is, a finished plan to show it, and three ways in — from a vessel, from
+// is, a finished plan to show it, and the ways in — from a vessel, from a
+// platform (spec 2026-11-06, 4: a semi-submersible or a fixed one), from
 // the example, or from an empty deck. It lies over the calculator, which
 // stays as it was under it; Esc closes it.
 export function StartScreen({
   onStartWithVessel,
+  onStartWithPlatform,
   onOpenExample,
   onEmptyDeck,
   onClose,
 }: {
   onStartWithVessel: () => void
+  onStartWithPlatform: (kind: PlatformKind) => void
   onOpenExample: () => void
   onEmptyDeck: () => void
   onClose: () => void
 }) {
   const titleId = useId()
   const startRef = useRef<HTMLButtonElement>(null)
+  // «Начать с платформы» asks which one, under the buttons.
+  const [choosingPlatform, setChoosingPlatform] = useState(false)
+  const platformRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (choosingPlatform) platformRef.current?.focus()
+  }, [choosingPlatform])
   useEffect(() => {
     startRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
@@ -53,10 +63,35 @@ export function StartScreen({
               <Ship className="mr-2 h-5 w-5" aria-hidden="true" />
               Начать с судна
             </Button>
+            <Button
+              size="lg"
+              className="h-11 bg-primary px-6 text-base text-primary-foreground hover:bg-primary-hover"
+              aria-expanded={choosingPlatform}
+              onClick={() => setChoosingPlatform((v) => !v)}
+            >
+              <Factory className="mr-2 h-5 w-5" aria-hidden="true" />
+              Начать с платформы
+            </Button>
             <Button size="lg" variant="outline" className="h-11 border-white/60 bg-white/10 px-6 text-base text-white hover:bg-white/20 hover:text-white" onClick={onOpenExample}>
               Открыть пример
             </Button>
           </div>
+          {choosingPlatform && (
+            <div role="group" aria-label="Какая платформа" className="flex flex-wrap justify-center gap-3">
+              {PLATFORM_KINDS.map((kind, i) => (
+                <button
+                  key={kind}
+                  ref={i === 0 ? platformRef : undefined}
+                  type="button"
+                  onClick={() => onStartWithPlatform(kind)}
+                  className="w-64 rounded-lg border border-white/60 bg-white/10 px-4 py-2.5 text-left text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  <span className="block text-base font-medium">{OBJECT_KIND_LABEL[kind]}</span>
+                  <span className="block text-xs text-white/85">{OBJECT_KIND_HINT[kind]}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             onClick={onEmptyDeck}
@@ -69,6 +104,9 @@ export function StartScreen({
     </div>
   )
 }
+
+export type PlatformKind = 'semi-sub' | 'fixed'
+const PLATFORM_KINDS: readonly PlatformKind[] = ['semi-sub', 'fixed']
 
 // The example's plan, drawn as the PDF draws it, on a sheet of paper.
 const PICTURE = { w: 640, h: 300 }

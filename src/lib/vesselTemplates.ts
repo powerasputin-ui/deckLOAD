@@ -12,10 +12,14 @@
 
 import type { VesselStabilityData, DeckShipFrameInput, VariableWeightItem } from './stability'
 import type { LoadZone, RestrictionZone } from './packing'
+import type { ObjectKind } from './objectKind'
 
 export interface VesselTemplate {
   id: string
   label: string
+  // A platform the user saved (objectKind.ts): it goes only into a
+  // calculation of its own kind. Unset — a vessel, as every built-in one.
+  objectKind?: ObjectKind
   // Non-rectangular real deck silhouette (from a GA drawing, say) — deck-
   // local coords in the same [0,width]x[0,length] frame as DeckConfig.outline.
   // Undefined = plain rectangle (today's default for every template that

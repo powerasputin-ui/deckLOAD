@@ -24,6 +24,10 @@ export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckCon
     ...(z.outline ? { outline: z.outline.map(point) } : {}),
   })
   return {
+    // The library entry says what the deck is of: a vessel, or a platform
+    // the user saved (the library offers an entry only to a calculation of
+    // its own kind).
+    ...(tpl.objectKind && tpl.objectKind !== 'vessel' ? { objectKind: tpl.objectKind } : {}),
     unit: current.unit,
     gap: current.gap,
     boardOffset: current.boardOffset,

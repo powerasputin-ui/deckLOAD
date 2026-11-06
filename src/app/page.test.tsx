@@ -1828,6 +1828,42 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
     })
 
+    // Spec 2026-11-06, 4: «Начать с платформы» asks which one, then opens
+    // «Платформа» on a calculation of that kind, at its card.
+    it('the start screen starts a platform: the kind is asked, and «Платформа» opens at its card', () => {
+      render(<Home />)
+      fireEvent.click(screen.getByRole('button', { name: 'Справка' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Показать стартовый экран' }))
+      const start = screen.getByRole('dialog', { name: 'DeckLoad' })
+      fireEvent.click(within(start).getByRole('button', { name: 'Начать с платформы' }))
+      const choice = within(start).getByRole('group', { name: 'Какая платформа' })
+      fireEvent.click(within(choice).getByRole('button', { name: /^ППБУ/ }))
+      expect(screen.queryByRole('dialog', { name: 'DeckLoad' })).toBeNull()
+      expect(useCalculator.getState().deck.objectKind).toBe('semi-sub')
+      expect(screen.getByRole('heading', { name: 'Платформа', level: 2 })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Карточка платформы' })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Платформа из библиотеки' })).toBeTruthy()
+      expect(screen.queryByRole('heading', { name: 'Остойчивость' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'Точки крепления' })).toBeNull()
+    })
+
+    it('the card changes the kind and keeps the deck and the cargo', () => {
+      render(<Home />)
+      const before = useCalculator.getState()
+      openSection('Судно')
+      const kinds = screen.getByRole('radiogroup', { name: 'Тип объекта' })
+      fireEvent.click(within(kinds).getByRole('radio', { name: 'Стационарная' }))
+      const after = useCalculator.getState()
+      expect(after.deck.objectKind).toBe('fixed')
+      expect(after.deck.width).toBe(before.deck.width)
+      expect(after.items).toEqual(before.items)
+      expect(screen.getByRole('heading', { name: 'Карточка платформы' })).toBeTruthy()
+      expect(sectionButton('Платформа')).toBeTruthy()
+      fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Тип объекта' })).getByRole('radio', { name: 'Судно' }))
+      expect(useCalculator.getState().deck.objectKind).toBeUndefined()
+      expect(screen.getByRole('heading', { name: 'Карточка судна' })).toBeTruthy()
+    })
+
     // Audit 2026-11-05: with a library vessel already on the deck it still said
     // «Выбрать судно».
     it('the empty deck offers to change the vessel once one is chosen', () => {

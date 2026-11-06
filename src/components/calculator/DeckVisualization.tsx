@@ -4,7 +4,8 @@ import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'r
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/ThemeProvider'
 import { THEME_TOKENS } from '@/lib/theme'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps } from '@/lib/deckDrawing'
+import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels } from '@/lib/deckDrawing'
+import type { ObjectKind } from '@/lib/objectKind'
 import { DeckDrawingFrame, DRAWING_MARGINS_PX } from './DeckDrawingFrame'
 import { ZoomIn, ZoomOut, Maximize, Plug, Ruler, Ratio } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -100,6 +101,8 @@ interface DeckVisualizationProps {
   // Which end of the deck length is the bow (stability.ts's convention) —
   // for the side labels around the deck.
   deckForwardIsPositiveY?: boolean
+  // What the deck is of: a fixed platform's sides go by the compass.
+  objectKind?: ObjectKind
   gap: number
   boardOffset: number
   showFreeSpace: boolean
@@ -266,6 +269,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   inspectorWidth = 0,
   onInspectorSide,
   deckForwardIsPositiveY = true,
+  objectKind,
   gap,
   boardOffset,
   showFreeSpace,
@@ -2663,6 +2667,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           h={h}
           px={labelPx}
           sides={hullSideEdges(deckWidth, deckLength, deckForwardIsPositiveY)}
+          labels={sideLabels(objectKind)}
           horizontalDimension={`${fmt(rotated ? deckLength : deckWidth)} ${UNIT_LABEL[unit]}`}
           verticalDimension={`${fmt(rotated ? deckWidth : deckLength)} ${UNIT_LABEL[unit]}`}
           scaleBar={scaleBar}

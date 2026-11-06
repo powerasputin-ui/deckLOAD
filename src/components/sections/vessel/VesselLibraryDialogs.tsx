@@ -29,6 +29,7 @@ export function SaveVesselDialog({
   submit,
   onCancel,
   onSave,
+  nameLabel = 'Название судна',
 }: {
   title: string
   label: string
@@ -41,6 +42,8 @@ export function SaveVesselDialog({
   submit: string
   onCancel: () => void
   onSave: (entry: { label: string; note: string }) => void
+  // «Название судна», or a platform's.
+  nameLabel?: string
 }) {
   const uid = useId()
   const [name, setName] = useState(label)
@@ -53,12 +56,12 @@ export function SaveVesselDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className={dataLine ? 'text-xs' : 'sr-only'}>{dataLine ?? 'Название судна'}</DialogDescription>
+          <DialogDescription className={dataLine ? 'text-xs' : 'sr-only'}>{dataLine ?? nameLabel}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1">
             <label htmlFor={`${uid}-name`} className="text-xs text-ink-2">
-              Название судна
+              {nameLabel}
             </label>
             <Input
               id={`${uid}-name`}
@@ -106,13 +109,24 @@ export function SaveVesselDialog({
 
 // Deleting a vessel of the library: the calculations made with it keep
 // their copy, and the toast that follows brings it back.
-export function DeleteVesselDialog({ label, onCancel, onConfirm }: { label: string; onCancel: () => void; onConfirm: () => void }) {
+export function DeleteVesselDialog({
+  label,
+  onCancel,
+  onConfirm,
+  madeWith = 'с этим судном',
+}: {
+  label: string
+  onCancel: () => void
+  onConfirm: () => void
+  // «с этим судном», or with a platform.
+  madeWith?: string
+}) {
   return (
     <AlertDialog open onOpenChange={(v) => !v && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Удалить «{label}» из библиотеки?</AlertDialogTitle>
-          <AlertDialogDescription>Расчёты, сделанные с этим судном, не изменятся: у каждого своя копия его данных.</AlertDialogDescription>
+          <AlertDialogDescription>Расчёты, сделанные {madeWith}, не изменятся: у каждого своя копия его данных.</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Отмена</AlertDialogCancel>

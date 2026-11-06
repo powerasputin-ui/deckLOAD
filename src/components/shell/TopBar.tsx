@@ -3,8 +3,9 @@
 import { Box, Check, CircleX, Download, MousePointerClick, Redo2, Square, TriangleAlert, Undo2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { SECTION_ORDER, SECTION_TITLE, type SectionId, type SectionMark } from '@/lib/workflow'
+import { SECTION_ORDER, sectionTitle, type SectionId, type SectionMark } from '@/lib/workflow'
 import { cn, pluralRu } from '@/lib/utils'
+import { useCalculator } from '@/store/calculator'
 
 // The 52 px bar on top (spec 5.2): the project on the left, the five
 // sections in the middle, then undo, the two modes, the one orange action
@@ -105,6 +106,7 @@ export function TopBar({
 }
 
 function SectionTab({ id, active, mark, onSelect }: { id: SectionId; active: boolean; mark: SectionMark; onSelect: () => void }) {
+  const kind = useCalculator((s) => s.deck.objectKind)
   return (
     <button
       type="button"
@@ -117,7 +119,7 @@ function SectionTab({ id, active, mark, onSelect }: { id: SectionId; active: boo
         active && 'after:absolute after:inset-x-2 after:bottom-0 after:h-[3px] after:rounded-t after:bg-primary'
       )}
     >
-      {SECTION_TITLE[id]}
+      {sectionTitle(id, kind)}
       <MarkBadge mark={mark} />
     </button>
   )

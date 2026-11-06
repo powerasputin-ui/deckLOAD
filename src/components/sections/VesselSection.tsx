@@ -13,7 +13,8 @@ import { VesselCard } from '@/components/sections/vessel/VesselCard'
 import { DeckBlock } from '@/components/sections/vessel/DeckBlock'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { NO_DECK_HEIGHT, STATE_LABEL } from '@/lib/stabilityConditions'
-import { firstOpenStep, REQUIRED_STEPS, vesselSteps, type VesselStepId } from '@/lib/vesselSteps'
+import { firstOpenStep, requiredSteps, vesselSteps, type VesselStepId } from '@/lib/vesselSteps'
+import { objectKindOf } from '@/lib/objectKind'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { CheckStatus } from '@/lib/checks'
@@ -66,7 +67,12 @@ export function VesselSection({
   const deck = useCalculator((s) => s.deck)
   const applied = appliedVessel(deck)
   const strength = applied?.deckStrengthTPerM2
+  const kind = objectKindOf(deck)
+  const platform = kind !== 'vessel'
+  const required = requiredSteps(kind)
   const steps = vesselSteps({
+    kind,
+    platformName: deck.platformName,
     vesselLabel: applied?.label,
     fresh,
     deck: {
@@ -74,7 +80,7 @@ export function VesselSection({
       length: deck.length,
       unitLabel: UNIT_LABEL[deck.unit],
       bow: DRAWING_EDGE_WORD[hullSideEdges(deck.width, deck.length, deck.deckForwardIsPositiveY ?? true).bow],
-      bowAssumed: !!applied && !applied.bowFromData,
+      bowAssumed: !platform && !!applied && !applied.bowFromData,
       maxDeckCargoT: deck.maxDeckCargoT,
       strength: strength && { chosenTPerM2: deck.deckStrengthChoiceTPerM2, pending: deck.deckStrengthChoiceTPerM2 === undefined },
       zones: deck.loadZones?.length ?? 0,
@@ -89,7 +95,7 @@ export function VesselSection({
   })
 
   // Picked once, on entering: nothing opens or folds under the user's hands.
-  const [firstOpen] = useState(() => firstOpenStep(steps, fresh))
+  const [firstOpen] = useState(() => firstOpenStep(steps, fresh, kind))
   const chosen = useVesselSteps((s) => s.byProject[projectId])
   const setChosen = useVesselSteps((s) => s.set)
   const isOpen = (id: VesselStepId) => (chosen ? !!chosen[id] : id === firstOpen)
@@ -101,7 +107,7 @@ export function VesselSection({
     },
     line: (id) => {
       const step = id as VesselStepId
-      const n = REQUIRED_STEPS.indexOf(step)
+      const n = required.indexOf(step)
       return { ...steps[step], step: n >= 0 ? n + 1 : undefined }
     },
   }
@@ -113,6 +119,24 @@ export function VesselSection({
   const applyToCurrent = (tpl: VesselTemplate) => {
     onApplyVesselToCurrent(tpl)
     setChosen(projectId, { [tpl.limits?.deckStrengthTPerM2 ? 'card' : 'deck']: true })
+  }
+
+  // A platform (spec 2026-11-06, 5): its card, deck and zones, the library
+  // after them; no vessel stability, no lashing points.
+  if (platform) {
+    return (
+      <FoldingBlocksContext.Provider value={folding}>
+        <VesselCard />
+        <DeckBlock />
+        <LoadZonesBlock zoneLoads={zoneLoads} />
+        <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={applyToCurrent} />
+        <p className="px-4 pb-2 pt-5 text-xs font-medium text-ink-2">Дополнительно</p>
+        <ObstaclesBlock />
+        <DeckPhotoBlock />
+        <SocketsBlock />
+        <MarksBlock />
+      </FoldingBlocksContext.Provider>
+    )
   }
 
   return (

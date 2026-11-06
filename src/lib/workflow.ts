@@ -2,6 +2,7 @@
 // top bar. A section is a tab and a step of the job at once: the mark hints
 // that the step is done, it never locks anything.
 import { toMeters, type Unit } from './units'
+import type { ObjectKind } from './objectKind'
 
 export type SectionId = 'vessel' | 'cargo' | 'placement' | 'checks' | 'report'
 
@@ -13,6 +14,12 @@ export const SECTION_TITLE: Record<SectionId, string> = {
   placement: 'Размещение',
   checks: 'Проверки',
   report: 'Отчёт',
+}
+
+// A platform's first section is «Платформа» (spec 2026-11-06, 4): the deck
+// and what limits it are the platform's, not a vessel's.
+export function sectionTitle(id: SectionId, kind: ObjectKind = 'vessel'): string {
+  return id === 'vessel' && kind !== 'vessel' ? 'Платформа' : SECTION_TITLE[id]
 }
 
 export type SectionMark =

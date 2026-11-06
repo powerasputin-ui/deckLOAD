@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Download, MoreHorizontal, Pencil, RefreshCw, Save, Ship, Trash2, Upload } from 'lucide-react'
+import { Copy, Download, Factory, MoreHorizontal, Pencil, RefreshCw, Save, Ship, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -23,7 +23,8 @@ import { VESSEL_TEMPLATES, type VesselTemplate } from '@/lib/vesselTemplates'
 import { appliedVessel, appliedVesselOf, libraryFile, newUserVesselId, vesselDataLine, vesselFromDeck } from '@/lib/vesselLibrary'
 import { resolveShipFrame } from '@/lib/stabilityConditions'
 import { deckForVesselDrops } from '@/lib/vesselDeck'
-import { cn, fmtNumber } from '@/lib/utils'
+import { cn, fmtNumber, pluralRu } from '@/lib/utils'
+import { objectKindOf } from '@/lib/objectKind'
 
 // «Судно из библиотеки» (spec 8.1): the built-in vessels and the user's own.
 // Without cargo the vessel goes onto the open calculation; with cargo the
@@ -36,6 +37,9 @@ import { cn, fmtNumber } from '@/lib/utils'
 // library lives in this browser and goes to a colleague as a file. A
 // calculation keeps its own copy of the vessel: nothing done here changes
 // one made before.
+//
+// A platform (spec 2026-11-06, 5) has the user's own platforms of its kind
+// here, none built in; a vessel's list has no platforms.
 export function VesselLibrary({
   onNewCalculation,
   onApplyToCurrent,
@@ -44,7 +48,11 @@ export function VesselLibrary({
   onApplyToCurrent: (tpl: VesselTemplate) => void
 }) {
   const vesselTemplateId = useCalculator((s) => s.deck.vesselTemplateId)
-  const own = useVesselLibrary((s) => s.vessels)
+  const kind = useCalculator((s) => objectKindOf(s.deck))
+  const platform = kind !== 'vessel'
+  const W = platform ? PLATFORM_WORDS : VESSEL_WORDS
+  const all = useVesselLibrary((s) => s.vessels)
+  const own = all.filter((t) => (t.objectKind ?? 'vessel') === kind)
   const broken = useVesselLibrary((s) => s.broken)
   const hydrate = useVesselLibrary((s) => s.hydrate)
   useEffect(() => hydrate(), [hydrate])
@@ -76,15 +84,19 @@ export function VesselLibrary({
       // The open calculation made with it takes the new name; others keep theirs.
       const deck = useCalculator.getState().deck
       if (deck.vesselTemplateId === editing.vessel.id && deck.vesselInfo)
-        useCalculator.getState().setDeck({ vesselInfo: { ...deck.vesselInfo, label: entry.label } })
-      toast.success(`Судно переименовано: «${entry.label}»`)
+        useCalculator.getState().setDeck({
+          vesselInfo: { ...deck.vesselInfo, label: entry.label },
+          // A platform named as its library entry keeps its name with it.
+          ...(deck.platformName === editing.vessel.label ? { platformName: entry.label } : {}),
+        })
+      toast.success(W.renamed(entry.label))
     } else {
       const id = editing.kind === 'update' ? editing.vessel.id : newUserVesselId()
       const vessel = vesselFromDeck(useCalculator.getState().deck, { id, ...entry })
       if (editing.kind === 'update') library.update(vessel)
       else library.add(vessel)
       linkCalculation(vessel)
-      toast.success(editing.kind === 'update' ? `Судно «${entry.label}» обновлено из расчёта` : `Судно «${entry.label}» сохранено в библиотеку`)
+      toast.success(editing.kind === 'update' ? W.updated(entry.label) : W.saved(entry.label))
     }
     setEditing(null)
   }
@@ -99,13 +111,14 @@ export function VesselLibrary({
     const removed = useVesselLibrary.getState().remove(vessel.id)
     setDeleting(null)
     if (!removed) return
-    toast.info(`Судно «${vessel.label}» удалено из библиотеки`, {
+    toast.info(W.deleted(vessel.label), {
       action: { label: 'Вернуть', onClick: () => useVesselLibrary.getState().restore(removed.vessel, removed.index) },
     })
   }
 
   const exportLibrary = () => {
-    const blob = new Blob([libraryFile(own)], { type: 'application/json' })
+    // The whole library goes into the file, vessels and platforms alike.
+    const blob = new Blob([libraryFile(all)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -114,7 +127,7 @@ export function VesselLibrary({
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
-    toast.success(`Библиотека скачана: ${own.length} ${own.length === 1 ? 'судно' : own.length < 5 ? 'судна' : 'судов'}`)
+    toast.success(`Библиотека скачана: ${all.length} ${pluralRu(all.length, 'запись', 'записи', 'записей')}`)
   }
 
   const importLibrary = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,9 +154,9 @@ export function VesselLibrary({
   const deckData = { vessel: deck.vessel, shipFrame: deck.shipFrame }
 
   return (
-    <PanelBlock title="Судно из библиотеки" fold="library">
-      <ul className="space-y-1" aria-label="Суда из библиотеки">
-        {[...VESSEL_TEMPLATES, ...own].map((tpl) => {
+    <PanelBlock title={W.title} fold="library">
+      <ul className="space-y-1" aria-label={W.list}>
+        {[...(platform ? [] : VESSEL_TEMPLATES), ...own].map((tpl) => {
           const builtIn = VESSEL_TEMPLATES.includes(tpl)
           const isApplied = tpl.id === vesselTemplateId
           return (
@@ -154,7 +167,11 @@ export function VesselLibrary({
                 aria-current={isApplied ? 'true' : undefined}
                 className="flex min-w-0 flex-1 items-start gap-2.5 rounded-l-md px-2.5 py-2 text-left hover:bg-accent"
               >
-                <Ship className="mt-0.5 h-4 w-4 shrink-0 text-ink-2" aria-hidden="true" />
+                {platform ? (
+                  <Factory className="mt-0.5 h-4 w-4 shrink-0 text-ink-2" aria-hidden="true" />
+                ) : (
+                  <Ship className="mt-0.5 h-4 w-4 shrink-0 text-ink-2" aria-hidden="true" />
+                )}
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-baseline gap-x-1.5">
                     <span className="text-sm font-medium">{tpl.label}</span>
@@ -162,10 +179,10 @@ export function VesselLibrary({
                     {isApplied && <span className="text-xs text-ink-2">применено</span>}
                   </span>
                   <span className="block text-xs text-ink-2">{vesselSummary(tpl)}</span>
-                  <span className="block text-xs text-ink-2">{vesselDataLine(tpl)}</span>
+                  {!platform && <span className="block text-xs text-ink-2">{vesselDataLine(tpl)}</span>}
                   {/* The vessel's data doesn't say which end of the deck is
                       the bow, so +y is assumed (spec 6.1). */}
-                  {tpl.deckForwardIsPositiveY === undefined && (
+                  {!platform && tpl.deckForwardIsPositiveY === undefined && (
                     <span className="block text-xs text-warn">Направление носа по умолчанию — проверьте</span>
                   )}
                 </span>
@@ -183,7 +200,7 @@ export function VesselLibrary({
         })}
       </ul>
       {own.length === 0 && !broken && (
-        <p className="text-xs text-ink-2">Своих судов пока нет. Задайте палубу и данные судна и сохраните их сюда — следующий расчёт начнётся с них.</p>
+        <p className="text-xs text-ink-2">{W.empty}</p>
       )}
       {broken && (
         <div className="space-y-1.5 rounded-md border border-warn bg-warn-bg p-2 text-xs">
@@ -196,10 +213,10 @@ export function VesselLibrary({
       <div className="space-y-1.5">
         <Button variant="outline" size="sm" className="w-full" onClick={() => setEditing({ kind: 'new' })}>
           <Save className="mr-1.5 h-4 w-4" aria-hidden="true" />
-          Сохранить палубу как судно
+          {W.save}
         </Button>
         <div className="flex gap-1.5">
-          <Button variant="ghost" size="sm" className="flex-1" disabled={own.length === 0} onClick={exportLibrary}>
+          <Button variant="ghost" size="sm" className="flex-1" disabled={all.length === 0} onClick={exportLibrary}>
             <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
             Экспорт
           </Button>
@@ -221,30 +238,31 @@ export function VesselLibrary({
 
       {editing && (
         <SaveVesselDialog
-          title={editing.kind === 'new' ? 'Сохранить палубу как судно' : editing.kind === 'update' ? 'Обновить судно из расчёта' : 'Переименовать судно'}
+          title={editing.kind === 'new' ? W.save : editing.kind === 'update' ? W.update : W.rename}
+          nameLabel={W.name}
           label={
             editing.kind === 'new'
-              ? deck.vessel?.particulars.name?.trim() || (applied ? `${applied.label} — копия` : '')
+              ? (platform ? deck.platformName?.trim() : deck.vessel?.particulars.name?.trim()) || (applied ? `${applied.label} — копия` : '')
               : editing.vessel.label
           }
           note={editing.kind === 'rename' ? undefined : editing.kind === 'update' ? editing.vessel.note : ''}
-          dataLine={editing.kind === 'rename' ? undefined : vesselDataLine(deckData)}
-          heightMissing={editing.kind !== 'rename' && !!deck.vessel && resolveShipFrame(deck.shipFrame).heightMissing}
+          dataLine={editing.kind === 'rename' || platform ? undefined : vesselDataLine(deckData)}
+          heightMissing={!platform && editing.kind !== 'rename' && !!deck.vessel && resolveShipFrame(deck.shipFrame).heightMissing}
           submit={editing.kind === 'update' ? 'Обновить' : 'Сохранить'}
           onCancel={() => setEditing(null)}
           onSave={save}
         />
       )}
-      {deleting && <DeleteVesselDialog label={deleting.label} onCancel={() => setDeleting(null)} onConfirm={() => remove(deleting)} />}
+      {deleting && <DeleteVesselDialog label={deleting.label} madeWith={W.madeWith} onCancel={() => setDeleting(null)} onConfirm={() => remove(deleting)} />}
 
       <AlertDialog open={!!asking} onOpenChange={(open) => !open && setAsking(null)}>
         {asking && (
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>{asking.hasCargo ? `Судно «${asking.tpl.label}»` : `Применить «${asking.tpl.label}» к расчёту?`}</AlertDialogTitle>
+              <AlertDialogTitle>{asking.hasCargo ? W.asked(asking.tpl.label) : `Применить «${asking.tpl.label}» к расчёту?`}</AlertDialogTitle>
               <AlertDialogDescription asChild>
                 <div className="space-y-2 text-sm text-ink-2">
-                  {asking.hasCargo && <p>В расчёте есть груз. Начать новый расчёт с этим судном или заменить палубу в этом?</p>}
+                  {asking.hasCargo && <p>В расчёте есть груз. Начать новый расчёт {W.madeWith} или заменить палубу в этом?</p>}
                   {asking.drops.length > 0 && (
                     <div>
                       <p>{asking.hasCargo ? 'При замене палубы будет удалено' : 'Будет удалено'} — это привязано к старой палубе:</p>
@@ -267,7 +285,7 @@ export function VesselLibrary({
                     setAsking(null)
                   }}
                 >
-                  Новый расчёт с этим судном
+                  Новый расчёт {W.madeWith}
                 </Button>
               )}
               <Button
@@ -349,6 +367,38 @@ function VesselMenu({
 }
 
 // «Палуба 16.9×49.1 м · до 2550 т · 5–10 т/м²»
+// The library's words for a vessel and for a platform.
+const VESSEL_WORDS = {
+  title: 'Судно из библиотеки',
+  list: 'Суда из библиотеки',
+  empty: 'Своих судов пока нет. Задайте палубу и данные судна и сохраните их сюда — следующий расчёт начнётся с них.',
+  save: 'Сохранить палубу как судно',
+  update: 'Обновить судно из расчёта',
+  rename: 'Переименовать судно',
+  name: 'Название судна',
+  madeWith: 'с этим судном',
+  asked: (l: string) => `Судно «${l}»`,
+  renamed: (l: string) => `Судно переименовано: «${l}»`,
+  updated: (l: string) => `Судно «${l}» обновлено из расчёта`,
+  saved: (l: string) => `Судно «${l}» сохранено в библиотеку`,
+  deleted: (l: string) => `Судно «${l}» удалено из библиотеки`,
+}
+const PLATFORM_WORDS: typeof VESSEL_WORDS = {
+  title: 'Платформа из библиотеки',
+  list: 'Платформы из библиотеки',
+  empty: 'Своих платформ этого вида пока нет. Заполните карточку и палубу и сохраните сюда — следующий расчёт начнётся с них.',
+  save: 'Сохранить палубу как платформу',
+  update: 'Обновить платформу из расчёта',
+  rename: 'Переименовать платформу',
+  name: 'Название платформы',
+  madeWith: 'с этой платформой',
+  asked: (l: string) => `Платформа «${l}»`,
+  renamed: (l: string) => `Платформа переименована: «${l}»`,
+  updated: (l: string) => `Платформа «${l}» обновлена из расчёта`,
+  saved: (l: string) => `Платформа «${l}» сохранена в библиотеку`,
+  deleted: (l: string) => `Платформа «${l}» удалена из библиотеки`,
+}
+
 function vesselSummary(tpl: VesselTemplate): string {
   const parts = [`Палуба ${fmtNumber(tpl.deck.width)}×${fmtNumber(tpl.deck.length)} м`]
   if (tpl.limits?.maxDeckCargoT) parts.push(`до ${fmtNumber(tpl.limits.maxDeckCargoT)} т`)

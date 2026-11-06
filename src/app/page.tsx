@@ -61,6 +61,7 @@ import { CargoTable } from '@/components/cargo/CargoTable'
 import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
+import { isPlatform, type ObjectKind } from '@/lib/objectKind'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
@@ -1425,13 +1426,15 @@ export default function Home() {
   const firstVisitDemoId = useProjects((s) => s.firstVisitDemoId)
   const createProject = useProjects((s) => s.createProject)
   const renameProject = useProjects((s) => s.renameProject)
-  const startFromScreen = (way: 'vessel' | 'example' | 'empty') => {
+  // `kind`: the platform «Начать с платформы» was asked for (spec 2026-11-06,
+  // 4); a vessel otherwise.
+  const startFromScreen = (way: 'vessel' | 'example' | 'empty', kind: ObjectKind = 'vessel') => {
     const takeOver = !startFromHelp && firstVisitDemoId !== null && activeId === firstVisitDemoId && projects.length === 1
     if (way === 'example') {
       if (!takeOver) createProject('Демо-расчёт', { demo: true })
     } else if (takeOver) {
       useCalculator.setState({
-        deck: { ...DEMO_DECK },
+        deck: { ...DEMO_DECK, ...(kind !== 'vessel' ? { objectKind: kind } : {}) },
         items: [],
         manualPlacements: [],
         pinnedPlacementsByTrip: {},
@@ -1444,7 +1447,7 @@ export default function Home() {
       clearCalculatorHistory()
       renameProject(firstVisitDemoId, 'Расчёт 1')
     } else {
-      createProject()
+      createProject(undefined, kind !== 'vessel' ? { objectKind: kind } : undefined)
     }
     handleCloseStart()
     if (way !== 'example') openSection('vessel')
@@ -1676,6 +1679,7 @@ export default function Home() {
                   deckLength={result.deckLength}
                   deckOutline={deck.outline}
                   deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
+                  objectKind={deck.objectKind}
                   coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
                   mode={mode}
                   manualPlacements={manualPlacements}
@@ -1696,6 +1700,7 @@ export default function Home() {
                 inspectorWidth={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
                 onInspectorSide={setInspectorSide2d}
                 deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
+                  objectKind={deck.objectKind}
                 result={result}
                 unit={deck.unit}
                 gap={deck.gap}
@@ -1914,6 +1919,7 @@ export default function Home() {
     {!entered && (
       <StartScreen
         onStartWithVessel={() => startFromScreen('vessel')}
+        onStartWithPlatform={(kind) => startFromScreen('vessel', kind)}
         onOpenExample={() => startFromScreen('example')}
         onEmptyDeck={() => startFromScreen('empty')}
         onClose={handleCloseStart}

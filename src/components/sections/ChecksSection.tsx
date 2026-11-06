@@ -4,7 +4,8 @@ import { ChevronDown, ChevronRight, CircleCheck, CircleX, Info, Minus, TriangleA
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { SeparationRulesEditor, VesselMotionPicker } from '@/components/sections/checks/CheckSettings'
 import type { Check, CheckAction, CheckDetailLine, CheckDetails, CheckId, CheckStatus } from '@/lib/checks'
-import { SECTION_TITLE, type SectionId } from '@/lib/workflow'
+import { sectionTitle, type SectionId } from '@/lib/workflow'
+import { useCalculator } from '@/store/calculator'
 import type { VesselStepId } from '@/lib/vesselSteps'
 import { cn } from '@/lib/utils'
 
@@ -182,12 +183,13 @@ function TargetLink({
   onOpenSection: (id: SectionId, step?: VesselStepId) => void
   onOpenStability: () => void
 }) {
+  const kind = useCalculator((s) => s.deck.objectKind)
   const { target } = check
   if (target === 'checks') return null
   const [label, text, open] =
     target === 'stability'
       ? [`${check.title}: открыть панель остойчивости`, 'Открыть остойчивость', onOpenStability]
-      : [`${check.title}: открыть раздел «${SECTION_TITLE[target]}»`, `Настроить в разделе «${SECTION_TITLE[target]}»`, () => onOpenSection(target, check.targetStep)]
+      : [`${check.title}: открыть раздел «${sectionTitle(target, kind)}»`, `Настроить в разделе «${sectionTitle(target, kind)}»`, () => onOpenSection(target, check.targetStep)]
   return (
     <button
       type="button"

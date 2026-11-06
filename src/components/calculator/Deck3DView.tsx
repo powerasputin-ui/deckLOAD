@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/ThemeProvider'
 import { fitCamera } from '@/lib/cameraFit'
 import { cargoToneForNumber } from '@/lib/cargoPalette'
-import { HULL_SIDE_LABEL, deckDrawnTransposed, hullSideEdges, type DrawingEdge, type HullSide } from '@/lib/deckDrawing'
+import { deckDrawnTransposed, hullSideEdges, sideLabels, type DrawingEdge, type HullSide } from '@/lib/deckDrawing'
+import type { ObjectKind } from '@/lib/objectKind'
 import { DRAG_THRESHOLD_PX, isStackSelected, type StackSelection } from '@/lib/stackSelection'
 import { THEME_TOKENS } from '@/lib/theme'
 import { BOW_ARROW } from './DeckDrawingFrame'
@@ -40,6 +41,8 @@ interface Deck3DViewProps {
   deckOutline?: { x: number; y: number }[]
   // Which end of the deck's length is the bow, for the side names.
   deckForwardIsPositiveY?: boolean
+  // What the deck is of: a fixed platform's sides go by the compass.
+  objectKind?: ObjectKind
   // Pixels at the right of the view covered by the inspector (spec 5.4).
   coveredRight?: number
   mode: 'auto' | 'manual'
@@ -114,6 +117,7 @@ export default function Deck3DView({
   deckLength,
   deckOutline,
   deckForwardIsPositiveY = true,
+  objectKind,
   coveredRight = 0,
   mode,
   manualPlacements,
@@ -629,6 +633,7 @@ export default function Deck3DView({
 
         <DeckSides
           sides={hullSideEdges(deckWidth, deckLength, deckForwardIsPositiveY)}
+          labels={sideLabels(objectKind)}
           width={drawnWidth}
           depth={drawnDepth}
           lift={tallest}
@@ -669,12 +674,14 @@ const SIDE_SHIFT: Record<DrawingEdge, string> = {
 
 function DeckSides({
   sides,
+  labels,
   width,
   depth,
   lift,
   container,
 }: {
   sides: Record<HullSide, DrawingEdge>
+  labels: Record<HullSide, string>
   width: number
   depth: number
   // The tallest stack's top above the deck, in the scene's units.
@@ -699,7 +706,7 @@ function DeckSides({
           className="select-none whitespace-nowrap rounded-sm bg-paper/85 px-1 text-xs font-semibold tracking-[0.08em] text-ink"
           style={{ transform: SIDE_SHIFT[edge] }}
         >
-          {side === 'bow' ? `${BOW_ARROW[edge]} ${HULL_SIDE_LABEL[side]}` : HULL_SIDE_LABEL[side]}
+          {side === 'bow' ? `${BOW_ARROW[edge]} ${labels[side]}` : labels[side]}
         </div>
       </Html>
     )

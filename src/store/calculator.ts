@@ -36,6 +36,7 @@ import {
   sanitizeCargoWeight,
 } from '@/lib/cargoValidation'
 import type { AppliedVessel } from '@/lib/vesselLibrary'
+import type { ObjectKind } from '@/lib/objectKind'
 import {
   DEFAULT_VESSEL_PARTICULARS,
   type VesselStabilityData,
@@ -85,6 +86,12 @@ export function roundForDisplay(value: number): number {
 }
 
 export interface DeckConfig {
+  // What the deck is of: a vessel (unset — every calculation saved before
+  // platforms existed) or a platform (spec 2026-11-06, objectKind.ts).
+  objectKind?: ObjectKind
+  // A platform's own name, as its card gives it (a vessel's comes from the
+  // library). Unset — the library entry applied, if any, names it.
+  platformName?: string
   width: number
   length: number
   unit: Unit

@@ -9,6 +9,7 @@
 import type { DeckConfig } from '@/store/calculator'
 import { isWholeDeckZone, type LoadZone, type RestrictionZone } from './packing'
 import { convertLength } from './units'
+import { isPlatform, objectKindOf } from './objectKind'
 import { fmtNumber, pluralRu } from './utils'
 import { VESSEL_TEMPLATES, vesselTemplateById, type VesselTemplate } from './vesselTemplates'
 
@@ -85,6 +86,8 @@ export function vesselFromDeck(deck: DeckConfig, entry: { id: string; label: str
     deckForwardIsPositiveY: deck.deckForwardIsPositiveY ?? true,
     limits: Object.values(limits).some((v) => v !== undefined) ? limits : undefined,
     savedAt: new Date().toISOString(),
+    // A platform stays a platform of its kind in the library.
+    ...(isPlatform(deck) ? { objectKind: objectKindOf(deck) } : {}),
   }
 }
 

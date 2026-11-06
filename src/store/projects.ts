@@ -6,6 +6,7 @@ import { WIRE_ROPE_SPECS, LASHING_DEVICES } from '@/lib/packing'
 import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrameInput, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
 import type { AppliedVessel } from '@/lib/vesselLibrary'
+import { isObjectKind, isPlatformStatus, type ObjectKind, type PlatformStatus } from '@/lib/objectKind'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import {
   sanitizeCargoWidth,
@@ -118,7 +119,7 @@ interface ProjectsState {
 
   hydrate: () => void
   discardCorruptedStorage: () => void
-  createProject: (name?: string, options?: { demo?: boolean }) => string
+  createProject: (name?: string, options?: { demo?: boolean; objectKind?: ObjectKind }) => string
   renameProject: (id: string, name: string) => void
   deleteProject: (id: string) => void
   switchTo: (id: string) => void
@@ -518,6 +519,7 @@ export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefin
     deckForwardIsPositiveY: typeof v.deckForwardIsPositiveY === 'boolean' ? v.deckForwardIsPositiveY : undefined,
     limits: limits && Object.values(limits).some((x) => x !== undefined) ? limits : undefined,
     savedAt: toOptionalString(v.savedAt),
+    objectKind: isObjectKind(v.objectKind) && v.objectKind !== 'vessel' ? v.objectKind : undefined,
   }
 }
 
@@ -909,14 +911,14 @@ function normalizeSeparationRules(value: unknown): SeparationRule[] {
   })
 }
 
-function freshProject(name: string, withDemo = false): Project {
+function freshProject(name: string, withDemo = false, objectKind: ObjectKind = 'vessel'): Project {
   const now = Date.now()
   return {
     id: uuid(),
     name,
     createdAt: now,
     updatedAt: now,
-    deck: { ...DEMO_DECK },
+    deck: { ...DEMO_DECK, ...(objectKind !== 'vessel' ? { objectKind } : {}) },
     items: withDemo ? createDemoItems(uuid) : [],
     manualPlacements: [],
     pinnedPlacementsByTrip: {},
@@ -1027,6 +1029,7 @@ export function normalizeProject(p: Partial<Project>): Project {
         nest: normalizeNestSpec((it as { nest?: unknown }).nest),
         pipeInnerDiameterMm: toOptionalPositive((it as { pipeInnerDiameterMm?: unknown }).pipeInnerDiameterMm),
         trappedWaterT: toOptionalNonNegative((it as { trappedWaterT?: unknown }).trappedWaterT),
+        platformStatus: isPlatformStatus((it as { platformStatus?: unknown }).platformStatus) ? ((it as { platformStatus?: PlatformStatus }).platformStatus) : undefined,
       }))
     : []
   const nestWater = moveNestWaterOutOfWeight(items)
@@ -1044,6 +1047,10 @@ export function normalizeProject(p: Partial<Project>): Project {
     createdAt: typeof p.createdAt === 'number' && Number.isFinite(p.createdAt) ? p.createdAt : now,
     updatedAt: typeof p.updatedAt === 'number' && Number.isFinite(p.updatedAt) ? p.updatedAt : now,
     deck: {
+      // Unset, or anything but a kind, is a vessel: every calculation saved
+      // before platforms existed.
+      objectKind: isObjectKind(p.deck?.objectKind) && p.deck.objectKind !== 'vessel' ? p.deck.objectKind : undefined,
+      platformName: toOptionalString(p.deck?.platformName),
       width: toFinitePositive(p.deck?.width, DEMO_DECK.width),
       length: toFinitePositive(p.deck?.length, DEMO_DECK.length),
       unit,
@@ -1265,7 +1272,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     // dropped (see the pendingAutosave block above).
     flushPendingAutosave((d) => get().saveSnapshot(d))
     // New projects start EMPTY, unless they open the example («Открыть пример»).
-    const p = freshProject(name || `Расчёт ${get().projects.length + 1}`, options?.demo ?? false)
+    const p = freshProject(name || `Расчёт ${get().projects.length + 1}`, options?.demo ?? false, options?.objectKind)
     set((s) => {
       const next = { projects: [...s.projects, p], activeId: p.id }
       saveToStorage(next.projects, next.activeId)

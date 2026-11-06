@@ -72,6 +72,14 @@ describe('a vessel saved from a calculation', () => {
   })
 })
 
+describe('a platform saved from a calculation (spec 2026-11-06, 9)', () => {
+  it('stays a platform of its kind; a vessel carries no kind', () => {
+    expect(vesselFromDeck({ ...own, objectKind: 'semi-sub' }, { id: 'user-3', label: 'Полярная звезда', note: '' }).objectKind).toBe('semi-sub')
+    expect(vesselFromDeck({ ...own, objectKind: 'fixed' }, { id: 'user-4', label: 'МСП-1', note: '' }).objectKind).toBe('fixed')
+    expect(vesselFromDeck(own, { id: 'user-5', label: 'Нептун', note: '' })).not.toHaveProperty('objectKind')
+  })
+})
+
 describe('the vessel a calculation was made for', () => {
   it('is its own copy, else — saved before calculations kept one — the built-in vessel it names', () => {
     const copy = { label: 'Нептун', bowFromData: true }

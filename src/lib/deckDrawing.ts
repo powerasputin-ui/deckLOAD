@@ -14,6 +14,8 @@
 // where each side really is in the calculation; flipping the drawing itself
 // changes the canvas transform and is left to stage 2.
 
+import type { ObjectKind } from './objectKind'
+
 export type HullSide = 'bow' | 'stern' | 'port' | 'starboard'
 export type DrawingEdge = 'top' | 'right' | 'bottom' | 'left'
 
@@ -22,6 +24,36 @@ export const HULL_SIDE_LABEL: Record<HullSide, string> = {
   stern: 'КОРМА',
   port: 'ЛЕВЫЙ БОРТ',
   starboard: 'ПРАВЫЙ БОРТ',
+}
+
+// A fixed platform has no bow and no board (spec 2026-11-06, 5): its sides
+// go by the compass, north at the end a vessel's bow would be.
+export const COMPASS_SIDE_LABEL: Record<HullSide, string> = {
+  bow: 'СЕВЕР',
+  stern: 'ЮГ',
+  port: 'ЗАПАД',
+  starboard: 'ВОСТОК',
+}
+
+export function sideLabels(kind?: ObjectKind): Record<HullSide, string> {
+  return kind === 'fixed' ? COMPASS_SIDE_LABEL : HULL_SIDE_LABEL
+}
+
+// The deck's own fields and lines in the same words: a semi-submersible has
+// a bow and boards as a vessel has.
+export interface DeckWords {
+  width: string
+  length: string
+  offset: string
+  // «Нос на схеме: снизу», and the deck's line «нос справа».
+  bowOnDrawing: string
+  bow: string
+}
+
+export function deckWords(kind?: ObjectKind): DeckWords {
+  return kind === 'fixed'
+    ? { width: 'Ширина (запад–восток)', length: 'Длина (юг–север)', offset: 'Отступ от края', bowOnDrawing: 'Север на схеме', bow: 'север' }
+    : { width: 'Ширина (борт–борт)', length: 'Длина (нос–корма)', offset: 'Отступ от борта', bowOnDrawing: 'Нос на схеме', bow: 'нос' }
 }
 
 // For «Нос на схеме: снизу».

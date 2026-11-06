@@ -1,9 +1,11 @@
 'use client'
 
 import { createContext, useContext, useId } from 'react'
-import { ChevronRight, CircleCheck, CircleX, ClipboardCheck, FileText, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, Ship, TriangleAlert } from 'lucide-react'
+import { ChevronRight, CircleCheck, CircleX, ClipboardCheck, Factory, FileText, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, Ship, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { SECTION_ORDER, SECTION_TITLE, type SectionId } from '@/lib/workflow'
+import { SECTION_ORDER, sectionTitle, type SectionId } from '@/lib/workflow'
+import { isPlatform } from '@/lib/objectKind'
+import { useCalculator } from '@/store/calculator'
 import { cn } from '@/lib/utils'
 
 export const SECTION_ICON: Record<SectionId, React.ComponentType<{ className?: string }>> = {
@@ -12,6 +14,13 @@ export const SECTION_ICON: Record<SectionId, React.ComponentType<{ className?: s
   placement: LayoutGrid,
   checks: ClipboardCheck,
   report: FileText,
+}
+
+// A section's sign; a platform's first section has its own.
+function SectionIcon({ id, platform, className }: { id: SectionId; platform: boolean; className?: string }) {
+  if (id === 'vessel' && platform) return <Factory className={className} />
+  const Icon = SECTION_ICON[id]
+  return <Icon className={className} />
 }
 
 // The left panel (spec 5.4): the open section's content, 360 px wide, or a
@@ -30,6 +39,8 @@ export function SectionPanel({
   onSelect: (id: SectionId) => void
   children: React.ReactNode
 }) {
+  const kind = useCalculator((s) => s.deck.objectKind)
+  const platform = isPlatform({ objectKind: kind })
   if (collapsed) {
     return (
       <aside aria-label="Панель разделов" className="flex w-12 shrink-0 flex-col items-center gap-1 border-r bg-surface py-2">
@@ -38,21 +49,20 @@ export function SectionPanel({
         </Button>
         <div className="my-1 h-px w-6 bg-line" />
         {SECTION_ORDER.map((id) => {
-          const Icon = SECTION_ICON[id]
           return (
             <Button
               key={id}
               variant="ghost"
               size="icon"
-              aria-label={SECTION_TITLE[id]}
-              title={SECTION_TITLE[id]}
+              aria-label={sectionTitle(id, kind)}
+              title={sectionTitle(id, kind)}
               className={cn('h-9 w-9', id === active && 'bg-accent text-foreground')}
               onClick={() => {
                 onSelect(id)
                 onCollapsedChange(false)
               }}
             >
-              <Icon className="h-4 w-4" />
+              <SectionIcon id={id} platform={platform} className="h-4 w-4" />
             </Button>
           )
         })}
@@ -60,13 +70,12 @@ export function SectionPanel({
     )
   }
 
-  const Icon = SECTION_ICON[active]
   return (
     <aside aria-labelledby="section-panel-title" className="flex w-[360px] shrink-0 flex-col border-r bg-surface">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <Icon className="h-4 w-4 text-ink-2" />
+        <SectionIcon id={active} platform={platform} className="h-4 w-4 text-ink-2" />
         <h2 id="section-panel-title" className="flex-1 text-base font-semibold">
-          {SECTION_TITLE[active]}
+          {sectionTitle(active, kind)}
         </h2>
         <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Свернуть панель" title="Свернуть панель" onClick={() => onCollapsedChange(true)}>
           <PanelLeftClose className="h-4 w-4" />

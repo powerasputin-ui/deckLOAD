@@ -12,7 +12,8 @@
 // deck's dimensions and a scale bar. The lock of a pinned stack is the
 // calculation's own business and stays off the paper; the grid too.
 import { CARGO_INK, cargoToneForNumber } from './cargoPalette'
-import { deckDrawnTransposed, HULL_SIDE_LABEL, hullSideEdges, scaleBarSteps, type DrawingEdge, type HullSide } from './deckDrawing'
+import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, type DrawingEdge, type HullSide } from './deckDrawing'
+import type { ObjectKind } from './objectKind'
 import { drawsAsPipe, footprintIsPipe, pipeLabelLine, pipeLines, pipeStrips, stripAcross } from './pipeDrawing'
 import {
   estimateTextWidth,
@@ -91,6 +92,8 @@ export interface PlanDeck {
   restrictionZones?: RestrictionZone[]
   loadZones?: LoadZone[]
   deckForwardIsPositiveY?: boolean
+  // A fixed platform's sides go by the compass (sideLabels).
+  objectKind?: ObjectKind
 }
 
 export interface PlanDrawingInput {
@@ -496,7 +499,7 @@ function drawingFrame(deck: PlanDeck, box: Box, k: number, transposed: boolean):
     const edge = sides[side]
     const { x, y } = at(edge, edge === 'top' || edge === 'left' ? 2 : 1)
     const vertical = edge === 'left' || edge === 'right'
-    const text = HULL_SIDE_LABEL[side]
+    const text = sideLabels(deck.objectKind)[side]
     out.push({ kind: 'text', x, y, text, size: FRAME_FONT, bold: true, color: INK, anchor: 'middle', vertical, spacing: 0.6 })
     if (side !== 'bow') continue
     // The arrow, before the name as it reads, pointing out of the drawing.

@@ -344,6 +344,53 @@ describe('projects store', () => {
     expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
   })
 
+  // Spec 2026-11-06, 9: a platform keeps its kind and its cargo's status
+  // through a reload; a value that isn't one is dropped, and the deck
+  // reads as a vessel's — as every calculation saved before.
+  it('round-trips the object kind and the cargo status, and drops what is neither', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    const save = (deck: Record<string, unknown>, items: Record<string, unknown>[]) =>
+      useProjects.getState().saveSnapshot({
+        id: project.id,
+        deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0, ...deck },
+        items: items.map((it, i) => ({ id: `i${i}`, name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, ...it })),
+        manualPlacements: [],
+        pinnedPlacementsByTrip: {},
+        separationRules: [],
+        mode: 'auto',
+        sortStrategy: 'area-desc',
+        globalRotation: true,
+        showFreeSpace: true,
+        showGrid: true,
+        showLabels: true,
+        showCargoContents: true,
+      } as Parameters<ReturnType<typeof useProjects.getState>['saveSnapshot']>[0])
+    const reload = () => {
+      useProjects.setState({ projects: [], activeId: null, hydrated: false })
+      useProjects.getState().hydrate()
+      return useProjects.getState().projects[0]
+    }
+
+    save({ objectKind: 'semi-sub' }, [{ platformStatus: 'onboard' }, { platformStatus: 'outgoing' }, {}])
+    let reloaded = reload()
+    expect(reloaded.deck.objectKind).toBe('semi-sub')
+    expect(reloaded.items.map((it) => it.platformStatus)).toEqual(['onboard', 'outgoing', undefined])
+
+    save({ objectKind: 'yacht' }, [{ platformStatus: 'lost' }])
+    reloaded = reload()
+    expect(reloaded.deck.objectKind).toBeUndefined()
+    expect(reloaded.items[0].platformStatus).toBeUndefined()
+  })
+
+  it('a new calculation can be made for a platform', () => {
+    useProjects.getState().hydrate()
+    const id = useProjects.getState().createProject('МСП', { objectKind: 'fixed' })
+    expect(useProjects.getState().projects.find((p) => p.id === id)!.deck.objectKind).toBe('fixed')
+    const vesselId = useProjects.getState().createProject('Судно')
+    expect(useProjects.getState().projects.find((p) => p.id === vesselId)!.deck).not.toHaveProperty('objectKind')
+  })
+
   // Regression: normalizeLashingPoints only kept id/x/y/label — a lashing
   // point is a full engineering record (which placement/cargo it secures,
   // attachment corner, angle off the deck plane, rated MSL, device type),

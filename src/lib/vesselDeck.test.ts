@@ -89,6 +89,13 @@ describe('deckForVessel', () => {
   })
 })
 
+describe('deckForVessel and the object kind (spec 2026-11-06, 9)', () => {
+  it('a platform from the library makes the deck that platform; a vessel, a vessel', () => {
+    expect(deckForVessel({ ...kuznetsov, id: 'user-p', objectKind: 'semi-sub' }, old).objectKind).toBe('semi-sub')
+    expect(deckForVessel(kuznetsov, { ...old, objectKind: 'fixed' }).objectKind).toBeUndefined()
+  })
+})
+
 describe('deckForVesselDrops', () => {
   it('says what the old deck loses, the positions in the current mode\'s words', () => {
     expect(deckForVesselDrops(old, { mode: 'auto', count: 12 })).toEqual([
