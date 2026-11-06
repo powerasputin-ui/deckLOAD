@@ -1408,6 +1408,7 @@ export default function Home() {
   const statusInput: StatusLineInput = {
     platform,
     semiSub: planFacts.semiSub,
+    jackUp: planFacts.jackUp,
     utilization: result.utilization,
     weightKg: result.totalWeight,
     maxDeckCargoT: deck.maxDeckCargoT,
@@ -1560,6 +1561,7 @@ export default function Home() {
               hasVessel={!!deck.vessel}
               onOpenStability={() => setWorkspace('stability')}
               semiSub={planFacts.semiSub}
+              jackUp={planFacts.jackUp}
             />
           )}
           {activeSection === 'cargo' && (

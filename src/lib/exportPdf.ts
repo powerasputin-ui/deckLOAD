@@ -26,6 +26,7 @@ import { drawPlanOnPdf } from './planToPdf'
 import { appliedVessel } from './vesselLibrary'
 import { isPlatform, OBJECT_KIND_LABEL, objectKindOf, PLATFORM_STATUS_LABEL, platformStatusOf, staysOnDeck } from './objectKind'
 import type { SemiSubResult } from './semiSub'
+import type { JackUpResult } from './jackUp'
 
 // The plan for the vessel (spec 11): A4 landscape, a sheet per trip — the
 // header, the deck drawn from the calculation, the trip's cargo, its summary
@@ -223,6 +224,62 @@ export interface StabilityPdfBlock {
   notes: string[]
   // The column the verdict is in; unset — the last.
   verdictColumn?: number
+}
+
+// A self-elevating unit's block (spec 2026-11-06, 11): on its legs, each
+// leg's load after the run against the allowable; afloat, the draught, VDL
+// and KG — an estimate for planning, with what it leaves out.
+export function buildJackUpPdfBlock(r: JackUpResult | undefined): StabilityPdfBlock {
+  const t = (v: number | undefined) => (v === undefined ? '—' : fmtNumber(Math.round(v)))
+  const m = (v: number | undefined) => (v === undefined ? '—' : v.toFixed(2))
+  const WORD: Record<StabilityVerdict, string> = { ok: 'в пределах', warn: 'не проверено', error: 'превышено' }
+  const planning = 'Оценка для планирования. Окончательно считает бортовой компьютер установки.'
+  if (!r) return { title: 'СПБУ', only: 'СПБУ: VDL и нагрузки не рассчитывались', head: [], rows: [], verdicts: [], notes: [] }
+  const vdl = r.checks.find((c) => c.id === 'jack-vdl')
+  if (r.mode === 'elevated') {
+    const title = 'СПБУ на опорах: нагрузки на опоры — оценка для планирования'
+    const head = ['Опора', 'По отчёту, т', 'Прирост, т', 'После рейса, т', 'Допустимая, т', 'Итог']
+    const legs = r.legs ?? []
+    const legsCheck = r.checks.find((c) => c.id === 'jack-legs')
+    if (legs.length === 0 || legs.every((l) => l.afterT === undefined))
+      return { title, only: `СПБУ на опорах: ${legsCheck?.detail ?? 'нагрузки не рассчитывались'}. VDL: ${vdl?.detail ?? '—'}.`, head, rows: [], verdicts: [], notes: [] }
+    const verdicts = legs.map((l): StabilityVerdict =>
+      l.afterT === undefined || r.maxLegLoadT === undefined ? 'warn' : l.afterT > r.maxLegLoadT + 1e-9 ? 'error' : 'ok'
+    )
+    return {
+      title,
+      head,
+      rows: legs.map((l, i) => [l.name, t(l.reportT), t(l.addedT), t(l.afterT), t(r.maxLegLoadT), WORD[verdicts[i]]]),
+      verdicts,
+      verdictColumn: 5,
+      notes: [
+        `VDL: ${vdl?.detail ?? '—'}.`,
+        'Статика: прирост от груза прихода в местах плана, корпус жёсткий, опоры одинаковой жёсткости. Ветер, волна, течение и нагрузки от бурения — в отчёте и в допустимой нагрузке.',
+        'Уходящий груз и расход из нагрузок не вычитаются (оценка с запасом); прочий приход — поровну на опоры.',
+        planning,
+      ],
+    }
+  }
+  const title = 'СПБУ на плаву: VDL, KG и осадка — оценка для планирования'
+  const head = ['Положение', 'Осадка, м', 'Наибольшая, м', 'VDL, т', 'Предел VDL, т', 'KG, м', 'Допустимый KG, м', 'Итог']
+  const over =
+    (r.draftAfterM !== undefined && r.maxDraftM !== undefined && r.draftAfterM > r.maxDraftM + 1e-9) ||
+    (r.vdlAfterT !== undefined && r.vdlMaxT !== undefined && r.vdlAfterT > r.vdlMaxT + 1e-9) ||
+    (r.kgAfterM !== undefined && r.kgMaxM !== undefined && r.kgAfterM > r.kgMaxM + 1e-9)
+  const judged = [r.draftAfterM, r.maxDraftM, r.vdlAfterT, r.vdlMaxT, r.kgAfterM, r.kgMaxM].every((v) => v !== undefined)
+  const verdict: StabilityVerdict = over ? 'error' : judged ? 'ok' : 'warn'
+  return {
+    title,
+    head,
+    rows: [['На плаву', m(r.draftAfterM), m(r.maxDraftM), t(r.vdlAfterT), t(r.vdlMaxT), m(r.kgAfterM), m(r.kgMaxM), WORD[verdict]]],
+    verdicts: [verdict],
+    verdictColumn: 7,
+    notes: [
+      `Приход − отгрузка: ${t(r.netT)} т. Осадка меняется на вес груза по TPC; KG — по суточному отчёту и грузу прихода и ухода.`,
+      'Упрощено: поправка на свободные поверхности как в отчёте, TPC постоянный; крепление груза на переходе не проверяется.',
+      planning,
+    ],
+  }
 }
 
 // A semi-submersible's block (spec 2026-11-06, 8): VDL and KG after the run,
@@ -540,6 +597,8 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
       checks: tripChecks(input.facts, i).map((c) => ({ title: c.title, status: c.status, word: CHECK_STATUS_WORD[c.status], detail: c.detail })),
       stability: kind === 'semi-sub'
         ? buildSemiSubPdfBlock(input.facts.semiSub)
+        : kind === 'jack-up'
+        ? buildJackUpPdfBlock(input.facts.jackUp)
         : platform
         ? {
             title: 'Остойчивость',

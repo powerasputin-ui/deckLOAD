@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { useCalculator } from '@/store/calculator'
-import { EMPTY_SEMI_SUB, type SemiSubData, type SemiSubKgRow, type SemiSubMode, type SemiSubResult } from '@/lib/semiSub'
+import { EMPTY_SEMI_SUB, type SemiSubData, type SemiSubKgRow, type SemiSubMode, type SemiSubResult, type SemiSubTransfer } from '@/lib/semiSub'
 import { cn, fmtNumber } from '@/lib/utils'
 
 // A semi-submersible's blocks in «Платформа» (spec 2026-11-06, 7.1): what
@@ -16,7 +16,7 @@ import { cn, fmtNumber } from '@/lib/utils'
 // and the supply run's other transfers. Every figure is the user's; none is
 // guessed, and a check without its figures reads «—».
 
-const PLANNING_NOTE = 'Оценка для планирования. Окончательно считает бортовой компьютер установки.'
+export const PLANNING_NOTE = 'Оценка для планирования. Окончательно считает бортовой компьютер установки.'
 
 function useSemiSub(): [SemiSubData, (next: SemiSubData) => void] {
   const semi = useCalculator((s) => s.deck.semiSub) ?? EMPTY_SEMI_SUB
@@ -77,7 +77,7 @@ function ModeFields({ title, mode, onChange }: { title: string; mode: SemiSubMod
 // The allowable KG by draught: a row per draught of the manual's table or
 // curve, one row being enough at a single draught. A new row is empty and
 // joins the table once both its figures are in: no limit is ever assumed.
-function KgTable({ label, rows, onChange }: { label: string; rows: SemiSubKgRow[]; onChange: (rows: SemiSubKgRow[]) => void }) {
+export function KgTable({ label, rows, onChange }: { label: string; rows: SemiSubKgRow[]; onChange: (rows: SemiSubKgRow[]) => void }) {
   const put = (i: number, patch: Partial<SemiSubKgRow>) => onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
   const [draft, setDraft] = useState<Partial<SemiSubKgRow> | null>(null)
   const fillDraft = (next: Partial<SemiSubKgRow>) => {
@@ -163,8 +163,8 @@ export function SemiSubReportBlock({ result }: { result?: SemiSubResult }) {
   )
 }
 
-const STATUS_ICON = { ok: CircleCheck, error: CircleX, none: CircleMinus }
-const STATUS_TONE = { ok: 'text-ok', error: 'text-danger', none: 'text-ink-2' }
+export const STATUS_ICON = { ok: CircleCheck, error: CircleX, none: CircleMinus }
+export const STATUS_TONE = { ok: 'text-ok', error: 'text-danger', none: 'text-ink-2' }
 
 function SemiSubResultView({ result }: { result: SemiSubResult }) {
   const m = (v: number | undefined) => (v === undefined ? '—' : `${v.toFixed(2)} м`)
@@ -202,10 +202,15 @@ function SemiSubResultView({ result }: { result: SemiSubResult }) {
 
 export function SemiSubTransfersBlock() {
   const [semi, update] = useSemiSub()
-  const rows = semi.transfers
-  const put = (id: string, patch: Partial<SemiSubData['transfers'][number]>) => update({ ...semi, transfers: rows.map((x) => (x.id === id ? { ...x, ...patch } : x)) })
+  return <TransfersBlock fold="semi-transfers" rows={semi.transfers} onChange={(transfers) => update({ ...semi, transfers })} />
+}
+
+// The supply run's other transfers — fuel, water, bulk — for a unit of
+// either kind: a row starts empty and assumes nothing.
+export function TransfersBlock({ fold, rows, onChange }: { fold: string; rows: SemiSubTransfer[]; onChange: (rows: SemiSubTransfer[]) => void }) {
+  const put = (id: string, patch: Partial<SemiSubTransfer>) => onChange(rows.map((x) => (x.id === id ? { ...x, ...patch } : x)))
   return (
-    <PanelBlock title="Прочий приход и расход" fold="semi-transfers">
+    <PanelBlock title="Прочий приход и расход" fold={fold}>
       <p className="text-xs text-ink-2">Топливо, вода, сыпучие: «+» — приходит, «−» — уходит. Входит в VDL и в KG.</p>
       {rows.length > 0 && (
         <div className="space-y-1" role="group" aria-label="Прочий приход и расход">
@@ -238,7 +243,7 @@ export function SemiSubTransfersBlock() {
               <button
                 type="button"
                 aria-label={`Удалить «${x.name || `строку ${i + 1}`}»`}
-                onClick={() => update({ ...semi, transfers: rows.filter((y) => y.id !== x.id) })}
+                onClick={() => onChange(rows.filter((y) => y.id !== x.id))}
                 className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-2 hover:bg-accent hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -247,13 +252,7 @@ export function SemiSubTransfersBlock() {
           ))}
         </div>
       )}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="w-full"
-        onClick={() => update({ ...semi, transfers: [...rows, { id: uuid(), name: '' }] })}
-      >
+      <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => onChange([...rows, { id: uuid(), name: '' }])}>
         <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
         Добавить строку
       </Button>
@@ -261,7 +260,7 @@ export function SemiSubTransfersBlock() {
   )
 }
 
-function Field({ id, label, unit, compact, children }: { id: string; label: string; unit: string; compact?: boolean; children: React.ReactNode }) {
+export function Field({ id, label, unit, compact, children }: { id: string; label: string; unit: string; compact?: boolean; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
       <label htmlFor={id} className={cn('block text-xs text-ink-2', compact && 'truncate')} title={compact ? `${label}, ${unit}` : undefined}>

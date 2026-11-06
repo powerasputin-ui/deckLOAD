@@ -96,6 +96,12 @@ describe('deckForVessel and the object kind (spec 2026-11-06, 9)', () => {
     expect(deck.semiSub).toEqual({ ...semiSub, report: {}, transfers: [] })
   })
 
+  it('a self-elevating unit from the library brings its legs, on its legs, the report left to enter', () => {
+    const jackUp = { afloat: {}, elevated: { maxLegLoadT: 5_000 }, legs: [{ id: 'a', name: 'Опора 1', fromSternM: 3, fromPortM: 2 }] }
+    const deck = deckForVessel({ ...kuznetsov, id: 'user-j', objectKind: 'jack-up', jackUp }, old)
+    expect(deck.jackUp).toEqual({ ...jackUp, mode: 'elevated', report: { legLoadsT: {} }, transfers: [] })
+  })
+
   it('a platform from the library makes the deck that platform; a vessel, a vessel', () => {
     expect(deckForVessel({ ...kuznetsov, id: 'user-p', objectKind: 'semi-sub' }, old).objectKind).toBe('semi-sub')
     expect(deckForVessel(kuznetsov, { ...old, objectKind: 'fixed' }).objectKind).toBeUndefined()

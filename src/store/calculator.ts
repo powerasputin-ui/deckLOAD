@@ -38,6 +38,7 @@ import {
 import type { AppliedVessel } from '@/lib/vesselLibrary'
 import type { ObjectKind } from '@/lib/objectKind'
 import type { SemiSubData } from '@/lib/semiSub'
+import type { JackUpData } from '@/lib/jackUp'
 import {
   DEFAULT_VESSEL_PARTICULARS,
   type VesselStabilityData,
@@ -97,6 +98,10 @@ export interface DeckConfig {
   // operating manual, the ballast's height, the daily report and the run's
   // other transfers. The deck's height over the baseline is shipFrame's.
   semiSub?: SemiSubData
+  // A self-elevating unit's (spec 2026-11-06, 11): where it is for the plan,
+  // its legs and limits afloat and elevated, the daily report with the leg
+  // loads, the run's other transfers.
+  jackUp?: JackUpData
   width: number
   length: number
   unit: Unit

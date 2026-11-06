@@ -17,6 +17,8 @@ import { firstOpenStep, requiredSteps, vesselSteps, type VesselStepId } from '@/
 import { objectKindOf } from '@/lib/objectKind'
 import type { SemiSubResult } from '@/lib/semiSub'
 import { SemiSubDataBlock, SemiSubReportBlock, SemiSubTransfersBlock } from '@/components/sections/vessel/SemiSubBlocks'
+import { JackUpDataBlock, JackUpReportBlock, JackUpTransfersBlock } from '@/components/sections/vessel/JackUpBlocks'
+import type { JackUpResult } from '@/lib/jackUp'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { CheckStatus } from '@/lib/checks'
@@ -49,6 +51,7 @@ export function VesselSection({
   hasVessel,
   onOpenStability,
   semiSub,
+  jackUp,
 }: {
   // The open calculation: which blocks the user opened is kept per one.
   projectId: string
@@ -68,6 +71,8 @@ export function VesselSection({
   onOpenStability: () => void
   // A semi-submersible's VDL, KG and ballast after the run (semiSub.ts).
   semiSub?: SemiSubResult
+  // A self-elevating unit's (jackUp.ts).
+  jackUp?: JackUpResult
 }) {
   const deck = useCalculator((s) => s.deck)
   const applied = appliedVessel(deck)
@@ -98,6 +103,7 @@ export function VesselSection({
     checks,
     stability: { gm: stability, missing: stabilityMissing, hasVessel },
     semiSub: kind === 'semi-sub' ? { data: deck.semiSub, result: semiSub } : undefined,
+    jackUp: kind === 'jack-up' ? { data: deck.jackUp, result: jackUp } : undefined,
   })
 
   // Picked once, on entering: nothing opens or folds under the user's hands.
@@ -141,9 +147,16 @@ export function VesselSection({
             <SemiSubReportBlock result={semiSub} />
           </>
         )}
+        {kind === 'jack-up' && (
+          <>
+            <JackUpDataBlock />
+            <JackUpReportBlock result={jackUp} />
+          </>
+        )}
         <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={applyToCurrent} />
         <p className="px-4 pb-2 pt-5 text-xs font-medium text-ink-2">Дополнительно</p>
         {kind === 'semi-sub' && <SemiSubTransfersBlock />}
+        {kind === 'jack-up' && <JackUpTransfersBlock />}
         <ObstaclesBlock />
         <DeckPhotoBlock />
         <SocketsBlock />

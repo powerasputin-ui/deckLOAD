@@ -18,6 +18,7 @@ import {
   tripChecks,
   type PlanPdfInput,
   buildSemiSubPdfBlock,
+  buildJackUpPdfBlock,
 } from './exportPdf'
 import { decomposePipePyramid, packMultiTrip, type CargoItem, type PackingResult, type PinnedPlacement, type PlacedItem } from './packing'
 import { cargoNumbers, cargoToneForNumber } from './cargoPalette'
@@ -370,6 +371,37 @@ describe('buildSemiSubPdfBlock', () => {
     expect(block.verdictColumn).toBe(5)
     expect(block.notes.at(-1)).toBe('Оценка для планирования. Окончательно считает бортовой компьютер установки.')
     expect(buildSemiSubPdfBlock(undefined).only).toBe('ППБУ: VDL и KG не рассчитывались')
+  })
+})
+
+describe('buildJackUpPdfBlock', () => {
+  it('on its legs, gives each leg before and after the run against the allowable', () => {
+    const block = buildJackUpPdfBlock({
+      mode: 'elevated',
+      netT: 300,
+      vdlAfterT: 3_100,
+      vdlMaxT: 3_500,
+      legs: [
+        { id: 'a', name: 'Опора 1', reportT: 4_000, addedT: 112.5, afterT: 4_112.5 },
+        { id: 'b', name: 'Опора 2', reportT: 4_000, addedT: 37.5, afterT: 4_037.5 },
+      ],
+      maxLegLoadT: 4_100,
+      checks: [{ id: 'jack-vdl', title: 'VDL', status: 'ok', detail: 'на опорах 3100 т при допустимом 3500 т' }],
+    })
+    expect(block.rows).toEqual([
+      ['Опора 1', '4000', '113', '4113', '4100', 'превышено'],
+      ['Опора 2', '4000', '38', '4038', '4100', 'в пределах'],
+    ])
+    expect(block.verdicts).toEqual(['error', 'ok'])
+    expect(block.notes[0]).toBe('VDL: на опорах 3100 т при допустимом 3500 т.')
+    expect(block.notes.at(-1)).toBe('Оценка для планирования. Окончательно считает бортовой компьютер установки.')
+  })
+
+  it('afloat, gives the draught, VDL and KG in one line', () => {
+    const block = buildJackUpPdfBlock({ mode: 'afloat', netT: 300, draftAfterM: 4.15, maxDraftM: 4.5, vdlAfterT: 2_300, vdlMaxT: 2_500, kgAfterM: 11.86, kgMaxM: 12.35, checks: [] })
+    expect(block.rows).toEqual([['На плаву', '4.15', '4.50', '2300', '2500', '11.86', '12.35', 'в пределах']])
+    expect(block.verdictColumn).toBe(7)
+    expect(buildJackUpPdfBlock(undefined).only).toBe('СПБУ: VDL и нагрузки не рассчитывались')
   })
 })
 

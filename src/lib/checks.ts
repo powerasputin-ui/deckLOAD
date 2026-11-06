@@ -14,10 +14,11 @@ import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 import type { VesselStepId } from './vesselSteps'
 import type { SemiSubCheckId, SemiSubResult } from './semiSub'
+import type { JackUpCheckId, JackUpResult } from './jackUp'
 
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'none'
 
-export type CheckId = 'capacity' | 'deck-weight' | 'zones' | 'separation' | 'lashing' | 'stability' | 'attention' | SemiSubCheckId
+export type CheckId = 'capacity' | 'deck-weight' | 'zones' | 'separation' | 'lashing' | 'stability' | 'attention' | SemiSubCheckId | JackUpCheckId
 
 export interface Check {
   id: CheckId
@@ -100,6 +101,9 @@ export interface PlanFacts {
   // A semi-submersible's VDL, KG and ballast against its manual (spec
   // 2026-11-06, 7.3) — in place of a vessel's stability.
   semiSub?: SemiSubResult
+  // A self-elevating unit's VDL and, afloat, its KG and draught, elevated,
+  // its leg loads (spec 2026-11-06, 11.4).
+  jackUp?: JackUpResult
   totalUnits: number
   // Auto mode: units no trip can take. Manual mode: units not placed yet.
   unplacedUnits: number
@@ -266,6 +270,8 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // ППБУ: VDL, KG and ballast, in operation and on the way to survival.
   for (const c of f.semiSub?.checks ?? []) checks.push({ ...c, target: 'vessel', targetStep: 'semi-report' })
+  // СПБУ: on its legs or afloat.
+  for (const c of f.jackUp?.checks ?? []) checks.push({ ...c, target: 'vessel', targetStep: 'jack-report' })
 
   // Требуют внимания — only when there is something.
   {

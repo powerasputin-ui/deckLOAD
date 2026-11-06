@@ -48,6 +48,27 @@ describe('status line', () => {
     expect(statusItems({ ...base, platform: true, semiSub: { netT: 0, momentTm: 0, checks: [] } }).map((i) => i.id)).not.toContain('vdl')
   })
 
+  it('a self-elevating unit\'s line has its VDL and the most loaded leg, or its KG afloat', () => {
+    const legs = [
+      { id: 'a', name: 'Опора 1', reportT: 4_000, addedT: 37.5, afterT: 4_037.5 },
+      { id: 'b', name: 'Опора 2', reportT: 4_000, addedT: 12.5, afterT: 4_012.5 },
+    ]
+    const elevated = {
+      mode: 'elevated' as const,
+      netT: 50,
+      vdlAfterT: 2_850,
+      vdlMaxT: 3_500,
+      legs,
+      maxLegLoadT: 4_030,
+      checks: [{ id: 'jack-legs' as const, title: 'Нагрузки на опоры', status: 'error' as const, detail: '' }],
+    }
+    const items = statusItems({ ...base, platform: true, jackUp: elevated })
+    expect(items.map((i) => i.text)).toContain('VDL 2850 из 3500 т')
+    expect(items.find((i) => i.id === 'legs')).toMatchObject({ text: 'Опора до 4038 из 4030 т', tone: 'danger' })
+    const afloat = { mode: 'afloat' as const, netT: 0, kgAfterM: 11.86, kgMaxM: 12.35, checks: [] }
+    expect(statusItems({ ...base, platform: true, jackUp: afloat }).find((i) => i.id === 'kg')!.text).toBe('KG 11.86 из 12.35 м')
+  })
+
   it('counts trips only when there is more than one', () => {
     expect(texts({ ...base, tripCount: 2 })).toContain('2 рейса')
     expect(texts({ ...base, tripCount: 5 })).toContain('5 рейсов')

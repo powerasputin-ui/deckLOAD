@@ -31,6 +31,7 @@ export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckCon
     // A semi-submersible's modes and ballast come with it; the daily report
     // is the calculation's own, to be entered for the day.
     ...(tpl.semiSub ? { semiSub: { ...tpl.semiSub, report: {}, transfers: [] } } : {}),
+    ...(tpl.jackUp ? { jackUp: { ...tpl.jackUp, mode: 'elevated' as const, report: { legLoadsT: {} }, transfers: [] } } : {}),
     unit: current.unit,
     gap: current.gap,
     boardOffset: current.boardOffset,

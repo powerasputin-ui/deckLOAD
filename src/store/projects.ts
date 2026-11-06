@@ -8,6 +8,7 @@ import type { VesselStabilityData, DeckShipFrameInput, KNCrossCurves, VariableWe
 import type { AppliedVessel } from '@/lib/vesselLibrary'
 import { isObjectKind, isPlatformStatus, type ObjectKind, type PlatformStatus } from '@/lib/objectKind'
 import type { SemiSubData, SemiSubMode } from '@/lib/semiSub'
+import type { JackUpData } from '@/lib/jackUp'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import {
   sanitizeCargoWidth,
@@ -546,6 +547,59 @@ export function normalizeSemiSub(value: unknown): SemiSubData | undefined {
   }
 }
 
+// A self-elevating unit's data (spec 2026-11-06, 11): every figure a
+// positive number or unset — a leg may stand off the deck, so its position
+// is any finite number; its loads by leg id.
+export function normalizeJackUpUnit(value: unknown): Pick<JackUpData, 'afloat' | 'elevated' | 'legs'> | undefined {
+  if (!isRecord(value)) return undefined
+  const a = isRecord(value.afloat) ? value.afloat : {}
+  const e = isRecord(value.elevated) ? value.elevated : {}
+  const rows = normalizeSemiSubMode({ kgLimit: a.kgLimit }).kgLimit
+  return {
+    afloat: {
+      vdlMaxT: toOptionalPositive(a.vdlMaxT),
+      tpcTPerCm: toOptionalPositive(a.tpcTPerCm),
+      maxDraftM: toOptionalPositive(a.maxDraftM),
+      ...(rows ? { kgLimit: rows } : {}),
+    },
+    elevated: { vdlMaxT: toOptionalPositive(e.vdlMaxT), vdlStormMaxT: toOptionalPositive(e.vdlStormMaxT), maxLegLoadT: toOptionalPositive(e.maxLegLoadT) },
+    legs: Array.isArray(value.legs)
+      ? value.legs.filter(isRecord).map((l) => ({
+          id: typeof l.id === 'string' && l.id ? l.id : uuid(),
+          name: typeof l.name === 'string' ? l.name : '',
+          fromSternM: finiteOrUndefined(l.fromSternM),
+          fromPortM: finiteOrUndefined(l.fromPortM),
+        }))
+      : [],
+  }
+}
+
+export function normalizeJackUp(value: unknown): JackUpData | undefined {
+  const unit = normalizeJackUpUnit(value)
+  if (!unit || !isRecord(value)) return undefined
+  const r = isRecord(value.report) ? value.report : {}
+  const loads = isRecord(r.legLoadsT) ? r.legLoadsT : {}
+  const legLoadsT: Record<string, number> = {}
+  for (const leg of unit.legs) {
+    const v = toOptionalNonNegative(loads[leg.id])
+    if (v !== undefined) legLoadsT[leg.id] = v
+  }
+  const semi = normalizeSemiSub({ operating: {}, survival: {}, report: {}, transfers: value.transfers })
+  return {
+    mode: value.mode === 'afloat' ? 'afloat' : 'elevated',
+    ...unit,
+    report: {
+      date: toOptionalString(r.date),
+      draftM: toOptionalPositive(r.draftM),
+      displacementT: toOptionalPositive(r.displacementT),
+      kgM: toOptionalPositive(r.kgM),
+      vdlT: toOptionalNonNegative(r.vdlT),
+      legLoadsT,
+    },
+    transfers: semi?.transfers ?? [],
+  }
+}
+
 export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefined {
   if (!value || typeof value !== 'object') return undefined
   const v = value as Record<string, unknown>
@@ -576,6 +630,7 @@ export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefin
     savedAt: toOptionalString(v.savedAt),
     objectKind: isObjectKind(v.objectKind) && v.objectKind !== 'vessel' ? v.objectKind : undefined,
     semiSub: normalizeSemiSubUnit(v.semiSub),
+    jackUp: normalizeJackUpUnit(v.jackUp),
   }
 }
 
@@ -1108,6 +1163,7 @@ export function normalizeProject(p: Partial<Project>): Project {
       objectKind: isObjectKind(p.deck?.objectKind) && p.deck.objectKind !== 'vessel' ? p.deck.objectKind : undefined,
       platformName: toOptionalString(p.deck?.platformName),
       semiSub: normalizeSemiSub(p.deck?.semiSub),
+      jackUp: normalizeJackUp(p.deck?.jackUp),
       width: toFinitePositive(p.deck?.width, DEMO_DECK.width),
       length: toFinitePositive(p.deck?.length, DEMO_DECK.length),
       unit,

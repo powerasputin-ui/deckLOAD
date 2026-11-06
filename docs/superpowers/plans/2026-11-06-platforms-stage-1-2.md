@@ -38,3 +38,14 @@
 | J. Проверки и строка состояния | 7.3, 8 | `lib/checks.ts`, `lib/planFacts.ts`, `lib/statusLine.ts`, `app/page.tsx` | проверки по таблице 7.3; «—» без данных |
 | K. PDF | 8 | `lib/exportPdf.ts` | блок ППБУ с пометкой об оценке |
 | L. Сценарий | — | `e2e/semi-sub.spec.ts` | ППБУ: данные, отчёт, приход труб → VDL и KG, шторм ✕ при перегрузе |
+
+## Этап 3: СПБУ
+
+Спека, раздел 11.
+
+| Группа | Пункты спеки | Основные файлы | Тесты |
+|---|---|---|---|
+| M. Модель и расчёт | 11.2, 11.3 | `objectKind.ts` (`'jack-up'`), новые `lib/jackUp.ts`, `lib/jackUpPlan.ts`; `store/calculator.ts` (`deck.jackUp`), `store/projects.ts`, библиотека | unit: три опоры — точное решение, четыре — пример спеки, на одной линии — нет решения; на плаву — KG и осадка; нет данных — «—» |
+| N. Блоки | 11.2 | `StartScreen.tsx`, `VesselCard.tsx` (четыре вида), новые `sections/vessel/JackUpBlocks.tsx`, общий блок прочего прихода, `vesselSteps.ts` | компонент: опоры, положение, нагрузки из отчёта |
+| O. Проверки, строка, PDF | 11.4 | `checks.ts`, `planFacts.ts`, `statusLine.ts`, `exportPdf.ts` | проверки по 11.4; блок PDF |
+| P. Сценарий | — | `e2e/jack-up.spec.ts` | на опорах: груз у опоры → её нагрузка выше допустимой ✕; на плаву: KG и осадка |

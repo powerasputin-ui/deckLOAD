@@ -45,7 +45,7 @@ export function VesselCard() {
         value={kind}
         onValueChange={(v) => isObjectKind(v) && setDeck({ objectKind: v === 'vessel' ? undefined : v })}
         aria-label="Тип объекта"
-        className="grid w-full grid-cols-3 gap-1"
+        className="grid w-full grid-cols-2 gap-1"
       >
         {KIND_CHOICES.map(([value, label]) => (
           <ToggleGroupItem key={value} value={value} className="h-8 text-xs">
@@ -156,6 +156,7 @@ export function VesselCard() {
 const KIND_CHOICES: readonly [ObjectKind, string][] = [
   ['vessel', 'Судно'],
   ['semi-sub', 'ППБУ'],
+  ['jack-up', 'СПБУ'],
   ['fixed', 'Стационарная'],
 ]
 

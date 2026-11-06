@@ -92,6 +92,9 @@ export function vesselFromDeck(deck: DeckConfig, entry: { id: string; label: str
     ...(objectKindOf(deck) === 'semi-sub' && deck.semiSub
       ? { semiSub: { operating: deck.semiSub.operating, survival: deck.semiSub.survival, ballastVcgM: deck.semiSub.ballastVcgM } }
       : {}),
+    ...(objectKindOf(deck) === 'jack-up' && deck.jackUp
+      ? { jackUp: { afloat: deck.jackUp.afloat, elevated: deck.jackUp.elevated, legs: deck.jackUp.legs } }
+      : {}),
   }
 }
 

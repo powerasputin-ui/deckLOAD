@@ -2,20 +2,22 @@ import { fmtTonnes } from './utils'
 
 // What a calculation plans the deck of (spec 2026-11-06, 3): a vessel, as
 // DeckLoad always did, or a platform the supply vessels serve — a
-// semi-submersible drilling unit (ППБУ) or a fixed platform (МСП, МЛСП).
+// semi-submersible drilling unit (ППБУ), a self-elevating one (СПБУ) or a
+// fixed platform (МСП, МЛСП).
 // A calculation saved before this existed has no kind and is a vessel.
 //
 // A platform has no trips (it doesn't sail with its cargo) and no lashing
 // check (its motions aren't a vessel's, and DeckLoad has no standard for
 // them); its cargo carries a status instead: already on board, arriving
 // with the supply vessel, or leaving with it.
-export type ObjectKind = 'vessel' | 'semi-sub' | 'fixed'
+export type ObjectKind = 'vessel' | 'semi-sub' | 'jack-up' | 'fixed'
 
-export const OBJECT_KINDS: readonly ObjectKind[] = ['vessel', 'semi-sub', 'fixed']
+export const OBJECT_KINDS: readonly ObjectKind[] = ['vessel', 'semi-sub', 'jack-up', 'fixed']
 
 export const OBJECT_KIND_LABEL: Record<ObjectKind, string> = {
   vessel: 'Судно',
   'semi-sub': 'ППБУ',
+  'jack-up': 'СПБУ',
   fixed: 'Стационарная платформа',
 }
 
@@ -23,6 +25,7 @@ export const OBJECT_KIND_LABEL: Record<ObjectKind, string> = {
 export const OBJECT_KIND_HINT: Record<ObjectKind, string> = {
   vessel: 'Судно снабжения, баржа, буровое судно',
   'semi-sub': 'Полупогружная буровая установка: VDL и KG по кривым руководства',
+  'jack-up': 'Самоподъёмная: на плаву — VDL, KG и осадка, на опорах — VDL и нагрузки на опоры',
   fixed: 'МСП, МЛСП: площадки т/м² и допускаемая нагрузка на палубу',
 }
 

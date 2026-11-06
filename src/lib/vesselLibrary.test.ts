@@ -85,6 +85,19 @@ describe('a platform saved from a calculation (spec 2026-11-06, 9)', () => {
     expect(v.semiSub).toEqual({ operating: semiSub.operating, survival: semiSub.survival, ballastVcgM: 4 })
   })
 
+  it('a self-elevating unit keeps its legs and limits, not where it is or the day\'s report', () => {
+    const jackUp = {
+      mode: 'afloat' as const,
+      afloat: { vdlMaxT: 2_500 },
+      elevated: { maxLegLoadT: 5_000 },
+      legs: [{ id: 'a', name: 'Опора 1', fromSternM: 3, fromPortM: 2 }],
+      report: { vdlT: 2_000, legLoadsT: { a: 4_000 } },
+      transfers: [],
+    }
+    const v = vesselFromDeck({ ...own, objectKind: 'jack-up', jackUp }, { id: 'user-7', label: 'Арктическая', note: '' })
+    expect(v.jackUp).toEqual({ afloat: jackUp.afloat, elevated: jackUp.elevated, legs: jackUp.legs })
+  })
+
   it('stays a platform of its kind; a vessel carries no kind', () => {
     expect(vesselFromDeck({ ...own, objectKind: 'semi-sub' }, { id: 'user-3', label: 'Полярная звезда', note: '' }).objectKind).toBe('semi-sub')
     expect(vesselFromDeck({ ...own, objectKind: 'fixed' }, { id: 'user-4', label: 'МСП-1', note: '' }).objectKind).toBe('fixed')

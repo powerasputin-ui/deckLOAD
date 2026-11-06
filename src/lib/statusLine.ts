@@ -4,6 +4,7 @@
 // leads to the section where it is set or explained.
 import type { Check } from './checks'
 import type { SemiSubResult } from './semiSub'
+import type { JackUpResult } from './jackUp'
 import { fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
@@ -12,6 +13,8 @@ export interface StatusLineInput {
   platform?: boolean
   // A semi-submersible's VDL and KG after the run (semiSub.ts).
   semiSub?: SemiSubResult
+  // A self-elevating unit's VDL, and its leg loads or KG (jackUp.ts).
+  jackUp?: JackUpResult
   // Current trip.
   utilization: number
   weightKg: number
@@ -32,7 +35,7 @@ export interface StatusLineInput {
 }
 
 export interface StatusItem {
-  id: 'load' | 'weight' | 'units' | 'trips' | 'gm' | 'vdl' | 'kg' | 'errors' | 'warnings'
+  id: 'load' | 'weight' | 'units' | 'trips' | 'gm' | 'vdl' | 'kg' | 'legs' | 'errors' | 'warnings'
   text: string
   title: string
   // For a screen reader, when the text alone is a symbol.
@@ -120,6 +123,41 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
       id: 'kg',
       text: `KG ${metres(semi.kgOperatingM)}${semi.kgOperatingMaxM !== undefined ? ` из ${metres(semi.kgOperatingMaxM)}` : ''} м`,
       title: 'KG после рейса и допустимый в работе — оценка для планирования',
+      target: 'vessel',
+      tone: kg?.status === 'error' ? 'danger' : undefined,
+    })
+  }
+
+  // A self-elevating unit's: the VDL of where it is, then the most loaded
+  // leg on its legs, or its KG afloat.
+  const jack = s.jackUp
+  if (jack?.vdlAfterT !== undefined) {
+    const vdl = jack.checks.find((c) => c.id === 'jack-vdl')
+    items.push({
+      id: 'vdl',
+      text: `VDL ${Math.round(jack.vdlAfterT)}${jack.vdlMaxT !== undefined ? ` из ${Math.round(jack.vdlMaxT)}` : ''} т`,
+      title: `VDL после рейса и предел ${jack.mode === 'afloat' ? 'на плаву' : 'на опорах'} — оценка для планирования`,
+      target: 'vessel',
+      tone: vdl?.status === 'error' ? 'danger' : undefined,
+    })
+  }
+  const loads = (jack?.legs ?? []).flatMap((l) => (l.afterT !== undefined ? [l.afterT] : []))
+  if (jack?.mode === 'elevated' && loads.length > 0 && loads.length === jack.legs!.length) {
+    const legsCheck = jack.checks.find((c) => c.id === 'jack-legs')
+    items.push({
+      id: 'legs',
+      text: `Опора до ${Math.round(Math.max(...loads))}${jack.maxLegLoadT !== undefined ? ` из ${Math.round(jack.maxLegLoadT)}` : ''} т`,
+      title: 'Наибольшая нагрузка на опору после рейса и допустимая — статика, оценка для планирования',
+      target: 'vessel',
+      tone: legsCheck?.status === 'error' ? 'danger' : undefined,
+    })
+  }
+  if (jack?.mode === 'afloat' && jack.kgAfterM !== undefined) {
+    const kg = jack.checks.find((c) => c.id === 'jack-kg')
+    items.push({
+      id: 'kg',
+      text: `KG ${metres(jack.kgAfterM)}${jack.kgMaxM !== undefined ? ` из ${metres(jack.kgMaxM)}` : ''} м`,
+      title: 'KG после рейса и допустимый на новой осадке — оценка для планирования',
       target: 'vessel',
       tone: kg?.status === 'error' ? 'danger' : undefined,
     })

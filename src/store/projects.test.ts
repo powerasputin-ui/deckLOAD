@@ -412,6 +412,38 @@ describe('projects store', () => {
     ])
   })
 
+  it('round-trips a self-elevating unit\'s data: its legs anywhere, their loads by leg', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      ...project,
+      deck: {
+        ...project.deck,
+        objectKind: 'jack-up',
+        jackUp: {
+          mode: 'afloat',
+          afloat: { vdlMaxT: 2_500, tpcTPerCm: 20, maxDraftM: 4.5, kgLimit: [{ draftM: 4, kgMaxM: 12.5 }] },
+          elevated: { vdlMaxT: 3_500, maxLegLoadT: -1 },
+          legs: [{ id: 'a', name: 'Опора 1', fromSternM: -2, fromPortM: 30 }, { name: 'без id' }],
+          report: { draftM: 4, vdlT: 2_800, legLoadsT: { a: 4_000, gone: 100, x: 'много' } },
+          transfers: [{ id: 't', name: 'Вода', weightT: 50, vcgM: 3 }],
+        },
+      },
+    } as unknown as Parameters<ReturnType<typeof useProjects.getState>['saveSnapshot']>[0])
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const jack = useProjects.getState().projects[0].deck.jackUp!
+    expect(jack.mode).toBe('afloat')
+    expect(jack.afloat).toEqual({ vdlMaxT: 2_500, tpcTPerCm: 20, maxDraftM: 4.5, kgLimit: [{ draftM: 4, kgMaxM: 12.5 }] })
+    expect(jack.elevated).toEqual({ vdlMaxT: 3_500, vdlStormMaxT: undefined, maxLegLoadT: undefined })
+    expect(jack.legs).toEqual([
+      { id: 'a', name: 'Опора 1', fromSternM: -2, fromPortM: 30 },
+      { id: expect.any(String), name: 'без id', fromSternM: undefined, fromPortM: undefined },
+    ])
+    expect(jack.report.legLoadsT).toEqual({ a: 4_000 })
+    expect(jack.transfers).toEqual([{ id: 't', name: 'Вода', weightT: 50, vcgM: 3 }])
+  })
+
   it('a new calculation can be made for a platform', () => {
     useProjects.getState().hydrate()
     const id = useProjects.getState().createProject('МСП', { objectKind: 'fixed' })

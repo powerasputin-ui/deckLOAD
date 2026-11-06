@@ -77,6 +77,19 @@ describe('buildChecks', () => {
     expect(checkCounts(list)).toEqual({ errors: 1, warnings: 0 })
   })
 
+  it('a self-elevating unit\'s checks stand in the list, with their settings at the daily report', () => {
+    const jackUp = {
+      mode: 'elevated' as const,
+      netT: 100,
+      checks: [
+        { id: 'jack-vdl' as const, title: 'VDL', status: 'ok' as const, detail: 'на опорах 2100 т при допустимом 3000 т' },
+        { id: 'jack-legs' as const, title: 'Нагрузки на опоры', status: 'error' as const, detail: '«Опора 1» 5100 т при допустимой 5000 т — больше допустимой' },
+      ],
+    }
+    expect(buildChecks(facts({ platform: true, jackUp })).map((c) => c.title).slice(-2)).toEqual(['VDL', 'Нагрузки на опоры'])
+    expect(check(facts({ platform: true, jackUp }), 'jack-legs')).toMatchObject({ status: 'error', target: 'vessel', targetStep: 'jack-report' })
+  })
+
   describe('capacity', () => {
     it('is fine when everything is placed, naming the trips', () => {
       expect(check(facts(), 'capacity')).toMatchObject({ status: 'ok', detail: 'Всё размещено' })

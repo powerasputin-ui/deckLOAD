@@ -14,6 +14,7 @@ import type { VesselStabilityData, DeckShipFrameInput, VariableWeightItem } from
 import type { LoadZone, RestrictionZone } from './packing'
 import type { ObjectKind } from './objectKind'
 import type { SemiSubData } from './semiSub'
+import type { JackUpData } from './jackUp'
 
 export interface VesselTemplate {
   id: string
@@ -25,6 +26,9 @@ export interface VesselTemplate {
   // its modes and the ballast's height. The daily report and the run's
   // transfers belong to a calculation, not to the unit.
   semiSub?: Pick<SemiSubData, 'operating' | 'survival' | 'ballastVcgM'>
+  // A self-elevating unit's own data: its legs and its limits afloat and
+  // elevated. Where it is and the day's report belong to a calculation.
+  jackUp?: Pick<JackUpData, 'afloat' | 'elevated' | 'legs'>
   // Non-rectangular real deck silhouette (from a GA drawing, say) — deck-
   // local coords in the same [0,width]x[0,length] frame as DeckConfig.outline.
   // Undefined = plain rectangle (today's default for every template that

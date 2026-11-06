@@ -10,6 +10,7 @@ import { fmtNumber, pluralRu } from './utils'
 import { deckWords } from './deckDrawing'
 import { OBJECT_KIND_LABEL, type ObjectKind } from './objectKind'
 import type { SemiSubData, SemiSubResult } from './semiSub'
+import type { JackUpData, JackUpResult } from './jackUp'
 
 export type VesselStepId =
   | 'library'
@@ -26,6 +27,10 @@ export type VesselStepId =
   | 'semi-data'
   | 'semi-report'
   | 'semi-transfers'
+  // A self-elevating unit's (spec 2026-11-06, 11.2).
+  | 'jack-data'
+  | 'jack-report'
+  | 'jack-transfers'
 
 // The steps in the order they are filled in; the rest are optional.
 export const REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'deck', 'card', 'zones', 'stability']
@@ -41,8 +46,10 @@ export const PLATFORM_OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'p
 // deck (spec 2026-11-06, 7.1); the run's other transfers are optional.
 export const SEMI_SUB_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'semi-data', 'semi-report', 'library']
 
+export const JACK_UP_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'jack-data', 'jack-report', 'library']
+
 export function requiredSteps(kind: ObjectKind = 'vessel'): readonly VesselStepId[] {
-  return kind === 'vessel' ? REQUIRED_STEPS : kind === 'semi-sub' ? SEMI_SUB_REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
+  return kind === 'vessel' ? REQUIRED_STEPS : kind === 'semi-sub' ? SEMI_SUB_REQUIRED_STEPS : kind === 'jack-up' ? JACK_UP_REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
 }
 
 export interface VesselStep {
@@ -85,6 +92,8 @@ export interface VesselStepsInput {
   checks: { deckWeight?: CheckStatus; zones?: CheckStatus }
   // A semi-submersible's data and what it gives (semiSub.ts).
   semiSub?: { data?: SemiSubData; result?: SemiSubResult }
+  // A self-elevating unit's (jackUp.ts).
+  jackUp?: { data?: JackUpData; result?: JackUpResult }
   stability: {
     gm?: { valueM: number; status: 'ok' | 'warn' | 'error'; estimated: boolean; state: 'departure' | 'arrival' }
     // Why it isn't worked out though the vessel's data is there.
@@ -156,6 +165,45 @@ export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselSte
     lashing: { summary: count(d.lashingPoints, 'точка', 'точки', 'точек') },
     marks: { summary: count(d.marks, 'метка', 'метки', 'меток') },
     ...semiSubSteps(s.semiSub),
+    ...jackUpSteps(s.jackUp),
+  }
+}
+
+// A self-elevating unit's steps in a line each: its legs and limits, the
+// day's report and how it holds, the run's other transfers.
+function jackUpSteps(jack: VesselStepsInput['jackUp']): Pick<Record<VesselStepId, VesselStep>, 'jack-data' | 'jack-report' | 'jack-transfers'> {
+  const data = jack?.data
+  const legs = data?.legs.length ?? 0
+  const e = data?.elevated
+  const r = data?.report
+  const checks = jack?.result?.checks ?? []
+  const worst = checks.some((c) => c.status === 'error') ? 'error' : checks.length > 0 && checks.every((c) => c.status === 'ok') ? 'ok' : undefined
+  const loads = data ? data.legs.filter((l) => r?.legLoadsT[l.id] !== undefined).length : 0
+  const transfers = data?.transfers.length ?? 0
+  return {
+    'jack-data': {
+      summary:
+        legs > 0 || e?.vdlMaxT !== undefined
+          ? [`${legs} ${pluralRu(legs, 'опора', 'опоры', 'опор')}`, e?.vdlMaxT !== undefined && `VDL на опорах ${fmtNumber(e.vdlMaxT)} т`, e?.maxLegLoadT !== undefined && `опора до ${fmtNumber(e.maxLegLoadT)} т`]
+              .filter(Boolean)
+              .join(' · ')
+          : 'не заданы',
+    },
+    'jack-report': {
+      summary:
+        r && (r.vdlT !== undefined || loads > 0 || r.kgM !== undefined)
+          ? [
+              data?.mode === 'afloat' ? 'на плаву' : 'на опорах',
+              r.date && `от ${r.date.split('-').reverse().join('.')}`,
+              r.vdlT !== undefined && `VDL ${fmtNumber(r.vdlT)} т`,
+              data?.mode === 'afloat' ? r.kgM !== undefined && `KG ${r.kgM.toFixed(2)} м` : `нагрузки: ${loads} из ${legs}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : 'не внесён',
+      status: worst,
+    },
+    'jack-transfers': { summary: transfers === 0 ? 'нет' : `${transfers} ${pluralRu(transfers, 'строка', 'строки', 'строк')}` },
   }
 }
 

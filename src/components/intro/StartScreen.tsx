@@ -105,8 +105,8 @@ export function StartScreen({
   )
 }
 
-export type PlatformKind = 'semi-sub' | 'fixed'
-const PLATFORM_KINDS: readonly PlatformKind[] = ['semi-sub', 'fixed']
+export type PlatformKind = 'semi-sub' | 'jack-up' | 'fixed'
+const PLATFORM_KINDS: readonly PlatformKind[] = ['semi-sub', 'jack-up', 'fixed']
 
 // The example's plan, drawn as the PDF draws it, on a sheet of paper.
 const PICTURE = { w: 640, h: 300 }

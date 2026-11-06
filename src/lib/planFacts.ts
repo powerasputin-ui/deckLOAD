@@ -6,6 +6,7 @@
 // are run over the plan.
 import { isPlatform } from './objectKind'
 import { semiSubForPlan } from './semiSubPlan'
+import { jackUpForPlan } from './jackUpPlan'
 import type { DeckConfig } from '@/store/calculator'
 import {
   assessLashingRequirement,
@@ -86,6 +87,7 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
     // A platform has one deck: the first trip is all of it. Cargo leaving is
     // in no trip — it comes from the whole list.
     semiSub: semiSubForPlan(deck, trips[0], p.allItems ?? items),
+    jackUp: jackUpForPlan(deck, trips[0], p.allItems ?? items),
     totalUnits: items.reduce((n, it) => n + Math.max(0, it.quantity), 0),
     // Each trip passes on what it couldn't place, so what the last one
     // leaves fits nowhere; in manual mode it is what isn't placed yet.
