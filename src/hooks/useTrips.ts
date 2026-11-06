@@ -1,8 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { packMultiTrip, packingResultFromManual, type PackingResult } from '@/lib/packing'
-import { isPlatform, staysOnDeck } from '@/lib/objectKind'
+import type { PackingResult } from '@/lib/packing'
+import { computeTrips, shownTripsOf } from '@/lib/trips'
 import type { useCalculator } from '@/store/calculator'
 
 type Calculation = ReturnType<typeof useCalculator.getState>
@@ -30,80 +30,30 @@ export function useTrips({
   separationRulesInUnit: Calculation['separationRules']
 }) {
   const [activeTripIndex, setActiveTripIndex] = useState(0)
-  // In auto mode, cargo that doesn't fit in one voyage automatically spills
-  // into additional trips (same deck, repeated) via packMultiTrip. Manual mode
-  // stays single-trip — the user places cargo by hand on one deck at a time.
-  //
-  // A platform (spec 2026-11-06, 6) doesn't sail with its cargo: its deck is
-  // one, after the supply run — what's on board and what arrives. Cargo
-  // leaving with the vessel isn't on it, nor are its positions; what the
-  // deck can't take stays «Не поместилось».
-  const platform = isPlatform(deck)
-  const trips: PackingResult[] = useMemo(() => {
-    const leaving = platform ? new Set(items.filter((it) => !staysOnDeck(it)).map((it) => it.id)) : new Set<string>()
-    const onDeck = leaving.size > 0 ? items.filter((it) => !leaving.has(it.id)) : items
-    const standing = <P extends { itemId: string }>(list: P[]) => (leaving.size > 0 ? list.filter((p) => !leaving.has(p.itemId)) : list)
-    if (mode === 'manual') {
-      const totalRequested = onDeck.reduce((s, it) => s + it.quantity, 0)
-      // Standing cargo is rechecked against the deck as it is now (L14): a
-      // new outline, a moved obstacle or a widened clearance zone used to
-      // leave a stack where it may not stand, with nothing said.
-      return [
-        packingResultFromManual(deck.width, deck.length, standing(manualPlacements), totalRequested, onDeck, deck.clearance, deck.outline, {
-          boardOffset: deck.boardOffset,
-          gap: deck.gap,
-          restrictionZones: deck.restrictionZones,
-        }),
-      ]
-    }
-    const effectiveItems = globalRotation
-      ? onDeck
-      : onDeck.map((it) => ({ ...it, allowRotation: false }))
-    const pinsByTrip = leaving.size > 0 ? Object.fromEntries(Object.entries(pinnedPlacementsByTrip).map(([trip, pins]) => [trip, standing(pins)])) : pinnedPlacementsByTrip
-    // Each trip is a separate deck instance — packMultiTrip applies the
-    // matching trip's own pins (pinnedByTrip[tripIndex]) at every iteration,
-    // so pinning/dragging cargo works identically on any trip, not just the first.
-    return packMultiTrip(
-      deck.width,
-      deck.length,
-      effectiveItems,
-      {
+  // Worked out by computeTrips (src/lib/trips.ts), as for a saved
+  // calculation's trips — again only when what the packing reads changes,
+  // not on every edit of the vessel's data.
+  const { width, length, gap, boardOffset, clearance, outline, restrictionZones, loadZones, unit, maxDeckCargoT, objectKind } = deck
+  const trips: PackingResult[] = useMemo(
+    () =>
+      computeTrips({
+        mode,
+        deck: { width, length, gap, boardOffset, clearance, outline, restrictionZones, loadZones, unit, maxDeckCargoT, objectKind },
+        items,
+        manualPlacements,
+        pinnedPlacementsByTrip,
         sortStrategy,
-        gap: deck.gap,
-        boardOffset: deck.boardOffset,
-        clearance: deck.clearance,
-        separationRules: separationRulesInUnit,
-        outline: deck.outline,
-        restrictionZones: deck.restrictionZones,
-        // Real, vessel-specific stowage limits — see PackOptions' own doc
-        // comments in packing.ts for exactly how each is enforced (loadZones
-        // soft-prefers a non-overloading position when one exists;
-        // maxTotalWeightKg hard-stops once the vessel's own approved deck
-        // capacity would be exceeded). Both are undefined/empty until a
-        // vessel template with real limits has actually been applied.
-        loadZones: deck.loadZones,
-        unit: deck.unit,
-        maxTotalWeightKg: deck.maxDeckCargoT !== undefined ? deck.maxDeckCargoT * 1000 : undefined,
-      },
-      platform ? 1 : 10,
-      pinsByTrip
-    )
-  }, [platform, deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, deck.loadZones, deck.unit, deck.maxDeckCargoT, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+        globalRotation,
+        separationRulesInUnit,
+      }),
+    [mode, width, length, gap, boardOffset, clearance, outline, restrictionZones, loadZones, unit, maxDeckCargoT, objectKind, items, manualPlacements, pinnedPlacementsByTrip, sortStrategy, globalRotation, separationRulesInUnit]
+  )
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a
-  // setState-in-effect render cascade for something purely derived.
-  // packMultiTrip also keeps the trip on which it stopped making progress:
-  // with cargo that can't fit even an empty deck, that's a last tab with
-  // nothing on it. It carries no cargo, so it isn't shown as a trip — its
-  // shortfall still reports what fits nowhere (below).
-  const lastTrip = trips[trips.length - 1]
-  const hasEmptyTrailingTrip =
-    mode === 'auto' &&
-    trips.length > 1 &&
-    lastTrip.placedCount === 0 &&
-    (pinnedPlacementsByTrip[trips.length - 1] ?? []).length === 0
-  const shownTrips = hasEmptyTrailingTrip ? trips.slice(0, -1) : trips
+  // setState-in-effect render cascade for something purely derived. The
+  // empty last trip packMultiTrip keeps isn't shown (shownTripsOf).
+  const { shownTrips, lastTrip, hasEmptyTrailingTrip } = shownTripsOf(trips, mode, pinnedPlacementsByTrip)
   const clampedTripIndex = Math.max(0, Math.min(activeTripIndex, shownTrips.length - 1))
   const result = shownTrips[clampedTripIndex] ?? shownTrips[0]
   return { activeTripIndex, setActiveTripIndex, trips, lastTrip, hasEmptyTrailingTrip, shownTrips, clampedTripIndex, result }

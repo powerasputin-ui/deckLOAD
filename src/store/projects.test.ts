@@ -320,6 +320,9 @@ describe('projects store', () => {
       },
       items: [
         { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, category: 'hazard' },
+        // Taken over from a vessel's trip: the source kept whole, or not at all.
+        { id: 'i2', name: 'С судна', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, from: { projectId: 'v', projectName: 'Нептун', trip: 1 } },
+        { id: 'i3', name: 'Битый', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, from: { projectId: 'v', projectName: 'Нептун', trip: -1 } as never },
       ],
       manualPlacements: [],
       pinnedPlacementsByTrip: {},
@@ -346,6 +349,8 @@ describe('projects store', () => {
       { id: 'z4', x: 11, y: 1, width: 2, length: 2, maxLoadPerArea: 4 },
     ])
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
+    expect(reloaded.items.find((it) => it.id === 'i2')?.from).toEqual({ projectId: 'v', projectName: 'Нептун', trip: 1 })
+    expect(reloaded.items.find((it) => it.id === 'i3')?.from).toBeUndefined()
     expect(reloaded.deck.powerSockets).toEqual([{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }])
     expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }])
     expect(reloaded.deck.maxDeckCargoT).toBe(2550)

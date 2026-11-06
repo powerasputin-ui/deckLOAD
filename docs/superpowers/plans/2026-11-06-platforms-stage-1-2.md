@@ -59,3 +59,13 @@
 | Q. Уровень зоны | 12.1, 12.2 | `packing.ts` (`LoadZone.elevationM`), `store/projects.ts`, `sections/vessel/LoadZonesBlock.tsx` | хранение: уровень сохраняется, 0 и мусор — нет |
 | R. Расчёты | 12.3 | `stability.ts` (`deckLevels`, `levelAt`, `placementLevel`, `lowestDeckLevel`), `stabilityConditions.ts` (VCG, лёд), `planFacts.ts`, `semiSubPlan.ts`, `jackUpPlan.ts` | unit: самая маленькая зона с уровнем, центроид формы, единицы палубы; GM судна с площадкой и нишей; лёд на верху штабеля; приход и отгрузка ППБУ и СПБУ |
 | S. Отображение | 12.4 | `deckDrawing.ts` (`zoneLevelSuffix`), `DeckVisualization.tsx`, `planDrawing.ts`, `Deck3DView.tsx`, `page.tsx` | подпись зоны в PDF; e2e: GM в строке состояния при +3, −2, ниже киля и пусто |
+
+## Этап 5: груз с судна на платформу
+
+Спека, раздел 13.
+
+| Группа | Пункты спеки | Основные файлы | Тесты |
+|---|---|---|---|
+| T. Рейсы без экрана | 13.1 | новый `lib/trips.ts` (из `hooks/useTrips.ts`), `lib/itemUnits.ts` (общий пересчёт единиц с `setUnit`) | unit: рейсы, пустой последний рейс, правила разноса в единицах палубы |
+| U. Перенос | 13.1, 13.2 | новый `lib/cargoTransfer.ts`; `packing.ts` (`CargoItem.from`), `store/calculator.ts` (`takeOverCargo`, копия без источника), `store/projects.ts` | unit: источники, рейсы 9 + 3, смешанный штабель, единицы; замена на месте со штабелями; хранение источника |
+| V. Панель | 13.3 | новый `cargo/CargoTakeOver.tsx`, `sections/CargoSection.tsx`, `cargo/CargoList.tsx` | компонент: нет расчётов, рейс, снятая отметка, предупреждение о замене; e2e: демо-судно → ППБУ, повторный перенос не удваивает |

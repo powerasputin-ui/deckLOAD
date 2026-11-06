@@ -1629,6 +1629,38 @@ describe('calculator store', () => {
   // Stage 4, group A (spec 8.2): a new rule of placement lays the cargo out
   // afresh — what holds an applied variant on the deck goes, what the user
   // fixed stays.
+  // Spec 2026-11-06, 13: a vessel's trip, its cargo taken over.
+  describe('takeOverCargo', () => {
+    const from = { projectId: 'vessel', projectName: 'Нептун', trip: 0 }
+    const cargo = (id: string, name: string, quantity: number, src?: typeof from) => ({ id, name, width: 1, length: 1, height: 1, quantity, color: '#000', allowRotation: true, ...(src ? { from: src } : {}) })
+
+    it('adds the trip\'s cargo at the end the first time', () => {
+      useCalculator.setState({ items: [cargo('own', 'Своё', 1)] })
+      useCalculator.getState().takeOverCargo([cargo('n1', 'Ящик', 3, from)], [])
+      expect(useCalculator.getState().items.map((it) => it.id)).toEqual(['own', 'n1'])
+    })
+
+    it('taken again, replaces what the trip brought where it stood, with its stacks; other cargo keeps its place', () => {
+      const other = { ...from, trip: 1 }
+      useCalculator.setState({
+        items: [cargo('own', 'Своё', 1), cargo('o1', 'Ящик', 3, from), cargo('o2', 'Бочка', 2, from), cargo('t2', 'Трубы', 5, other), cargo('own2', 'Ещё', 1)],
+        pinnedPlacementsByTrip: { 0: [{ id: 'p1', itemId: 'o1', name: 'Ящик', color: '#000', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false }, { id: 'p2', itemId: 'own', name: 'Своё', color: '#000', x: 2, y: 0, width: 1, length: 1, layers: 1, rotated: false }] },
+        selectedPinIds: ['p1', 'p2'],
+      })
+      useCalculator.getState().takeOverCargo([cargo('n1', 'Ящик', 4, from)], ['o1', 'o2', 'gone'])
+      const s = useCalculator.getState()
+      expect(s.items.map((it) => it.id)).toEqual(['own', 'n1', 't2', 'own2'])
+      expect(s.pinnedPlacementsByTrip[0].map((p) => p.id)).toEqual(['p2'])
+      expect(s.selectedPinIds).toEqual(['p2'])
+    })
+
+    it('a copy of taken cargo is the user\'s own', () => {
+      useCalculator.setState({ items: [cargo('o1', 'Ящик', 3, from)] })
+      useCalculator.getState().duplicateItem('o1')
+      expect(useCalculator.getState().items[1].from).toBeUndefined()
+    })
+  })
+
   describe('dropPackerLayout', () => {
     const pin = (id: string, extra: Record<string, unknown> = {}) => ({
       id, itemId: 'a', name: 'A', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, color: '#000', ...extra,

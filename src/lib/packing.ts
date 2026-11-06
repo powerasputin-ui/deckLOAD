@@ -101,6 +101,18 @@ export interface CargoItem {
   // with the supply vessel (unset), or leaving with it. A vessel's cargo
   // ignores it.
   platformStatus?: PlatformStatus
+  // Taken over from another calculation (spec 2026-11-06, 13): a vessel's
+  // trip, its cargo onto a platform. Taking the same trip over again
+  // replaces what it brought; a copy of the cargo is the user's own.
+  from?: CargoSource
+}
+
+// Where a cargo was taken over from: the calculation (its id, and its name
+// at the time, for the list) and its trip, from 0.
+export interface CargoSource {
+  projectId: string
+  projectName: string
+  trip: number
 }
 
 // Overrides the stability calculator's geometric default for a cargo unit's

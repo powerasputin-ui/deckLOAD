@@ -53,6 +53,7 @@ import {
   weightsInState,
 } from '@/lib/stability'
 import { type Unit, UNIT_LABEL, convertLength } from '@/lib/units'
+import { convStabilityOverride, itemWithConv } from '@/lib/itemUnits'
 import { keptByVariants } from '@/lib/variantKeep'
 import { deckForVessel } from '@/lib/vesselDeck'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
@@ -297,6 +298,10 @@ interface CalculatorState {
   updateItem: (id: string, patch: Partial<CargoItem>) => void
   removeItem: (id: string) => void
   duplicateItem: (id: string) => void
+  // Cargo taken over from another calculation's trip (spec 2026-11-06, 13):
+  // the cargo it replaces (what the trip brought before) goes, its stacks
+  // with it, and the new cargo takes its place in the list.
+  takeOverCargo: (items: CargoItem[], replaceIds: readonly string[]) => void
   clearItems: () => void
   setSortStrategy: (s: SortStrategy) => void
   toggleGlobalRotation: () => void
@@ -465,23 +470,8 @@ function convClearance(
   return { top: conv(m.top), right: conv(m.right), bottom: conv(m.bottom), left: conv(m.left) }
 }
 
-// stabilityOverride.vcgAboveDeckM/tcgOffsetM/lcgOffsetM are stored in the
-// deck's display unit, same as every other length here (see stability.ts's
-// buildLoadingConditionFromPlacements, which converts them via toMeters the
-// same way it converts placement x/y/width/length) — setUnit used to leave
-// them unconverted, silently corrupting a VCG/TCG/LCG override by whatever
-// factor separates the old and new units the next time it was used.
-function convStabilityOverride(
-  o: StabilityOverride | undefined,
-  conv: (v: number) => number
-): StabilityOverride | undefined {
-  if (!o) return undefined
-  return {
-    vcgAboveDeckM: o.vcgAboveDeckM === undefined ? undefined : conv(o.vcgAboveDeckM),
-    tcgOffsetM: o.tcgOffsetM === undefined ? undefined : conv(o.tcgOffsetM),
-    lcgOffsetM: o.lcgOffsetM === undefined ? undefined : conv(o.lcgOffsetM),
-  }
-}
+// convStabilityOverride and itemWithConv (src/lib/itemUnits.ts) convert a
+// cargo's own figures; the placements' are converted below the same way.
 
 // Drops lashing points whose placementId no longer matches any existing
 // manual or pinned placement (across every trip). Without this, deleting,
@@ -1260,14 +1250,7 @@ export const useCalculator = create<CalculatorState>()(
             length: conv(s.deck.backgroundImageRect.length),
           },
         },
-        items: s.items.map((it) => ({
-          ...it,
-          width: conv(it.width),
-          length: conv(it.length),
-          height: conv(it.height),
-          outline: it.outline?.map((p) => ({ x: conv(p.x), y: conv(p.y) })),
-          stabilityOverride: convStabilityOverride(it.stabilityOverride, conv),
-        })),
+        items: s.items.map((it) => itemWithConv(it, conv)),
         // Convert coordinates/dimensions of all existing placements too
         manualPlacements: s.manualPlacements.map((m) => ({
           ...m,
@@ -1639,11 +1622,37 @@ export const useCalculator = create<CalculatorState>()(
         ),
       }
     }),
+  takeOverCargo: (incoming, replaceIds) =>
+    set((s) => {
+      const replaced = new Set(replaceIds.filter((id) => s.items.some((it) => it.id === id)))
+      let manualPlacements = s.manualPlacements
+      let pinnedPlacementsByTrip = s.pinnedPlacementsByTrip
+      for (const id of replaced) {
+        manualPlacements = removeItemFromPlacements(manualPlacements, id, s.items)
+        pinnedPlacementsByTrip = Object.fromEntries(Object.entries(pinnedPlacementsByTrip).map(([trip, list]) => [trip, removeItemFromPlacements(list, id, s.items)]))
+      }
+      // The new cargo where the trip's old cargo began, so the numbers of
+      // the rest stay; at the end when the trip is taken for the first time.
+      // Everything before the first replaced cargo stays, so that's where.
+      const at = s.items.findIndex((it) => replaced.has(it.id))
+      const kept = s.items.filter((it) => !replaced.has(it.id))
+      const before = at < 0 ? kept.length : at
+      const allPins = Object.values(pinnedPlacementsByTrip).flat()
+      return {
+        items: [...kept.slice(0, before), ...incoming, ...kept.slice(before)],
+        manualPlacements,
+        pinnedPlacementsByTrip,
+        deck: pruneOrphanLashingPoints(s.deck, manualPlacements, pinnedPlacementsByTrip),
+        selectedPinIds: s.selectedPinIds.filter((sid) => allPins.some((p) => p.id === sid)),
+        selectedManualIds: s.selectedManualIds.filter((mid) => manualPlacements.some((m) => m.id === mid)),
+      }
+    }),
   duplicateItem: (id) =>
     set((s) => {
       const it = s.items.find((x) => x.id === id)
       if (!it) return s
-      return { items: [...s.items, { ...it, id: uuid(), name: `${it.name} (копия)` }] }
+      // A copy is the user's own: taking the trip over again leaves it.
+      return { items: [...s.items, { ...it, id: uuid(), name: `${it.name} (копия)`, from: undefined }] }
     }),
   clearItems: () =>
     set((s) => ({

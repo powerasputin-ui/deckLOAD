@@ -201,7 +201,17 @@ export function CargoList({
                     <QuantityField item={it} onCommit={(quantity) => updateItem(it.id, { quantity })} />
                   </p>
                 )}
-                {platform && <PlatformStatusSelect item={it} onChange={(platformStatus) => updateItem(it.id, { platformStatus })} className="mt-0.5" />}
+                {platform && (
+                  <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                    <PlatformStatusSelect item={it} onChange={(platformStatus) => updateItem(it.id, { platformStatus })} />
+                    {/* Taken over from a vessel's trip (spec 2026-11-06, 13). */}
+                    {it.from && (
+                      <span className="min-w-0 truncate text-xs text-ink-2" data-testid="cargo-source" title={`с «${it.from.projectName}», рейс ${it.from.trip + 1}`}>
+                        с «{it.from.projectName}», рейс {it.from.trip + 1}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {leaving ? (
                 <span className={cn(ROW_BUTTON, 'inline-flex items-center justify-center text-center text-xs leading-tight text-ink-2')}>не на плане</span>

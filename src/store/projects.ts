@@ -202,6 +202,16 @@ function normalizeOutline(value: unknown): { x: number; y: number }[] | undefine
 
 // Coerce persisted load zones — dropped entirely before this fix, so old
 // saved projects simply won't have this field (Array.isArray guards that).
+// Where a cargo was taken over from (spec 2026-11-06, 13): kept whole or
+// not at all.
+function normalizeCargoSource(value: unknown): CargoItem['from'] {
+  if (typeof value !== 'object' || value === null) return undefined
+  const v = value as Record<string, unknown>
+  if (typeof v.projectId !== 'string' || v.projectId === '' || typeof v.projectName !== 'string') return undefined
+  if (typeof v.trip !== 'number' || !Number.isInteger(v.trip) || v.trip < 0) return undefined
+  return { projectId: v.projectId, projectName: v.projectName, trip: v.trip }
+}
+
 function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
   if (!Array.isArray(value)) return undefined
   const zones = value
@@ -1143,6 +1153,7 @@ export function normalizeProject(p: Partial<Project>): Project {
         pipeInnerDiameterMm: toOptionalPositive((it as { pipeInnerDiameterMm?: unknown }).pipeInnerDiameterMm),
         trappedWaterT: toOptionalNonNegative((it as { trappedWaterT?: unknown }).trappedWaterT),
         platformStatus: isPlatformStatus((it as { platformStatus?: unknown }).platformStatus) ? ((it as { platformStatus?: PlatformStatus }).platformStatus) : undefined,
+        from: normalizeCargoSource((it as { from?: unknown }).from),
       }))
     : []
   const nestWater = moveNestWaterOutOfWeight(items)

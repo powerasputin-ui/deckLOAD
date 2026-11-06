@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { CargoSection } from './CargoSection'
 import { clearCalculatorHistory, useCalculator } from '@/store/calculator'
@@ -39,6 +39,10 @@ function section(props: Partial<Parameters<typeof CargoSection>[0]> = {}) {
 }
 
 const items = () => useCalculator.getState().items
+const cleanupAndReset = (patch: Parameters<typeof reset>[0]) => {
+  cleanup()
+  reset(patch)
+}
 const catalogEntry = (name: RegExp) => within(screen.getByRole('region', { name: 'Каталог грузов' })).getAllByRole('button', { name })[0]
 
 describe('CargoSection', () => {
@@ -48,6 +52,18 @@ describe('CargoSection', () => {
   })
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  // Spec 2026-11-06, 13: a platform takes a vessel's trip as «приход».
+  it('offers «С судна» on a platform only, and opens it above the list', () => {
+    section()
+    expect(screen.queryByRole('button', { name: 'С судна' })).toBeNull()
+    cleanupAndReset({ deck: { width: 8, length: 20, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0, objectKind: 'semi-sub' } })
+    section()
+    expect(screen.getByText('Добавьте груз из каталога, свой или с судна')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'С судна' }))
+    expect(screen.getByRole('button', { name: 'С судна' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('region', { name: 'Груз с судна' })).toBeInTheDocument()
   })
 
   it('an empty list says how to start, with the catalogue and the form', () => {
