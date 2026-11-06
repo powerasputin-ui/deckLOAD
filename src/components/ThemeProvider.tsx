@@ -65,5 +65,15 @@ export function useTheme(): ThemeContextValue {
 // the system's when the user has picked one.
 export function ThemedToaster() {
   const { resolved } = useTheme()
-  return <Toaster position="bottom-right" richColors closeButton theme={resolved} />
+  // Its buttons no smaller than 24 px (WCAG 2.2, 2.5.8), Sonner's are 20 and
+  // 24 — and a toast behind another is drawn about 5% smaller, so a margin.
+  return (
+    <Toaster
+      position="bottom-right"
+      richColors
+      closeButton
+      theme={resolved}
+      toastOptions={{ classNames: { closeButton: 'size-[26px]!', actionButton: 'h-7!', cancelButton: 'h-7!' } }}
+    />
+  )
 }

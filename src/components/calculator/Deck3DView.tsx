@@ -466,6 +466,11 @@ export default function Deck3DView({
     [transposed]
   )
   const planRef = useRef<THREE.Group>(null)
+  // The top of the tallest stack (the side names stand that high).
+  const tallest = useMemo(
+    () => boxes.reduce((top, b) => Math.max(top, b.y + Math.max(b.h ?? 0, 2 * (b.radius ?? 0), b.cylLen ?? 0, b.depth ?? 0) / 2), 0),
+    [boxes]
+  )
   const drawnWidth = transposed ? deckLength : deckWidth
   const drawnDepth = transposed ? deckWidth : deckLength
   // «Вписать» brings the camera back to the whole deck.
@@ -626,6 +631,7 @@ export default function Deck3DView({
           sides={hullSideEdges(deckWidth, deckLength, deckForwardIsPositiveY)}
           width={drawnWidth}
           depth={drawnDepth}
+          lift={tallest}
           container={containerRef}
         />
 
@@ -644,9 +650,16 @@ export default function Deck3DView({
 // Which side of the hull each edge of the deck is, named as 2D's drawing
 // frame names them (spec 6.1): beside the middle of each edge, the names on
 // the left and right edges turned to read upwards. They stay level however
-// the camera turns, on a backing of the page's colour where a stack rises
-// behind them. They go into the view's own container: left to find one
-// itself, drei moves them once the canvas takes events, and loses one.
+// the camera turns, on a backing of the page's colour. They go into the
+// view's own container: left to find one itself, drei moves them once the
+// canvas takes events, and loses one.
+//
+// The far and side names stand as high as the tallest stack (`lift`): at
+// deck level a stack by that edge rose over them on screen (audit
+// 2026-11-05: «ЛЕВЫЙ БОРТ» on a container's roof, «КОРМА» on its side).
+// From the camera's side of the deck, the higher and further a point, the
+// further out it is drawn, so at that height the name clears every stack.
+// The near name stays at deck level: what stands there rises away from it.
 const SIDE_SHIFT: Record<DrawingEdge, string> = {
   top: 'translate(-50%, -50%) translate(0, -14px)',
   bottom: 'translate(-50%, -50%) translate(0, 14px)',
@@ -658,15 +671,18 @@ function DeckSides({
   sides,
   width,
   depth,
+  lift,
   container,
 }: {
   sides: Record<HullSide, DrawingEdge>
   width: number
   depth: number
+  // The tallest stack's top above the deck, in the scene's units.
+  lift: number
   container: React.RefObject<HTMLDivElement | null>
 }) {
   const at = (edge: DrawingEdge): [number, number, number] =>
-    edge === 'top' ? [0, 0, -depth / 2] : edge === 'bottom' ? [0, 0, depth / 2] : edge === 'left' ? [-width / 2, 0, 0] : [width / 2, 0, 0]
+    edge === 'top' ? [0, lift, -depth / 2] : edge === 'bottom' ? [0, 0, depth / 2] : edge === 'left' ? [-width / 2, lift, 0] : [width / 2, lift, 0]
   return (Object.keys(sides) as HullSide[]).map((side) => {
     const edge = sides[side]
     return (

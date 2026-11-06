@@ -39,7 +39,7 @@ export function EmptyDeck({
         <button
           type="button"
           onClick={onOpenExample}
-          className="inline-flex items-center gap-1 rounded px-1 text-sm text-ink-2 underline underline-offset-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-7 items-center gap-1 rounded px-1 text-sm text-ink-2 underline underline-offset-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
           Открыть пример

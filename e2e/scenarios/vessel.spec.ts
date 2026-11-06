@@ -57,14 +57,14 @@ test('Сценарий 2: размеры, отступы, предельная �
   await setNumber(page.getByLabel('Ширина'), '10')
   await expect(deck(page).getByText(/^10 м$/)).toBeVisible()
 
-  // A 1 m height limit stacks a 0.14 m pallet 7 high at most.
-  await setNumber(page.getByLabel('Предельная высота штабеля'), '1')
+  // A 3 m height limit stacks a 1.5 m pallet (the catalogue's, loaded) 2 high at most.
+  await setNumber(page.getByLabel('Предельная высота штабеля'), '3')
   const pallet = deck(page).locator('g[data-cargo-name="Паллета EUR"]').first()
   await expect(async () => {
     await pallet.click({ force: true })
     await expect(page.getByRole('complementary', { name: 'Инспектор' })).toBeVisible({ timeout: 1000 })
   }).toPass({ timeout: 10000 })
-  await expect(page.getByRole('complementary', { name: 'Инспектор' }).getByText('макс. 7 по высоте')).toBeVisible()
+  await expect(page.getByRole('complementary', { name: 'Инспектор' }).getByText('макс. 2 по высоте')).toBeVisible()
   await page.keyboard.press('Escape')
 
   // Feet convert the fields and the cargo's sizes, in the cargo table.
