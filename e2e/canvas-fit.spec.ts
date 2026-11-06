@@ -76,11 +76,12 @@ test('a stamp lands where the deck is clicked and a drag moves it as far as the 
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
-  // In manual mode a cargo from the catalogue is armed for a click at once
-  // (in auto mode the packer puts it on the deck itself).
-  await page.getByRole('radio', { name: 'Ручной' }).click()
 
   for (const panel of ['open', 'closed'] as const) {
+    // In manual mode a cargo from the catalogue is armed for a click at once
+    // (in auto mode the packer puts it on the deck itself). «Очистить
+    // расчёт» at the end of a round goes back to auto, so every round asks.
+    await page.getByRole('radio', { name: 'Ручной' }).click()
     await chooseFromCatalog(page, 'Контейнер 20ft')
     await armCargo(page, 'Контейнер 20ft')
     // With the panel closed the canvas is wider; «Вписать» fits the deck to it.

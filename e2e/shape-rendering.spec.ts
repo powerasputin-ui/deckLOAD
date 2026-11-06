@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { chooseFromCatalog, clearCalculation, setCargoTotal, stackTools } from './helpers'
+import { chooseFromCatalog, clearCalculation, openSection, setCargoTotal, setNumber, stackTools } from './helpers'
 
 test.describe('Non-rectangular cargo shape rendering', () => {
   test('a circle from the catalogue keeps its shape (not a plain box) in manual mode', async ({ page }) => {
@@ -32,6 +32,9 @@ test.describe('Non-rectangular cargo shape rendering', () => {
   test('a pile of pipe has square ends, hairlines between its pipes and its Ø on a plaque', async ({ page }) => {
     await page.goto('/')
     await clearCalculation(page)
+    // A height limit lets the pipes pile up (unset, each lies alone).
+    await openSection(page, 'Судно')
+    await setNumber(page.getByLabel('Предельная высота штабеля'), '3')
     await chooseFromCatalog(page, 'Обсадная труба')
     await setCargoTotal(page, 'Обсадная труба', '8')
     const pile = page.locator('svg[data-deck-plan] g[data-cargo-name="Обсадная труба"]').first()
