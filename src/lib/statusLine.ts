@@ -3,12 +3,15 @@
 // One place for the numbers that used to repeat across the screen. Each item
 // leads to the section where it is set or explained.
 import type { Check } from './checks'
+import type { SemiSubResult } from './semiSub'
 import { fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
 export interface StatusLineInput {
   // A platform's plan: one deck after the supply run, no trips.
   platform?: boolean
+  // A semi-submersible's VDL and KG after the run (semiSub.ts).
+  semiSub?: SemiSubResult
   // Current trip.
   utilization: number
   weightKg: number
@@ -29,7 +32,7 @@ export interface StatusLineInput {
 }
 
 export interface StatusItem {
-  id: 'load' | 'weight' | 'units' | 'trips' | 'gm' | 'errors' | 'warnings'
+  id: 'load' | 'weight' | 'units' | 'trips' | 'gm' | 'vdl' | 'kg' | 'errors' | 'warnings'
   text: string
   title: string
   // For a screen reader, when the text alone is a symbol.
@@ -95,6 +98,31 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
     })
   } else if (s.gmMissing) {
     items.push({ id: 'gm', text: 'GM — ⚠', title: s.gmMissing, label: `GM не посчитана: ${s.gmMissing.toLowerCase()}`, target: 'stability', tone: 'warn' })
+  }
+
+  // A semi-submersible's VDL and KG after the run — an estimate for
+  // planning; the unit's computer says the last word.
+  const semi = s.semiSub
+  if (semi?.vdlAfterT !== undefined) {
+    const vdl = semi.checks.find((c) => c.id === 'semi-vdl')
+    const max = semi.vdlMaxOperatingT
+    items.push({
+      id: 'vdl',
+      text: `VDL ${Math.round(semi.vdlAfterT)}${max !== undefined ? ` из ${Math.round(max)}` : ''} т`,
+      title: 'VDL после рейса и предел рабочего режима — оценка для планирования',
+      target: 'vessel',
+      tone: vdl?.status === 'error' ? 'danger' : undefined,
+    })
+  }
+  if (semi?.kgOperatingM !== undefined) {
+    const kg = semi.checks.find((c) => c.id === 'semi-kg')
+    items.push({
+      id: 'kg',
+      text: `KG ${metres(semi.kgOperatingM)}${semi.kgOperatingMaxM !== undefined ? ` из ${metres(semi.kgOperatingMaxM)}` : ''} м`,
+      title: 'KG после рейса и допустимый в работе — оценка для планирования',
+      target: 'vessel',
+      tone: kg?.status === 'error' ? 'danger' : undefined,
+    })
   }
 
   // «✕ 1 · ⚠ 2»: shown as far as there is any.

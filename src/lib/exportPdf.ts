@@ -25,6 +25,7 @@ import { buildPlanDrawing, type PlanDrawing } from './planDrawing'
 import { drawPlanOnPdf } from './planToPdf'
 import { appliedVessel } from './vesselLibrary'
 import { isPlatform, OBJECT_KIND_LABEL, objectKindOf, PLATFORM_STATUS_LABEL, platformStatusOf, staysOnDeck } from './objectKind'
+import type { SemiSubResult } from './semiSub'
 
 // The plan for the vessel (spec 11): A4 landscape, a sheet per trip — the
 // header, the deck drawn from the calculation, the trip's cargo, its summary
@@ -220,6 +221,44 @@ export interface StabilityPdfBlock {
   // The verdict of each row, for its colour.
   verdicts: StabilityVerdict[]
   notes: string[]
+  // The column the verdict is in; unset — the last.
+  verdictColumn?: number
+}
+
+// A semi-submersible's block (spec 2026-11-06, 8): VDL and KG after the run,
+// in operation and on the way to survival, against the manual's limits — an
+// estimate for planning, and said so. A mode not judged for lack of data
+// reads «не проверено», in the warning's colour.
+export function buildSemiSubPdfBlock(r: SemiSubResult | undefined): StabilityPdfBlock {
+  const title = 'ППБУ: VDL и KG — оценка для планирования'
+  const head = ['Режим', 'VDL, т', 'Предел VDL, т', 'KG, м', 'Допустимый KG, м', 'Итог']
+  if (!r) return { title, only: 'ППБУ: VDL и KG не рассчитывались', head, rows: [], verdicts: [], notes: [] }
+  const t = (v: number | undefined) => (v === undefined ? '—' : fmtNumber(Math.round(v)))
+  const m = (v: number | undefined) => (v === undefined ? '—' : v.toFixed(2))
+  const verdict = (vdl: number | undefined, vdlMax: number | undefined, kg: number | undefined, kgMax: number | undefined): StabilityVerdict => {
+    if ((vdl !== undefined && vdlMax !== undefined && vdl > vdlMax + 1e-9) || (kg !== undefined && kgMax !== undefined && kg > kgMax + 1e-9)) return 'error'
+    return vdl !== undefined && vdlMax !== undefined && kg !== undefined && kgMax !== undefined ? 'ok' : 'warn'
+  }
+  const WORD: Record<StabilityVerdict, string> = { ok: 'в пределах', warn: 'не проверено', error: 'превышено' }
+  const modes = [
+    { label: 'В работе', vdlMax: r.vdlMaxOperatingT, kg: r.kgOperatingM, kgMax: r.kgOperatingMaxM },
+    { label: 'При уходе в шторм', vdlMax: r.vdlMaxSurvivalT, kg: r.kgSurvivalM, kgMax: r.kgSurvivalMaxM },
+  ]
+  const verdicts = modes.map((x) => verdict(r.vdlAfterT, x.vdlMax, x.kg, x.kgMax))
+  const ballast = r.checks.find((c) => c.id === 'semi-ballast')
+  return {
+    title,
+    head,
+    rows: modes.map((x, i) => [x.label, t(r.vdlAfterT), t(x.vdlMax), m(x.kg), m(x.kgMax), WORD[verdicts[i]]]),
+    verdicts,
+    verdictColumn: 5,
+    notes: [
+      `Приход − отгрузка: ${t(r.netT)} т. Осадка держится балластом; при уходе в шторм балласт откачивается до штормовой осадки, груз не снимается.`,
+      ...(ballast ? [`Балласт: ${ballast.detail}.`] : []),
+      'Упрощено: поправка на свободные поверхности как в суточном отчёте, балласт с одной высоты, без отсоединения райзера и изменения натяжения якорей.',
+      'Оценка для планирования. Окончательно считает бортовой компьютер установки.',
+    ],
+  }
 }
 
 const STABILITY_HEAD = ['Состояние', 'Водоизм., т', 'Осадка ср. / нос / корма, м', 'Крен, °', 'Дифферент, м', 'GM, м', 'Предел GM, м', 'Вода в трубах, т', 'Лёд, т', 'Итог']
@@ -499,10 +538,12 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
       },
       area: `Загрузка площади: ${Math.round(t.utilization * 100)}% — занято ${fmtNumber(t.usedArea)} из ${fmtNumber(t.totalArea)} ${unit}²`,
       checks: tripChecks(input.facts, i).map((c) => ({ title: c.title, status: c.status, word: CHECK_STATUS_WORD[c.status], detail: c.detail })),
-      stability: platform
+      stability: kind === 'semi-sub'
+        ? buildSemiSubPdfBlock(input.facts.semiSub)
+        : platform
         ? {
             title: 'Остойчивость',
-            only: kind === 'fixed' ? 'Стационарная платформа: остойчивость не считается' : 'ППБУ: VDL и KG по данным установки не рассчитывались',
+            only: 'Стационарная платформа: остойчивость не считается',
             head: STABILITY_HEAD,
             rows: [],
             verdicts: [],
@@ -696,9 +737,9 @@ export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string
         body: stability.rows,
         pageBreak: 'avoid',
         styles: { ...tableStyles.styles, fontSize: 8 },
-        columnStyles: { 0: { fontStyle: 'bold' }, 9: { fontStyle: 'bold' } },
+        columnStyles: { 0: { fontStyle: 'bold' }, [stability.verdictColumn ?? stability.head.length - 1]: { fontStyle: 'bold' } },
         didParseCell: (data) => {
-          if (data.section === 'body' && data.column.index === 9) {
+          if (data.section === 'body' && data.column.index === (stability.verdictColumn ?? stability.head.length - 1)) {
             const verdict = stability.verdicts[data.row.index]
             data.cell.styles.textColor = verdict === 'error' ? DANGER : verdict === 'warn' ? WARN : OK
           }

@@ -5,6 +5,7 @@
 // calculated here; the same functions the deck, the sidebar and the PDF use
 // are run over the plan.
 import { isPlatform } from './objectKind'
+import { semiSubForPlan } from './semiSubPlan'
 import type { DeckConfig } from '@/store/calculator'
 import {
   assessLashingRequirement,
@@ -40,6 +41,9 @@ export interface PlanInput {
   pinnedPlacementsByTrip: Readonly<Record<number, readonly PinnedPlacement[]>>
   manualPlacements: readonly ManualPlacement[]
   items: CargoItem[]
+  // A platform's whole list, its cargo leaving too (`items` is what stands
+  // on its deck). Unset — `items`.
+  allItems?: CargoItem[]
   deck: DeckConfig
   // In the deck's unit, like the placements.
   separationRules: readonly SeparationRule[]
@@ -79,6 +83,9 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
   return {
     mode,
     platform: isPlatform(deck),
+    // A platform has one deck: the first trip is all of it. Cargo leaving is
+    // in no trip — it comes from the whole list.
+    semiSub: semiSubForPlan(deck, trips[0], p.allItems ?? items),
     totalUnits: items.reduce((n, it) => n + Math.max(0, it.quantity), 0),
     // Each trip passes on what it couldn't place, so what the last one
     // leaves fits nowhere; in manual mode it is what isn't placed yet.

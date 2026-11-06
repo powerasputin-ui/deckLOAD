@@ -61,6 +61,22 @@ describe('buildChecks', () => {
     expect(check(f, 'deck-weight')).toMatchObject({ status: 'ok', detail: '16.6 из 300 т' })
   })
 
+  it('a semi-submersible\'s VDL, KG and ballast stand in the list, with their settings at the daily report', () => {
+    const semiSub = {
+      netT: 500,
+      momentTm: 20_000,
+      checks: [
+        { id: 'semi-vdl' as const, title: 'VDL', status: 'ok' as const, detail: 'в работе 4500 т при допустимом 5000 т' },
+        { id: 'semi-kg' as const, title: 'KG', status: 'error' as const, detail: 'в шторм 22.58 м при допустимом 22.50 м' },
+        { id: 'semi-ballast' as const, title: 'Балласт', status: 'none' as const, detail: 'Балласт на борту не указан' },
+      ],
+    }
+    const list = buildChecks(facts({ platform: true, semiSub }))
+    expect(list.map((c) => c.title)).toEqual(['Вместимость', 'Нагрузка на палубу', 'Зоны т/м²', 'Сепарация', 'VDL', 'KG', 'Балласт'])
+    expect(check(facts({ platform: true, semiSub }), 'semi-kg')).toMatchObject({ status: 'error', target: 'vessel', targetStep: 'semi-report' })
+    expect(checkCounts(list)).toEqual({ errors: 1, warnings: 0 })
+  })
+
   describe('capacity', () => {
     it('is fine when everything is placed, naming the trips', () => {
       expect(check(facts(), 'capacity')).toMatchObject({ status: 'ok', detail: 'Всё размещено' })

@@ -13,6 +13,7 @@
 import type { VesselStabilityData, DeckShipFrameInput, VariableWeightItem } from './stability'
 import type { LoadZone, RestrictionZone } from './packing'
 import type { ObjectKind } from './objectKind'
+import type { SemiSubData } from './semiSub'
 
 export interface VesselTemplate {
   id: string
@@ -20,6 +21,10 @@ export interface VesselTemplate {
   // A platform the user saved (objectKind.ts): it goes only into a
   // calculation of its own kind. Unset — a vessel, as every built-in one.
   objectKind?: ObjectKind
+  // A semi-submersible's own data from its operating manual (semiSub.ts):
+  // its modes and the ballast's height. The daily report and the run's
+  // transfers belong to a calculation, not to the unit.
+  semiSub?: Pick<SemiSubData, 'operating' | 'survival' | 'ballastVcgM'>
   // Non-rectangular real deck silhouette (from a GA drawing, say) — deck-
   // local coords in the same [0,width]x[0,length] frame as DeckConfig.outline.
   // Undefined = plain rectangle (today's default for every template that

@@ -28,6 +28,9 @@ export function deckForVessel(tpl: VesselTemplate, current: DeckConfig): DeckCon
     // the user saved (the library offers an entry only to a calculation of
     // its own kind).
     ...(tpl.objectKind && tpl.objectKind !== 'vessel' ? { objectKind: tpl.objectKind } : {}),
+    // A semi-submersible's modes and ballast come with it; the daily report
+    // is the calculation's own, to be entered for the day.
+    ...(tpl.semiSub ? { semiSub: { ...tpl.semiSub, report: {}, transfers: [] } } : {}),
     unit: current.unit,
     gap: current.gap,
     boardOffset: current.boardOffset,

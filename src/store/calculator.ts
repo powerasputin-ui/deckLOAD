@@ -37,6 +37,7 @@ import {
 } from '@/lib/cargoValidation'
 import type { AppliedVessel } from '@/lib/vesselLibrary'
 import type { ObjectKind } from '@/lib/objectKind'
+import type { SemiSubData } from '@/lib/semiSub'
 import {
   DEFAULT_VESSEL_PARTICULARS,
   type VesselStabilityData,
@@ -92,6 +93,10 @@ export interface DeckConfig {
   // A platform's own name, as its card gives it (a vessel's comes from the
   // library). Unset — the library entry applied, if any, names it.
   platformName?: string
+  // A semi-submersible's data (spec 2026-11-06, 7): its modes from the
+  // operating manual, the ballast's height, the daily report and the run's
+  // other transfers. The deck's height over the baseline is shipFrame's.
+  semiSub?: SemiSubData
   width: number
   length: number
   unit: Unit

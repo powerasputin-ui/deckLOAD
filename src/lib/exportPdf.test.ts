@@ -17,6 +17,7 @@ import {
   layOutPlanPdf,
   tripChecks,
   type PlanPdfInput,
+  buildSemiSubPdfBlock,
 } from './exportPdf'
 import { decomposePipePyramid, packMultiTrip, type CargoItem, type PackingResult, type PinnedPlacement, type PlacedItem } from './packing'
 import { cargoNumbers, cargoToneForNumber } from './cargoPalette'
@@ -346,6 +347,32 @@ describe('buildPlanPdf', () => {
 })
 
 // Stage 2a (spec 2026-10-24, 7): the «Остойчивость» block of the PDF.
+describe('buildSemiSubPdfBlock', () => {
+  it('gives VDL and KG in operation and on the way to survival, marked as an estimate', () => {
+    const block = buildSemiSubPdfBlock({
+      netT: 500,
+      momentTm: 0,
+      vdlAfterT: 4_500,
+      vdlMaxOperatingT: 5_000,
+      vdlMaxSurvivalT: 4_600,
+      kgOperatingM: 20.36,
+      kgOperatingMaxM: 20.9,
+      kgSurvivalM: 22.58,
+      kgSurvivalMaxM: 22.5,
+      checks: [{ id: 'semi-ballast', title: 'Балласт', status: 'ok', detail: 'После рейса 8500 т · в шторм 3500 т' }],
+    })
+    expect(block.head).toEqual(['Режим', 'VDL, т', 'Предел VDL, т', 'KG, м', 'Допустимый KG, м', 'Итог'])
+    expect(block.rows).toEqual([
+      ['В работе', '4500', '5000', '20.36', '20.90', 'в пределах'],
+      ['При уходе в шторм', '4500', '4600', '22.58', '22.50', 'превышено'],
+    ])
+    expect(block.verdicts).toEqual(['ok', 'error'])
+    expect(block.verdictColumn).toBe(5)
+    expect(block.notes.at(-1)).toBe('Оценка для планирования. Окончательно считает бортовой компьютер установки.')
+    expect(buildSemiSubPdfBlock(undefined).only).toBe('ППБУ: VDL и KG не рассчитывались')
+  })
+})
+
 describe('buildStabilityPdfBlock', () => {
   // 1000 t lightship at KG 5, KM 8 at 1000–3000 t; 500 t of ballast at
   // departure and 100 t at arrival, low down; a 100 t box on the deck at the

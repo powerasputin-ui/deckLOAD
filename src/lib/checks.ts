@@ -13,10 +13,11 @@ import { NO_DECK_HEIGHT, NO_HYDROSTATICS, prefixedReason } from './stabilityCond
 import { fmtNumber, fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 import type { VesselStepId } from './vesselSteps'
+import type { SemiSubCheckId, SemiSubResult } from './semiSub'
 
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'none'
 
-export type CheckId = 'capacity' | 'deck-weight' | 'zones' | 'separation' | 'lashing' | 'stability' | 'attention'
+export type CheckId = 'capacity' | 'deck-weight' | 'zones' | 'separation' | 'lashing' | 'stability' | 'attention' | SemiSubCheckId
 
 export interface Check {
   id: CheckId
@@ -96,6 +97,9 @@ export interface PlanFacts {
   // A platform's plan (spec 2026-11-06, 6): one deck after the supply run,
   // no trips, no lashing check, no vessel stability.
   platform?: boolean
+  // A semi-submersible's VDL, KG and ballast against its manual (spec
+  // 2026-11-06, 7.3) — in place of a vessel's stability.
+  semiSub?: SemiSubResult
   totalUnits: number
   // Auto mode: units no trip can take. Manual mode: units not placed yet.
   unplacedUnits: number
@@ -259,6 +263,9 @@ export function buildChecks(f: PlanFacts): Check[] {
       })
     }
   }
+
+  // ППБУ: VDL, KG and ballast, in operation and on the way to survival.
+  for (const c of f.semiSub?.checks ?? []) checks.push({ ...c, target: 'vessel', targetStep: 'semi-report' })
 
   // Требуют внимания — only when there is something.
   {

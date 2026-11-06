@@ -15,6 +15,8 @@ import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
 import { NO_DECK_HEIGHT, STATE_LABEL } from '@/lib/stabilityConditions'
 import { firstOpenStep, requiredSteps, vesselSteps, type VesselStepId } from '@/lib/vesselSteps'
 import { objectKindOf } from '@/lib/objectKind'
+import type { SemiSubResult } from '@/lib/semiSub'
+import { SemiSubDataBlock, SemiSubReportBlock, SemiSubTransfersBlock } from '@/components/sections/vessel/SemiSubBlocks'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import type { CheckStatus } from '@/lib/checks'
@@ -46,6 +48,7 @@ export function VesselSection({
   stabilityMissing,
   hasVessel,
   onOpenStability,
+  semiSub,
 }: {
   // The open calculation: which blocks the user opened is kept per one.
   projectId: string
@@ -63,6 +66,8 @@ export function VesselSection({
   stabilityMissing?: string
   hasVessel: boolean
   onOpenStability: () => void
+  // A semi-submersible's VDL, KG and ballast after the run (semiSub.ts).
+  semiSub?: SemiSubResult
 }) {
   const deck = useCalculator((s) => s.deck)
   const applied = appliedVessel(deck)
@@ -92,6 +97,7 @@ export function VesselSection({
     },
     checks,
     stability: { gm: stability, missing: stabilityMissing, hasVessel },
+    semiSub: kind === 'semi-sub' ? { data: deck.semiSub, result: semiSub } : undefined,
   })
 
   // Picked once, on entering: nothing opens or folds under the user's hands.
@@ -129,8 +135,15 @@ export function VesselSection({
         <VesselCard />
         <DeckBlock />
         <LoadZonesBlock zoneLoads={zoneLoads} />
+        {kind === 'semi-sub' && (
+          <>
+            <SemiSubDataBlock />
+            <SemiSubReportBlock result={semiSub} />
+          </>
+        )}
         <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={applyToCurrent} />
         <p className="px-4 pb-2 pt-5 text-xs font-medium text-ink-2">Дополнительно</p>
+        {kind === 'semi-sub' && <SemiSubTransfersBlock />}
         <ObstaclesBlock />
         <DeckPhotoBlock />
         <SocketsBlock />

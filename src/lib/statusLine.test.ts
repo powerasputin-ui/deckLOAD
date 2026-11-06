@@ -29,6 +29,25 @@ describe('status line', () => {
     expect(items.map((i) => i.title)).toEqual(['Загрузка площади палубы', 'Груз на палубе после рейса и допускаемая нагрузка', 'Размещено на палубе из всего, что на борту и в приходе'])
   })
 
+  it('a semi-submersible\'s line has its VDL and KG after the run, red when over', () => {
+    const semiSub = {
+      netT: 500,
+      momentTm: 0,
+      vdlAfterT: 4_500,
+      vdlMaxOperatingT: 5_000,
+      kgOperatingM: 20.36,
+      kgOperatingMaxM: 20.9,
+      checks: [
+        { id: 'semi-vdl' as const, title: 'VDL', status: 'ok' as const, detail: '' },
+        { id: 'semi-kg' as const, title: 'KG', status: 'error' as const, detail: '' },
+      ],
+    }
+    const items = statusItems({ ...base, platform: true, semiSub })
+    expect(items.map((i) => i.text)).toContain('VDL 4500 из 5000 т')
+    expect(items.find((i) => i.id === 'kg')).toMatchObject({ text: 'KG 20.36 из 20.90 м', tone: 'danger', target: 'vessel' })
+    expect(statusItems({ ...base, platform: true, semiSub: { netT: 0, momentTm: 0, checks: [] } }).map((i) => i.id)).not.toContain('vdl')
+  })
+
   it('counts trips only when there is more than one', () => {
     expect(texts({ ...base, tripCount: 2 })).toContain('2 рейса')
     expect(texts({ ...base, tripCount: 5 })).toContain('5 рейсов')

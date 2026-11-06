@@ -9,8 +9,23 @@ import { NO_DECK_HEIGHT, STATE_LABEL } from './stabilityConditions'
 import { fmtNumber, pluralRu } from './utils'
 import { deckWords } from './deckDrawing'
 import { OBJECT_KIND_LABEL, type ObjectKind } from './objectKind'
+import type { SemiSubData, SemiSubResult } from './semiSub'
 
-export type VesselStepId = 'library' | 'deck' | 'card' | 'zones' | 'stability' | 'obstacles' | 'photo' | 'sockets' | 'lashing' | 'marks'
+export type VesselStepId =
+  | 'library'
+  | 'deck'
+  | 'card'
+  | 'zones'
+  | 'stability'
+  | 'obstacles'
+  | 'photo'
+  | 'sockets'
+  | 'lashing'
+  | 'marks'
+  // A semi-submersible's (spec 2026-11-06, 7.1).
+  | 'semi-data'
+  | 'semi-report'
+  | 'semi-transfers'
 
 // The steps in the order they are filled in; the rest are optional.
 export const REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'deck', 'card', 'zones', 'stability']
@@ -22,8 +37,12 @@ export const OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 's
 export const PLATFORM_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'library']
 export const PLATFORM_OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 'sockets', 'marks']
 
+// A semi-submersible's: its manual's data and the day's report after the
+// deck (spec 2026-11-06, 7.1); the run's other transfers are optional.
+export const SEMI_SUB_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'semi-data', 'semi-report', 'library']
+
 export function requiredSteps(kind: ObjectKind = 'vessel'): readonly VesselStepId[] {
-  return kind === 'vessel' ? REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
+  return kind === 'vessel' ? REQUIRED_STEPS : kind === 'semi-sub' ? SEMI_SUB_REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
 }
 
 export interface VesselStep {
@@ -64,6 +83,8 @@ export interface VesselStepsInput {
     marks: number
   }
   checks: { deckWeight?: CheckStatus; zones?: CheckStatus }
+  // A semi-submersible's data and what it gives (semiSub.ts).
+  semiSub?: { data?: SemiSubData; result?: SemiSubResult }
   stability: {
     gm?: { valueM: number; status: 'ok' | 'warn' | 'error'; estimated: boolean; state: 'departure' | 'arrival' }
     // Why it isn't worked out though the vessel's data is there.
@@ -134,6 +155,39 @@ export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselSte
     sockets: { summary: count(d.sockets, 'розетка', 'розетки', 'розеток') },
     lashing: { summary: count(d.lashingPoints, 'точка', 'точки', 'точек') },
     marks: { summary: count(d.marks, 'метка', 'метки', 'меток') },
+    ...semiSubSteps(s.semiSub),
+  }
+}
+
+// A semi-submersible's steps in a line each: what its manual gives, the
+// day's report and how it holds, the run's other transfers.
+function semiSubSteps(semi: VesselStepsInput['semiSub']): Pick<Record<VesselStepId, VesselStep>, 'semi-data' | 'semi-report' | 'semi-transfers'> {
+  const data = semi?.data
+  const op = data?.operating
+  const rows = (op?.kgLimit?.length ?? 0) + (data?.survival.kgLimit?.length ?? 0)
+  const r = data?.report
+  const checks = semi?.result?.checks ?? []
+  const worst = checks.some((c) => c.status === 'error') ? 'error' : checks.length > 0 && checks.every((c) => c.status === 'ok') ? 'ok' : undefined
+  const transfers = data?.transfers.length ?? 0
+  return {
+    'semi-data': {
+      summary:
+        op?.vdlMaxT !== undefined || rows > 0
+          ? [op?.draftM !== undefined && `в работе ${fmtNumber(op.draftM)} м`, op?.vdlMaxT !== undefined && `VDL ${fmtNumber(op.vdlMaxT)} т`, `KG: ${rows} ${pluralRu(rows, 'строка', 'строки', 'строк')}`]
+              .filter(Boolean)
+              .join(' · ')
+          : 'не заданы',
+    },
+    'semi-report': {
+      summary:
+        r && (r.vdlT !== undefined || r.kgM !== undefined)
+          ? [r.date && `от ${r.date.split('-').reverse().join('.')}`, r.vdlT !== undefined && `VDL ${fmtNumber(r.vdlT)} т`, r.kgM !== undefined && `KG ${r.kgM.toFixed(2)} м`]
+              .filter(Boolean)
+              .join(' · ')
+          : 'не внесён',
+      status: worst,
+    },
+    'semi-transfers': { summary: transfers === 0 ? 'нет' : `${transfers} ${pluralRu(transfers, 'строка', 'строки', 'строк')}` },
   }
 }
 

@@ -383,6 +383,35 @@ describe('projects store', () => {
     expect(reloaded.items[0].platformStatus).toBeUndefined()
   })
 
+  it('round-trips a semi-submersible\'s data, keeping what is whole and dropping what is not', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      ...project,
+      deck: {
+        ...project.deck,
+        objectKind: 'semi-sub',
+        semiSub: {
+          operating: { draftM: 21, displacementT: 50_000, vdlMaxT: 5_000, kgLimit: [{ draftM: 21, kgMaxM: 20.9 }, { draftM: 'x', kgMaxM: 1 }] },
+          survival: { draftM: -3, displacementT: 45_000 },
+          ballastVcgM: 4,
+          report: { date: '2026-11-06', draftM: 21, displacementT: 50_000, kgM: 20, vdlT: 4_000, ballastT: 9_000 },
+          transfers: [{ id: 't', name: 'Топливо', weightT: -120, vcgM: 6 }, { name: 'без веса' }],
+        },
+      },
+    } as unknown as Parameters<ReturnType<typeof useProjects.getState>['saveSnapshot']>[0])
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    const semi = useProjects.getState().projects[0].deck.semiSub!
+    expect(semi.operating).toEqual({ draftM: 21, displacementT: 50_000, vdlMaxT: 5_000, kgLimit: [{ draftM: 21, kgMaxM: 20.9 }] })
+    expect(semi.survival).toEqual({ draftM: undefined, displacementT: 45_000, vdlMaxT: undefined })
+    expect(semi.report).toEqual({ date: '2026-11-06', draftM: 21, displacementT: 50_000, kgM: 20, vdlT: 4_000, ballastT: 9_000 })
+    expect(semi.transfers).toEqual([
+      { id: 't', name: 'Топливо', weightT: -120, vcgM: 6 },
+      { id: expect.any(String), name: 'без веса', weightT: undefined, vcgM: undefined },
+    ])
+  })
+
   it('a new calculation can be made for a platform', () => {
     useProjects.getState().hydrate()
     const id = useProjects.getState().createProject('МСП', { objectKind: 'fixed' })

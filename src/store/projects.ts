@@ -7,6 +7,7 @@ import type { PipeNestSpec } from '@/lib/pipeNest'
 import type { VesselStabilityData, DeckShipFrameInput, KNCrossCurves, VariableWeightItem, StabilityLimit } from '@/lib/stability'
 import type { AppliedVessel } from '@/lib/vesselLibrary'
 import { isObjectKind, isPlatformStatus, type ObjectKind, type PlatformStatus } from '@/lib/objectKind'
+import type { SemiSubData, SemiSubMode } from '@/lib/semiSub'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import {
   sanitizeCargoWidth,
@@ -491,6 +492,60 @@ function normalizeAppliedVessel(value: unknown): AppliedVessel | undefined {
 // A vessel of the user's library, from the browser's storage or a library
 // file (spec 8.1, revision 2026-10-30). In metres, like the built-in ones;
 // anything that isn't a vessel — no id, no name, no deck size — is dropped.
+// A semi-submersible's data (spec 2026-11-06, 7): every figure a positive
+// number or unset; a KG row and a transfer only whole. A transfer's weight
+// may be negative — what the run takes away.
+const finiteOrUndefined = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+
+function normalizeSemiSubMode(value: unknown): SemiSubMode {
+  const m = isRecord(value) ? value : {}
+  const rows = Array.isArray(m.kgLimit)
+    ? m.kgLimit.filter(isRecord).flatMap((r) => {
+        const draftM = toOptionalPositive(r.draftM)
+        const kgMaxM = toOptionalPositive(r.kgMaxM)
+        return draftM !== undefined && kgMaxM !== undefined ? [{ draftM, kgMaxM }] : []
+      })
+    : []
+  return {
+    draftM: toOptionalPositive(m.draftM),
+    displacementT: toOptionalPositive(m.displacementT),
+    vdlMaxT: toOptionalPositive(m.vdlMaxT),
+    ...(rows.length > 0 ? { kgLimit: rows } : {}),
+  }
+}
+
+export function normalizeSemiSubUnit(value: unknown): Pick<SemiSubData, 'operating' | 'survival' | 'ballastVcgM'> | undefined {
+  if (!isRecord(value)) return undefined
+  return { operating: normalizeSemiSubMode(value.operating), survival: normalizeSemiSubMode(value.survival), ballastVcgM: toOptionalPositive(value.ballastVcgM) }
+}
+
+export function normalizeSemiSub(value: unknown): SemiSubData | undefined {
+  const unit = normalizeSemiSubUnit(value)
+  if (!unit || !isRecord(value)) return undefined
+  const r = isRecord(value.report) ? value.report : {}
+  // A row keeps what it has: one not filled in yet assumes nothing.
+  const transfers = Array.isArray(value.transfers)
+    ? value.transfers.filter(isRecord).map((x) => ({
+        id: typeof x.id === 'string' && x.id ? x.id : uuid(),
+        name: typeof x.name === 'string' ? x.name : '',
+        weightT: finiteOrUndefined(x.weightT),
+        vcgM: finiteOrUndefined(x.vcgM),
+      }))
+    : []
+  return {
+    ...unit,
+    report: {
+      date: toOptionalString(r.date),
+      draftM: toOptionalPositive(r.draftM),
+      displacementT: toOptionalPositive(r.displacementT),
+      kgM: toOptionalPositive(r.kgM),
+      vdlT: toOptionalNonNegative(r.vdlT),
+      ballastT: toOptionalNonNegative(r.ballastT),
+    },
+    transfers,
+  }
+}
+
 export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefined {
   if (!value || typeof value !== 'object') return undefined
   const v = value as Record<string, unknown>
@@ -520,6 +575,7 @@ export function normalizeLibraryVessel(value: unknown): VesselTemplate | undefin
     limits: limits && Object.values(limits).some((x) => x !== undefined) ? limits : undefined,
     savedAt: toOptionalString(v.savedAt),
     objectKind: isObjectKind(v.objectKind) && v.objectKind !== 'vessel' ? v.objectKind : undefined,
+    semiSub: normalizeSemiSubUnit(v.semiSub),
   }
 }
 
@@ -1051,6 +1107,7 @@ export function normalizeProject(p: Partial<Project>): Project {
       // before platforms existed.
       objectKind: isObjectKind(p.deck?.objectKind) && p.deck.objectKind !== 'vessel' ? p.deck.objectKind : undefined,
       platformName: toOptionalString(p.deck?.platformName),
+      semiSub: normalizeSemiSub(p.deck?.semiSub),
       width: toFinitePositive(p.deck?.width, DEMO_DECK.width),
       length: toFinitePositive(p.deck?.length, DEMO_DECK.length),
       unit,

@@ -73,6 +73,18 @@ describe('a vessel saved from a calculation', () => {
 })
 
 describe('a platform saved from a calculation (spec 2026-11-06, 9)', () => {
+  it('a semi-submersible keeps its modes and ballast height, not the day\'s report', () => {
+    const semiSub = {
+      operating: { draftM: 21, vdlMaxT: 5_000 },
+      survival: { draftM: 17 },
+      ballastVcgM: 4,
+      report: { vdlT: 4_000 },
+      transfers: [{ id: 't', name: 'Топливо', weightT: 50, vcgM: 6 }],
+    }
+    const v = vesselFromDeck({ ...own, objectKind: 'semi-sub', semiSub }, { id: 'user-6', label: 'Полярная звезда', note: '' })
+    expect(v.semiSub).toEqual({ operating: semiSub.operating, survival: semiSub.survival, ballastVcgM: 4 })
+  })
+
   it('stays a platform of its kind; a vessel carries no kind', () => {
     expect(vesselFromDeck({ ...own, objectKind: 'semi-sub' }, { id: 'user-3', label: 'Полярная звезда', note: '' }).objectKind).toBe('semi-sub')
     expect(vesselFromDeck({ ...own, objectKind: 'fixed' }, { id: 'user-4', label: 'МСП-1', note: '' }).objectKind).toBe('fixed')

@@ -1158,10 +1158,11 @@ export default function Home() {
         pinnedPlacementsByTrip,
         manualPlacements,
         items: deckItems,
+        allItems: items,
         deck,
         separationRules: separationRulesInUnit,
       }),
-    [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, deckItems, deck, separationRulesInUnit]
+    [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, deckItems, items, deck, separationRulesInUnit]
   )
   const planChecks = useMemo(() => buildChecks(planFacts), [planFacts])
   // The check opened in «Проверки» (8.4): what it found, and its stacks at
@@ -1406,6 +1407,7 @@ export default function Home() {
 
   const statusInput: StatusLineInput = {
     platform,
+    semiSub: planFacts.semiSub,
     utilization: result.utilization,
     weightKg: result.totalWeight,
     maxDeckCargoT: deck.maxDeckCargoT,
@@ -1557,6 +1559,7 @@ export default function Home() {
               stabilityMissing={stabilityMissing}
               hasVessel={!!deck.vessel}
               onOpenStability={() => setWorkspace('stability')}
+              semiSub={planFacts.semiSub}
             />
           )}
           {activeSection === 'cargo' && (

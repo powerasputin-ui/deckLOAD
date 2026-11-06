@@ -86,8 +86,12 @@ export function vesselFromDeck(deck: DeckConfig, entry: { id: string; label: str
     deckForwardIsPositiveY: deck.deckForwardIsPositiveY ?? true,
     limits: Object.values(limits).some((v) => v !== undefined) ? limits : undefined,
     savedAt: new Date().toISOString(),
-    // A platform stays a platform of its kind in the library.
+    // A platform stays a platform of its kind in the library, a
+    // semi-submersible with its modes and ballast height.
     ...(isPlatform(deck) ? { objectKind: objectKindOf(deck) } : {}),
+    ...(objectKindOf(deck) === 'semi-sub' && deck.semiSub
+      ? { semiSub: { operating: deck.semiSub.operating, survival: deck.semiSub.survival, ballastVcgM: deck.semiSub.ballastVcgM } }
+      : {}),
   }
 }
 
