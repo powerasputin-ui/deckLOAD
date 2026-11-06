@@ -23,6 +23,12 @@ describe('status line', () => {
     expect(over.tone).toBe('danger')
   })
 
+  it('a platform\'s line speaks of its deck, not of trips', () => {
+    const items = statusItems({ ...base, platform: true, maxDeckCargoT: 300 })
+    expect(items.map((i) => i.text)).toEqual(['81%', '16.6 из 300 т', '22/22 ед.'])
+    expect(items.map((i) => i.title)).toEqual(['Загрузка площади палубы', 'Груз на палубе после рейса и допускаемая нагрузка', 'Размещено на палубе из всего, что на борту и в приходе'])
+  })
+
   it('counts trips only when there is more than one', () => {
     expect(texts({ ...base, tripCount: 2 })).toContain('2 рейса')
     expect(texts({ ...base, tripCount: 5 })).toContain('5 рейсов')

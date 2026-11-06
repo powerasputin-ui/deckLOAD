@@ -1,3 +1,5 @@
+import { fmtTonnes } from './utils'
+
 // What a calculation plans the deck of (spec 2026-11-06, 3): a vessel, as
 // DeckLoad always did, or a platform the supply vessels serve — a
 // semi-submersible drilling unit (ППБУ) or a fixed platform (МСП, МЛСП).
@@ -62,4 +64,22 @@ export function isPlatformStatus(value: unknown): value is PlatformStatus {
 // The cargo that stands on the platform's deck after the supply run.
 export function staysOnDeck(item: { platformStatus?: PlatformStatus }): boolean {
   return platformStatusOf(item) !== 'outgoing'
+}
+
+// The cargo by status, for the line under the list's totals — what the
+// supply run brings and takes first: «Приход: 12 ед., 34.5 т · Отгрузка:
+// 3 ед., 8 т · На борту: 5 ед., 10 т». A status with nothing is left out.
+const LINE_ORDER: readonly PlatformStatus[] = ['incoming', 'outgoing', 'onboard']
+
+export function platformStatusLine(items: readonly { quantity: number; weight?: number; platformStatus?: PlatformStatus }[]): string {
+  return LINE_ORDER.map((status) => {
+    const of = items.filter((it) => platformStatusOf(it) === status)
+    const units = of.reduce((n, it) => n + Math.max(0, it.quantity), 0)
+    if (units === 0) return null
+    const kg = of.reduce((n, it) => n + Math.max(0, it.quantity) * (it.weight && it.weight > 0 ? it.weight : 0), 0)
+    const label = PLATFORM_STATUS_LABEL[status]
+    return `${label[0].toUpperCase()}${label.slice(1)}: ${units} ед., ${fmtTonnes(kg)} т`
+  })
+    .filter(Boolean)
+    .join(' · ')
 }

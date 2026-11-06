@@ -41,8 +41,11 @@ test.describe('First run', () => {
       await expect(screen).toBeVisible()
       await expect(screen.getByText('План палубы, вес и остойчивость за 5 минут')).toBeVisible()
       await expect(screen.getByRole('img', { name: 'Готовый план палубы примера' })).toBeVisible()
-      // The keyboard: the main button has the focus, Tab goes on, Enter presses.
+      // The keyboard: the main button has the focus, Tab goes on — to the
+      // platform (spec 2026-11-06, 4), then the example — Enter presses.
       await expect(screen.getByRole('button', { name: 'Начать с судна' })).toBeFocused()
+      await page.keyboard.press('Tab')
+      await expect(screen.getByRole('button', { name: 'Начать с платформы' })).toBeFocused()
       await page.keyboard.press('Tab')
       await expect(screen.getByRole('button', { name: 'Открыть пример' })).toBeFocused()
       await page.keyboard.press('Enter')

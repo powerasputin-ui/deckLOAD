@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { packMultiTrip, packingResultFromManual, type PackingResult } from '@/lib/packing'
+import { isPlatform, staysOnDeck } from '@/lib/objectKind'
 import type { useCalculator } from '@/store/calculator'
 
 type Calculation = ReturnType<typeof useCalculator.getState>
@@ -32,14 +33,23 @@ export function useTrips({
   // In auto mode, cargo that doesn't fit in one voyage automatically spills
   // into additional trips (same deck, repeated) via packMultiTrip. Manual mode
   // stays single-trip — the user places cargo by hand on one deck at a time.
+  //
+  // A platform (spec 2026-11-06, 6) doesn't sail with its cargo: its deck is
+  // one, after the supply run — what's on board and what arrives. Cargo
+  // leaving with the vessel isn't on it, nor are its positions; what the
+  // deck can't take stays «Не поместилось».
+  const platform = isPlatform(deck)
   const trips: PackingResult[] = useMemo(() => {
+    const leaving = platform ? new Set(items.filter((it) => !staysOnDeck(it)).map((it) => it.id)) : new Set<string>()
+    const onDeck = leaving.size > 0 ? items.filter((it) => !leaving.has(it.id)) : items
+    const standing = <P extends { itemId: string }>(list: P[]) => (leaving.size > 0 ? list.filter((p) => !leaving.has(p.itemId)) : list)
     if (mode === 'manual') {
-      const totalRequested = items.reduce((s, it) => s + it.quantity, 0)
+      const totalRequested = onDeck.reduce((s, it) => s + it.quantity, 0)
       // Standing cargo is rechecked against the deck as it is now (L14): a
       // new outline, a moved obstacle or a widened clearance zone used to
       // leave a stack where it may not stand, with nothing said.
       return [
-        packingResultFromManual(deck.width, deck.length, manualPlacements, totalRequested, items, deck.clearance, deck.outline, {
+        packingResultFromManual(deck.width, deck.length, standing(manualPlacements), totalRequested, onDeck, deck.clearance, deck.outline, {
           boardOffset: deck.boardOffset,
           gap: deck.gap,
           restrictionZones: deck.restrictionZones,
@@ -47,8 +57,9 @@ export function useTrips({
       ]
     }
     const effectiveItems = globalRotation
-      ? items
-      : items.map((it) => ({ ...it, allowRotation: false }))
+      ? onDeck
+      : onDeck.map((it) => ({ ...it, allowRotation: false }))
+    const pinsByTrip = leaving.size > 0 ? Object.fromEntries(Object.entries(pinnedPlacementsByTrip).map(([trip, pins]) => [trip, standing(pins)])) : pinnedPlacementsByTrip
     // Each trip is a separate deck instance — packMultiTrip applies the
     // matching trip's own pins (pinnedByTrip[tripIndex]) at every iteration,
     // so pinning/dragging cargo works identically on any trip, not just the first.
@@ -74,10 +85,10 @@ export function useTrips({
         unit: deck.unit,
         maxTotalWeightKg: deck.maxDeckCargoT !== undefined ? deck.maxDeckCargoT * 1000 : undefined,
       },
-      10,
-      pinnedPlacementsByTrip
+      platform ? 1 : 10,
+      pinsByTrip
     )
-  }, [deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, deck.loadZones, deck.unit, deck.maxDeckCargoT, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
+  }, [platform, deck.width, deck.length, deck.gap, deck.boardOffset, deck.clearance, deck.outline, deck.restrictionZones, deck.loadZones, deck.unit, deck.maxDeckCargoT, items, sortStrategy, globalRotation, mode, manualPlacements, pinnedPlacementsByTrip, separationRulesInUnit])
 
   // Clamp (rather than store) the selected trip in range as the trip count
   // changes (e.g. cargo edited so fewer/more voyages are needed) — avoids a

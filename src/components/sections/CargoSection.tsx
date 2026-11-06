@@ -8,6 +8,7 @@ import { CargoCatalog, CustomShapeForm } from '@/components/cargo/CargoCatalog'
 import { OwnCargoForm } from '@/components/cargo/OwnCargoForm'
 import { useCalculator } from '@/store/calculator'
 import { cargoTotals } from '@/lib/cargoTable'
+import { isPlatform, platformStatusLine } from '@/lib/objectKind'
 import type { PlacedItem } from '@/lib/packing'
 import { cn, fmtTonnes, pluralRu } from '@/lib/utils'
 
@@ -36,6 +37,7 @@ export function CargoSection({
   placeRefusal?: (itemId: string) => PlaceRefusal | null
 }) {
   const items = useCalculator((s) => s.items)
+  const platform = useCalculator((s) => isPlatform(s.deck))
   const pendingCustomShape = useCalculator((s) => s.pendingCustomShape)
   const [open, setOpen] = useState<'catalog' | 'own' | null>(null)
   const toggle = (panel: 'catalog' | 'own') => setOpen((current) => (current === panel ? null : panel))
@@ -73,6 +75,11 @@ export function CargoSection({
             <p className="text-sm text-ink-2 tabular-nums" data-testid="cargo-summary">
               {items.length} {pluralRu(items.length, 'тип', 'типа', 'типов')} · {totals.units} ед. · {fmtTonnes(totals.weightKg)} т
               {totals.unweighed > 0 && ` (без веса: ${totals.unweighed})`}
+            </p>
+          )}
+          {!empty && platform && (
+            <p className="text-xs text-ink-2 tabular-nums" data-testid="cargo-status-summary">
+              {platformStatusLine(items)}
             </p>
           )}
           <div className="grid grid-cols-3 gap-2">

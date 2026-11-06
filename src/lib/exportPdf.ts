@@ -24,6 +24,7 @@ import { deckStabilityMissing, evaluateDeckTripStability } from './planFacts'
 import { buildPlanDrawing, type PlanDrawing } from './planDrawing'
 import { drawPlanOnPdf } from './planToPdf'
 import { appliedVessel } from './vesselLibrary'
+import { isPlatform, OBJECT_KIND_LABEL, objectKindOf, PLATFORM_STATUS_LABEL, platformStatusOf, staysOnDeck } from './objectKind'
 
 // The plan for the vessel (spec 11): A4 landscape, a sheet per trip — the
 // header, the deck drawn from the calculation, the trip's cargo, its summary
@@ -356,6 +357,9 @@ export interface PdfTripSheet {
 }
 
 export interface PlanPdfModel {
+  // A platform's plan (spec 2026-11-06, 8): one sheet «План палубы», no
+  // totals sheet, no lashing.
+  platform?: boolean
   fileName: string
   // «Алексей Кузнецов (IMO 9692648)» or «Своя палуба 8 × 20 м».
   vessel: string
@@ -384,8 +388,20 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
   const { deck, items, trips, numbers } = input
   const unit = UNIT_LABEL[deck.unit]
   const applied = appliedVessel(deck)
-  const vessel = applied ? applied.label : `Своя палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
+  const platform = isPlatform(deck)
+  const kind = objectKindOf(deck)
+  const platformName = deck.platformName?.trim() || applied?.label
+  // «ППБУ «Полярная звезда»», or the kind and its deck when it has no name.
+  const vessel = platform
+    ? platformName
+      ? `${OBJECT_KIND_LABEL[kind]} «${platformName}»`
+      : `${OBJECT_KIND_LABEL[kind]}, палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
+    : applied
+      ? applied.label
+      : `Своя палуба ${fmtNumber(deck.width)} × ${fmtNumber(deck.length)} ${unit}`
   const count = trips.length
+  // What leaves with the vessel: listed under the deck's cargo, not drawn.
+  const leaving = platform ? items.filter((it) => !staysOnDeck(it) && it.quantity > 0) : []
   const lashingOf = (placements: LashingPlacement[]): PdfLashing => {
     const { rows, dangerousGoodsNames } = buildLashingRequirementRows(placements, items, deck.lashingPoints ?? [])
     return { rows: groupLashingRows(rows), dangerousGoodsNames: [...new Set(dangerousGoodsNames)] }
@@ -424,7 +440,8 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
         tone: n ? cargoToneForNumber(n) : undefined,
         cells: [
           n ? String(n) : '—',
-          b.name,
+          // A platform's cargo says whether it is on board or arriving.
+          platform && item ? `${b.name} · ${PLATFORM_STATUS_LABEL[platformStatusOf(item)]}` : b.name,
           String(b.placed),
           dims,
           b.unitWeight > 0 ? tonnes(b.unitWeight) : '—',
@@ -436,30 +453,63 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
         ],
       }
     })
+    if (leaving.length > 0) {
+      cargo.push({ cells: ['', 'Отгрузка — не на плане', '', '', '', '', '', ''] })
+      for (const it of sortByCargoNumber(leaving.map((l) => ({ ...l, itemId: l.id })), numbers)) {
+        const n = numbers.get(it.id)
+        const w = it.weight && it.weight > 0 ? it.weight : 0
+        cargo.push({
+          number: n,
+          tone: n ? cargoToneForNumber(n) : undefined,
+          cells: [
+            n ? String(n) : '—',
+            it.name,
+            String(it.quantity),
+            `${short(it.length)}×${short(it.width)}×${it.height > 0 ? short(it.height) : '—'}`,
+            w > 0 ? tonnes(w) : '—',
+            w > 0 ? tonnes(w * it.quantity) : '—',
+            '—',
+            '—',
+          ],
+        })
+      }
+    }
     const units = rows.reduce((n, b) => n + b.placed, 0)
     const stacks = rows.reduce((n, b) => n + b.footprints, 0)
     const limit = deck.maxDeckCargoT
     const placements =
       input.mode === 'manual' ? lashingPlacementsForPlan('manual', input.manualPlacements, [], {}) : lashingPlacementsForTrip(t, i, input.pinnedPlacementsByTrip[i] ?? [])
     return {
-      title: `Рейс ${i + 1} из ${count}`,
+      title: platform ? 'План палубы' : `Рейс ${i + 1} из ${count}`,
       drawing,
       cargo,
-      cargoTotal: ['', 'Итого по рейсу', String(units), '', '', tonnes(t.totalWeight), '', String(stacks)],
+      cargoTotal: ['', platform ? 'Итого на палубе' : 'Итого по рейсу', String(units), '', '', tonnes(t.totalWeight), '', String(stacks)],
       units,
       weightKg: t.totalWeight,
       stacks,
       weight: {
-        text:
-          limit !== undefined
+        text: platform
+          ? limit !== undefined
+            ? `Груз на палубе: ${tonnes(t.totalWeight)} т из ${fmtNumber(limit)} т — допускаемая нагрузка`
+            : `Груз на палубе: ${tonnes(t.totalWeight)} т — допускаемая нагрузка не задана`
+          : limit !== undefined
             ? `Вес груза: ${tonnes(t.totalWeight)} т из ${fmtNumber(limit)} т — лимит судна`
             : `Вес груза: ${tonnes(t.totalWeight)} т — лимит судна не задан`,
         over: limit !== undefined && t.totalWeight / 1000 > limit + 1e-9,
       },
       area: `Загрузка площади: ${Math.round(t.utilization * 100)}% — занято ${fmtNumber(t.usedArea)} из ${fmtNumber(t.totalArea)} ${unit}²`,
       checks: tripChecks(input.facts, i).map((c) => ({ title: c.title, status: c.status, word: CHECK_STATUS_WORD[c.status], detail: c.detail })),
-      stability: buildStabilityPdfBlock(evaluateDeckTripStability(deck, t, items), deck.vessel, deckStabilityMissing(deck, t)),
-      lashing: lashingOf(placements),
+      stability: platform
+        ? {
+            title: 'Остойчивость',
+            only: kind === 'fixed' ? 'Стационарная платформа: остойчивость не считается' : 'ППБУ: VDL и KG по данным установки не рассчитывались',
+            head: STABILITY_HEAD,
+            rows: [],
+            verdicts: [],
+            notes: [],
+          }
+        : buildStabilityPdfBlock(evaluateDeckTripStability(deck, t, items), deck.vessel, deckStabilityMissing(deck, t)),
+      lashing: platform ? { rows: [], dangerousGoodsNames: [] } : lashingOf(placements),
     }
   })
 
@@ -467,6 +517,7 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
   const totalKg = sheets.reduce((n, s) => n + s.weightKg, 0)
   const totalStacks = sheets.reduce((n, s) => n + s.stacks, 0)
   return {
+    platform,
     fileName: `deckload-${slugify(input.projectName)}-${input.date.toISOString().slice(0, 10)}.pdf`,
     vessel,
     name: input.projectName,
@@ -607,7 +658,7 @@ export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string
 
     // The summary — weight, area, the checks — kept on one sheet.
     makeRoom(16 + 2 * 14 + (sheet.checks.length + 1) * 19 + 8)
-    title('Сводка рейса')
+    title(model.platform ? 'Сводка' : 'Сводка рейса')
     lines([sheet.weight.text], 9, sheet.weight.over ? DANGER : INK)
     lines([sheet.area], 9, INK)
     y += 2
@@ -686,28 +737,30 @@ export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string
     y += 12
   })
 
-  // The operation's totals.
-  pdf.addPage()
-  current = { totals: true }
-  sheets.set(pdf.getNumberOfPages(), current)
-  y = CONTENT_TOP
-  title('Груз по рейсам')
-  autoTable(pdf, {
-    ...tableStyles,
-    startY: y,
-    head: [TOTALS_HEAD],
-    body: model.totals.rows,
-    foot: [model.totals.total],
-    footStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' },
-    showFoot: 'lastPage',
-    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    didParseCell: (data) => {
-      if (data.section === 'foot' && data.column.index > 0) data.cell.styles.halign = 'right'
-    },
-  })
-  claimSheets()
-  y = lastTableEnd() + 14
-  drawLashing(model.totals.lashing, 'Крепление на всю операцию', true)
+  // The operation's totals — a vessel's: a platform's one sheet is its plan.
+  if (!model.platform) {
+    pdf.addPage()
+    current = { totals: true }
+    sheets.set(pdf.getNumberOfPages(), current)
+    y = CONTENT_TOP
+    title('Груз по рейсам')
+    autoTable(pdf, {
+      ...tableStyles,
+      startY: y,
+      head: [TOTALS_HEAD],
+      body: model.totals.rows,
+      foot: [model.totals.total],
+      footStyles: { font: FONT_FAMILY, fillColor: HEAD_BG, textColor: INK, fontStyle: 'bold' },
+      showFoot: 'lastPage',
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+      didParseCell: (data) => {
+        if (data.section === 'foot' && data.column.index > 0) data.cell.styles.halign = 'right'
+      },
+    })
+    claimSheets()
+    y = lastTableEnd() + 14
+    drawLashing(model.totals.lashing, 'Крепление на всю операцию', true)
+  }
 
   // Headers and footers, now that the sheets are counted.
   const total = pdf.getNumberOfPages()

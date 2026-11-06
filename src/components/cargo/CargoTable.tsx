@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/calculator/NumberField'
 import { TextField } from '@/components/calculator/TextField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
+import { PlatformStatusSelect } from '@/components/cargo/PlatformStatusSelect'
+import { isPlatform } from '@/lib/objectKind'
 import { closeCalculatorHistoryStep, undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import type { CargoItem, PlacedItem } from '@/lib/packing'
 import { cargoTotals, DEFAULT_CATEGORIES, LAYERS_RULE, placedByItem, rangeOf, SIZE_AXES } from '@/lib/cargoTable'
@@ -39,6 +41,8 @@ export function CargoTable({
   onHover: (id: string | null) => void
 }) {
   const items = useCalculator((s) => s.items)
+  // A platform's cargo has its status as a column (spec 2026-11-06, 6).
+  const platform = useCalculator((s) => isPlatform(s.deck))
   const addItem = useCalculator((s) => s.addItem)
   const updateItem = useCalculator((s) => s.updateItem)
   const removeItem = useCalculator((s) => s.removeItem)
@@ -233,6 +237,11 @@ export function CargoTable({
                   </span>
                 </th>
                 <th scope="col" className="px-1 py-1.5 text-left font-medium">Название</th>
+                {platform && (
+                  <th scope="col" className="w-28 px-1 py-1.5 text-left font-medium">
+                    Статус
+                  </th>
+                )}
                 <th scope="col" className="w-56 px-1 py-1.5 text-right font-medium">
                   <abbr title={SIZE_AXES} className="no-underline">
                     Д×Ш×В, {u}
@@ -281,6 +290,11 @@ export function CargoTable({
                         </span>
                       </td>
                       <td className="px-1 py-1">{textCell(row, 'name', 'Название', it.name, (v) => updateItem(it.id, { name: v.trim() || it.name }))}</td>
+                      {platform && (
+                        <td className="px-1 py-1">
+                          <PlatformStatusSelect item={it} onChange={(platformStatus) => updateItem(it.id, { platformStatus })} className="h-7 w-full" />
+                        </td>
+                      )}
                       <td className="px-1 py-1">
                         <div className="flex items-start gap-1">
                           <div className="flex-1">
@@ -382,7 +396,7 @@ export function CargoTable({
                     {open && (
                       <tr className="border-b border-line bg-paper">
                         <td />
-                        <td colSpan={10} className="px-1 py-2">
+                        <td colSpan={platform ? 11 : 10} className="px-1 py-2">
                           <MoreFields item={it} unitLabel={u} onUpdate={(patch) => updateItem(it.id, patch)} onSetOverride={(o) => setItemStabilityOverride(it.id, o)} />
                         </td>
                       </tr>
@@ -393,7 +407,7 @@ export function CargoTable({
             </tbody>
             <tfoot>
               <tr className="text-sm text-ink-2" data-testid="cargo-totals">
-                <td colSpan={11} className="px-2 py-2">
+                <td colSpan={platform ? 12 : 11} className="px-2 py-2">
                   Итого: {totals.units} {pluralRu(totals.units, 'единица', 'единицы', 'единиц')} · {fmtTonnes(totals.weightKg)} т
                   {totals.unweighed > 0 && ` (без веса: ${totals.unweighed})`} · {fmtNumber(totals.area)} {u}²
                 </td>

@@ -52,6 +52,15 @@ describe('buildChecks', () => {
     expect(checkCounts(buildChecks(f))).toEqual({ errors: 0, warnings: 0 })
   })
 
+  // Spec 2026-11-06, 6: a platform's plan is one deck after the supply run —
+  // no trips, no lashing check, no vessel stability.
+  it('a platform has no lashing or vessel stability check, and its words have no trips', () => {
+    const f = facts({ platform: true, maxDeckCargoT: 300, unplacedUnits: 2 })
+    expect(buildChecks(f).map((c) => c.title)).toEqual(['Вместимость', 'Нагрузка на палубу', 'Зоны т/м²', 'Сепарация'])
+    expect(check(f, 'capacity')).toMatchObject({ status: 'error', detail: '2 ед. не помещаются на палубу' })
+    expect(check(f, 'deck-weight')).toMatchObject({ status: 'ok', detail: '16.6 из 300 т' })
+  })
+
   describe('capacity', () => {
     it('is fine when everything is placed, naming the trips', () => {
       expect(check(facts(), 'capacity')).toMatchObject({ status: 'ok', detail: 'Всё размещено' })

@@ -384,6 +384,37 @@ describe('CargoSection', () => {
 
   // Revision 2026-11-06: a cargo that fits no trip has no stack to
   // right-click on the deck; its row's menu removes it.
+  // Spec 2026-11-06, 6: a platform's cargo has a status; what leaves with
+  // the vessel isn't on the plan and has nothing to place.
+  describe('a platform\'s cargo', () => {
+    const pipe = { id: 'p', name: 'Трубы', width: 12, length: 1, height: 1, quantity: 10, color: '#000', allowRotation: true, weight: 2000 }
+    const box = { id: 'b', name: 'Контейнер', width: 6, length: 2.4, height: 2.6, quantity: 2, color: '#000', allowRotation: true, weight: 5000 }
+
+    it('a vessel\'s list has no status; a platform\'s does, arriving by default', () => {
+      reset({ items: [pipe] })
+      const { view } = section()
+      expect(screen.queryByRole('combobox', { name: 'Статус «Трубы»' })).toBeNull()
+      view.unmount()
+      reset({ items: [pipe], deck: { ...useCalculator.getState().deck, objectKind: 'fixed' } })
+      section()
+      const status = screen.getByRole('combobox', { name: 'Статус «Трубы»' }) as HTMLSelectElement
+      expect(status.value).toBe('incoming')
+      fireEvent.change(status, { target: { value: 'onboard' } })
+      expect(items()[0].platformStatus).toBe('onboard')
+    })
+
+    it('cargo leaving is counted apart and has nothing to place', () => {
+      reset({ items: [pipe, { ...box, platformStatus: 'outgoing' as const }], deck: { ...useCalculator.getState().deck, objectKind: 'semi-sub' } })
+      section()
+      expect(screen.getByTestId('cargo-status-summary').textContent).toBe('Приход: 10 ед., 20 т · Отгрузка: 2 ед., 10 т')
+      const rows = screen.getAllByTestId('cargo-list-row')
+      expect(within(rows[1]).getByText('Увозят')).toBeTruthy()
+      expect(within(rows[1]).getByText('не на плане')).toBeTruthy()
+      expect(within(rows[1]).queryByRole('button', { name: /Поставить/ })).toBeNull()
+      expect(within(rows[0]).getByRole('button', { name: 'Поставить «Трубы»' })).toBeTruthy()
+    })
+  })
+
   describe('a row\'s right-click menu', () => {
     const cargo = { id: 'a', name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#000', allowRotation: true, weight: 2200 }
 

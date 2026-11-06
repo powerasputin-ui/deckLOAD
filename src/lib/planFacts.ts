@@ -4,6 +4,7 @@
 // required lashing count, stability and the IMO criteria. Nothing new is
 // calculated here; the same functions the deck, the sidebar and the PDF use
 // are run over the plan.
+import { isPlatform } from './objectKind'
 import type { DeckConfig } from '@/store/calculator'
 import {
   assessLashingRequirement,
@@ -77,6 +78,7 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
 
   return {
     mode,
+    platform: isPlatform(deck),
     totalUnits: items.reduce((n, it) => n + Math.max(0, it.quantity), 0),
     // Each trip passes on what it couldn't place, so what the last one
     // leaves fits nowhere; in manual mode it is what isn't placed yet.

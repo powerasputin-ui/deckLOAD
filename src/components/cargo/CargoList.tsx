@@ -5,11 +5,13 @@ import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { MenuItem } from '@/components/shell/menu'
+import { PlatformStatusSelect } from '@/components/cargo/PlatformStatusSelect'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
 import { NumberField } from '@/components/calculator/NumberField'
 import { closeCalculatorHistoryStep, undoCalculator, useCalculator } from '@/store/calculator'
 import { placedByItem } from '@/lib/cargoTable'
 import { ownUnitsOfItem } from '@/lib/ownPlacements'
+import { isPlatform, platformStatusOf } from '@/lib/objectKind'
 import type { CargoItem, PlacedItem } from '@/lib/packing'
 import { cn, fmtTonnes } from '@/lib/utils'
 
@@ -69,6 +71,9 @@ export function CargoList({
   const takeOffDeck = useCalculator((s) => s.takeOffDeck)
   const pinOnDeck = useCalculator((s) => s.pinOnDeck)
   const removeItem = useCalculator((s) => s.removeItem)
+  // A platform's cargo has a status (spec 2026-11-06, 6); what leaves with
+  // the vessel isn't on the plan and has nothing to place.
+  const platform = useCalculator((s) => isPlatform(s.deck))
   // A row's right-click menu (revision 2026-11-06): a cargo that fits no
   // trip has no stack to right-click on the deck, and the list offered no
   // way to drop it short of the cargo table.
@@ -134,6 +139,7 @@ export function CargoList({
           const armed = activeStampId === it.id
           const refusal = armed ? null : placeRefusal(it.id)
           const own = ownUnitsOfItem(it.id, mode, manualPlacements, pinnedPlacementsByTrip)
+          const leaving = platform && platformStatusOf(it) === 'outgoing'
           // Armed, it stays «Поставить», to be clicked off.
           const offer: 'place' | 'take-off' | 'pin' = armed
             ? 'place'
@@ -182,13 +188,24 @@ export function CargoList({
                     </span>
                   )}
                 </div>
-                <p className="flex items-center gap-x-1 text-xs text-ink-2 tabular-nums">
-                  <PlacedCount item={it} units={units} />
-                  <span>из</span>
-                  <QuantityField item={it} onCommit={(quantity) => updateItem(it.id, { quantity })} />
-                </p>
+                {leaving ? (
+                  <p className="flex items-center gap-x-1 text-xs text-ink-2 tabular-nums">
+                    <span>Увозят</span>
+                    <QuantityField item={it} onCommit={(quantity) => updateItem(it.id, { quantity })} />
+                    <span>ед.</span>
+                  </p>
+                ) : (
+                  <p className="flex items-center gap-x-1 text-xs text-ink-2 tabular-nums">
+                    <PlacedCount item={it} units={units} />
+                    <span>из</span>
+                    <QuantityField item={it} onCommit={(quantity) => updateItem(it.id, { quantity })} />
+                  </p>
+                )}
+                {platform && <PlatformStatusSelect item={it} onChange={(platformStatus) => updateItem(it.id, { platformStatus })} className="mt-0.5" />}
               </div>
-              {offer === 'pin' ? (
+              {leaving ? (
+                <span className={cn(ROW_BUTTON, 'inline-flex items-center justify-center text-center text-xs leading-tight text-ink-2')}>не на плане</span>
+              ) : offer === 'pin' ? (
                 <Button
                   type="button"
                   size="sm"

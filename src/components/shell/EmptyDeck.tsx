@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, PackagePlus, Ship } from 'lucide-react'
+import { BookOpen, Factory, PackagePlus, Ship } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // An empty deck (spec 10.3): the next step from here — a vessel, the cargo
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 // hint, so the deck itself stays free for its outline, obstacles and photo.
 export function EmptyDeck({
   vesselChosen = false,
+  platform = false,
   onChooseVessel,
   onAddCargo,
   onOpenExample,
@@ -15,6 +16,8 @@ export function EmptyDeck({
   // A vessel from the library is already on the deck: the step is to change
   // it, not to choose one.
   vesselChosen?: boolean
+  // A platform's deck (spec 2026-11-06): its step is its own card.
+  platform?: boolean
   onChooseVessel: () => void
   onAddCargo: () => void
   onOpenExample: () => void
@@ -29,8 +32,8 @@ export function EmptyDeck({
           На палубе пока нет груза
         </h2>
         <Button variant="outline" size="sm" className="h-7" onClick={onChooseVessel}>
-          <Ship className="mr-1 h-4 w-4" aria-hidden="true" />
-          {vesselChosen ? 'Сменить судно' : 'Выбрать судно'}
+          {platform ? <Factory className="mr-1 h-4 w-4" aria-hidden="true" /> : <Ship className="mr-1 h-4 w-4" aria-hidden="true" />}
+          {platform ? 'Данные платформы' : vesselChosen ? 'Сменить судно' : 'Выбрать судно'}
         </Button>
         <Button variant="outline" size="sm" className="h-7" onClick={onAddCargo}>
           <PackagePlus className="mr-1 h-4 w-4" aria-hidden="true" />

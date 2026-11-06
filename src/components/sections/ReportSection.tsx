@@ -41,8 +41,9 @@ export function ReportSection({
         ) : (
           <>
             <p className="text-sm text-ink-2">
-              По листу на рейс: схема палубы, груз, сводка с проверками и остойчивостью, крепление и подписи. Последний лист — итого по
-              операции.
+              {model?.platform
+                ? 'Лист «План палубы»: схема палубы после рейса, груз на борту и в приходе, отгрузка, сводка с проверками и подписи.'
+                : 'По листу на рейс: схема палубы, груз, сводка с проверками и остойчивостью, крепление и подписи. Последний лист — итого по операции.'}
             </p>
             {hasErrors && (
               <p role="status" className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
@@ -71,7 +72,7 @@ export function ReportSection({
                     </button>
                   </li>
                 ))}
-                <li className="px-2 py-1.5 text-sm text-ink-2">Итого по операции</li>
+                {!model.platform && <li className="px-2 py-1.5 text-sm text-ink-2">Итого по операции</li>}
               </ul>
             )}
           </>

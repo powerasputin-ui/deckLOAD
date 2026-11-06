@@ -7,6 +7,8 @@ import { fmtTonnes, pluralRu } from './utils'
 import type { SectionId } from './workflow'
 
 export interface StatusLineInput {
+  // A platform's plan: one deck after the supply run, no trips.
+  platform?: boolean
   // Current trip.
   utilization: number
   weightKg: number
@@ -46,7 +48,7 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
     {
       id: 'load',
       text: `${Math.round(s.utilization * 100)}%`,
-      title: 'Загрузка площади текущего рейса',
+      title: s.platform ? 'Загрузка площади палубы' : 'Загрузка площади текущего рейса',
       target: 'placement',
     },
   ]
@@ -55,7 +57,13 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   items.push({
     id: 'weight',
     text: s.maxDeckCargoT !== undefined ? `${fmtTonnes(s.weightKg)} из ${s.maxDeckCargoT} т` : `${fmtTonnes(s.weightKg)} т`,
-    title: s.maxDeckCargoT !== undefined ? 'Вес груза текущего рейса и наибольший вес для судна' : 'Вес груза текущего рейса',
+    title: s.platform
+      ? s.maxDeckCargoT !== undefined
+        ? 'Груз на палубе после рейса и допускаемая нагрузка'
+        : 'Груз на палубе после рейса'
+      : s.maxDeckCargoT !== undefined
+        ? 'Вес груза текущего рейса и наибольший вес для судна'
+        : 'Вес груза текущего рейса',
     target: 'vessel',
     tone: overWeight ? 'danger' : undefined,
   })
@@ -63,7 +71,7 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   items.push({
     id: 'units',
     text: `${s.placedUnits}/${s.totalUnits} ед.`,
-    title: 'Размещено во всех рейсах из всего',
+    title: s.platform ? 'Размещено на палубе из всего, что на борту и в приходе' : 'Размещено во всех рейсах из всего',
     target: 'cargo',
   })
 

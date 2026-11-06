@@ -61,7 +61,7 @@ import { CargoTable } from '@/components/cargo/CargoTable'
 import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
-import { isPlatform, type ObjectKind } from '@/lib/objectKind'
+import { isPlatform, staysOnDeck, type ObjectKind } from '@/lib/objectKind'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
@@ -161,7 +161,7 @@ const TOUR_STEPS: TourStep[] = [
     id: 'vessel',
     selector: '[data-tour="section-vessel"]',
     title: 'Судно',
-    body: 'Выберите судно из библиотеки или задайте свою палубу.',
+    body: 'Выберите судно из библиотеки или задайте свою палубу. Платформа — ППБУ или стационарная — выбирается в карточке.',
   },
   {
     id: 'cargo',
@@ -198,6 +198,10 @@ export default function Home() {
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
   const items = useCalculator((s) => s.items)
+  // A platform (spec 2026-11-06, 6): the deck after the supply run carries
+  // what's on board and what arrives; what leaves counts nowhere on it.
+  const platform = isPlatform(deck)
+  const deckItems = useMemo(() => (platform ? items.filter(staysOnDeck) : items), [platform, items])
   const sortStrategy = useCalculator((s) => s.sortStrategy)
   const globalRotation = useCalculator((s) => s.globalRotation)
   const showFreeSpace = useCalculator((s) => s.showFreeSpace)
@@ -600,11 +604,12 @@ export default function Home() {
   const lashingShortIds = useMemo(
     () =>
       new Set(
-        (mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []))
+        // A platform has no lashing check (spec 2026-11-06, 6).
+        (platform ? [] : mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []))
           .filter((r) => lashingVerdict(r, deck, items) === 'short')
           .map((r) => r.id)
       ),
-    [mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items]
+    [platform, mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items]
   )
   // The one purely auto-placed stack selected on the deck (no pin yet), if
   // any. Keys and the sidebar's «Крепление груза» act on it like on a pin:
@@ -1152,11 +1157,11 @@ export default function Home() {
         trips: hasEmptyTrailingTrip ? trips.slice(0, -1) : trips,
         pinnedPlacementsByTrip,
         manualPlacements,
-        items,
+        items: deckItems,
         deck,
         separationRules: separationRulesInUnit,
       }),
-    [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, items, deck, separationRulesInUnit]
+    [mode, trips, hasEmptyTrailingTrip, pinnedPlacementsByTrip, manualPlacements, deckItems, deck, separationRulesInUnit]
   )
   const planChecks = useMemo(() => buildChecks(planFacts), [planFacts])
   // The check opened in «Проверки» (8.4): what it found, and its stacks at
@@ -1400,20 +1405,23 @@ export default function Home() {
   }
 
   const statusInput: StatusLineInput = {
+    platform,
     utilization: result.utilization,
     weightKg: result.totalWeight,
     maxDeckCargoT: deck.maxDeckCargoT,
     placedUnits: placedAcrossTrips.reduce((sum, p) => sum + p.stackedCount, 0),
-    totalUnits: items.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
+    totalUnits: deckItems.reduce((sum, it) => sum + Math.max(0, it.quantity), 0),
     tripCount: shownTrips.length,
-    gm: statusGm,
-    gmMissing: stabilityMissing === NO_DECK_HEIGHT ? stabilityMissing : undefined,
+    // A platform has no vessel stability (spec 2026-11-06, 7: a semi-sub's
+    // VDL and KG come with its own data).
+    gm: platform ? undefined : statusGm,
+    gmMissing: !platform && stabilityMissing === NO_DECK_HEIGHT ? stabilityMissing : undefined,
     checks: planChecks,
   }
   const marks = sectionMarks({
     vesselTemplateId: deck.vesselTemplateId,
     deck: { width: deck.width, length: deck.length, unit: deck.unit },
-    items,
+    items: deckItems,
     placedUnits: statusInput.placedUnits,
     checks: checkCounts(planChecks),
     pdfUpToDate,
@@ -1660,7 +1668,8 @@ export default function Home() {
           {!hasCargo && !toolArmed && activeSection !== 'vessel' && (
             <EmptyDeck
               vesselChosen={appliedVessel(deck) !== undefined}
-              onChooseVessel={() => openSection('vessel', 'library')}
+              platform={platform}
+              onChooseVessel={() => openSection('vessel', platform ? 'card' : 'library')}
               onAddCargo={() => openSection('cargo')}
               onOpenExample={() => {
                 createProject('Демо-расчёт', { demo: true })
@@ -1772,7 +1781,7 @@ export default function Home() {
                 onToggleManualSelection={toggleManualSelection}
                 onClearManualSelection={clearManualSelection}
                 loadZones={deck.loadZones}
-                lashingPoints={deck.lashingPoints}
+                lashingPoints={platform ? undefined : deck.lashingPoints}
                 categoryByItemId={categoryByItemId}
                 cargoNumberByItemId={cargoNumberByItemId}
                 separationRules={separationRulesInUnit}
@@ -1853,7 +1862,7 @@ export default function Home() {
               stack={inspected?.stack}
               actions={inspectedActions}
               selection={inspectedSelection}
-              lashing={<StackLashing autoStack={selectedAutoStack} onPatchAutoStack={patchAutoStack} />}
+              lashing={platform ? undefined : <StackLashing autoStack={selectedAutoStack} onPatchAutoStack={patchAutoStack} />}
               onShowChecks={() => openSection('checks')}
               onClose={closeInspector}
             />

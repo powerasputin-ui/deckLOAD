@@ -217,6 +217,32 @@ describe('buildPlanPdf', () => {
     }
   }
 
+  // Spec 2026-11-06, 8: a platform's PDF is one sheet «План палубы» — the
+  // deck after the supply run, each cargo's status, the cargo leaving listed
+  // under it — with no lashing and no vessel stability.
+  it('makes a platform\'s plan: its name, «План палубы», statuses and the cargo leaving', () => {
+    const deck = { ...DEMO_DECK, objectKind: 'fixed', platformName: 'МСП-2', maxDeckCargoT: 300 } as DeckConfig
+    const items: CargoItem[] = [
+      { id: 'a', name: 'Контейнер', width: 2.44, length: 6.06, height: 2.59, quantity: 2, color: '#000', allowRotation: true, weight: 5000, platformStatus: 'onboard' },
+      { id: 'b', name: 'Паллета', width: 1.2, length: 0.8, height: 1.5, quantity: 4, color: '#000', allowRotation: true, weight: 500 },
+      { id: 'c', name: 'Бочки', width: 1.2, length: 1.2, height: 1, quantity: 3, color: '#000', allowRotation: true, weight: 1000, platformStatus: 'outgoing' },
+    ]
+    const onDeck = items.filter((it) => it.platformStatus !== 'outgoing')
+    // The list numbers every cargo, the one leaving too.
+    const model = buildPlanPdf({ ...input(deck, onDeck), items, numbers: cargoNumbers(items) })
+    expect(model.platform).toBe(true)
+    expect(model.vessel).toBe('Стационарная платформа «МСП-2»')
+    const sheet = model.trips[0]
+    expect(sheet.title).toBe('План палубы')
+    expect(sheet.cargo.map((r) => r.cells[1])).toEqual(['Контейнер · на борту', 'Паллета · приход', 'Отгрузка — не на плане', 'Бочки'])
+    expect(sheet.cargo.at(-1)!.cells).toEqual(['3', 'Бочки', '3', '1.2×1.2×1', '1', '3', '—', '—'])
+    expect(sheet.cargoTotal[1]).toBe('Итого на палубе')
+    expect(sheet.weight.text).toBe('Груз на палубе: 12 т из 300 т — допускаемая нагрузка')
+    expect(sheet.stability.only).toBe('Стационарная платформа: остойчивость не считается')
+    expect(sheet.lashing.rows).toEqual([])
+    expect(sheet.checks.map((c) => c.title)).not.toContain('Крепление')
+  })
+
   // Revision 2026-11-06: a pile's «Ярусов» is its rows, as the plan's label
   // says, not the pipes in it.
   it('gives a pile of pipe its tiers, not its pipes', () => {

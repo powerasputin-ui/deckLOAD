@@ -93,6 +93,9 @@ export interface TripFindings {
 
 export interface PlanFacts {
   mode: 'auto' | 'manual'
+  // A platform's plan (spec 2026-11-06, 6): one deck after the supply run,
+  // no trips, no lashing check, no vessel stability.
+  platform?: boolean
   totalUnits: number
   // Auto mode: units no trip can take. Manual mode: units not placed yet.
   unplacedUnits: number
@@ -150,10 +153,10 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // Вместимость и рейсы.
   {
-    const base = { id: 'capacity' as const, title: 'Вместимость и рейсы', target: 'placement' as const }
+    const base = { id: 'capacity' as const, title: f.platform ? 'Вместимость' : 'Вместимость и рейсы', target: 'placement' as const }
     if (f.totalUnits === 0) checks.push({ ...base, status: 'none', detail: 'Груза нет' })
     else if (f.unplacedUnits > 0 && f.mode === 'auto')
-      checks.push({ ...base, status: 'error', detail: `${f.unplacedUnits} ед. не помещаются ни в один рейс` })
+      checks.push({ ...base, status: 'error', detail: `${f.unplacedUnits} ед. не помещаются ${f.platform ? 'на палубу' : 'ни в один рейс'}` })
     else if (f.unplacedUnits > 0) checks.push({ ...base, status: 'warn', detail: `Не размещено ${f.unplacedUnits} ед.` })
     else
       checks.push({
@@ -167,7 +170,7 @@ export function buildChecks(f: PlanFacts): Check[] {
 
   // Вес палубы.
   {
-    const base = { id: 'deck-weight' as const, title: 'Вес палубы', target: 'vessel' as const, targetStep: 'card' as const }
+    const base = { id: 'deck-weight' as const, title: f.platform ? 'Нагрузка на палубу' : 'Вес палубы', target: 'vessel' as const, targetStep: 'card' as const }
     const limit = f.maxDeckCargoT
     if (limit === undefined) checks.push({ ...base, status: 'none', detail: 'Лимит не задан' })
     else {
@@ -221,8 +224,8 @@ export function buildChecks(f: PlanFacts): Check[] {
     } else checks.push({ ...base, status: 'ok', detail: 'Нарушений нет' })
   }
 
-  // Крепление.
-  {
+  // Крепление — a vessel's: a platform's motions aren't the norm's.
+  if (!f.platform) {
     const base = { id: 'lashing' as const, title: 'Крепление', target: 'checks' as const }
     const { securedStacks, shortStacks, dangerousGoodsStacks } = f.lashing
     const warnings = [
@@ -234,8 +237,8 @@ export function buildChecks(f: PlanFacts): Check[] {
     else checks.push({ ...base, status: 'ok', detail: `Крепления хватает: ${securedStacks} ${stacksWord(securedStacks)}` })
   }
 
-  // Остойчивость.
-  {
+  // Остойчивость — a vessel's, by its booklet.
+  if (!f.platform) {
     const base = { id: 'stability' as const, title: 'Остойчивость', target: 'stability' as const }
     const judged = f.trips.filter((t) => t.stability)
     const worst = judged.some((t) => t.stability!.verdict === 'error') ? 'error' : judged.some((t) => t.stability!.verdict === 'warn') ? 'warn' : 'ok'
