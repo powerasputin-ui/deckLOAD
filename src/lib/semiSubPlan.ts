@@ -6,7 +6,7 @@ import type { DeckConfig } from '@/store/calculator'
 import { platformStatusOf } from './objectKind'
 import type { CargoItem, PackingResult } from './packing'
 import { EMPTY_SEMI_SUB, evaluateSemiSub, type SemiSubResult, type Weight } from './semiSub'
-import { buildCargoWeightMoments, catalogInMeters, placementsInMeters } from './stability'
+import { buildCargoWeightMoments, catalogInMeters, deckLevels, lowestDeckLevel, placementsInMeters } from './stability'
 import { resolveShipFrame } from './stabilityConditions'
 import { computeItemVCG } from './stabilityMath'
 import { toMeters } from './units'
@@ -19,21 +19,24 @@ export function semiSubForPlan(deck: DeckConfig, trip: PackingResult | undefined
   // Heights and a cargo's own VCG in metres, as the stability works.
   const itemsM = catalogInMeters([...items], unit)
   const arrivingStacks = (trip?.placed ?? []).filter((p) => status.get(p.itemId) === 'incoming')
+  const levels = deckLevels(deck.loadZones, unit)
   const arriving: Weight[] = buildCargoWeightMoments(
     placementsInMeters(arrivingStacks, unit),
     toMeters(deck.width, unit),
     toMeters(deck.length, unit),
     frame,
     deck.deckForwardIsPositiveY ?? true,
-    itemsM
+    itemsM,
+    levels
   ).map((w) => ({ weightT: w.weightKg / 1000, vcgM: w.vcgM }))
   // Cargo leaving stands on the deck now, where the report has it: taken
-  // one tier high, at its own height's middle (or its own VCG).
+  // one tier high, at its own height's middle (or its own VCG), on the
+  // deck's lowest level — the plan doesn't say where it is.
   const leaving: Weight[] = itemsM
     .filter((it) => status.get(it.id) === 'outgoing' && it.quantity > 0 && (it.weight ?? 0) > 0)
     .map((it) => ({
       weightT: ((it.weight ?? 0) * it.quantity) / 1000,
-      vcgM: frame.heightAboveBaselineM + computeItemVCG({ height: it.height, layers: 1, stabilityOverride: it.stabilityOverride }),
+      vcgM: frame.heightAboveBaselineM + lowestDeckLevel(levels) + computeItemVCG({ height: it.height, layers: 1, stabilityOverride: it.stabilityOverride }),
     }))
   return evaluateSemiSub(deck.semiSub ?? EMPTY_SEMI_SUB, arriving, leaving, !heightMissing)
 }

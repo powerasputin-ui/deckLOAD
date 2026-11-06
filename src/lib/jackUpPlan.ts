@@ -7,7 +7,7 @@ import { EMPTY_JACK_UP, evaluateJackUp, type JackUpResult, type PlacedWeight } f
 import { platformStatusOf } from './objectKind'
 import type { CargoItem, PackingResult } from './packing'
 import type { Weight } from './semiSub'
-import { buildCargoWeightMoments, catalogInMeters, placementsInMeters } from './stability'
+import { buildCargoWeightMoments, catalogInMeters, deckLevels, lowestDeckLevel, placementsInMeters } from './stability'
 import { resolveShipFrame } from './stabilityConditions'
 import { computeItemVCG } from './stabilityMath'
 import { toMeters } from './units'
@@ -21,20 +21,23 @@ export function jackUpForPlan(deck: DeckConfig, trip: PackingResult | undefined,
   const widthM = toMeters(deck.width, unit)
   const lengthM = toMeters(deck.length, unit)
   const forward = deck.deckForwardIsPositiveY ?? true
+  const levels = deckLevels(deck.loadZones, unit)
   // Each stack arriving: its weight and height as the stability works them,
   // its centre on the deck in the deck's own metres.
   const arriving: PlacedWeight[] = placementsInMeters(
     (trip?.placed ?? []).filter((p) => status.get(p.itemId) === 'incoming'),
     unit
   ).flatMap((p) => {
-    const [w] = buildCargoWeightMoments([p], widthM, lengthM, frame, forward, itemsM)
+    const [w] = buildCargoWeightMoments([p], widthM, lengthM, frame, forward, itemsM, levels)
     return w ? [{ weightT: w.weightKg / 1000, vcgM: w.vcgM, x: p.x + p.width / 2, y: p.y + p.length / 2 }] : []
   })
+  // Cargo leaving: one tier high on the deck's lowest level, as on a
+  // semi-submersible (semiSubPlan).
   const leaving: Weight[] = itemsM
     .filter((it) => status.get(it.id) === 'outgoing' && it.quantity > 0 && (it.weight ?? 0) > 0)
     .map((it) => ({
       weightT: ((it.weight ?? 0) * it.quantity) / 1000,
-      vcgM: frame.heightAboveBaselineM + computeItemVCG({ height: it.height, layers: 1, stabilityOverride: it.stabilityOverride }),
+      vcgM: frame.heightAboveBaselineM + lowestDeckLevel(levels) + computeItemVCG({ height: it.height, layers: 1, stabilityOverride: it.stabilityOverride }),
     }))
   return evaluateJackUp(deck.jackUp ?? EMPTY_JACK_UP, arriving, leaving, { lengthM, forwardIsPositiveY: forward }, !heightMissing)
 }

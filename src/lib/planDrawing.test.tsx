@@ -132,6 +132,21 @@ describe('buildPlanDrawing', () => {
     expect(textOf(d, '!')).toBeDefined()
   })
 
+  it('writes an area\'s own level on its label: above the deck with «+», below with «−»', () => {
+    const deck = {
+      ...DEMO_DECK,
+      loadZones: [
+        { id: 'up', x: 0, y: 0, width: 8, length: 8, maxLoadPerArea: 2, elevationM: 3 },
+        { id: 'down', x: 0, y: 10, width: 8, length: 8, maxLoadPerArea: 2, elevationM: -1.25 },
+        { id: 'flat', x: 0, y: 18, width: 8, length: 2, maxLoadPerArea: 2 },
+      ],
+    } as DeckConfig
+    const d = draw(deck, [], [])
+    expect(textOf(d, 'Зона 1 · 2 т/м² · +3 м')).toBeDefined()
+    expect(textOf(d, 'Зона 2 · 2 т/м² · −1.25 м')).toBeDefined()
+    expect(textOf(d, 'Зона 3 · 2 т/м²')).toBeDefined()
+  })
+
   it('marks stacks short of lashing and of unknown make-up', () => {
     const items = createDemoItems(genId)
     const deck = { ...DEMO_DECK } as DeckConfig

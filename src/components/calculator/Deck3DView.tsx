@@ -16,8 +16,10 @@ import { DRAG_THRESHOLD_PX, isStackSelected, type StackSelection } from '@/lib/s
 import { THEME_TOKENS } from '@/lib/theme'
 import { BOW_ARROW } from './DeckDrawingFrame'
 import { autoPlacementKey } from '@/store/calculator'
-import { rotateOutline90, decomposePipePyramid, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
+import { rotateOutline90, decomposePipePyramid, type LoadZone, type PackingResult, type ManualPlacement, type PinnedPlacement } from '@/lib/packing'
 import { pipeNestTierOffsets } from '@/lib/pipeNest'
+import { deckLevels, placementLevel } from '@/lib/stability'
+import { convertLength, type Unit } from '@/lib/units'
 
 interface PinData {
   itemId: string
@@ -43,6 +45,11 @@ interface Deck3DViewProps {
   deckForwardIsPositiveY?: boolean
   // What the deck is of: a fixed platform's sides go by the compass.
   objectKind?: ObjectKind
+  // The deck's areas; those at their own level (elevationM) are drawn as a
+  // raised floor or a bay, and the cargo on them stands at that level.
+  loadZones?: LoadZone[]
+  // The deck's unit, which the levels (in metres) are brought into.
+  unit?: Unit
   // Pixels at the right of the view covered by the inspector (spec 5.4).
   coveredRight?: number
   mode: 'auto' | 'manual'
@@ -118,6 +125,8 @@ export default function Deck3DView({
   deckOutline,
   deckForwardIsPositiveY = true,
   objectKind,
+  loadZones,
+  unit = 'm',
   coveredRight = 0,
   mode,
   manualPlacements,
@@ -171,6 +180,24 @@ export default function Deck3DView({
   // regardless of how small the real gap is — same clarity the 2D view gets
   // for free from each rect's own stroke outline.
   const SHRINK = 0.94
+
+  // The deck's areas at their own levels, placed in the deck's own units
+  // like the scene; each level itself stays in metres.
+  const levels = useMemo(() => deckLevels(loadZones, 'm'), [loadZones])
+  // Each drawn as it stands: a raised floor from the deck up to its level,
+  // a bay as its opening on the deck.
+  const levelFloors = useMemo(
+    () =>
+      levels.map((l, i) => ({
+        key: `level-${i}`,
+        x: l.x + l.width / 2 - deckWidth / 2,
+        z: l.y + l.length / 2 - deckLength / 2,
+        w: l.width,
+        d: l.length,
+        h: convertLength(l.elevationM, 'm', unit),
+      })),
+    [levels, deckWidth, deckLength, unit]
+  )
 
   const boxes = useMemo(() => {
     const out: {
@@ -241,6 +268,9 @@ export default function Deck3DView({
       const cx = p.x + p.width / 2 - deckWidth / 2
       const cz = p.y + p.length / 2 - deckLength / 2
       const layers = Math.max(1, p.stackedCount)
+      // On an area at its own level (LoadZone.elevationM) the stack stands
+      // that much higher, or lower, as the stability has it.
+      const lift = convertLength(placementLevel(levels, p), 'm', unit)
 
       // Hand-drawn custom outline (incl. concave — L/Z shapes) — checked
       // BEFORE the height<=0 fallback below, since a freshly drawn shape
@@ -266,7 +296,7 @@ export default function Deck3DView({
             depth,
             x: cx - p.width / 2,
             z: cz - p.length / 2,
-            y: layer * tierPitch0,
+            y: lift + layer * tierPitch0,
             color: tone,
           })
         }
@@ -274,7 +304,7 @@ export default function Deck3DView({
       }
 
       if (p.height <= 0) {
-        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: 0.15, z: cz, color: tone })
+        out.push({ key: `${p.itemId}-${thisIdx}`, placementId, pinData, w: p.width * SHRINK, d: p.length * SHRINK, h: 0.3, x: cx, y: lift + 0.15, z: cz, color: tone })
         continue
       }
 
@@ -309,7 +339,7 @@ export default function Deck3DView({
             scaleZ: p.length / (p.width || 1),
             x: cx,
             z: cz,
-            y: layer * tierPitch + p.height / 2,
+            y: lift + layer * tierPitch + p.height / 2,
             color: tone,
           })
         }
@@ -342,7 +372,7 @@ export default function Deck3DView({
               cylLen: pipeLen,
               rot,
               x: cx + (acrossIsX ? across : 0),
-              y: tierY,
+              y: lift + tierY,
               z: cz + (acrossIsX ? 0 : across),
               color: tone,
             })
@@ -362,7 +392,7 @@ export default function Deck3DView({
             h: p.height,
             x: cx,
             z: cz,
-            y: layer * tierPitch + p.height / 2,
+            y: lift + layer * tierPitch + p.height / 2,
             color: tone,
           })
         }
@@ -399,7 +429,7 @@ export default function Deck3DView({
             rot,
             x: cx,
             z: cz,
-            y: layer * tierPitch + p.height / 2,
+            y: lift + layer * tierPitch + p.height / 2,
             color: tone,
           })
         }
@@ -431,14 +461,14 @@ export default function Deck3DView({
             rot,
             x: cx + (acrossIsX ? across : 0),
             z: cz + (acrossIsX ? 0 : across),
-            y: rowY,
+            y: lift + rowY,
             color: tone,
           })
         }
       }
     }
     return out
-  }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements, cargoNumberByItemId])
+  }, [result.placed, deckWidth, deckLength, mode, manualPlacements, pinnedPlacements, cargoNumberByItemId, levels, unit])
 
   const handleClick = (placementId: string | undefined, pinData: PinData | undefined) => (e: ThreeEvent<MouseEvent>) => {
     // The end of a camera turn that started on a stack, not a choice of it.
@@ -562,6 +592,24 @@ export default function Deck3DView({
             <meshStandardMaterial color={palette.deck} {...SURFACE} />
             <Outline color={palette.deckOutline} />
           </mesh>
+        )}
+
+        {/* Areas at their own levels: a raised floor as a block from the
+            deck up to its level, a bay as a darker opening on the deck. */}
+        {levelFloors.map((f) =>
+          f.h > 0 ? (
+            <mesh key={f.key} position={[f.x, f.h / 2, f.z]} raycast={() => null}>
+              <boxGeometry args={[f.w, f.h, f.d]} />
+              <meshStandardMaterial color={palette.deck} {...SURFACE} />
+              <Outline color={palette.deckOutline} />
+            </mesh>
+          ) : (
+            <mesh key={f.key} rotation={[-Math.PI / 2, 0, 0]} position={[f.x, 0.01, f.z]} raycast={() => null}>
+              <planeGeometry args={[f.w, f.d]} />
+              <meshBasicMaterial color="#000000" transparent opacity={0.3} {...SURFACE} />
+              <Outline color={palette.deckOutline} />
+            </mesh>
+          )
         )}
 
         {boxes.map((b) => {

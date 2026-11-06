@@ -61,4 +61,12 @@ describe('jackUpForPlan', () => {
     expect(r.kgAfterM).toBeCloseTo(102_100 / 10_100, 9)
     expect(r.draftAfterM).toBeCloseTo(3.04, 9)
   })
+
+  it('afloat, stands a stack on a raised area that much higher (spec 12)', () => {
+    const afloat = { ...deck, jackUp: { ...data, mode: 'afloat' as const, report: { ...data.report, displacementT: 10_000, kgM: 10, draftM: 3 }, afloat: { tpcTPerCm: 25 } } }
+    const raised = { ...afloat, loadZones: [{ id: 'z', x: 0, y: 0, width: 30, length: 30, maxLoadPerArea: 50, elevationM: 4 }] }
+    const { r } = plan([box({ id: 'in' })], raised)
+    // 100 t at 20 + 4 + 1 m.
+    expect(r.kgAfterM).toBeCloseTo((100_000 + 2_500) / 10_100, 9)
+  })
 })

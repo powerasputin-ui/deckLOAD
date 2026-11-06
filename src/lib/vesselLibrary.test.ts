@@ -19,7 +19,7 @@ const own: DeckConfig = {
   maxDeckCargoT: 1200,
   outline: [{ x: 0, y: 0 }, { x: 1600, y: 0 }, { x: 1600, y: 4000 }, { x: 0, y: 3000 }],
   restrictionZones: [{ id: 'crane', name: 'Кран', shapeType: 'rect', x: 100, y: 200, width: 300, length: 400 }],
-  loadZones: [{ id: 'aft', x: 0, y: 0, width: 1600, length: 1000, maxLoadPerArea: 5 }],
+  loadZones: [{ id: 'aft', x: 0, y: 0, width: 1600, length: 1000, maxLoadPerArea: 5, elevationM: 2 }],
   powerSockets: [{ id: 's', x: 0, y: 100, label: '1' }],
   annotations: [{ id: 'a', kind: 'note', text: 'Кран', x: 1, y: 1 }],
   backgroundImage: 'data:image/jpeg;base64,AAAA',
@@ -37,7 +37,8 @@ describe('a vessel saved from a calculation', () => {
       note: 'Формуляр, ред. 2',
       deck: { width: 16, length: 40, outline: [{ x: 0, y: 0 }, { x: 16, y: 0 }, { x: 16, y: 40 }, { x: 0, y: 30 }] },
       restrictionZones: [{ id: 'crane', name: 'Кран', x: 1, y: 2, width: 3, length: 4 }],
-      loadZones: [{ id: 'aft', x: 0, y: 0, width: 16, length: 10, maxLoadPerArea: 5 }],
+      // A zone's level is in metres already.
+      loadZones: [{ id: 'aft', x: 0, y: 0, width: 16, length: 10, maxLoadPerArea: 5, elevationM: 2 }],
       limits: { maxDeckCargoT: 1200, maxStackHeightM: 3 },
       vessel: kuznetsov.vessel,
       shipFrame: { originOffsetFromMidshipsM: 20, heightAboveBaselineM: 7.5 },

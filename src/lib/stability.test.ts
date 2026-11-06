@@ -13,6 +13,10 @@ import {
   G_METACENTRIC_MIN_SAFE,
   knCurvesProblem,
   lightshipLcgHint,
+  deckLevels,
+  levelAt,
+  lowestDeckLevel,
+  placementLevel,
   type VesselStabilityData,
   type DeckShipFrame,
   type HydrostaticTable,
@@ -20,6 +24,51 @@ import {
   type VariableWeightItem,
 } from './stability'
 import { polygonCentroid } from './packing'
+
+// Spec 2026-11-06, 12: areas of the deck at their own levels.
+describe('deck levels', () => {
+  const zones = [
+    { id: 'a', x: 0, y: 0, width: 1000, length: 2000, maxLoadPerArea: 5, elevationM: 1 },
+    { id: 'b', x: 200, y: 200, width: 400, length: 400, maxLoadPerArea: 5, elevationM: 3 },
+    { id: 'c', x: 300, y: 300, width: 100, length: 100, maxLoadPerArea: 5 },
+    { id: 'd', x: 0, y: 0, width: 50, length: 50, maxLoadPerArea: 5, elevationM: 0 },
+  ]
+
+  it('keeps only the areas with a level, in metres; the level stays as given', () => {
+    expect(deckLevels(zones, 'cm')).toEqual([
+      { x: 0, y: 0, width: 10, length: 20, elevationM: 1 },
+      { x: 2, y: 2, width: 4, length: 4, elevationM: 3 },
+    ])
+    expect(deckLevels(undefined, 'm')).toEqual([])
+  })
+
+  it('stands a point on the smallest area with a level that holds it, edges included; elsewhere on the deck', () => {
+    const levels = deckLevels(zones, 'cm')
+    expect(levelAt(levels, 3.5, 3.5)).toBe(3) // inside b and the level-less c
+    expect(levelAt(levels, 2, 6)).toBe(3) // b's corner
+    expect(levelAt(levels, 7, 7)).toBe(1)
+    expect(levelAt(levels, 11, 1)).toBe(0)
+    expect(levelAt([], 1, 1)).toBe(0)
+  })
+
+  it('places a stack by its footprint\'s centre — a drawn shape\'s by its centroid', () => {
+    const levels = [{ x: 0, y: 0, width: 2, length: 4, elevationM: 2 }]
+    // A 4 × 4 box from (0, 0): centre (2, 2) is on the area's edge.
+    expect(placementLevel(levels, { x: 0, y: 0, width: 4, length: 4 })).toBe(2)
+    // An L (a 1 × 4 bar and a 3 × 1 one): its centroid is (9.5/7, 18.5/7)
+    // ≈ (1.36, 2.64) from its corner. Put at x 0.5, its box centre (2.5, 2)
+    // is off the area, its centroid (1.86, 2.64) on it — the centroid counts.
+    const l = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 3 }, { x: 4, y: 3 }, { x: 4, y: 4 }, { x: 0, y: 4 }]
+    expect(placementLevel(levels, { x: 0.5, y: 0, width: 4, length: 4, outline: l })).toBe(2)
+    expect(placementLevel(levels, { x: 0.5, y: 0, width: 4, length: 4 })).toBe(0)
+  })
+
+  it('takes the deck\'s lowest level as 0 or below', () => {
+    expect(lowestDeckLevel([])).toBe(0)
+    expect(lowestDeckLevel([{ x: 0, y: 0, width: 1, length: 1, elevationM: 3 }])).toBe(0)
+    expect(lowestDeckLevel([{ x: 0, y: 0, width: 1, length: 1, elevationM: 3 }, { x: 0, y: 0, width: 1, length: 1, elevationM: -2 }])).toBe(-2)
+  })
+})
 
 describe('computeItemVCG', () => {
   it('defaults to half the stacked height above the deck', () => {

@@ -10,7 +10,7 @@
 // warning, not a tick. The KN-curve criteria (checkIMOCriteria) stay an
 // estimate shown beside it and never change it.
 
-import { isPipeShape, polygonArea, type CargoItem, type CompositionSegment } from './packing'
+import { isPipeShape, polygonArea, type CargoItem, type CompositionSegment, type LoadZone } from './packing'
 import { segmentsOf, stackHeight } from './placementComposition'
 import {
   buildCargoWeightMoments,
@@ -37,6 +37,8 @@ import {
   type StabilityResult,
   type VesselStabilityData,
   type WeightMoment,
+  deckLevels,
+  placementLevel,
 } from './stability'
 import { toMeters, type Unit } from './units'
 
@@ -305,7 +307,8 @@ export function stabilityMissing(input: Pick<TripStabilityInput, 'vessel' | 'shi
 export interface TripStabilityInput {
   vessel: VesselStabilityData
   shipFrame: DeckShipFrameInput
-  deck: { width: number; length: number; unit: Unit; outline?: { x: number; y: number }[] }
+  // Its areas at their own levels raise the cargo standing on them.
+  deck: { width: number; length: number; unit: Unit; outline?: { x: number; y: number }[]; loadZones?: LoadZone[] }
   deckForwardIsPositiveY: boolean
   placements: (StabilityPlacement & { itemId: string })[]
   items: CargoItem[]
@@ -358,9 +361,10 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
   const deckL = toMeters(input.deck.length, unit)
   const placementsM = placementsInMeters(input.placements, unit)
   const itemsM = catalogInMeters(input.items, unit)
+  const levels = deckLevels(input.deck.loadZones, unit)
   const lightship = lightshipMoment(vessel)
   const variable = variableWeightsToMoments(vessel.variableWeights)
-  const cargo = buildCargoWeightMoments(placementsM, deckW, deckL, frame, fwd, itemsM)
+  const cargo = buildCargoWeightMoments(placementsM, deckW, deckL, frame, fwd, itemsM, levels)
   let loading: LoadingCondition = computeLoadingCondition(lightship, [...variable, ...cargo])
   const load = (extra: WeightMoment[]) => {
     loading = computeLoadingCondition(lightship, [...variable, ...cargo, ...extra])
@@ -369,13 +373,14 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
 
   const stacks = input.placements.map((p, i) => {
     const pm = placementsM[i]
-    const arm = cargoMomentArm(pm, deckW, deckL, frame, fwd, itemsM)
+    const arm = cargoMomentArm(pm, deckW, deckL, frame, fwd, itemsM, levels)
     return {
       water: stackWater(p, input.items, unit),
       arm,
       ice: {
         areaM2: pm.outline && pm.outline.length >= 3 ? polygonArea(pm.outline) : pm.width * pm.length,
-        topM: stackHeight(segmentsOf(pm as { itemId: string; layers: number; composition?: CompositionSegment[] }), itemsM),
+        // On an area at its own level the top is that much higher (or lower).
+        topM: placementLevel(levels, pm) + stackHeight(segmentsOf(pm as { itemId: string; layers: number; composition?: CompositionSegment[] }), itemsM),
         y0M: pm.y,
         y1M: pm.y + pm.length,
         tcgM: arm.tcgM,

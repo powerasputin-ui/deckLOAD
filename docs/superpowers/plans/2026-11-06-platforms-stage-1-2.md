@@ -49,3 +49,13 @@
 | N. Блоки | 11.2 | `StartScreen.tsx`, `VesselCard.tsx` (четыре вида), новые `sections/vessel/JackUpBlocks.tsx`, общий блок прочего прихода, `vesselSteps.ts` | компонент: опоры, положение, нагрузки из отчёта |
 | O. Проверки, строка, PDF | 11.4 | `checks.ts`, `planFacts.ts`, `statusLine.ts`, `exportPdf.ts` | проверки по 11.4; блок PDF |
 | P. Сценарий | — | `e2e/jack-up.spec.ts` | на опорах: груз у опоры → её нагрузка выше допустимой ✕; на плаву: KG и осадка |
+
+## Этап 4: площадки на разных уровнях
+
+Спека, раздел 12.
+
+| Группа | Пункты спеки | Основные файлы | Тесты |
+|---|---|---|---|
+| Q. Уровень зоны | 12.1, 12.2 | `packing.ts` (`LoadZone.elevationM`), `store/projects.ts`, `sections/vessel/LoadZonesBlock.tsx` | хранение: уровень сохраняется, 0 и мусор — нет |
+| R. Расчёты | 12.3 | `stability.ts` (`deckLevels`, `levelAt`, `placementLevel`, `lowestDeckLevel`), `stabilityConditions.ts` (VCG, лёд), `planFacts.ts`, `semiSubPlan.ts`, `jackUpPlan.ts` | unit: самая маленькая зона с уровнем, центроид формы, единицы палубы; GM судна с площадкой и нишей; лёд на верху штабеля; приход и отгрузка ППБУ и СПБУ |
+| S. Отображение | 12.4 | `deckDrawing.ts` (`zoneLevelSuffix`), `DeckVisualization.tsx`, `planDrawing.ts`, `Deck3DView.tsx`, `page.tsx` | подпись зоны в PDF; e2e: GM в строке состояния при +3, −2, ниже киля и пусто |

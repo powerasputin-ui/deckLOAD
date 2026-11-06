@@ -16,7 +16,7 @@
 // checkZoneLoads/checkLashingBalance (compute live from current state,
 // nothing cached here).
 
-import type { CompositionSegment, StabilityOverride } from './packing'
+import type { CompositionSegment, LoadZone, StabilityOverride } from './packing'
 import { polygonCentroid, rotateOutline90 } from './packing'
 import { type Unit, toMeters } from './units'
 // Re-exported (not just imported) — see this file's own "Cargo VCG" comment
@@ -364,6 +364,48 @@ const composable = (p: { itemId?: string; layers: number; composition?: Composit
   composition: p.composition,
 })
 
+// An area of the deck at its own level (LoadZone.elevationM), in metres
+// like the placements the stability works with.
+export interface DeckLevel {
+  x: number
+  y: number
+  width: number
+  length: number
+  elevationM: number
+}
+
+// The deck's areas at their own levels, in metres.
+export function deckLevels(zones: readonly LoadZone[] | undefined, unit: Unit): DeckLevel[] {
+  return (zones ?? [])
+    .filter((z) => z.elevationM !== undefined && Number.isFinite(z.elevationM) && z.elevationM !== 0)
+    .map((z) => ({ x: toMeters(z.x, unit), y: toMeters(z.y, unit), width: toMeters(z.width, unit), length: toMeters(z.length, unit), elevationM: z.elevationM! }))
+}
+
+// The level a stack stands on: the smallest area with a level of its own
+// that holds the stack's centre — a pipe rack inside a raised deck stands
+// on the rack. Off every such area — the deck's own, 0.
+export function levelAt(levels: readonly DeckLevel[] | undefined, x: number, y: number): number {
+  let best: DeckLevel | undefined
+  for (const l of levels ?? []) {
+    if (x < l.x - 1e-9 || x > l.x + l.width + 1e-9 || y < l.y - 1e-9 || y > l.y + l.length + 1e-9) continue
+    if (!best || l.width * l.length < best.width * best.length) best = l
+  }
+  return best?.elevationM ?? 0
+}
+
+// The deck's lowest level: cargo whose place isn't known (a platform's
+// cargo leaving) is taken off there — on the safe side, the least moment.
+export function lowestDeckLevel(levels: readonly DeckLevel[]): number {
+  return Math.min(0, ...levels.map((l) => l.elevationM))
+}
+
+// The level a placement stands on, by its footprint's centre.
+export function placementLevel(levels: readonly DeckLevel[] | undefined, p: Parameters<typeof footprintCenter>[0]): number {
+  if (!levels || levels.length === 0) return 0
+  const c = footprintCenter(p)
+  return levelAt(levels, c.x, c.y)
+}
+
 // Where a placement's weight acts on the ship, in metres: the arm alone,
 // so whatever rides with the stack (the water trapped in pipes) can act at
 // the same point.
@@ -373,7 +415,9 @@ export function cargoMomentArm(
   deckLength: number,
   shipFrame: DeckShipFrame,
   deckForwardIsPositiveY: boolean,
-  items: CompositionCatalogItem[] = []
+  items: CompositionCatalogItem[] = [],
+  // The deck's areas at their own levels (deckLevels), in metres.
+  levels: readonly DeckLevel[] = []
 ): { vcgM: number; tcgM: number; lcgM: number } {
   const center = footprintCenter(p)
   const tcgAuto = shipFrame.originOffsetFromCenterlineM + (center.x - deckWidth / 2)
@@ -387,7 +431,7 @@ export function cargoMomentArm(
   // summation — see placementTotalVCG's own doc comment, and the
   // explicit user requirement to branch here rather than inject a fake
   // stabilityOverride). Uncomposed: unchanged single computeItemVCG call.
-  const vcgM = shipFrame.heightAboveBaselineM + (p.composition
+  const vcgM = shipFrame.heightAboveBaselineM + levelAt(levels, center.x, center.y) + (p.composition
     ? placementTotalVCG(composable(p), items)
     : computeItemVCG({ ...p, nestVcgAboveDeckM: p.nest?.vcgAboveDeckM }))
   // tcgOffsetM/lcgOffsetM are a correction ADDED to the auto-computed
@@ -411,7 +455,9 @@ export function buildCargoWeightMoments(
   // overwhelming common case today) never touches this. Defaults to `[]` so
   // every existing caller/test that predates composition keeps compiling
   // and behaving identically (no placement it passes has `.composition` set).
-  items: CompositionCatalogItem[] = []
+  items: CompositionCatalogItem[] = [],
+  // The deck's areas at their own levels (deckLevels), in metres.
+  levels: readonly DeckLevel[] = []
 ): WeightMoment[] {
   return placements
     .filter((p) => (p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0)) > 0)
@@ -425,7 +471,7 @@ export function buildCargoWeightMoments(
       // displacement, KG, list and trim: the load came out UNDERstated,
       // which makes the vessel look more stable than it is.
       const weightKg = p.composition ? placementTotalWeightKg(composable(p), items) : (p.weight ?? 0) * Math.max(1, p.layers ?? 1)
-      return { weightKg, ...cargoMomentArm(p, deckWidth, deckLength, shipFrame, deckForwardIsPositiveY, items) }
+      return { weightKg, ...cargoMomentArm(p, deckWidth, deckLength, shipFrame, deckForwardIsPositiveY, items, levels) }
     })
 }
 

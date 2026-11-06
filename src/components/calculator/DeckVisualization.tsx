@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'r
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/ThemeProvider'
 import { THEME_TOKENS } from '@/lib/theme'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels } from '@/lib/deckDrawing'
+import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix } from '@/lib/deckDrawing'
 import type { ObjectKind } from '@/lib/objectKind'
 import { DeckDrawingFrame, DRAWING_MARGINS_PX } from './DeckDrawingFrame'
 import { ZoomIn, ZoomOut, Maximize, Plug, Ruler, Ratio } from 'lucide-react'
@@ -3599,14 +3599,18 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
 
         {/* A load zone's limit — and its load, when over it — over the stacks,
             on a halo of the deck: a stack in the zone's corner used to cut
-            it. Written only where it fits the zone whole. */}
+            it. Written only where it fits the zone whole; its own level
+            beside it where that fits too. */}
         <g clipPath={deckOutline && deckOutline.length >= 3 ? 'url(#deck-outline-clip)' : undefined}>
           {loadZones?.map((z) => {
             const overload = overloadedZonesById.get(z.id)
-            const text = `${overload?.exceeded ? `${shortNumber(overload.densityTPerM2)} из ` : ''}${shortNumber(z.maxLoadPerArea)} т/м²`
+            const limit = `${overload?.exceeded ? `${shortNumber(overload.densityTPerM2)} из ` : ''}${shortNumber(z.maxLoadPerArea)} т/м²`
             const zw = screenSpanW(z.width, z.length)
             const zh = screenSpanH(z.width, z.length)
-            if (measureTextWidth(text, 12, 600) + 8 > zw / labelPx || zh <= 18 * labelPx) return null
+            const fits = (t: string) => measureTextWidth(t, 12, 600) + 8 <= zw / labelPx
+            const withLevel = limit + zoneLevelSuffix(z.elevationM)
+            const text = fits(withLevel) ? withLevel : limit
+            if (!fits(text) || zh <= 18 * labelPx) return null
             const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
             return (
               <text

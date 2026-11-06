@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { deckDrawnTransposed, drawingToDeckMove, hullSideEdges, scaleBarSteps } from './deckDrawing'
+import { deckDrawnTransposed, drawingToDeckMove, hullSideEdges, scaleBarSteps, zoneLevelSuffix } from './deckDrawing'
+
+describe('an area\'s level on its label', () => {
+  it('signs it, rounds it to the centimetre, and says nothing at the deck\'s level', () => {
+    expect(zoneLevelSuffix(3)).toBe(' · +3 м')
+    expect(zoneLevelSuffix(-1.256)).toBe(' · −1.26 м')
+    expect(zoneLevelSuffix(0)).toBe('')
+    expect(zoneLevelSuffix(undefined)).toBe('')
+    expect(zoneLevelSuffix(Number.NaN)).toBe('')
+  })
+})
 
 describe('hull sides on the drawing', () => {
   it('a deck wider than long (20 m across, 8 m fore and aft) keeps bow and stern on its long edges, top and bottom', () => {

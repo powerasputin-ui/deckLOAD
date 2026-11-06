@@ -124,6 +124,11 @@ export interface LoadZone {
   width: number
   length: number
   maxLoadPerArea: number // t/m²
+  // An area at its own level (spec 2026-11-06, stage 4): its floor this
+  // high over the deck, m — a pipe deck above the main deck, a bay below
+  // it. Unset — at the deck's level. A stack whose centre is on it stands
+  // that much higher (or lower) for the stability.
+  elevationM?: number
 }
 
 export interface ZoneLoadCheck {

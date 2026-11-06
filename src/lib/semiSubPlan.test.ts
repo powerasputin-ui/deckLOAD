@@ -42,6 +42,21 @@ describe('semiSubForPlan', () => {
     expect(r.vdlAfterT).toBeCloseTo(4_005, 9)
   })
 
+  // Spec 12: what arrives stands on its area's level; what leaves, whose
+  // place the plan doesn't give, comes off the deck's lowest level.
+  it('lifts what arrives by its area\'s level and takes what leaves off the lowest one', () => {
+    const levelled = {
+      ...deck,
+      loadZones: [
+        { id: 'pipe-deck', x: 0, y: 0, width: 30, length: 40, maxLoadPerArea: 50, elevationM: 6 },
+        { id: 'bay', x: 28, y: 38, width: 2, length: 2, maxLoadPerArea: 50, elevationM: -2 },
+      ],
+    }
+    const r = plan([box({ id: 'in', quantity: 2 }), box({ id: 'out', platformStatus: 'outgoing', quantity: 3, weight: 5_000, height: 1 })], levelled)!
+    // 2 × 10 t at 38 + 6 + 1 m (both away from the bay); 3 × 5 t at 38 − 2 + 0.5 m.
+    expect(r.momentTm).toBeCloseTo(20 * 45 - 15 * 36.5, 9)
+  })
+
   it('without the deck\'s height the KG isn\'t worked out', () => {
     const r = plan([box({ id: 'in' })], { ...deck, shipFrame: {} })!
     expect(r.kgOperatingM).toBeUndefined()

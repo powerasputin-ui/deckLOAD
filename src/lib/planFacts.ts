@@ -205,7 +205,7 @@ export function evaluateDeckTripStability(deck: DeckConfig, t: PackingResult, it
   return evaluateTripStability({
     vessel: deck.vessel,
     shipFrame: deck.shipFrame ?? {},
-    deck: { width: deck.width, length: deck.length, unit: deck.unit, outline: deck.outline },
+    deck: { width: deck.width, length: deck.length, unit: deck.unit, outline: deck.outline, loadZones: deck.loadZones },
     deckForwardIsPositiveY: deck.deckForwardIsPositiveY ?? true,
     placements: t.placed,
     items,

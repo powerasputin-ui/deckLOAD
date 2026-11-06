@@ -304,7 +304,13 @@ describe('projects store', () => {
         gap: 0.1,
         boardOffset: 0.2,
         clearance: 0,
-        loadZones: [{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }],
+        loadZones: [
+          { id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 },
+          // An area at its own level keeps it; at 0, or junk, it has none.
+          { id: 'z2', x: 5, y: 1, width: 2, length: 2, maxLoadPerArea: 4, elevationM: -1.5 },
+          { id: 'z3', x: 8, y: 1, width: 2, length: 2, maxLoadPerArea: 4, elevationM: 0 },
+          { id: 'z4', x: 11, y: 1, width: 2, length: 2, maxLoadPerArea: 4, elevationM: Number.NaN },
+        ],
         lashingPoints: [{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }],
         powerSockets: [{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }],
         annotations: [{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }],
@@ -333,7 +339,12 @@ describe('projects store', () => {
     useProjects.getState().hydrate()
 
     const reloaded = useProjects.getState().projects[0]
-    expect(reloaded.deck.loadZones).toEqual([{ id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 }])
+    expect(reloaded.deck.loadZones).toEqual([
+      { id: 'z1', x: 1, y: 1, width: 3, length: 3, maxLoadPerArea: 2 },
+      { id: 'z2', x: 5, y: 1, width: 2, length: 2, maxLoadPerArea: 4, elevationM: -1.5 },
+      { id: 'z3', x: 8, y: 1, width: 2, length: 2, maxLoadPerArea: 4 },
+      { id: 'z4', x: 11, y: 1, width: 2, length: 2, maxLoadPerArea: 4 },
+    ])
     expect(reloaded.deck.lashingPoints).toEqual([{ id: 'l1', x: 5, y: 5, label: 'Точка 1' }])
     expect(reloaded.deck.powerSockets).toEqual([{ id: 's1', x: 4, y: 2, label: 'Розетка 1' }])
     expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }])

@@ -12,7 +12,7 @@
 // deck's dimensions and a scale bar. The lock of a pinned stack is the
 // calculation's own business and stays off the paper; the grid too.
 import { CARGO_INK, cargoToneForNumber } from './cargoPalette'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, type DrawingEdge, type HullSide } from './deckDrawing'
+import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix, type DrawingEdge, type HullSide } from './deckDrawing'
 import type { ObjectKind } from './objectKind'
 import { drawsAsPipe, footprintIsPipe, pipeLabelLine, pipeLines, pipeStrips, stripAcross } from './pipeDrawing'
 import {
@@ -279,7 +279,7 @@ export function buildPlanDrawing(input: PlanDrawingInput): PlanDrawing {
   zones.forEach((z, i) => {
     const r = rectOf(z)
     const load = loadOf(z.id)
-    const text = `Зона ${i + 1} · ${load?.exceeded ? `${short(load.densityTPerM2)} из ` : ''}${short(z.maxLoadPerArea)} т/м²`
+    const text = `Зона ${i + 1} · ${load?.exceeded ? `${short(load.densityTPerM2)} из ` : ''}${short(z.maxLoadPerArea)} т/м²${zoneLevelSuffix(z.elevationM)}`
     shapes.push(...tag(text, r, load?.exceeded ? PROBLEM : INK_2))
   })
   for (const zone of deck.restrictionZones ?? []) {

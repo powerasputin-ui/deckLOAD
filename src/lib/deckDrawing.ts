@@ -50,6 +50,13 @@ export interface DeckWords {
   bow: string
 }
 
+// An area's own level (LoadZone.elevationM) as its label carries it:
+// « · +3 м», « · −1.5 м»; nothing for an area at the deck's level.
+export function zoneLevelSuffix(elevationM: number | undefined): string {
+  if (elevationM === undefined || !Number.isFinite(elevationM) || elevationM === 0) return ''
+  return ` · ${elevationM > 0 ? '+' : '−'}${Math.round(Math.abs(elevationM) * 100) / 100} м`
+}
+
 export function deckWords(kind?: ObjectKind): DeckWords {
   return kind === 'fixed'
     ? { width: 'Ширина (запад–восток)', length: 'Длина (юг–север)', offset: 'Отступ от края', bowOnDrawing: 'Север на схеме', bow: 'север' }

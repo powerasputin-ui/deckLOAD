@@ -86,6 +86,9 @@ describe('deckForVessel', () => {
     expect(deckForVessel(commander, old).vesselInfo).toMatchObject({ label: commander.label, bowFromData: false, deckStrengthTPerM2: undefined })
     const own = { ...commander, id: 'user-1', loadZones: [{ id: 'z', x: 1, y: 2, width: 3, length: 4, maxLoadPerArea: 5 }] }
     expect(deckForVessel(own, { ...old, unit: 'cm' }).loadZones).toEqual([{ id: 'z', x: 100, y: 200, width: 300, length: 400, maxLoadPerArea: 5 }])
+    // An area at its own level keeps it in metres, whatever the deck's unit.
+    const raised = { ...own, loadZones: [{ id: 'z', x: 1, y: 2, width: 3, length: 4, maxLoadPerArea: 5, elevationM: 2.5 }] }
+    expect(deckForVessel(raised, { ...old, unit: 'cm' }).loadZones).toEqual([{ id: 'z', x: 100, y: 200, width: 300, length: 400, maxLoadPerArea: 5, elevationM: 2.5 }])
   })
 })
 

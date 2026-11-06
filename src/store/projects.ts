@@ -215,6 +215,8 @@ function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
         width: toFinitePositive(zone.width, 1),
         length: toFinitePositive(zone.length, 1),
         maxLoadPerArea: toFinitePositive(zone.maxLoadPerArea, 5),
+        // Above or below the deck; 0 is the deck itself — no level of its own.
+        ...(typeof zone.elevationM === 'number' && Number.isFinite(zone.elevationM) && zone.elevationM !== 0 ? { elevationM: zone.elevationM } : {}),
       }
     })
   return zones.length > 0 ? zones : undefined

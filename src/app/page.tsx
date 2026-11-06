@@ -1694,6 +1694,8 @@ export default function Home() {
                   deckOutline={deck.outline}
                   deckForwardIsPositiveY={deck.deckForwardIsPositiveY ?? true}
                   objectKind={deck.objectKind}
+                  loadZones={deck.loadZones}
+                  unit={deck.unit}
                   coveredRight={inspected || inspectedSelection ? INSPECTOR_WIDTH_PX - 16 : 0}
                   mode={mode}
                   manualPlacements={manualPlacements}

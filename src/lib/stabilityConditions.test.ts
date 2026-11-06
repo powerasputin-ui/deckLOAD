@@ -413,6 +413,53 @@ describe('the verdict', () => {
     const r = evaluateTripStability(input({ items: [pipe({ id: 'box' })], placements: [{ itemId: 'box', x: 0, y: 5, width: 10, length: 0.5, height: 0.5, layers: 3, weight: 1000 }] }))!
     expect(r.departure.waterKg).toBeCloseTo(4.3744 * 0.1 * 1025, 0)
   })
+
+  // Spec 2026-11-06, 12: an area at its own level raises the cargo on it.
+  describe('areas at their own levels', () => {
+    // The box (4–6 × 9–11) stands inside all three; the smallest WITH a level
+    // is the 4 × 4 one at +3 m — the 2 × 2 one has none and doesn't count.
+    const zones = [
+      { id: 'deck', x: 0, y: 0, width: 10, length: 20, maxLoadPerArea: 10, elevationM: 1 },
+      { id: 'rack', x: 3, y: 8, width: 4, length: 4, maxLoadPerArea: 10, elevationM: 3 },
+      { id: 'mark', x: 4, y: 9, width: 2, length: 2, maxLoadPerArea: 10 },
+    ]
+    const raised = (over: Partial<TripStabilityInput> = {}) => input({ deck: { width: 10, length: 20, unit: 'm', loadZones: zones }, ...over })
+
+    it('lifts the cargo by the level it stands on', () => {
+      // Departure: KG (5000 + 500 + 100 × (6 + 3 + 1))/1600 = 4.0625, GM 3.9375.
+      const r = evaluateTripStability(raised())!
+      expect(r.departure.stability.GM_fluid).toBeCloseTo(8 - 6500 / 1600, 9)
+    })
+
+    it('a bay lowers it; off every area with a level it stands on the deck', () => {
+      const bay = [{ id: 'bay', x: 3, y: 8, width: 4, length: 4, maxLoadPerArea: 10, elevationM: -1.5 }]
+      // KG (5000 + 500 + 100 × (6 − 1.5 + 1))/1600.
+      expect(evaluateTripStability(input({ deck: { width: 10, length: 20, unit: 'm', loadZones: bay } }))!.departure.stability.GM_fluid).toBeCloseTo(8 - 6050 / 1600, 9)
+      const elsewhere = [{ id: 'far', x: 0, y: 0, width: 3, length: 3, maxLoadPerArea: 10, elevationM: 3 }]
+      expect(evaluateTripStability(input({ deck: { width: 10, length: 20, unit: 'm', loadZones: elsewhere } }))!.departure.stability.GM_fluid).toBeCloseTo(4.125, 9)
+    })
+
+    it('reads the zones in the deck\'s own unit, the level in metres', () => {
+      const cm = zones.map((z) => ({ ...z, x: z.x * 100, y: z.y * 100, width: z.width * 100, length: z.length * 100 }))
+      const r = evaluateTripStability(
+        input({
+          deck: { width: 1000, length: 2000, unit: 'cm', loadZones: cm },
+          placements: [{ itemId: 'box', x: 400, y: 900, width: 200, length: 200, height: 200, layers: 1, weight: 100_000 }],
+          items: [{ ...box, width: 200, length: 200, height: 200 }],
+        })
+      )!
+      expect(r.departure.stability.GM_fluid).toBeCloseTo(8 - 6500 / 1600, 9)
+    })
+
+    it('puts the ice on the cargo\'s top as high as the top is', () => {
+      // Top 30 × 4 = 120 kg at 6 + 3 + 2; the rest of the deck 30 × 196 =
+      // 5880 kg at 6; the cargo's side, deck to top (2 m × 5 m), 2 × 7.5 ×
+      // 1.05 × 10 = 157.5 kg at 6 + 2.5 × 1.1/1.05.
+      const r = evaluateTripStability(raised({ icing: true }))!
+      expect(r.arrival.iceKg).toBeCloseTo(120 + 5880 + 157.5, 6)
+      expect(r.arrival.iceVcgM).toBeCloseTo((120 * 11 + 5880 * 6 + 157.5 * (6 + (2.5 * 1.1) / 1.05)) / 6157.5, 9)
+    })
+  })
 })
 
 describe('the KN reference', () => {

@@ -22,6 +22,8 @@ export function LoadZonesBlock({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
   const unit = useCalculator((s) => s.deck.unit)
   const deckWidth = useCalculator((s) => s.deck.width)
   const deckLength = useCalculator((s) => s.deck.length)
+  // A bay's floor goes no lower than the keel.
+  const deckHeightM = useCalculator((s) => s.deck.shipFrame?.heightAboveBaselineM)
   const addLoadZone = useCalculator((s) => s.addLoadZone)
   const updateLoadZone = useCalculator((s) => s.updateLoadZone)
   const removeLoadZone = useCalculator((s) => s.removeLoadZone)
@@ -32,6 +34,10 @@ export function LoadZonesBlock({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
       <p className="text-xs text-ink-2">
         Лимит — плотность, тонн на квадратный метр зоны, а не общий вес: при лимите 2 т/м² зона 5 × 4 м держит до 40 т. Перегруз —
         предупреждение, груз не блокируется.
+      </p>
+      <p className="text-xs text-ink-2">
+        «Над палубой» — для площадки на своём уровне: трубная палуба выше главной, ниша ниже неё (со знаком «−»). Груз на ней — выше
+        или ниже в расчёте остойчивости.
       </p>
       {zones.length > 0 && (
         <ul className="space-y-1.5" aria-label="Зоны нагрузки">
@@ -67,8 +73,19 @@ export function LoadZonesBlock({ zoneLoads }: { zoneLoads?: ZoneLoadCheck[] }) {
                   <ZoneField zone={name} label="Шир." unit={u} value={z.width} min={0.01} onCommit={(v) => updateLoadZone(z.id, { width: v })} />
                   <ZoneField zone={name} label="Длин." unit={u} value={z.length} min={0.01} onCommit={(v) => updateLoadZone(z.id, { length: v })} />
                 </div>
-                <div className="w-1/2">
+                <div className="grid grid-cols-2 gap-1">
                   <ZoneField zone={name} label="Лимит, т/м²" value={z.maxLoadPerArea} min={0} onCommit={(v) => updateLoadZone(z.id, { maxLoadPerArea: v })} />
+                  {/* An area at its own level (stage 4): a pipe deck above
+                      the deck, a bay below it; empty — the deck's level. */}
+                  <ZoneField
+                    zone={name}
+                    label="Над палубой, м"
+                    value={z.elevationM}
+                    min={deckHeightM !== undefined && deckHeightM > 0 ? -deckHeightM : undefined}
+                    onCommit={(v) => updateLoadZone(z.id, { elevationM: v === 0 ? undefined : v })}
+                    onClear={() => updateLoadZone(z.id, { elevationM: undefined })}
+                    placeholder="на палубе"
+                  />
                 </div>
                 <p className="text-xs text-ink-2">
                   Держит до {fmtNumber(capacityT)} т ({fmtNumber(z.maxLoadPerArea)} т/м² × {fmtNumber(areaM2)} м²)
@@ -100,13 +117,17 @@ function ZoneField({
   value,
   min,
   onCommit,
+  onClear,
+  placeholder,
 }: {
   zone: string
   label: string
   unit?: string
-  value: number
+  value: number | undefined
   min?: number
   onCommit: (v: number) => void
+  onClear?: () => void
+  placeholder?: string
 }) {
   const id = useId()
   return (
@@ -121,6 +142,8 @@ function ZoneField({
         min={min}
         value={value}
         onCommit={onCommit}
+        onClear={onClear}
+        placeholder={placeholder}
         className="h-7 px-1.5 text-xs"
       />
     </div>
