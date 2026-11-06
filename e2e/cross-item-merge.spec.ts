@@ -60,10 +60,9 @@ test.describe('Merging two different (e.g. duplicated) cargo items', () => {
     await chooseFromCatalog(page, 'Обсадная труба')
     await setCargoTotal(page, 'Обсадная труба', '8')
     await pickVariants(page)
-    // A stacked pipe pyramid now draws as several <rect> capsule segments
-    // sharing the same fill (see DeckVisualization's per-row pipe render) —
-    // count placements via the g[data-cargo-placement] wrapper, not raw
-    // rects, so one 8-pipe pyramid isn't miscounted as several placements.
+    // A stacked pipe pyramid draws its pipes inside one placement group
+    // (outline, hairlines, axes — see src/lib/pipeDrawing.ts) — count
+    // placements via the g[data-cargo-placement] wrapper, not raw shapes.
     const pipePlacements = page.locator('svg g[data-cargo-name^="Обсадная труба"]')
     await expect(pipePlacements).toHaveCount(1)
 

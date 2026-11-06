@@ -143,6 +143,30 @@ describe('buildPlanDrawing', () => {
     expect(textOf(d, '?')).toBeDefined()
   })
 
+  // Revision 2026-11-06: pipes as on a drawing — square ends, a hairline
+  // between pipes, dash-dot axes on the wide ones — the label on a plaque,
+  // its second line the pipe.
+  it('draws pipes with square ends, hairlines and axes, labelled by their pipe on a plaque', () => {
+    const items: CargoItem[] = [
+      { id: genId(), name: 'Труба Ø813 НУБП-72', width: 0.957, length: 12.38, height: 0.957, quantity: 2, color: '#57534e', allowRotation: false, weight: 15000, shape: 'cylinder', maxLayers: 1 },
+      { id: genId(), name: 'Бурильная труба', width: 0.15, length: 9.5, height: 0.15, quantity: 20, color: '#334155', allowRotation: false, weight: 400, shape: 'cylinder' },
+    ]
+    // Small enough a deck for the big pipe's two-line label to fit on paper.
+    const deck = { ...DEMO_DECK, width: 10, length: 14, clearance: 3 } as DeckConfig
+    const [trip] = tripsOf(deck, items)
+    const d = draw(deck, items, trip.placed)
+    const pipeRects = d.shapes.filter((s): s is Extract<PlanShape, { kind: 'rect' }> => s.kind === 'rect' && s.fill !== undefined && s.fill !== '#FFFFFF' && s.w > 20 && s.h > 1 && s.h < 40)
+    expect(pipeRects.length).toBeGreaterThan(0)
+    expect(pipeRects.every((s) => !s.r)).toBe(true)
+    const lines = d.shapes.filter((s): s is Extract<PlanShape, { kind: 'line' }> => s.kind === 'line')
+    expect(lines.some((l) => l.stroke.dash?.length === 4)).toBe(true)
+    const big = trip.placed.find((p) => p.length === 12.38)!
+    const plan = d.labels.get(autoPlacementKey(big))
+    expect(plan?.kind === 'own' ? plan.name : undefined).toBe('Ø957')
+    // The plaque: a white rounded box under the label.
+    expect(d.shapes.some((s) => s.kind === 'rect' && s.fill === '#FFFFFF' && (s.r ?? 0) > 0)).toBe(true)
+  })
+
   it('keeps the label sizes of paper: 12 pt down to 7', () => {
     expect(PAPER_LABEL_SIZES.numbers[0]).toBe(12)
     expect(PAPER_LABEL_SIZES.numbers[PAPER_LABEL_SIZES.numbers.length - 1]).toBe(7)

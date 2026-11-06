@@ -78,6 +78,7 @@ import {
 import { fmtNumber, cn } from '@/lib/utils'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
+import { pipeLabelLine, pipeLines, pipeStrips, stripAcross, drawsAsPipe, footprintIsPipe } from '@/lib/pipeDrawing'
 
 interface DeckVisualizationProps {
   result: PackingResult
@@ -2441,7 +2442,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           key: stackKeyOf(p, idx),
           numbers,
           layers: p.stackedCount,
-          name: new Set(numbers).size === 1 ? p.name : undefined,
+          // A pipe stack's second line is its pipe — Ø, pipes, tiers — not
+          // its name (src/lib/pipeDrawing.ts).
+          name: new Set(numbers).size !== 1 ? undefined : drawsAsPipe(p) ? pipeLabelLine(p, unit) : p.name,
           rect: {
             x: sx / labelPx,
             y: sy / labelPx,
@@ -4282,7 +4285,8 @@ function FootprintShape({
   scale,
   pipeRowCount,
   pipeDivideAxis,
-  nestTiers,
+  px,
+  detail = true,
 }: {
   shape?: PlacedItem['shape']
   x: number
@@ -4308,60 +4312,47 @@ function FootprintShape({
   // side instead of one solid box the width of a container.
   pipeRowCount?: number
   pipeDivideAxis?: 'w' | 'h'
-  // A real pipe штабель (shape 'pipe-nest') — how many tiers deep the
-  // stack is. Drawn as a small "×N яр." badge, since only the TOP tier is
-  // visible from directly above (straight stacking, see pipeNest.ts — the
-  // tiers sit exactly on top of one another, so a second row of capsules
-  // here would misleadingly suggest they're offset).
-  nestTiers?: number
+  // ViewBox units per screen pixel: a pipe's hairlines and axis are sized,
+  // and shown, in screen pixels. Without it only the outline is drawn.
+  px?: number
+  // The outline alone (the selection's halo draws the shape a second time).
+  detail?: boolean
 }) {
   const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
+  // A drum standing on its end is round from above.
+  if (shape === 'cylinder' && !footprintIsPipe(shape, w, h, pipeRowCount)) {
+    return <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />
+  }
   if (shape === 'cylinder' || shape === 'pipe-nest') {
-    // A pipe lying flat is genuinely a thin rectangle from directly above
-    // (only its END shows roundness) — a capsule (fully rounded short
-    // ends) reads as "round stock" at a glance without pretending to show
-    // a circular cross-section that isn't actually visible from this
-    // angle. When more than one pipe occupies this footprint's base row
-    // (pipeRowCount > 1), divide the widened axis into that many capsules
-    // with a hairline gap between them, so the true multi-pipe width
-    // drawn here (see pipePyramidSpreadMargin, or — for a real штабель —
-    // CargoItem.nest.pipesPerRow) doesn't just look like one wide solid
-    // block.
-    const shapeContent =
-      pipeRowCount && pipeRowCount > 1 && pipeDivideAxis
-        ? (() => {
-            const isW = pipeDivideAxis === 'w'
-            const totalSpan = isW ? w : h
-            const crossSpan = isW ? h : w
-            const gap = Math.max(0.5, Math.min(2, totalSpan / pipeRowCount * 0.06))
-            const segSpan = (totalSpan - gap * (pipeRowCount - 1)) / pipeRowCount
-            const r = Math.min(segSpan, crossSpan) / 2
-            return Array.from({ length: pipeRowCount }).map((_, i) => {
-              const offset = i * (segSpan + gap)
-              const segX = isW ? x + offset : x
-              const segY = isW ? y : y + offset
-              const segW = isW ? segSpan : w
-              const segH = isW ? h : segSpan
-              return <rect key={i} x={segX} y={segY} width={segW} height={segH} rx={r} ry={r} {...common} />
-            })
-          })()
-        : <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />
-    if (shape !== 'pipe-nest' || !nestTiers || nestTiers <= 1) return <>{shapeContent}</>
-    // "×2 яр." badge — small, bottom-right, same visual language as the
-    // stacked-count badge PlacedRect already draws for ordinary cargo.
-    const badgeW = 34
-    const badgeH = 13
+    // The drafting look (src/lib/pipeDrawing.ts): square ends, one outline
+    // round pipes side by side, a hairline between them — faint when each
+    // is under 6 px across — and a dash-dot axis on each from 8 px.
+    const envelope = <rect x={x} y={y} width={w} height={h} {...common} />
+    if (!detail || !px) return envelope
+    const { strips, along } = pipeStrips({ x, y, w, h }, pipeRowCount ?? 1, pipeDivideAxis)
+    const { between, axes } = pipeLines(strips, along, 8 * px)
+    const thin = stripAcross(strips[0], along) < 6 * px
     return (
       <>
-        {shapeContent}
-        {w >= 20 && h >= 20 && (
-          <g className="pointer-events-none">
-            <rect x={x + w - badgeW - 2} y={y + h - badgeH - 2} width={badgeW} height={badgeH} rx={3} fill="rgba(0,0,0,0.6)" />
-            <text x={x + w - badgeW / 2 - 2} y={y + h - badgeH / 2 + 3} fontSize={9} fontWeight={700} textAnchor="middle" fill="#fff" className="select-none">
-              ×{nestTiers} яр.
-            </text>
-          </g>
-        )}
+        {envelope}
+        <g className="pointer-events-none" stroke={stroke} fill="none">
+          {between.map(([x1, y1, x2, y2], i) => (
+            <line key={`b${i}`} x1={x1} y1={y1} x2={x2} y2={y2} strokeOpacity={thin ? 0.22 : 0.45} strokeWidth={0.6 * px} data-pipe-line="between" />
+          ))}
+          {axes.map(([x1, y1, x2, y2], i) => (
+            <line
+              key={`a${i}`}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              strokeOpacity={0.55}
+              strokeWidth={0.7 * px}
+              strokeDasharray={`${12 * px} ${3 * px} ${2 * px} ${3 * px}`}
+              data-pipe-line="axis"
+            />
+          ))}
+        </g>
       </>
     )
   }
@@ -4595,8 +4586,7 @@ function PlacedRect({
             outline={item.outline}
             rotated={item.rotated}
             scale={scale}
-            pipeRowCount={pipeSpread?.rowCount ?? nestSpread?.pipesPerRow}
-            pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
+            detail={false}
           />
         </g>
       )}
@@ -4616,7 +4606,7 @@ function PlacedRect({
         scale={scale}
         pipeRowCount={pipeSpread?.rowCount ?? nestSpread?.pipesPerRow}
         pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
-        nestTiers={item.nest?.tierCounts.length}
+        px={labelPx}
       />
       {(overLoadTitle || conflict) && <title>{[conflict, overLoadTitle].filter(Boolean).join(' · ')}</title>}
       {conflict && <ConflictHatch x={x} y={y} w={w} h={h} patternId="conflict-hatch" />}
@@ -4634,14 +4624,38 @@ function PlacedRect({
         const name = showLabels ? label.name : undefined
         const cx = x + w / 2
         const cy = y + h / 2
+        // On pipes the label stands on a white plaque, clear of their
+        // hairlines and axes.
+        const plaque = drawsAsPipe(item) && (
+          <rect
+            x={cx - (labelSize.w / 2 + 3) * labelPx}
+            y={cy - (labelSize.h / 2 + 1) * labelPx}
+            width={(labelSize.w + 6) * labelPx}
+            height={(labelSize.h + 2) * labelPx}
+            rx={4 * labelPx}
+            fill="#ffffff"
+            fillOpacity={0.92}
+            stroke="#94a3b8"
+            strokeWidth={0.6 * labelPx}
+            className="pointer-events-none"
+            data-pipe-plaque="true"
+          />
+        )
         // A halo of the cargo's tone keeps it legible over the outlines of a
         // pipe pile.
-        if (!name) return <StackNumber cx={cx} cy={cy} text={label.text} fontSize={fontSize} halo={tone} data-stack-label="own" />
+        if (!name)
+          return (
+            <>
+              {plaque}
+              <StackNumber cx={cx} cy={cy} text={label.text} fontSize={fontSize} halo={plaque ? '#ffffff' : tone} data-stack-label="own" />
+            </>
+          )
         const gapPx = 2 * labelPx
         const top = cy - (fontSize + gapPx + nameSize) / 2
         return (
           <>
-            <StackNumber cx={cx} cy={top + fontSize / 2} text={label.text} fontSize={fontSize} halo={tone} data-stack-label="own" />
+            {plaque}
+            <StackNumber cx={cx} cy={top + fontSize / 2} text={label.text} fontSize={fontSize} halo={plaque ? '#ffffff' : tone} data-stack-label="own" />
             <text
               x={cx}
               y={top + fontSize + gapPx + nameSize * 0.85}

@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf'
+import { drawsAsPipe, pipeTiers } from './pipeDrawing'
 import { autoTable } from 'jspdf-autotable'
 import type { CargoItem, ManualPlacement, PackingResult, PinnedPlacement } from './packing'
 import { assessLashingRequirement, computeZoneLoads, DEFAULT_WIRE_ROPE_TYPE, WIRE_ROPE_SPECS, type WireRopeType } from './packing'
@@ -428,7 +429,9 @@ export function buildPlanPdf(input: PlanPdfInput): PlanPdfModel {
           dims,
           b.unitWeight > 0 ? tonnes(b.unitWeight) : '—',
           b.weight > 0 ? tonnes(b.weight) : '—',
-          String(b.layers),
+          // A pile's «layers» are its pipes; its tiers are the pyramid's rows
+          // (and a штабель's own), as the plan's label says.
+          String(item && drawsAsPipe(item) ? pipeTiers(item, b.layers) : b.layers),
           String(b.footprints),
         ],
       }

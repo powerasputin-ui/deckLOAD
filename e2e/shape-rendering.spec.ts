@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { chooseFromCatalog, clearCalculation, stackTools } from './helpers'
+import { chooseFromCatalog, clearCalculation, setCargoTotal, stackTools } from './helpers'
 
 test.describe('Non-rectangular cargo shape rendering', () => {
   test('a circle from the catalogue keeps its shape (not a plain box) in manual mode', async ({ page }) => {
@@ -24,6 +24,23 @@ test.describe('Non-rectangular cargo shape rendering', () => {
     await page.getByRole('button', { name: 'Оставить позиции' }).click()
     await page.getByText('Ручной').first().click()
     await expect(page.locator('svg[data-deck-plan] ellipse')).toHaveCount(1)
+  })
+
+  // Revision 2026-11-06: pipes drawn as on a drawing — square ends, a
+  // hairline between the pipes of a pile, the label on a white plaque with
+  // the pipe's Ø under the number.
+  test('a pile of pipe has square ends, hairlines between its pipes and its Ø on a plaque', async ({ page }) => {
+    await page.goto('/')
+    await clearCalculation(page)
+    await chooseFromCatalog(page, 'Обсадная труба')
+    await setCargoTotal(page, 'Обсадная труба', '8')
+    const pile = page.locator('svg[data-deck-plan] g[data-cargo-name="Обсадная труба"]').first()
+    await expect(pile).toBeVisible()
+    const outline = pile.locator('rect').first()
+    expect(Number((await outline.getAttribute('rx')) ?? 0)).toBe(0)
+    await expect(pile.locator('[data-pipe-line="between"]').first()).toBeAttached()
+    await expect(pile.locator('[data-pipe-plaque="true"]')).toHaveCount(1)
+    await expect(pile).toHaveAttribute('data-stack-text', /×8/)
   })
 
   test('rotating a triangle actually turns it (not just squishes the same apex-up shape)', async ({ page }) => {

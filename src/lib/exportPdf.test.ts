@@ -18,7 +18,7 @@ import {
   tripChecks,
   type PlanPdfInput,
 } from './exportPdf'
-import { packMultiTrip, type CargoItem, type PackingResult, type PinnedPlacement, type PlacedItem } from './packing'
+import { decomposePipePyramid, packMultiTrip, type CargoItem, type PackingResult, type PinnedPlacement, type PlacedItem } from './packing'
 import { cargoNumbers, cargoToneForNumber } from './cargoPalette'
 import { gatherPlanFacts } from './planFacts'
 import { deckForVessel } from './vesselDeck'
@@ -216,6 +216,17 @@ describe('buildPlanPdf', () => {
       ...over,
     }
   }
+
+  // Revision 2026-11-06: a pile's «Ярусов» is its rows, as the plan's label
+  // says, not the pipes in it.
+  it('gives a pile of pipe its tiers, not its pipes', () => {
+    const items: CargoItem[] = [{ id: 'd', name: 'Бурильная труба', width: 0.15, length: 9.5, height: 0.15, quantity: 20, color: '#334155', allowRotation: false, weight: 400, shape: 'cylinder' }]
+    const model = buildPlanPdf(input({ ...DEMO_DECK, width: 8, length: 20, clearance: 3 } as DeckConfig, items))
+    const [row] = model.trips[0].cargo
+    const pipesPerPile = Number(row.cells[2]) / Number(row.cells[7])
+    expect(row.cells[6]).toBe(String(decomposePipePyramid(pipesPerPile).length))
+    expect(Number(row.cells[6])).toBeLessThan(pipesPerPile)
+  })
 
   it('gives each trip a sheet with its cargo: number, name, count, size, weights, tiers, stacks and the trip\'s total', () => {
     const items = createDemoItems(genId)

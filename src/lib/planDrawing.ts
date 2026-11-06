@@ -13,6 +13,7 @@
 // calculation's own business and stays off the paper; the grid too.
 import { CARGO_INK, cargoToneForNumber } from './cargoPalette'
 import { deckDrawnTransposed, HULL_SIDE_LABEL, hullSideEdges, scaleBarSteps, type DrawingEdge, type HullSide } from './deckDrawing'
+import { drawsAsPipe, footprintIsPipe, pipeLabelLine, pipeLines, pipeStrips, stripAcross } from './pipeDrawing'
 import {
   estimateTextWidth,
   layoutStackLabels,
@@ -203,7 +204,7 @@ export function buildPlanDrawing(input: PlanDrawingInput): PlanDrawing {
         key: s.key,
         numbers: s.numbers,
         layers: s.p.stackedCount,
-        name: new Set(s.numbers).size === 1 ? s.p.name : undefined,
+        name: new Set(s.numbers).size !== 1 ? undefined : drawsAsPipe(s.p) ? pipeLabelLine(s.p, deck.unit) : s.p.name,
         rect: s.rect,
         deck: s.deckRect,
       })),
@@ -232,7 +233,7 @@ export function buildPlanDrawing(input: PlanDrawingInput): PlanDrawing {
 
     const plan = plans.get(s.key)
     if (plan?.kind === 'own' && plan.text) {
-      const label = ownLabel(plan, rect, tone, pile.divided)
+      const label = ownLabel(plan, rect, pile.pipe)
       shapes.push(...label.shapes)
       taken.push(label.box)
     }
@@ -334,21 +335,22 @@ function callout(text: string, r: Box, deckBox: Box, taken: Box[]): { shapes: Pl
 // Over a pile of pipes the number sits on a patch of the tone, clear of the
 // lines between them, and the name — which no patch would keep legible
 // there — is left to the table.
-function ownLabel(plan: Extract<StackLabelPlan, { kind: 'own' }>, r: Box, tone: string, divided: boolean): { shapes: PlanShape[]; box: Box } {
+function ownLabel(plan: Extract<StackLabelPlan, { kind: 'own' }>, r: Box, pipe: boolean): { shapes: PlanShape[]; box: Box } {
   const out: PlanShape[] = []
   const cx = r.x + r.w / 2
   const cy = r.y + r.h / 2
   const size = plan.fontSize
   const nameSize = PAPER_LABEL_SIZES.name
   const gap = PAPER_LABEL_SIZES.lineGap
-  const name = divided ? undefined : plan.name
+  const name = plan.name
   const numberY = name ? cy - (size + gap + nameSize) / 2 + size / 2 : cy
   const numberW = estimateTextWidth(plan.text, size) + 2
-  if (divided) out.push({ kind: 'rect', x: cx - numberW / 2, y: numberY - size / 2, w: numberW, h: size, fill: tone })
-  out.push(numberText(plan.text, cx, numberY, size))
-  if (name) out.push({ kind: 'text', x: cx, y: numberY + size / 2 + gap + nameSize / 2, text: name, size: nameSize, color: CARGO_INK, anchor: 'middle' })
   const w = Math.max(numberW, name ? estimateTextWidth(name, nameSize) + 2 : 0)
   const h = name ? size + gap + nameSize : size
+  // On pipes, a white plaque under the label, clear of their lines.
+  if (pipe) out.push({ kind: 'rect', x: cx - w / 2 - 1.5, y: cy - h / 2 - 0.5, w: w + 3, h: h + 1, r: 1.5, fill: WHITE, stroke: { color: LINE_STRONG, width: 0.3 } })
+  out.push(numberText(plan.text, cx, numberY, size))
+  if (name) out.push({ kind: 'text', x: cx, y: numberY + size / 2 + gap + nameSize / 2, text: name, size: nameSize, color: CARGO_INK, anchor: 'middle' })
   return { shapes: out, box: { x: cx - w / 2, y: cy - h / 2, w, h } }
 }
 
@@ -378,12 +380,13 @@ function footprint(
   transposed: boolean,
   fill: string,
   stroke: Stroke
-): { shapes: PlanShape[]; divided: boolean } {
+): { shapes: PlanShape[]; pipe: boolean } {
   const { x, y, w, h } = r
   const shape = p.shape
   if (shape === 'cylinder' || shape === 'pipe-nest') {
-    // A pile of pipes reads as several pipes side by side: the widened axis
-    // divided into the base row's count (PlacedRect's pipeSpread/nestSpread).
+    // The drafting look, as on screen (src/lib/pipeDrawing.ts): square ends,
+    // one outline round pipes side by side, a hairline between them — light
+    // when each is under 3 pt — and a dash-dot axis on each from 4 pt.
     let count = 1
     let axis: 'w' | 'h' = 'w'
     if (shape === 'cylinder' && p.stackedCount > 1) {
@@ -396,29 +399,28 @@ function footprint(
       count = Math.max(1, p.nest.pipesPerRow)
       axis = transposed ? 'h' : 'w'
     }
-    if (count <= 1) return { shapes: [{ kind: 'rect', x, y, w, h, r: Math.min(w, h) / 2, fill, stroke }], divided: false }
-    const along = axis === 'w' ? w : h
-    const across = axis === 'w' ? h : w
-    const gap = Math.max(0.25, Math.min(1, (along / count) * 0.06))
-    const seg = (along - gap * (count - 1)) / count
-    const radius = Math.min(seg, across) / 2
+    // A drum standing on its end is round from above.
+    if (shape === 'cylinder' && !footprintIsPipe(shape, w, h, count)) return { shapes: [{ kind: 'rect', x, y, w, h, r: Math.min(w, h) / 2, fill, stroke }], pipe: false }
+    const { strips, along } = pipeStrips(r, count, count > 1 ? axis : undefined)
+    const { between, axes } = pipeLines(strips, along, 4)
+    const thin = stripAcross(strips[0], along) < 3
+    const segment = ([x1, y1, x2, y2]: [number, number, number, number], line: Stroke): PlanShape => ({ kind: 'line', from: { x: x1, y: y1 }, to: { x: x2, y: y2 }, stroke: line })
     return {
-      shapes: Array.from({ length: count }, (_, i) => {
-        const offset = i * (seg + gap)
-        return axis === 'w'
-          ? { kind: 'rect' as const, x: x + offset, y, w: seg, h, r: radius, fill, stroke }
-          : { kind: 'rect' as const, x, y: y + offset, w, h: seg, r: radius, fill, stroke }
-      }),
-      divided: true,
+      shapes: [
+        { kind: 'rect', x, y, w, h, fill, stroke },
+        ...between.map((seg) => segment(seg, { color: thin ? LINE_STRONG : INK_2, width: thin ? 0.2 : 0.3 })),
+        ...axes.map((seg) => segment(seg, { color: INK_2, width: 0.35, dash: [6, 1.5, 1, 1.5] })),
+      ],
+      pipe: true,
     }
   }
   if (shape === 'custom' && p.outline && p.outline.length >= 3) {
     const origWidth = p.rotated ? h / k : w / k
     const origLength = p.rotated ? w / k : h / k
     const local = p.rotated ? rotateOutline90(p.outline, origWidth, origLength) : p.outline
-    return { shapes: [{ kind: 'poly', points: local.map((q) => ({ x: x + q.x * k, y: y + q.y * k })), fill, stroke }], divided: false }
+    return { shapes: [{ kind: 'poly', points: local.map((q) => ({ x: x + q.x * k, y: y + q.y * k })), fill, stroke }], pipe: false }
   }
-  if (shape === 'circle' || shape === 'oval') return { shapes: [{ kind: 'ellipse', cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2, fill, stroke }], divided: false }
+  if (shape === 'circle' || shape === 'oval') return { shapes: [{ kind: 'ellipse', cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2, fill, stroke }], pipe: false }
   if (shape === 'triangle') {
     const origW = p.rotated ? h : w
     const origL = p.rotated ? w : h
@@ -428,7 +430,7 @@ function footprint(
       { x: origW, y: origL },
     ]
     const pts = p.rotated ? rotateOutline90(local, origW, origL) : local
-    return { shapes: [{ kind: 'poly', points: pts.map((q) => ({ x: x + q.x, y: y + q.y })), fill, stroke }], divided: false }
+    return { shapes: [{ kind: 'poly', points: pts.map((q) => ({ x: x + q.x, y: y + q.y })), fill, stroke }], pipe: false }
   }
   if (shape === 'diamond') {
     const points = [
@@ -437,9 +439,9 @@ function footprint(
       { x: x + w / 2, y: y + h },
       { x, y: y + h / 2 },
     ]
-    return { shapes: [{ kind: 'poly', points, fill, stroke }], divided: false }
+    return { shapes: [{ kind: 'poly', points, fill, stroke }], pipe: false }
   }
-  return { shapes: [{ kind: 'rect', x, y, w, h, r: 0.5, fill, stroke }], divided: false }
+  return { shapes: [{ kind: 'rect', x, y, w, h, r: 0.5, fill, stroke }], pipe: false }
 }
 
 // The marks of 6.3 at half their screen size (deckMarks.tsx), from the
