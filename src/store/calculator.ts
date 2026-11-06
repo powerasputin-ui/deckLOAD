@@ -2374,6 +2374,15 @@ export function redoCalculator() {
   useCalculator.temporal.getState().redo()
 }
 
+// One deliberate action — a button that removes, pins or takes off cargo,
+// with «Отменить» in its toast — is its own step of the history. Called
+// first, it closes the edit still pending in handleSet's 400 ms burst: an
+// add and a delete a moment apart were one step from «nothing» to
+// «nothing», and «Отменить» on the delete brought nothing back.
+export function closeCalculatorHistoryStep() {
+  commitPendingHistory?.()
+}
+
 export { UNIT_LABEL, PALETTE, convertLength }
 
 // Lives in stackSelection.ts, where the checks name stacks by it too.

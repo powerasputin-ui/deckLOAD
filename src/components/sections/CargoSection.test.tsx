@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { toast } from 'sonner'
 import { CargoSection } from './CargoSection'
-import { useCalculator } from '@/store/calculator'
+import { clearCalculatorHistory, useCalculator } from '@/store/calculator'
 import type { PlacedItem } from '@/lib/packing'
 
 // Stage 3, group C: «Грузы» — the compact list, the catalogue and the short
@@ -141,10 +141,24 @@ describe('CargoSection', () => {
       const stack = items()[0]
       expect(stack.shape).toBe('pipe-nest')
       expect(stack.length).toBeCloseTo(1238, 6)
-      expect(stack.width).toBeCloseTo(800, 6)
+      // Between the board offsets (800 − 2 × 20), so it fits the deck.
+      expect(stack.width).toBeCloseTo(760, 6)
       expect(stack.nest?.pipeLengthM).toBeCloseTo(12.38, 6)
       expect(stack.height).toBeCloseTo((stack.nest?.heightM ?? 0) * 100, 6)
     })
+  })
+
+  // Revision 2026-11-06: built as it came, a stack was as wide as the whole
+  // deck and never fitted on it.
+  it('builds a stack as wide as the room between the board offsets, and says when a typed one won\'t fit', () => {
+    reset({ deck: { width: 8, length: 20, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0 } })
+    section()
+    fireEvent.click(screen.getByRole('button', { name: 'Каталог' }))
+    const builder = screen.getByRole('group', { name: 'Конструктор штабеля' })
+    expect((within(builder).getByLabelText('Ширина, м') as HTMLInputElement).value).toBe('7.60')
+    expect(within(builder).queryByText(/на палубу не встанет/)).toBeNull()
+    fireEvent.change(within(builder).getByLabelText('Ширина, м'), { target: { value: '8' } })
+    expect(within(builder).getByText('Шире места между отступами от борта (7.60 м) — на палубу не встанет')).toBeTruthy()
   })
 
   describe('a cargo of one\'s own', () => {
@@ -365,6 +379,62 @@ describe('CargoSection', () => {
         expect(useCalculator.getState().activeStampId).toBeNull()
         expect(place.className).not.toContain('border-primary')
       })
+    })
+  })
+
+  // Revision 2026-11-06: a cargo that fits no trip has no stack to
+  // right-click on the deck; its row's menu removes it.
+  describe('a row\'s right-click menu', () => {
+    const cargo = { id: 'a', name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 4, color: '#000', allowRotation: true, weight: 2200 }
+
+    it('removes the cargo from the list, with an undo in the toast', () => {
+      reset({ items: [cargo], activeStampId: 'a' })
+      section()
+      fireEvent.contextMenu(screen.getByTestId('cargo-list-row'), { clientX: 120, clientY: 200 })
+      const menu = screen.getByRole('menu', { name: 'Действия с грузом «Контейнер 20ft»' })
+      fireEvent.click(within(menu).getByRole('button', { name: 'Удалить груз' }))
+      expect(items()).toEqual([])
+      expect(useCalculator.getState().activeStampId).toBeNull()
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(toast.success).toHaveBeenCalledWith(
+        'Груз «Контейнер 20ft» удалён',
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) })
+      )
+    })
+
+    it('«Отменить» brings back the deleted cargo even when it was added a moment before', () => {
+      // History merges edits made within 400 ms into one step; a delete is a
+      // step of its own, or «Отменить» would undo the add with it.
+      clearCalculatorHistory()
+      section()
+      fireEvent.click(screen.getByRole('button', { name: 'Каталог' }))
+      fireEvent.click(catalogEntry(/^Контейнер 20ft/))
+      fireEvent.contextMenu(screen.getByTestId('cargo-list-row'), { clientX: 120, clientY: 200 })
+      fireEvent.click(screen.getByRole('button', { name: 'Удалить груз' }))
+      expect(items()).toEqual([])
+      const options = vi.mocked(toast.success).mock.calls.at(-1)?.[1] as unknown as { action: { onClick: () => void } }
+      act(() => options.action.onClick())
+      expect(items().map((i) => i.name)).toEqual(['Контейнер 20ft'])
+    })
+
+    it('closes on Escape, the focus back where it was, or on a click elsewhere; the quantity field keeps the browser\'s own menu', () => {
+      reset({ items: [cargo] })
+      section()
+      const row = screen.getByTestId('cargo-list-row')
+      // From the keyboard: the menu takes the focus, Esc gives it back.
+      const button = within(row).getByRole('button', { name: 'Поставить «Контейнер 20ft»' })
+      button.focus()
+      fireEvent.contextMenu(button)
+      expect(document.activeElement?.textContent).toBe('Удалить груз')
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(document.activeElement).toBe(button)
+      fireEvent.contextMenu(row, { clientX: 120, clientY: 200 })
+      fireEvent.pointerDown(document.body)
+      expect(screen.queryByRole('menu')).toBeNull()
+      fireEvent.contextMenu(screen.getByLabelText('Всего, Контейнер 20ft'))
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(items()).toHaveLength(1)
     })
   })
 

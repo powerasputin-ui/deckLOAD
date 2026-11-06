@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { NumberField } from '@/components/calculator/NumberField'
 import { TextField } from '@/components/calculator/TextField'
 import { CargoNumberTile } from '@/components/calculator/CargoNumberTile'
-import { undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
+import { closeCalculatorHistoryStep, undoCalculator, useCalculator, UNIT_LABEL, type Unit } from '@/store/calculator'
 import type { CargoItem, PlacedItem } from '@/lib/packing'
 import { cargoTotals, DEFAULT_CATEGORIES, LAYERS_RULE, placedByItem, rangeOf, SIZE_AXES } from '@/lib/cargoTable'
 import { isPipeCargo } from '@/lib/stabilityConditions'
@@ -79,6 +79,7 @@ export function CargoTable({
   }
 
   const removeWithUndo = (targets: CargoItem[]) => {
+    closeCalculatorHistoryStep()
     for (const it of targets) removeItem(it.id)
     setSelected((prev) => new Set([...prev].filter((id) => !targets.some((t) => t.id === id))))
     const what = targets.length === 1 ? `Груз «${targets[0].name}» удалён` : `Удалено грузов: ${targets.length}`

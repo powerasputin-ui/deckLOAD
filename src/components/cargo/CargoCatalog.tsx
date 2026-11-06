@@ -258,24 +258,31 @@ export function CustomShapeForm({ onPlace }: { onPlace: (name: string, weightKg?
 // the nest's pipeLengthM/pipeOuterDiameterM inputs, not duplicated.
 function PipeNestBuilder() {
   const deckWidth = useCalculator((s) => s.deck.width)
+  const deckLength = useCalculator((s) => s.deck.length)
+  const boardOffset = useCalculator((s) => s.deck.boardOffset)
   const deckClearance = useCalculator((s) => s.deck.clearance)
   const unit = useCalculator((s) => s.deck.unit)
+  // The room between the board offsets. The stack's width used to default to
+  // the whole deck's, so a stack built as it came never fitted on it
+  // («Превышает размеры палубы»).
+  const roomWidth = Math.max(0, deckWidth - 2 * boardOffset)
+  const roomLength = Math.max(0, deckLength - 2 * boardOffset)
   const addOrIncrementCargoFromTemplate = useCalculator((s) => s.addOrIncrementCargoFromTemplate)
   const pipeItems = PRESETS.pipes.items
   const [pipeIndex, setPipeIndex] = useState(0)
   // The stack's width and pipe count are entered in the deck's own unit,
   // converted to metres only for the geometry — computePipeNest works in
   // metres throughout.
-  const [widthText, setWidthText] = useState(() => fmtNumber(deckWidth))
+  const [widthText, setWidthText] = useState(() => fmtNumber(roomWidth))
   const [countText, setCountText] = useState('')
   // Water trapped in the stack, when the transport project states it. Left
   // empty, the stability check estimates it by the IS Code rule. Kept apart
   // from the pipes' weight (CargoItem.trappedWaterT).
   const [waterText, setWaterText] = useState('')
-  const [prevDeckWidth, setPrevDeckWidth] = useState(deckWidth)
-  if (deckWidth !== prevDeckWidth) {
-    setPrevDeckWidth(deckWidth)
-    setWidthText(fmtNumber(deckWidth))
+  const [prevRoomWidth, setPrevRoomWidth] = useState(roomWidth)
+  if (roomWidth !== prevRoomWidth) {
+    setPrevRoomWidth(roomWidth)
+    setWidthText(fmtNumber(roomWidth))
   }
   const ids = { type: useId(), width: useId(), count: useId(), water: useId() }
 
@@ -284,7 +291,15 @@ function PipeNestBuilder() {
   const pipeOuterDiameterM = tpl.length ?? tpl.height ?? 0
   const pipeLengthM = tpl.width ?? 0
   const pipeWeightKg = tpl.weight
-  const usableWidthM = convertLength(parseFloat(widthText.replace(',', '.')) || deckWidth, unit, 'm')
+  const typedWidth = parseFloat(widthText.replace(',', '.')) || roomWidth
+  const usableWidthM = convertLength(typedWidth, unit, 'm')
+  // Said before it is added: a stack that can't stand on this deck.
+  const misfit =
+    typedWidth > roomWidth + 1e-6
+      ? `Шире места между отступами от борта (${fmtNumber(roomWidth)} ${UNIT_LABEL[unit]}) — на палубу не встанет`
+      : convertLength(tpl?.width ?? 0, 'm', unit) > roomLength + 1e-6
+        ? `Трубы длиннее палубы между отступами (${fmtNumber(roomLength)} ${UNIT_LABEL[unit]}) — на палубу не встанет`
+        : null
   const pipeCount = countText.trim() ? Math.max(1, Math.round(parseFloat(countText.replace(',', '.')))) : undefined
   const maxStackHeightM = deckClearance > 0 ? convertLength(deckClearance, unit, 'm') : undefined
 
@@ -373,6 +388,7 @@ function PipeNestBuilder() {
         </div>
       </div>
       <p className="text-xs text-ink-2">Пусто в «Труб» — два яруса. «Вода» — если её вес дан в проекте перевозки, иначе она оценивается.</p>
+      {misfit && <p className="text-xs text-danger">{misfit}</p>}
       {nest && (
         <p className="text-xs text-ink-2">
           {nest.pipesPerRow} труб в ряд × {nest.tierCounts.length} яр. = {nest.pipeCount} шт · высота {fmtNumber(nest.heightM)} м

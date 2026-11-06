@@ -106,3 +106,22 @@ test.describe('Cargo management', () => {
     expect(Math.abs(finalBox!.x - startBox.x)).toBeGreaterThan(50)
   })
 })
+
+// Revision 2026-11-06: a cargo that fits no trip has no stack on the deck to
+// right-click; its row in the list has a menu that removes it.
+test('a cargo that fits no trip goes from its row\'s right-click menu, with an undo', async ({ page }) => {
+  await page.goto('/')
+  await clearCalculation(page)
+  // 30 m long on the 20 m demo deck: no trip takes it.
+  await addOwnCargo(page, { name: 'Длинный', length: '30', width: '1', weightT: '5' })
+  const misfit = page.getByText(/Не поместилось/)
+  await expect(misfit).toBeVisible()
+
+  await cargoRow(page, 'Длинный').getByTitle('Длинный', { exact: true }).click({ button: 'right' })
+  await page.getByRole('menu', { name: 'Действия с грузом «Длинный»' }).getByRole('button', { name: 'Удалить груз' }).click()
+  await expect(cargoRow(page, 'Длинный')).toHaveCount(0)
+  await expect(misfit).toBeHidden()
+
+  await page.locator('[data-sonner-toast]').filter({ hasText: 'Груз «Длинный» удалён' }).getByRole('button', { name: 'Отменить' }).click()
+  await expect(cargoRow(page, 'Длинный')).toBeVisible()
+})
