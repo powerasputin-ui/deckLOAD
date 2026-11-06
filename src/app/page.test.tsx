@@ -3599,6 +3599,33 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('уже размещены'))
   })
 
+  // Revision 2026-11-06: in auto mode a cargo from the catalogue is on the
+  // deck at once, so its row never says «Поставить» beside it.
+  it('auto mode: a cargo from the catalogue offers «Закрепить» at once, more of it too; then «Открепить», and back', () => {
+    render(<Home />)
+    clearDemoCargo()
+    openSection('Грузы')
+    fireEvent.click(screen.getByRole('button', { name: 'Каталог' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Каталог грузов' })).getAllByRole('button', { name: /^Ящик M,/ })[0])
+    expect(screen.getByRole('button', { name: 'Закрепить «Ящик M»' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Поставить «Ящик M»' })).toBeNull()
+
+    const total = screen.getByLabelText('Всего, Ящик M')
+    fireEvent.change(total, { target: { value: '3' } })
+    fireEvent.blur(total)
+    expect(screen.getByRole('button', { name: 'Закрепить «Ящик M»' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Закрепить «Ящик M»' }))
+    const pins = () => Object.values(useCalculator.getState().pinnedPlacementsByTrip).flat()
+    const itemId = useCalculator.getState().items.find((it) => it.name === 'Ящик M')!.id
+    expect(pins().filter((p) => p.locked && p.itemId === itemId).reduce((n, p) => n + p.layers, 0)).toBe(3)
+    expect(screen.getByRole('button', { name: 'Открепить «Ящик M»' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Открепить «Ящик M»' }))
+    expect(pins().filter((p) => p.locked)).toEqual([])
+    expect(screen.getByRole('button', { name: 'Закрепить «Ящик M»' })).toBeTruthy()
+  })
+
   // Revision 2026-11-05: the last unit placed ends the stamp — nothing more
   // of it to place — and the cargo's «Поставить» turns into «Убрать».
   it('the last unit placed ends the stamp, and the cargo\'s row offers «Убрать»', () => {

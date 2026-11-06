@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { armCargo, chooseFromCatalog, clearCalculation, clearDeckSpot, unitsCount, stackMenu, stackOf } from './helpers'
+import { chooseFromCatalog, clearCalculation, unitsCount, stackMenu, stackOf } from './helpers'
 
 // «placed/total ед.» in the status line under the deck (spec 8.3).
 function headerBadge(page: Page) {
@@ -54,17 +54,14 @@ test.describe('Auto-mode selection and pinning', () => {
     await clearCalculation(page)
 
     // One container on an empty deck, so the drag has room to land: from
-    // the catalogue the packer puts it on the deck, «Поставить» and a click
-    // clear of it put it where the user clicked.
+    // the catalogue the packer puts it on the deck, and «Закрепить» on its
+    // row keeps it there, locked.
     await chooseFromCatalog(page, 'Контейнер 20ft')
     const stack = page.locator('svg g[data-cargo-placement="true"]')
     await expect(stack).toHaveCount(1)
     await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
-    await armCargo(page, 'Контейнер 20ft')
-    await page.locator('svg [data-deck-background="true"]').first().click({ position: await clearDeckSpot(page), force: true })
-    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Закрепить «Контейнер 20ft»' }).click()
     await expect(stack).toHaveCount(1)
-    // A stamp puts the cargo exactly where the user clicked: locked.
     await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
 
     const before = (await storedPins(page))[0]
@@ -167,22 +164,28 @@ test.describe('Auto-mode selection and pinning', () => {
   // Stage 3, group D: in auto mode the armed cargo's own stacks that the
   // packer placed don't block it — the packer moves them out of its way —
   // so «Поставить» can put a unit right where one of them stands.
-  test('«Поставить» in auto mode can put the cargo where the packer had put it', async ({ page }) => {
+  // Revision 2026-11-06: from the catalogue the cargo is on the deck at once,
+  // so its row offers «Закрепить», never «Поставить», beside it.
+  test('«Закрепить» on the row keeps the packer\'s stack where it stands; «Открепить» lets it go', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     await clearCalculation(page)
     await chooseFromCatalog(page, 'Контейнер 20ft')
     const stack = page.locator('svg g[data-cargo-placement="true"]')
     await expect(stack).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Поставить «Контейнер 20ft»', exact: true })).toHaveCount(0)
     const auto = (await stack.boundingBox())!
-    await armCargo(page, 'Контейнер 20ft')
-    await page.mouse.move(auto.x + auto.width / 2, auto.y + auto.height / 2)
-    await expect(page.locator('[data-stamp-shadow="ok"]')).toHaveCount(1)
-    await page.mouse.click(auto.x + auto.width / 2, auto.y + auto.height / 2)
-    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Закрепить «Контейнер 20ft»' }).click()
     await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(1)
-    await expect(stack).toHaveCount(1)
+    const pinned = (await stack.boundingBox())!
+    expect(Math.abs(pinned.x - auto.x)).toBeLessThan(1)
+    expect(Math.abs(pinned.y - auto.y)).toBeLessThan(1)
     expect(await storedPins(page)).toHaveLength(1)
+
+    await page.getByRole('button', { name: 'Открепить «Контейнер 20ft»' }).click()
+    await expect(page.locator('svg [data-mark="lock"]')).toHaveCount(0)
+    await expect(stack).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Закрепить «Контейнер 20ft»' })).toBeVisible()
   })
 })
 

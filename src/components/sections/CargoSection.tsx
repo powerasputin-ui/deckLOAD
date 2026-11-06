@@ -17,6 +17,7 @@ import { cn, fmtTonnes, pluralRu } from '@/lib/utils'
 export function CargoSection({
   onOpenTable,
   placedAcrossTrips,
+  placedByTrip,
   hoveredItemId,
   onHover,
   onPlaceCustomShape,
@@ -25,6 +26,8 @@ export function CargoSection({
   // Opens the cargo table across the bottom (spec 5.4).
   onOpenTable: () => void
   placedAcrossTrips: PlacedItem[]
+  // The same trip by trip, for «Закрепить» (auto mode).
+  placedByTrip?: PlacedItem[][]
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   // A drawn outline, once named, placed where it was drawn.
@@ -91,7 +94,13 @@ export function CargoSection({
       )}
       {!empty && (
         <div className="pt-2">
-          <CargoList placedAcrossTrips={placedAcrossTrips} hoveredItemId={hoveredItemId} onHover={onHover} placeRefusal={placeRefusal} />
+          <CargoList
+            placedAcrossTrips={placedAcrossTrips}
+            placedByTrip={placedByTrip}
+            hoveredItemId={hoveredItemId}
+            onHover={onHover}
+            placeRefusal={placeRefusal}
+          />
         </div>
       )}
     </>

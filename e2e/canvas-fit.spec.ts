@@ -61,13 +61,14 @@ test('a 49×17 m deck fills 90% of the central area, a closing panel keeps its s
   await expect(fit).toBeDisabled()
 })
 
-// The pin of trip 1, read from the autosave once its debounce has settled.
+// The placement made by hand, read from the autosave once its debounce has
+// settled.
 async function storedPin(page: Page) {
   await page.waitForTimeout(600)
   return page.evaluate(() => {
     const data = JSON.parse(localStorage.getItem('deckload-projects') ?? 'null')
     const project = data?.projects?.find((p: { id: string }) => p.id === data.activeId)
-    return (project?.pinnedPlacementsByTrip?.['0'] ?? [])[0] as { x: number; y: number; width: number; length: number } | undefined
+    return (project?.manualPlacements ?? [])[0] as { x: number; y: number; width: number; length: number } | undefined
   })
 }
 
@@ -75,10 +76,11 @@ test('a stamp lands where the deck is clicked and a drag moves it as far as the 
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
   await clearCalculation(page)
+  // In manual mode a cargo from the catalogue is armed for a click at once
+  // (in auto mode the packer puts it on the deck itself).
+  await page.getByRole('radio', { name: 'Ручной' }).click()
 
   for (const panel of ['open', 'closed'] as const) {
-    // From the catalogue the packer puts the container at the deck's start;
-    // «Поставить» arms it for a click.
     await chooseFromCatalog(page, 'Контейнер 20ft')
     await armCargo(page, 'Контейнер 20ft')
     // With the panel closed the canvas is wider; «Вписать» fits the deck to it.

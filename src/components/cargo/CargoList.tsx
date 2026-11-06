@@ -19,8 +19,8 @@ export interface PlaceRefusal {
 }
 
 // The row's one button keeps one width whatever it says («Поставить»,
-// «Убрать», «Открепить»): the buttons stand in one column down the list, and
-// the names and weights beside them end on one edge.
+// «Убрать», «Закрепить», «Открепить»): the buttons stand in one column down
+// the list, and the names and weights beside them end on one edge.
 const ROW_BUTTON = 'h-8 w-24 shrink-0 px-2'
 
 // «Грузы» → the compact list (spec 7.1): the number on its tone, the name
@@ -31,18 +31,26 @@ const ROW_BUTTON = 'h-8 w-24 shrink-0 px-2'
 // One button follows the cargo's state (revision 2026-11-05: a «Поставить»
 // that looked ready but put nothing on the deck read as broken).
 // «Поставить» arms the cargo for a click on the deck, outlined in orange
-// while armed. Once all of it stands on the deck by the user's hand, the
-// button turns into «Убрать», which takes it off again (in auto mode
-// «Открепить»: the packer lays those stacks out itself). When the deck's
-// cargo limit stops another unit, «Поставить» is greyed with the reason.
+// while armed; when the deck's cargo limit stops another unit, it is greyed
+// with the reason.
+// - Manual mode: once all of it stands on the deck, the button turns into
+//   «Убрать», which takes it off again.
+// - Auto mode (revision 2026-11-06): the packer puts cargo on the deck by
+//   itself — from the catalogue too — so a «Поставить» beside cargo already
+//   standing there read wrong. On the deck it is «Закрепить» (every stack
+//   of it stays where it stands), then «Открепить» (the packer lays it out
+//   again). «Поставить» only while none of it is on the deck.
 export function CargoList({
   placedAcrossTrips,
+  placedByTrip = [placedAcrossTrips],
   hoveredItemId,
   onHover,
   placeRefusal = () => null,
 }: {
   // Every trip's placements: a unit on any trip counts as placed.
   placedAcrossTrips: PlacedItem[]
+  // The same, trip by trip: what «Закрепить» pins, each on its own trip.
+  placedByTrip?: PlacedItem[][]
   hoveredItemId: string | null
   onHover: (id: string | null) => void
   placeRefusal?: (itemId: string) => PlaceRefusal | null
@@ -55,6 +63,7 @@ export function CargoList({
   const setActiveStamp = useCalculator((s) => s.setActiveStamp)
   const updateItem = useCalculator((s) => s.updateItem)
   const takeOffDeck = useCalculator((s) => s.takeOffDeck)
+  const pinOnDeck = useCalculator((s) => s.pinOnDeck)
   const placed = useMemo(() => placedByItem(placedAcrossTrips), [placedAcrossTrips])
   const manual = mode === 'manual'
 
@@ -62,6 +71,13 @@ export function CargoList({
     const units = takeOffDeck(it.id)
     if (units === 0) return
     toast.success(manual ? `«${it.name}» убран с палубы: ${units} ед.` : `«${it.name}» откреплён: ${units} ед. разложит программа`, {
+      action: { label: 'Отменить', onClick: () => undoCalculator() },
+    })
+  }
+  const pin = (it: CargoItem) => {
+    const units = pinOnDeck(it.id, placedByTrip)
+    if (units === 0) return
+    toast.success(`«${it.name}» закреплён на месте: ${units} ед.`, {
       action: { label: 'Отменить', onClick: () => undoCalculator() },
     })
   }
@@ -73,9 +89,18 @@ export function CargoList({
         const armed = activeStampId === it.id
         const refusal = armed ? null : placeRefusal(it.id)
         const own = ownUnitsOfItem(it.id, mode, manualPlacements, pinnedPlacementsByTrip)
-        // All of it stands on the deck, some by the user's hand: the button
-        // takes it off. Armed, it stays «Поставить», to be clicked off.
-        const offer = refusal?.kind === 'all-placed' && own > 0 ? 'take-off' : 'place'
+        // Armed, it stays «Поставить», to be clicked off.
+        const offer: 'place' | 'take-off' | 'pin' = armed
+          ? 'place'
+          : manual
+            ? refusal?.kind === 'all-placed' && own > 0
+              ? 'take-off'
+              : 'place'
+            : own > 0
+              ? 'take-off'
+              : units > 0
+                ? 'pin'
+                : 'place'
         return (
           <li
             key={it.id}
@@ -108,7 +133,19 @@ export function CargoList({
                 <QuantityField item={it} onCommit={(quantity) => updateItem(it.id, { quantity })} />
               </p>
             </div>
-            {offer === 'take-off' ? (
+            {offer === 'pin' ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={`Закрепить «${it.name}»`}
+                title={`Оставить на месте: ${units} ед. — авторасстановка их больше не двигает`}
+                onClick={() => pin(it)}
+                className={ROW_BUTTON}
+              >
+                Закрепить
+              </Button>
+            ) : offer === 'take-off' ? (
               <Button
                 type="button"
                 size="sm"

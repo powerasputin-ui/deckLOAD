@@ -281,7 +281,52 @@ describe('CargoSection', () => {
         expect(buttons()).toEqual(['Поставить'])
       })
 
-      it('in auto mode turns into «Открепить» once the user pinned all of it', () => {
+      // Revision 2026-11-06: in auto mode the packer puts it on the deck by
+      // itself, so the button follows that, not the user's own stacks alone.
+      const stack = (x: number, layers: number): PlacedItem =>
+        ({ itemId: 'a', name: 'Контейнер 20ft', x, y: 0.2, width: 6.06, length: 2.44, height: 2.59, layers, stackedCount: layers, rotated: false, color: '#000', weight: 2200, index: 0 }) as PlacedItem
+
+      it('in auto mode, cargo the packer put on the deck offers «Закрепить»: every stack of it stays where it stands, with an undo', () => {
+        reset({ items: [cargo], mode: 'auto' })
+        const onDeck = [stack(0.2, 2), stack(7, 2)]
+        section({ placedAcrossTrips: onDeck, placedByTrip: [onDeck] })
+        expect(buttons()).toEqual(['Закрепить'])
+        fireEvent.click(screen.getByRole('button', { name: 'Закрепить «Контейнер 20ft»' }))
+        const pins = useCalculator.getState().pinnedPlacementsByTrip[0]
+        expect(pins.map((p) => [p.x, p.y, p.layers, p.locked])).toEqual([
+          [0.2, 0.2, 2, true],
+          [7, 0.2, 2, true],
+        ])
+        expect(toast.success).toHaveBeenCalledWith(
+          '«Контейнер 20ft» закреплён на месте: 4 ед.',
+          expect.objectContaining({ action: expect.objectContaining({ label: 'Отменить' }) })
+        )
+      })
+
+      it('in auto mode turns into «Открепить» as soon as any of it is the user\'s, though the packer placed the rest', () => {
+        const mine = { ...byHand(1)[0], id: 'p1', x: 0.2, y: 0.2, locked: true }
+        reset({ items: [cargo], mode: 'auto', pinnedPlacementsByTrip: { 0: [mine] } })
+        const onDeck = [stack(0.2, 1), stack(7, 3)]
+        section({ placedAcrossTrips: onDeck, placedByTrip: [onDeck] })
+        expect(buttons()).toEqual(['Открепить'])
+      })
+
+      it('in auto mode «Закрепить» locks an applied variant\'s stacks as they are, adding none', () => {
+        const variants = { ...byHand(4)[0], id: 'v1', x: 0.2, y: 0.2 }
+        reset({ items: [cargo], mode: 'auto', pinnedPlacementsByTrip: { 0: [variants] } })
+        const onDeck = [stack(0.2, 4)]
+        section({ placedAcrossTrips: onDeck, placedByTrip: [onDeck] })
+        fireEvent.click(screen.getByRole('button', { name: 'Закрепить «Контейнер 20ft»' }))
+        expect(useCalculator.getState().pinnedPlacementsByTrip[0].map((p) => [p.id, p.locked])).toEqual([['v1', true]])
+      })
+
+      it('in auto mode is «Поставить» only while none of it is on the deck', () => {
+        reset({ items: [cargo], mode: 'auto' })
+        section()
+        expect(buttons()).toEqual(['Поставить'])
+      })
+
+      it('in auto mode «Открепить» lets the user\'s stacks go back to the packer', () => {
         reset({ items: [{ ...cargo, quantity: 1 }], mode: 'auto', pinnedPlacementsByTrip: { 0: [{ ...byHand(1)[0], id: 'p1', locked: true }] } })
         section({ placeRefusal: allPlaced })
         fireEvent.click(screen.getByRole('button', { name: 'Открепить «Контейнер 20ft»' }))
@@ -301,9 +346,9 @@ describe('CargoSection', () => {
         expect(useCalculator.getState().activeStampId).toBeNull()
         expect(toast.error).toHaveBeenCalledWith('Превышен лимит груза на палубе (10 т)')
         view.unmount()
-        // All of it pinned by the packer (an applied variant): nothing the
-        // user stood there to take off.
-        reset({ items: [cargo], mode: 'auto', pinnedPlacementsByTrip: { 0: [{ ...byHand(4)[0], id: 'p1' }] } })
+        // All of it placed already, in manual mode by someone else's hand
+        // (none of it the user's to take off): the reason, not a stamp.
+        reset({ items: [cargo], mode: 'manual' })
         section({ placeRefusal: allPlaced })
         expect(buttons()).toEqual(['Поставить'])
         fireEvent.click(screen.getByRole('button', { name: 'Поставить «Контейнер 20ft»' }))

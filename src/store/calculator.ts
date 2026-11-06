@@ -14,6 +14,7 @@ import {
   DEFAULT_VESSEL_MOTION,
   type StabilityOverride,
   type CargoItem,
+  type PlacedItem,
   type SortStrategy,
   type ManualPlacement,
   type PinnedPlacement,
@@ -53,7 +54,7 @@ import { keptByVariants } from '@/lib/variantKeep'
 import { deckForVessel } from '@/lib/vesselDeck'
 import type { VesselTemplate } from '@/lib/vesselTemplates'
 import { autoPlacementKey } from '@/lib/stackSelection'
-import { ownUnitsOfItem } from '@/lib/ownPlacements'
+import { ownUnitsOfItem, unitsOfItemIn } from '@/lib/ownPlacements'
 import { placementLayersOfItem, placementRemoveItem, placementTotalLayers, placementTotalWeightKg, placementClampItemLayers, placementClampTotalHeight, type ClampItemLayersResult } from '@/lib/placementComposition'
 
 function emptyVessel(): VesselStabilityData {
@@ -201,6 +202,11 @@ const PALETTE = [
   '#7c3aed',
 ]
 
+// One of the packer's stacks, as «Закрепить» copies it into a pin.
+type PinnablePlacement = Pick<PlacedItem, 'itemId' | 'name' | 'x' | 'y' | 'width' | 'length' | 'layers' | 'rotated' | 'color' | 'weight'> & {
+  composition?: unknown
+}
+
 interface CalculatorState {
   deck: DeckConfig
   items: CargoItem[]
@@ -306,6 +312,11 @@ interface CalculatorState {
   // «Убрать» / «Открепить» on a cargo's row (spec 7.1): the units of it the
   // user stood on the deck come off it (ownPlacements.ts). Returns how many.
   takeOffDeck: (itemId: string) => number
+  // «Закрепить» on a cargo's row in auto mode: every stack of it, on every
+  // trip, stays where it stands — the user's unlocked pins get locked and
+  // the packer's own stacks become locked pins. `placedByTrip` is what each
+  // trip has on the deck (the packer's result). Returns the units locked.
+  pinOnDeck: (itemId: string, placedByTrip: readonly (readonly PinnablePlacement[])[]) => number
   // Pinned (interactive auto mode) — all keyed by trip index
   // `locked` marks a position the user chose (drag, «Закрепить», a stamp
   // click, a layer/rotate edit): shown with a lock, kept by «Автораспределение».
@@ -1756,6 +1767,48 @@ export const useCalculator = create<CalculatorState>()(
         selectedPinIds: s.selectedPinIds.filter((sid) => allPins.some((p) => p.id === sid)),
         selectedManualIds: s.selectedManualIds.filter((mid) => manualPlacements.some((m) => m.id === mid)),
       }
+    })
+    return units
+  },
+
+  pinOnDeck: (itemId, placedByTrip) => {
+    let units = 0
+    const near = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01
+    set((s) => {
+      const pinnedPlacementsByTrip = { ...s.pinnedPlacementsByTrip }
+      placedByTrip.forEach((placed, trip) => {
+        const before = s.pinnedPlacementsByTrip[trip] ?? []
+        // The user's own stacks of it not locked yet (an applied variant's,
+        // or a mixed stack it is part of): locked whole, as they stand.
+        const pins = before.map((pin) => {
+          const ofIt = unitsOfItemIn([pin], itemId)
+          if (pin.locked || ofIt === 0) return pin
+          units += ofIt
+          return { ...pin, locked: true }
+        })
+        // The packer's own stacks of it: a locked pin each, where it stands.
+        for (const p of placed) {
+          if (p.itemId !== itemId || p.composition) continue
+          if (before.some((pin) => pin.itemId === p.itemId && near(pin, p))) continue
+          pins.push({
+            id: uuid(),
+            itemId: p.itemId,
+            name: p.name,
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            length: p.length,
+            layers: p.layers,
+            rotated: p.rotated,
+            color: p.color,
+            weight: p.weight,
+            locked: true,
+          })
+          units += Math.max(1, p.layers)
+        }
+        if (pins.length > 0) pinnedPlacementsByTrip[trip] = pins
+      })
+      return { pinnedPlacementsByTrip }
     })
     return units
   },

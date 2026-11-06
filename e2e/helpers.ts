@@ -240,34 +240,6 @@ export async function setCargoCells(page: Page, name: string, values: Record<str
   for (const [label, value] of Object.entries(values)) await setNumber(await cargoCell(page, label, name), value)
 }
 
-// A point of the deck drawing, relative to its background, as far as can be
-// from every stack on it: where a stamp lands clear of the cargo the packer
-// already put on the deck.
-export async function clearDeckSpot(page: Page): Promise<{ x: number; y: number }> {
-  const deck = await page.locator('svg [data-deck-background="true"]').first().boundingBox()
-  if (!deck) throw new Error('deck background not found')
-  const centers = await page.locator('svg g[data-cargo-placement="true"]').evaluateAll((els) =>
-    els.map((e) => {
-      const r = e.getBoundingClientRect()
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-    })
-  )
-  let best = { x: deck.width / 2, y: deck.height / 2 }
-  let bestDistance = -1
-  for (const fx of [0.1, 0.3, 0.5, 0.7, 0.85]) {
-    for (const fy of [0.15, 0.5, 0.85]) {
-      const x = deck.x + deck.width * fx
-      const y = deck.y + deck.height * fy
-      const distance = centers.length ? Math.min(...centers.map((c) => Math.hypot(c.x - x, c.y - y))) : 0
-      if (distance > bestDistance) {
-        bestDistance = distance
-        best = { x: deck.width * fx, y: deck.height * fy }
-      }
-    }
-  }
-  return best
-}
-
 // The sheets of a downloaded PDF (spec 11): jsPDF writes one «/Type /Page»
 // object each.
 export async function sheetCount(download: Download): Promise<number> {

@@ -1552,6 +1552,7 @@ export default function Home() {
             <CargoSection
               onOpenTable={() => setCargoTableOpen(true)}
               placedAcrossTrips={placedAcrossTrips}
+              placedByTrip={shownTrips.map((t) => t.placed)}
               hoveredItemId={hoveredItemId}
               onHover={handleHover}
               onPlaceCustomShape={handlePlaceCustomShape}
