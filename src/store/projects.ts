@@ -543,6 +543,8 @@ export function normalizeSemiSub(value: unknown): SemiSubData | undefined {
         name: typeof x.name === 'string' ? x.name : '',
         weightT: finiteOrUndefined(x.weightT),
         vcgM: finiteOrUndefined(x.vcgM),
+        // A jack-up's: by a leg (its id) or 'centre'.
+        ...(typeof x.at === 'string' && x.at ? { at: x.at } : {}),
       }))
     : []
   return {

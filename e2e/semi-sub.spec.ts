@@ -54,7 +54,9 @@ test('a semi-submersible: its manual, the daily report, pipe arriving — VDL an
 
   // 1 000 t: the storm is over its VDL — the cargo would have to come off.
   await setCargoTotal(page, 'Трубы', '20')
-  await expect(page.locator('[data-status-item="vdl"]')).toHaveText('VDL 5000 из 5000 т')
+  // Within the operating 5 000 t, over the storm's 4 600: the line shows
+  // the limit that is broken (audit 2026-11-07).
+  await expect(page.locator('[data-status-item="vdl"]')).toHaveText('VDL 5000 из 4600 т в шторм')
   await openSection(page, 'Проверки')
   await expect(checks).toContainText('в шторм 5000 т при допустимом 4600 т — в шторм придётся снимать груз')
   await expect(page.locator('[data-status-item="errors"]')).toBeVisible()

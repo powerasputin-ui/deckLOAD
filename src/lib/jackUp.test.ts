@@ -86,10 +86,30 @@ describe('evaluateJackUp, elevated', () => {
     expect(check(r, 'jack-vdl')).toMatchObject({ status: 'error', detail: 'на опорах 3100 т при допустимом 3500 т · в шторм 3100 т при допустимом 3000 т — в шторм придётся снимать груз' })
   })
 
-  it('shares fuel brought equally, and subtracts nothing leaving from the legs', () => {
-    const r = evaluateJackUp({ ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: 200, vcgM: 5 }, { id: 'w', name: 'Вода', weightT: -80, vcgM: 3 }] }, [], [{ weightT: 50, vcgM: 30 }], deck, true)
+  it('shares fuel brought at the legs\' centre equally, and subtracts nothing leaving from the legs', () => {
+    const r = evaluateJackUp(
+      { ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: 200, vcgM: 5, at: 'centre' }, { id: 'w', name: 'Вода', weightT: -80, vcgM: 3 }] },
+      [],
+      [{ weightT: 50, vcgM: 30 }],
+      deck,
+      true
+    )
     expect(r.legs!.map((l) => l.afterT)).toEqual([4_050, 4_050, 4_050, 4_050])
     expect(r.vdlAfterT).toBe(2_800 - 50 + 200 - 80)
+  })
+
+  // Audit 2026-11-07: tanks by one leg load it far more than an equal share.
+  it('puts fuel brought by a leg on that leg as the plane has it, and works no legs out without saying where', () => {
+    // 200 t at «Опора 1»'s own point of the 20 × 16 m rectangle: 3/4 on it,
+    // 1/4 on each neighbour, −1/4 on the diagonal one.
+    const by = evaluateJackUp({ ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: 200, vcgM: 5, at: 'a' }] }, [], [], deck, true)
+    expect(by.legs!.map((l) => Math.round(l.addedT * 1e6) / 1e6)).toEqual([150, 50, -50, 50])
+    const nowhere = evaluateJackUp({ ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: 200, vcgM: 5 }] }, [], [], deck, true)
+    expect(check(nowhere, 'jack-legs')).toMatchObject({ status: 'none', detail: 'Прочий приход: не указано, где «Топливо» — у опоры или в центре опор' })
+    expect(nowhere.legs!.every((l) => l.afterT === undefined)).toBe(true)
+    // A leg since removed is no place either; fuel taken needs none.
+    expect(check(evaluateJackUp({ ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: 200, vcgM: 5, at: 'gone' }] }, [], [], deck, true), 'jack-legs').status).toBe('none')
+    expect(check(evaluateJackUp({ ...unit, transfers: [{ id: 'f', name: 'Топливо', weightT: -200, vcgM: 5 }] }, [], [], deck, true), 'jack-legs').status).toBe('ok')
   })
 
   it('says what is missing rather than judging without it', () => {

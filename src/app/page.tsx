@@ -929,9 +929,13 @@ export default function Home() {
     const now = Date.now()
     if (now - lastAutoRedistributeRef.current < 500) return
     lastAutoRedistributeRef.current = now
+    // A platform's variants are of its deck after the run (audit 2026-11-07):
+    // cargo leaving takes neither room nor the deck's weight limit, and a
+    // stack of it left from before stays out.
     const effectiveItems = globalRotation
-      ? items
-      : items.map((it) => ({ ...it, allowRotation: false }))
+      ? deckItems
+      : deckItems.map((it) => ({ ...it, allowRotation: false }))
+    const onDeck = new Set(deckItems.map((it) => it.id))
     // A clearance-zoned or lashing-attached placement (in the current
     // mode/trip) is an operational constraint, not just a position —
     // silently letting a full reshuffle relocate or drop it would defeat
@@ -951,7 +955,7 @@ export default function Home() {
     // geometric guess, not a guarantee the rigging still makes physical
     // sense afterward, so freezing the placement in place is what
     // actually keeps a lashing setup valid across a redistribute.
-    const sourcePlacements: (ManualPlacement | PinnedPlacement)[] = mode === 'manual' ? manualPlacements : pinnedPlacements
+    const sourcePlacements: (ManualPlacement | PinnedPlacement)[] = (mode === 'manual' ? manualPlacements : pinnedPlacements).filter((p) => onDeck.has(p.itemId))
     const isLocked = (p: ManualPlacement | PinnedPlacement) => 'locked' in p && !!p.locked
     const frozenPinned: PinnedPlacement[] = keptByVariants(sourcePlacements, deck.lashingPoints)
       .map((p) => ({

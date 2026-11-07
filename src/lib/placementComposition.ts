@@ -163,27 +163,27 @@ export function placementTotalHeightM(p: ComposablePlacement, items: Composition
 // don't need buildCargoWeightMoments to change its "one WeightMoment per
 // placement" shape at all — just the WEIGHT and VCG values fed into it.
 export function placementTotalVCG(p: ComposablePlacement, items: CompositionCatalogItem[]): number {
+  const parts = segmentWeights(p, items)
+  const totalWeightKg = parts.reduce((sum, s) => sum + s.weightKg, 0)
+  return totalWeightKg > 0 ? parts.reduce((sum, s) => sum + s.weightKg * s.vcgM, 0) / totalWeightKg : 0
+}
+
+// Each segment of a pile as a weight of its own, bottom first: its weight
+// and its centre's height above the deck under the pile — the parts
+// placementTotalVCG averages, by the same rule (an absolute override as
+// given, anything else above what's stacked beneath it). A platform's
+// calculations need them apart: cargo arriving may stand on cargo already
+// aboard (spec 2026-11-06, 7.2).
+export function segmentWeights(p: ComposablePlacement, items: CompositionCatalogItem[]): { itemId: string; layers: number; weightKg: number; vcgM: number }[] {
   let baselineM = 0
-  let weightedSum = 0
-  let totalWeightKg = 0
-  for (const seg of segmentsOf(p)) {
+  return segmentsOf(p).map((seg) => {
     const item = findItem(items, seg.itemId)
-    const segWeightKg = seg.layers * (item?.weight ?? 0)
     const segHeightM = item?.height ?? 0
-    const hasAbsoluteOverride = item?.stabilityOverride?.vcgAboveDeckM !== undefined
-    const vcgAbsolute = hasAbsoluteOverride
-      ? computeItemVCG({ height: segHeightM, layers: seg.layers, stabilityOverride: item?.stabilityOverride })
-      : baselineM +
-        computeItemVCG({
-          height: segHeightM,
-          layers: seg.layers,
-          stabilityOverride: item?.stabilityOverride,
-        })
-    weightedSum += segWeightKg * vcgAbsolute
-    totalWeightKg += segWeightKg
+    const own = computeItemVCG({ height: segHeightM, layers: seg.layers, stabilityOverride: item?.stabilityOverride })
+    const vcgM = item?.stabilityOverride?.vcgAboveDeckM !== undefined ? own : baselineM + own
     baselineM += segHeightM * seg.layers
-  }
-  return totalWeightKg > 0 ? weightedSum / totalWeightKg : 0
+    return { itemId: seg.itemId, layers: seg.layers, weightKg: seg.layers * (item?.weight ?? 0), vcgM }
+  })
 }
 
 // Weight-weighted average of each segment's tcgOffsetM/lcgOffsetM — the

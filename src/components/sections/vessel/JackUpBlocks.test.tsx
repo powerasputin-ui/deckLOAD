@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { JackUpDataBlock, JackUpReportBlock } from './JackUpBlocks'
+import { JackUpDataBlock, JackUpReportBlock, JackUpTransfersBlock } from './JackUpBlocks'
 import { useCalculator } from '@/store/calculator'
 
 // Spec 2026-11-06, 11.2: the legs are the user's — a leg added has its name
@@ -45,5 +45,30 @@ describe('jack-up blocks', () => {
     fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Положение установки' })).getByRole('radio', { name: 'На плаву' }))
     expect(jack()?.mode).toBe('afloat')
     expect(screen.getByLabelText('Осадка, м')).toBeTruthy()
+  })
+
+  // Audit 2026-11-07: what's brought stands somewhere — the legs need where.
+  it('each row of what\'s brought says where it stands: by a leg, or at the legs\' centre', () => {
+    useCalculator.setState({
+      deck: {
+        ...useCalculator.getState().deck,
+        jackUp: {
+          mode: 'elevated',
+          afloat: {},
+          elevated: {},
+          legs: [{ id: 'a', name: 'Носовая' }, { id: 'b', name: '' }],
+          report: { legLoadsT: {} },
+          transfers: [{ id: 't', name: 'Вода', weightT: 300 }],
+        },
+      },
+    })
+    render(<JackUpTransfersBlock />)
+    const where = screen.getByLabelText('Где, строка 1')
+    expect(within(where).getAllByRole('option').map((o) => o.textContent)).toEqual(['где — не указано', 'в центре опор, поровну', 'у «Носовая»', 'у «Опора 2»'])
+    expect(where).toHaveValue('')
+    fireEvent.change(where, { target: { value: 'a' } })
+    expect(jack()?.transfers[0].at).toBe('a')
+    fireEvent.change(where, { target: { value: '' } })
+    expect(jack()?.transfers[0].at).toBeUndefined()
   })
 })

@@ -300,7 +300,8 @@ export function computeLoadingCondition(
 // true geometric centroid, so the polygon's own shoelace centroid is used
 // instead whenever `outline` is present, rotated to match the placement's
 // current orientation first.
-function footprintCenter(p: {
+// A footprint's centre: a drawn shape's by its centroid, a box's by its middle.
+export function footprintCenter(p: {
   x: number
   y: number
   width: number

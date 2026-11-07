@@ -104,27 +104,32 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   }
 
   // A semi-submersible's VDL and KG after the run — an estimate for
-  // planning; the unit's computer says the last word.
+  // planning; the unit's computer says the last word. In operation, unless
+  // only the survival limit is broken: then that one, so the red figure is
+  // the one over its limit.
   const semi = s.semiSub
   if (semi?.vdlAfterT !== undefined) {
     const vdl = semi.checks.find((c) => c.id === 'semi-vdl')
-    const max = semi.vdlMaxOperatingT
+    const storm = overOnlyInStorm(semi.vdlAfterT, semi.vdlMaxOperatingT, semi.vdlAfterT, semi.vdlMaxSurvivalT)
+    const max = storm ? semi.vdlMaxSurvivalT : semi.vdlMaxOperatingT
     items.push({
       id: 'vdl',
-      text: `VDL ${Math.round(semi.vdlAfterT)}${max !== undefined ? ` из ${Math.round(max)}` : ''} т`,
-      title: 'VDL после рейса и предел рабочего режима — оценка для планирования',
+      text: `VDL ${Math.round(semi.vdlAfterT)}${max !== undefined ? ` из ${Math.round(max)}` : ''} т${storm ? ' в шторм' : ''}`,
+      title: storm ? 'VDL после рейса больше предела в шторм — оценка для планирования' : 'VDL после рейса и предел рабочего режима — оценка для планирования',
       target: 'vessel',
-      tone: vdl?.status === 'error' ? 'danger' : undefined,
+      tone: toneOf(vdl?.status),
     })
   }
   if (semi?.kgOperatingM !== undefined) {
     const kg = semi.checks.find((c) => c.id === 'semi-kg')
+    const storm = semi.kgSurvivalM !== undefined && overOnlyInStorm(semi.kgOperatingM, semi.kgOperatingMaxM, semi.kgSurvivalM, semi.kgSurvivalMaxM)
+    const [value, max] = storm ? [semi.kgSurvivalM!, semi.kgSurvivalMaxM] : [semi.kgOperatingM, semi.kgOperatingMaxM]
     items.push({
       id: 'kg',
-      text: `KG ${metres(semi.kgOperatingM)}${semi.kgOperatingMaxM !== undefined ? ` из ${metres(semi.kgOperatingMaxM)}` : ''} м`,
-      title: 'KG после рейса и допустимый в работе — оценка для планирования',
+      text: `KG${storm ? ' в шторм' : ''} ${metres(value)}${max !== undefined ? ` из ${metres(max)}` : ''} м`,
+      title: storm ? 'KG при уходе в шторм больше допустимого — оценка для планирования' : 'KG после рейса и допустимый в работе — оценка для планирования',
       target: 'vessel',
-      tone: kg?.status === 'error' ? 'danger' : undefined,
+      tone: toneOf(kg?.status),
     })
   }
 
@@ -133,12 +138,14 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   const jack = s.jackUp
   if (jack?.vdlAfterT !== undefined) {
     const vdl = jack.checks.find((c) => c.id === 'jack-vdl')
+    const storm = jack.mode === 'elevated' && overOnlyInStorm(jack.vdlAfterT, jack.vdlMaxT, jack.vdlAfterT, jack.vdlStormMaxT)
+    const max = storm ? jack.vdlStormMaxT : jack.vdlMaxT
     items.push({
       id: 'vdl',
-      text: `VDL ${Math.round(jack.vdlAfterT)}${jack.vdlMaxT !== undefined ? ` из ${Math.round(jack.vdlMaxT)}` : ''} т`,
-      title: `VDL после рейса и предел ${jack.mode === 'afloat' ? 'на плаву' : 'на опорах'} — оценка для планирования`,
+      text: `VDL ${Math.round(jack.vdlAfterT)}${max !== undefined ? ` из ${Math.round(max)}` : ''} т${storm ? ' в шторм' : ''}`,
+      title: storm ? 'VDL после рейса больше предела в шторм — оценка для планирования' : `VDL после рейса и предел ${jack.mode === 'afloat' ? 'на плаву' : 'на опорах'} — оценка для планирования`,
       target: 'vessel',
-      tone: vdl?.status === 'error' ? 'danger' : undefined,
+      tone: toneOf(vdl?.status),
     })
   }
   const loads = (jack?.legs ?? []).flatMap((l) => (l.afterT !== undefined ? [l.afterT] : []))
@@ -149,7 +156,7 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
       text: `Опора до ${Math.round(Math.max(...loads))}${jack.maxLegLoadT !== undefined ? ` из ${Math.round(jack.maxLegLoadT)}` : ''} т`,
       title: 'Наибольшая нагрузка на опору после рейса и допустимая — статика, оценка для планирования',
       target: 'vessel',
-      tone: legsCheck?.status === 'error' ? 'danger' : undefined,
+      tone: toneOf(legsCheck?.status),
     })
   }
   if (jack?.mode === 'afloat' && jack.kgAfterM !== undefined) {
@@ -159,7 +166,7 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
       text: `KG ${metres(jack.kgAfterM)}${jack.kgMaxM !== undefined ? ` из ${metres(jack.kgMaxM)}` : ''} м`,
       title: 'KG после рейса и допустимый на новой осадке — оценка для планирования',
       target: 'vessel',
-      tone: kg?.status === 'error' ? 'danger' : undefined,
+      tone: toneOf(kg?.status),
     })
   }
 
@@ -179,4 +186,16 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   }
 
   return items
+}
+
+// A platform check's tone in the line: red over a limit, amber when judged
+// without some cargo.
+function toneOf(status: 'ok' | 'warn' | 'error' | 'none' | undefined): StatusItem['tone'] {
+  return status === 'error' ? 'danger' : status === 'warn' ? 'warn' : undefined
+}
+
+// Within the operating limit, over the survival one: the line shows that one.
+function overOnlyInStorm(value: number, max: number | undefined, stormValue: number, stormMax: number | undefined): boolean {
+  const over = (v: number, m: number | undefined) => m !== undefined && v > m + 1e-9
+  return over(stormValue, stormMax) && !over(value, max)
 }

@@ -45,6 +45,24 @@ test('a jack-up: a heavy box by a leg overloads it; afloat, the KG and draught f
   await expect(checks).toContainText(/«Опора \d» \d+ т при допустимой 4100 т — больше допустимой/)
   await expect(page.locator('[data-status-item="legs"]')).toHaveText(/^Опора до 4[12]\d\d из 4100 т$/)
 
+  // Water brought: where it stands decides the legs — unsaid, no loads
+  // (audit 2026-11-07); at the legs' centre, an equal share.
+  await sectionBar(page).getByRole('button', { name: /^СПБУ/ }).click()
+  await unfoldVesselBlocks(page)
+  const transfers = block(page, 'jack-transfers')
+  await transfers.getByRole('button', { name: 'Добавить строку' }).click()
+  await transfers.getByLabel('Что, строка 1').fill('Вода')
+  await setNumber(transfers.getByLabel('Вес, т, строка 1'), '200')
+  await setNumber(transfers.getByLabel('ЦТ над ОП, м, строка 1'), '5')
+  await openSection(page, 'Проверки')
+  await expect(checks).toContainText('Прочий приход: не указано, где «Вода» — у опоры или в центре опор')
+  await expect(page.locator('[data-status-item="legs"]')).toHaveCount(0)
+  await sectionBar(page).getByRole('button', { name: /^СПБУ/ }).click()
+  await unfoldVesselBlocks(page)
+  await transfers.getByLabel('Где, строка 1').selectOption('centre')
+  await expect(page.locator('[data-status-item="legs"]')).toHaveText(/^Опора до 4[12]\d\d из 4100 т$/)
+  await transfers.getByRole('button', { name: 'Удалить «Вода»' }).click()
+
   // Afloat: the draught and the KG follow the 300 t.
   await sectionBar(page).getByRole('button', { name: /^СПБУ/ }).click()
   await unfoldVesselBlocks(page)

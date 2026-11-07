@@ -16,8 +16,10 @@
 // and drilling loads are in the report and in the allowable load, not here.
 //
 // Cargo leaving and fuel taken aren't subtracted from the leg loads — they
-// have no place on the plan — so the loads come out on the safe side; fuel
-// and water brought are shared equally, as if at the legs' centre.
+// have no place on the plan — so the loads come out on the safe side. Fuel
+// and water brought go where their row says: by a leg, or shared equally at
+// the legs' centre; a row that doesn't say leaves the legs unworked — tanks
+// by one leg load it far more than an equal share (audit 2026-11-07).
 import { kgLimitAt, type SemiSubKgRow, type SemiSubTransfer, type Weight } from './semiSub'
 import { fmtNumber } from './utils'
 
@@ -107,7 +109,8 @@ export type JackUpCheckId = 'jack-vdl' | 'jack-kg' | 'jack-draft' | 'jack-legs'
 export interface JackUpCheck {
   id: JackUpCheckId
   title: string
-  status: 'ok' | 'error' | 'none'
+  // As a semi-submersible's (SemiSubCheck).
+  status: 'ok' | 'warn' | 'error' | 'none'
   detail: string
 }
 
@@ -134,6 +137,8 @@ export interface JackUpResult {
   legs?: JackUpLegLoad[]
   maxLegLoadT?: number
   checks: JackUpCheck[]
+  // Units arriving with no weight, in none of these figures (the plan's).
+  unweighed?: number
 }
 
 const t = (v: number) => fmtNumber(Math.round(v))
@@ -263,24 +268,34 @@ function elevated(
   const unplaced = data.legs.find((_, i) => !points[i])
   const shares = (x: number, y: number) => (unplaced ? null : legShares(points as { x: number; y: number }[], x, y))
   const determinate = data.legs.length >= 3 && !unplaced && shares(0, 0) !== null
-  const brought = weighed.filter((x) => (x.weightT ?? 0) > 0).reduce((n, x) => n + (x.weightT ?? 0), 0)
+  const brought = weighed.filter((x) => (x.weightT ?? 0) > 0)
+  const legIndex = new Map(data.legs.map((l, i) => [l.id, i]))
+  const nowhere = brought.find((x) => x.at !== 'centre' && !(x.at !== undefined && legIndex.has(x.at)))
   const added = data.legs.map(() => 0)
   if (determinate) {
     for (const w of arriving) {
       const k = shares(w.x, w.y)!
       k.forEach((share, i) => (added[i] += w.weightT * share))
     }
-    added.forEach((_, i) => (added[i] += brought / data.legs.length))
+    // A row that doesn't say where adds nothing: the legs aren't worked out
+    // with it (below), and its share would be a guess.
+    for (const x of brought) {
+      const i = x.at !== undefined && x.at !== 'centre' ? legIndex.get(x.at) : undefined
+      const k = x.at === 'centre' ? data.legs.map(() => 1 / data.legs.length) : i !== undefined ? shares(points[i]!.x, points[i]!.y)! : undefined
+      k?.forEach((share, j) => (added[j] += (x.weightT ?? 0) * share))
+    }
   }
+  const worked = determinate && !nowhere
   const legs: JackUpLegLoad[] = data.legs.map((leg, i) => {
     const reportT = r.legLoadsT[leg.id]
-    return { id: leg.id, name: leg.name, reportT, addedT: added[i], afterT: reportT !== undefined && determinate ? reportT + added[i] : undefined }
+    return { id: leg.id, name: leg.name, reportT, addedT: added[i], afterT: reportT !== undefined && worked ? reportT + added[i] : undefined }
   })
   const legsCheck: JackUpCheck = (() => {
     const base = { id: 'jack-legs' as const, title: 'Нагрузки на опоры' }
     if (data.legs.length === 0) return { ...base, status: 'none', detail: 'Опоры не заданы' }
     if (unplaced) return { ...base, status: 'none', detail: `У опоры «${unplaced.name}» не задано положение` }
     if (!determinate) return { ...base, status: 'none', detail: 'Меньше трёх опор или опоры на одной линии — нагрузки не определить' }
+    if (nowhere) return { ...base, status: 'none', detail: `Прочий приход: не указано, где «${nowhere.name || 'строка без названия'}» — у опоры или в центре опор` }
     const noReport = legs.find((l) => l.reportT === undefined)
     if (noReport) return { ...base, status: 'none', detail: `Нет нагрузки на опору «${noReport.name}» из суточного отчёта` }
     const most = legs.reduce((a, b) => ((b.afterT ?? 0) > (a.afterT ?? 0) ? b : a))

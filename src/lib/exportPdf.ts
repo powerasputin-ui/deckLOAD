@@ -244,7 +244,7 @@ export function buildJackUpPdfBlock(r: JackUpResult | undefined): StabilityPdfBl
     if (legs.length === 0 || legs.every((l) => l.afterT === undefined))
       return { title, only: `СПБУ на опорах: ${legsCheck?.detail ?? 'нагрузки не рассчитывались'}. VDL: ${vdl?.detail ?? '—'}.`, head, rows: [], verdicts: [], notes: [] }
     const verdicts = legs.map((l): StabilityVerdict =>
-      l.afterT === undefined || r.maxLegLoadT === undefined ? 'warn' : l.afterT > r.maxLegLoadT + 1e-9 ? 'error' : 'ok'
+      l.afterT === undefined || r.maxLegLoadT === undefined ? 'warn' : l.afterT > r.maxLegLoadT + 1e-9 ? 'error' : unweighedOk(r.unweighed)
     )
     return {
       title,
@@ -254,8 +254,9 @@ export function buildJackUpPdfBlock(r: JackUpResult | undefined): StabilityPdfBl
       verdictColumn: 5,
       notes: [
         `VDL: ${vdl?.detail ?? '—'}.`,
+        ...unweighedNote(r.unweighed),
         'Статика: прирост от груза прихода в местах плана, корпус жёсткий, опоры одинаковой жёсткости. Ветер, волна, течение и нагрузки от бурения — в отчёте и в допустимой нагрузке.',
-        'Уходящий груз и расход из нагрузок не вычитаются (оценка с запасом); прочий приход — поровну на опоры.',
+        'Уходящий груз и расход из нагрузок не вычитаются (оценка с запасом); прочий приход — там, где указано: у опоры или поровну, в центре опор.',
         planning,
       ],
     }
@@ -267,7 +268,7 @@ export function buildJackUpPdfBlock(r: JackUpResult | undefined): StabilityPdfBl
     (r.vdlAfterT !== undefined && r.vdlMaxT !== undefined && r.vdlAfterT > r.vdlMaxT + 1e-9) ||
     (r.kgAfterM !== undefined && r.kgMaxM !== undefined && r.kgAfterM > r.kgMaxM + 1e-9)
   const judged = [r.draftAfterM, r.maxDraftM, r.vdlAfterT, r.vdlMaxT, r.kgAfterM, r.kgMaxM].every((v) => v !== undefined)
-  const verdict: StabilityVerdict = over ? 'error' : judged ? 'ok' : 'warn'
+  const verdict: StabilityVerdict = over ? 'error' : judged ? unweighedOk(r.unweighed) : 'warn'
   return {
     title,
     head,
@@ -276,11 +277,18 @@ export function buildJackUpPdfBlock(r: JackUpResult | undefined): StabilityPdfBl
     verdictColumn: 7,
     notes: [
       `Приход − отгрузка: ${t(r.netT)} т. Осадка меняется на вес груза по TPC; KG — по суточному отчёту и грузу прихода и ухода.`,
+      ...unweighedNote(r.unweighed),
       'Упрощено: поправка на свободные поверхности как в отчёте, TPC постоянный; крепление груза на переходе не проверяется.',
       planning,
     ],
   }
 }
+
+// Within the limits, but with cargo arriving that has no weight: not a
+// pass — the figures leave it out (spec 2026-11-06, 7.3).
+const unweighedOk = (unweighed: number | undefined): StabilityVerdict => ((unweighed ?? 0) > 0 ? 'warn' : 'ok')
+const unweighedNote = (unweighed: number | undefined): string[] =>
+  (unweighed ?? 0) > 0 ? [`Груз без веса не учтён: ${unweighed} ед. — задайте вес, иначе VDL и KG занижены.`] : []
 
 // A semi-submersible's block (spec 2026-11-06, 8): VDL and KG after the run,
 // in operation and on the way to survival, against the manual's limits — an
@@ -294,7 +302,7 @@ export function buildSemiSubPdfBlock(r: SemiSubResult | undefined): StabilityPdf
   const m = (v: number | undefined) => (v === undefined ? '—' : v.toFixed(2))
   const verdict = (vdl: number | undefined, vdlMax: number | undefined, kg: number | undefined, kgMax: number | undefined): StabilityVerdict => {
     if ((vdl !== undefined && vdlMax !== undefined && vdl > vdlMax + 1e-9) || (kg !== undefined && kgMax !== undefined && kg > kgMax + 1e-9)) return 'error'
-    return vdl !== undefined && vdlMax !== undefined && kg !== undefined && kgMax !== undefined ? 'ok' : 'warn'
+    return vdl !== undefined && vdlMax !== undefined && kg !== undefined && kgMax !== undefined ? unweighedOk(r.unweighed) : 'warn'
   }
   const WORD: Record<StabilityVerdict, string> = { ok: 'в пределах', warn: 'не проверено', error: 'превышено' }
   const modes = [
@@ -312,6 +320,7 @@ export function buildSemiSubPdfBlock(r: SemiSubResult | undefined): StabilityPdf
     notes: [
       `Приход − отгрузка: ${t(r.netT)} т. Осадка держится балластом; при уходе в шторм балласт откачивается до штормовой осадки, груз не снимается.`,
       ...(ballast ? [`Балласт: ${ballast.detail}.`] : []),
+      ...unweighedNote(r.unweighed),
       'Упрощено: поправка на свободные поверхности как в суточном отчёте, балласт с одной высоты, без отсоединения райзера и изменения натяжения якорей.',
       'Оценка для планирования. Окончательно считает бортовой компьютер установки.',
     ],

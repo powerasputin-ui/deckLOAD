@@ -240,14 +240,19 @@ function JackUpResultView({ result }: { result: JackUpResult }) {
         })}
       </ul>
       {result.mode === 'elevated' && (
-        <p className="text-xs text-ink-2">Только статика. Уходящий груз и расход из нагрузок на опоры не вычитаются, прочий приход — поровну на опоры.</p>
+        <p className="text-xs text-ink-2">
+          Только статика. Уходящий груз и расход из нагрузок на опоры не вычитаются; прочий приход — у своей опоры или поровну, как указано в его строке.
+        </p>
       )}
       <p className="text-xs text-ink-2">{PLANNING_NOTE}</p>
     </div>
   )
 }
 
+// A jack-up's rows say where what's brought stands, for the legs (audit
+// 2026-11-07): by a leg, or shared equally at the legs' centre.
 export function JackUpTransfersBlock() {
   const [jack, update] = useJackUp()
-  return <TransfersBlock fold="jack-transfers" rows={jack.transfers} onChange={(transfers) => update({ ...jack, transfers })} />
+  const places = jack.legs.map((l, i) => ({ id: l.id, label: `у «${l.name || `Опора ${i + 1}`}»` }))
+  return <TransfersBlock fold="jack-transfers" rows={jack.transfers} onChange={(transfers) => update({ ...jack, transfers })} places={places} />
 }

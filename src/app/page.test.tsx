@@ -1669,6 +1669,30 @@ describe('Home (page.tsx)', () => {
       expect(toast.info).not.toHaveBeenCalledWith('Груз расставлен заново по новому правилу', expect.anything())
     })
 
+    // Audit 2026-11-07: a platform's variants are of its deck after the run —
+    // cargo leaving took room and the deck's weight limit, and the cargo
+    // arriving was left off.
+    it('«Подобрать варианты» on a platform packs only what stays on its deck', () => {
+      render(<Home />)
+      act(() => {
+        const s = useCalculator.getState()
+        useCalculator.setState({
+          deck: { ...s.deck, objectKind: 'fixed', maxDeckCargoT: 25 },
+          items: [
+            { id: 'out', name: 'Бочки', width: 1, length: 1, height: 1, quantity: 4, color: '#000', allowRotation: true, weight: 5_000, platformStatus: 'outgoing' },
+            { id: 'in', name: 'Ящик', width: 2, length: 2, height: 1, quantity: 2, color: '#000', allowRotation: true, weight: 10_000 },
+          ],
+          pinnedPlacementsByTrip: { 0: [{ id: 'old', itemId: 'out', name: 'Бочки', color: '#000', x: 0, y: 0, width: 1, length: 1, layers: 1, rotated: false, locked: true }] },
+          manualPlacements: [],
+          mode: 'auto',
+        })
+      })
+      clickAutoRedistribute()
+      expect(within(variantsList()!).getAllByRole('button')[0].textContent).toMatch(/· 2 ед\.на палубе$/)
+      const pins = useCalculator.getState().pinnedPlacementsByTrip[0] ?? []
+      expect(pins.filter((p) => p.itemId === 'in').reduce((n, p) => n + p.layers, 0)).toBe(2)
+    })
+
     it('«Подобрать варианты» waits for cargo', () => {
       render(<Home />)
       clearDemoCargo()

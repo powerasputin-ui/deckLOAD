@@ -55,6 +55,10 @@ export interface SemiSubTransfer {
   name: string
   weightT?: number
   vcgM?: number
+  // A jack-up's only (jackUp.ts): where what's brought stands — by a leg (its
+  // id), or 'centre' of the legs, shared equally. Unset — not said, and its
+  // legs aren't worked out.
+  at?: string
 }
 
 export interface SemiSubData {
@@ -101,8 +105,9 @@ export type SemiSubCheckId = 'semi-vdl' | 'semi-kg' | 'semi-ballast'
 export interface SemiSubCheck {
   id: SemiSubCheckId
   title: string
-  // ✓ only when both modes are judged; ✕ when either is over; «—» else.
-  status: 'ok' | 'error' | 'none'
+  // ✓ only when both modes are judged; ✕ when either is over; «—» else; ⚠
+  // when judged without some arriving cargo, which has no weight.
+  status: 'ok' | 'warn' | 'error' | 'none'
   detail: string
 }
 
@@ -122,6 +127,8 @@ export interface SemiSubResult {
   ballastAfterT?: number
   ballastSurvivalT?: number
   checks: SemiSubCheck[]
+  // Units arriving with no weight, in none of these figures (the plan's).
+  unweighed?: number
 }
 
 const t = (v: number) => fmtNumber(Math.round(v))

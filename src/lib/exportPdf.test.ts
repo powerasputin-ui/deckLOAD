@@ -372,6 +372,26 @@ describe('buildSemiSubPdfBlock', () => {
     expect(block.notes.at(-1)).toBe('Оценка для планирования. Окончательно считает бортовой компьютер установки.')
     expect(buildSemiSubPdfBlock(undefined).only).toBe('ППБУ: VDL и KG не рассчитывались')
   })
+
+  // Audit 2026-11-07: cargo arriving without a weight is in no figure.
+  it('passes no mode while some cargo arriving has no weight, and says so', () => {
+    const block = buildSemiSubPdfBlock({
+      netT: 0,
+      momentTm: 0,
+      vdlAfterT: 4_000,
+      vdlMaxOperatingT: 5_000,
+      vdlMaxSurvivalT: 4_600,
+      kgOperatingM: 20,
+      kgOperatingMaxM: 21,
+      kgSurvivalM: 21.5,
+      kgSurvivalMaxM: 23,
+      checks: [],
+      unweighed: 3,
+    })
+    expect(block.verdicts).toEqual(['warn', 'warn'])
+    expect(block.rows.map((r) => r.at(-1))).toEqual(['не проверено', 'не проверено'])
+    expect(block.notes).toContain('Груз без веса не учтён: 3 ед. — задайте вес, иначе VDL и KG занижены.')
+  })
 })
 
 describe('buildJackUpPdfBlock', () => {

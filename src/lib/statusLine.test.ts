@@ -48,6 +48,31 @@ describe('status line', () => {
     expect(statusItems({ ...base, platform: true, semiSub: { netT: 0, momentTm: 0, checks: [] } }).map((i) => i.id)).not.toContain('vdl')
   })
 
+  // Audit 2026-11-07: red on a figure within its limit read as a fault of
+  // the line; the line shows the limit that is broken.
+  it('a semi-submersible\'s line shows the storm\'s figures when only they are over, amber without some cargo\'s weight', () => {
+    const semiSub = {
+      netT: 500,
+      momentTm: 0,
+      vdlAfterT: 4_700,
+      vdlMaxOperatingT: 5_000,
+      vdlMaxSurvivalT: 4_600,
+      kgOperatingM: 20.36,
+      kgOperatingMaxM: 20.9,
+      kgSurvivalM: 22.1,
+      kgSurvivalMaxM: 21.8,
+      checks: [
+        { id: 'semi-vdl' as const, title: 'VDL', status: 'error' as const, detail: '' },
+        { id: 'semi-kg' as const, title: 'KG', status: 'error' as const, detail: '' },
+      ],
+    }
+    const items = statusItems({ ...base, platform: true, semiSub })
+    expect(items.find((i) => i.id === 'vdl')).toMatchObject({ text: 'VDL 4700 из 4600 т в шторм', tone: 'danger' })
+    expect(items.find((i) => i.id === 'kg')).toMatchObject({ text: 'KG в шторм 22.10 из 21.80 м', tone: 'danger' })
+    const unweighed = { ...semiSub, vdlAfterT: 4_000, kgSurvivalM: 21, checks: [{ id: 'semi-vdl' as const, title: 'VDL', status: 'warn' as const, detail: '' }] }
+    expect(statusItems({ ...base, platform: true, semiSub: unweighed }).find((i) => i.id === 'vdl')).toMatchObject({ text: 'VDL 4000 из 5000 т', tone: 'warn' })
+  })
+
   it('a self-elevating unit\'s line has its VDL and the most loaded leg, or its KG afloat', () => {
     const legs = [
       { id: 'a', name: 'Опора 1', reportT: 4_000, addedT: 37.5, afterT: 4_037.5 },

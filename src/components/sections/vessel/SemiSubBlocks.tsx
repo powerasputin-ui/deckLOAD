@@ -1,7 +1,7 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { CircleCheck, CircleMinus, CircleX, Plus, Trash2 } from 'lucide-react'
+import { CircleCheck, CircleMinus, CircleX, Plus, Trash2, TriangleAlert } from 'lucide-react'
 import { v4 as uuid } from 'uuid'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -163,8 +163,8 @@ export function SemiSubReportBlock({ result }: { result?: SemiSubResult }) {
   )
 }
 
-export const STATUS_ICON = { ok: CircleCheck, error: CircleX, none: CircleMinus }
-export const STATUS_TONE = { ok: 'text-ok', error: 'text-danger', none: 'text-ink-2' }
+export const STATUS_ICON = { ok: CircleCheck, warn: TriangleAlert, error: CircleX, none: CircleMinus }
+export const STATUS_TONE = { ok: 'text-ok', warn: 'text-warn', error: 'text-danger', none: 'text-ink-2' }
 
 function SemiSubResultView({ result }: { result: SemiSubResult }) {
   const m = (v: number | undefined) => (v === undefined ? '—' : `${v.toFixed(2)} м`)
@@ -195,6 +195,10 @@ function SemiSubResultView({ result }: { result: SemiSubResult }) {
           )
         })}
       </ul>
+      {/* Not on the safe side, so said where the KG is (audit 2026-11-07). */}
+      <p className="text-xs text-ink-2">
+        Поправка на свободные поверхности — как в отчёте: если откачка оставит танки неполными, KG выше.
+      </p>
       <p className="text-xs text-ink-2">{PLANNING_NOTE}</p>
     </div>
   )
@@ -207,11 +211,25 @@ export function SemiSubTransfersBlock() {
 
 // The supply run's other transfers — fuel, water, bulk — for a unit of
 // either kind: a row starts empty and assumes nothing.
-export function TransfersBlock({ fold, rows, onChange }: { fold: string; rows: SemiSubTransfer[]; onChange: (rows: SemiSubTransfer[]) => void }) {
+export function TransfersBlock({
+  fold,
+  rows,
+  onChange,
+  places,
+}: {
+  fold: string
+  rows: SemiSubTransfer[]
+  onChange: (rows: SemiSubTransfer[]) => void
+  // A jack-up's legs: each row then says where it stands, for their loads.
+  places?: { id: string; label: string }[]
+}) {
   const put = (id: string, patch: Partial<SemiSubTransfer>) => onChange(rows.map((x) => (x.id === id ? { ...x, ...patch } : x)))
   return (
     <PanelBlock title="Прочий приход и расход" fold={fold}>
-      <p className="text-xs text-ink-2">Топливо, вода, сыпучие: «+» — приходит, «−» — уходит. Входит в VDL и в KG.</p>
+      <p className="text-xs text-ink-2">
+        Топливо, вода, сыпучие: «+» — приходит, «−» — уходит. Входит в VDL и в KG.
+        {places && ' «Где» — для нагрузок на опоры: у какой опоры танк, или поровну, в центре опор.'}
+      </p>
       {rows.length > 0 && (
         <div className="space-y-1" role="group" aria-label="Прочий приход и расход">
           <div className="grid grid-cols-[1fr_72px_64px_24px] gap-1.5 text-xs text-ink-2">
@@ -248,6 +266,25 @@ export function TransfersBlock({ fold, rows, onChange }: { fold: string; rows: S
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
+              {places && (
+                <select
+                  aria-label={`Где, строка ${i + 1}`}
+                  value={x.at && (x.at === 'centre' || places.some((p) => p.id === x.at)) ? x.at : ''}
+                  onChange={(e) => put(x.id, { at: e.target.value || undefined })}
+                  className={cn(
+                    'col-span-3 h-7 rounded border border-input bg-background px-1.5 text-xs text-ink',
+                    (x.weightT ?? 0) > 0 && !(x.at === 'centre' || places.some((p) => p.id === x.at)) && 'border-warn'
+                  )}
+                >
+                  <option value="">где — не указано</option>
+                  <option value="centre">в центре опор, поровну</option>
+                  {places.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           ))}
         </div>

@@ -442,7 +442,7 @@ describe('projects store', () => {
           elevated: { vdlMaxT: 3_500, maxLegLoadT: -1 },
           legs: [{ id: 'a', name: 'Опора 1', fromSternM: -2, fromPortM: 30 }, { name: 'без id' }],
           report: { draftM: 4, vdlT: 2_800, legLoadsT: { a: 4_000, gone: 100, x: 'много' } },
-          transfers: [{ id: 't', name: 'Вода', weightT: 50, vcgM: 3 }],
+          transfers: [{ id: 't', name: 'Вода', weightT: 50, vcgM: 3, at: 'centre' }, { id: 'u', name: 'Топливо', weightT: 20, vcgM: 2, at: 7 }],
         },
       },
     } as unknown as Parameters<ReturnType<typeof useProjects.getState>['saveSnapshot']>[0])
@@ -457,7 +457,8 @@ describe('projects store', () => {
       { id: expect.any(String), name: 'без id', fromSternM: undefined, fromPortM: undefined },
     ])
     expect(jack.report.legLoadsT).toEqual({ a: 4_000 })
-    expect(jack.transfers).toEqual([{ id: 't', name: 'Вода', weightT: 50, vcgM: 3 }])
+    // Where what's brought stands is kept; a number there means nothing.
+    expect(jack.transfers).toEqual([{ id: 't', name: 'Вода', weightT: 50, vcgM: 3, at: 'centre' }, { id: 'u', name: 'Топливо', weightT: 20, vcgM: 2 }])
   })
 
   it('a new calculation can be made for a platform', () => {
