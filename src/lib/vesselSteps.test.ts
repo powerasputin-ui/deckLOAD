@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { firstOpenStep, vesselSteps, type VesselStepsInput } from './vesselSteps'
+import { firstOpenStep, requiredSteps, vesselSteps, type VesselStepsInput } from './vesselSteps'
 
 // A new calculation's own deck, nothing on it.
 const input = (over: Partial<VesselStepsInput> = {}, deck: Partial<VesselStepsInput['deck']> = {}): VesselStepsInput => ({
@@ -68,5 +68,31 @@ describe('«Судно» as steps', () => {
     expect(firstOpenStep(pending, true)).toBe('card')
     const noHeight = vesselSteps(input({ stability: { hasVessel: true, missing: 'Не задана высота палубы над килем' } }))
     expect(firstOpenStep(noHeight, false)).toBe('stability')
+  })
+})
+
+// Spec 2026-11-06, 14: a platform's steps go from what it is, as a vessel's
+// from the vessel.
+describe('a platform\'s steps', () => {
+  it('go from which one it is, its card and its manual\'s data to the deck, the zones and the day\'s report', () => {
+    expect(requiredSteps('semi-sub')).toEqual(['library', 'card', 'semi-data', 'deck', 'zones', 'semi-report'])
+    expect(requiredSteps('jack-up')).toEqual(['library', 'card', 'jack-data', 'deck', 'zones', 'jack-report'])
+    expect(requiredSteps('fixed')).toEqual(['library', 'card', 'deck', 'zones'])
+    expect(requiredSteps('vessel')).toEqual(['library', 'deck', 'card', 'zones', 'stability'])
+  })
+
+  it('say in the first one which it is: the saved one, or a new one and what the library keeps', () => {
+    expect(vesselSteps(input({ kind: 'semi-sub', librarySaved: 2 })).library).toEqual({ summary: 'новая · в библиотеке 2' })
+    expect(vesselSteps(input({ kind: 'semi-sub' })).library).toEqual({ summary: 'новая · в библиотеке нет' })
+    expect(vesselSteps(input({ kind: 'semi-sub', vesselLabel: 'Полярная звезда', librarySaved: 1 })).library).toEqual({ summary: '«Полярная звезда»', status: 'ok' })
+  })
+
+  it('open a new one at its library when it keeps platforms of the kind, else at its card', () => {
+    const fresh = (saved: number) => firstOpenStep(vesselSteps(input({ kind: 'semi-sub', fresh: true, librarySaved: saved })), true, 'semi-sub', saved)
+    expect(fresh(0)).toBe('card')
+    expect(fresh(3)).toBe('library')
+    expect(firstOpenStep(vesselSteps(input({ kind: 'fixed', fresh: true })), true, 'fixed')).toBe('card')
+    // A vessel's library always has the built-in vessels.
+    expect(firstOpenStep(vesselSteps(input({ fresh: true })), true, 'vessel', 0)).toBe('library')
   })
 })

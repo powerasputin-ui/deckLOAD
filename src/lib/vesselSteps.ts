@@ -36,17 +36,17 @@ export type VesselStepId =
 export const REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'deck', 'card', 'zones', 'stability']
 export const OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 'sockets', 'lashing', 'marks']
 
-// A platform's (spec 2026-11-06, 5): its card first — what it is and what it
-// is called — then its deck and zones; the library keeps it for the next
-// calculation. No vessel stability, no lashing points.
-export const PLATFORM_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'library']
+// A platform's go from what it is (spec 2026-11-06, 14), as a vessel's go
+// from the vessel: which one — from the library, or a new one — then its
+// card, its manual's data, its deck and zones, and last the day's report,
+// what changes every day. No vessel stability, no lashing points.
+export const PLATFORM_REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'card', 'deck', 'zones']
 export const PLATFORM_OPTIONAL_STEPS: readonly VesselStepId[] = ['obstacles', 'photo', 'sockets', 'marks']
 
-// A semi-submersible's: its manual's data and the day's report after the
-// deck (spec 2026-11-06, 7.1); the run's other transfers are optional.
-export const SEMI_SUB_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'semi-data', 'semi-report', 'library']
+// A semi-submersible's (spec 7.1); the run's other transfers are optional.
+export const SEMI_SUB_REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'card', 'semi-data', 'deck', 'zones', 'semi-report']
 
-export const JACK_UP_REQUIRED_STEPS: readonly VesselStepId[] = ['card', 'deck', 'zones', 'jack-data', 'jack-report', 'library']
+export const JACK_UP_REQUIRED_STEPS: readonly VesselStepId[] = ['library', 'card', 'jack-data', 'deck', 'zones', 'jack-report']
 
 export function requiredSteps(kind: ObjectKind = 'vessel'): readonly VesselStepId[] {
   return kind === 'vessel' ? REQUIRED_STEPS : kind === 'semi-sub' ? SEMI_SUB_REQUIRED_STEPS : kind === 'jack-up' ? JACK_UP_REQUIRED_STEPS : PLATFORM_REQUIRED_STEPS
@@ -64,6 +64,8 @@ export interface VesselStepsInput {
   kind?: ObjectKind
   // A platform's name, as its card gives it.
   platformName?: string
+  // The platforms of this kind saved in the library.
+  librarySaved?: number
   // The library vessel applied; unset for the user's own deck.
   vesselLabel?: string
   // Nothing is chosen for the vessel yet: no library vessel, the new
@@ -145,8 +147,11 @@ export function vesselSteps(s: VesselStepsInput): Record<VesselStepId, VesselSte
       : { summary: s.stability.hasVessel ? 'нет гидростатики судна' : 'нет данных судна' }
   return {
     // A calculation under way has its vessel and deck, if only its own.
+    // A platform's: the saved one it is, or a new one.
     library: platform
-      ? { summary: s.vesselLabel ? `из библиотеки: ${s.vesselLabel}` : 'не сохранена в библиотеку' }
+      ? s.vesselLabel
+        ? { summary: `«${s.vesselLabel}»`, status: 'ok' }
+        : { summary: `новая · в библиотеке ${s.librarySaved ? s.librarySaved : 'нет'}` }
       : { summary: s.vesselLabel ?? 'Своя палуба', status: s.fresh ? undefined : 'ok' },
     deck: {
       summary: `${fmtNumber(d.width)} × ${fmtNumber(d.length)} ${d.unitLabel} · ${deckWords(kind).bow} ${d.bow}`,
@@ -241,9 +246,13 @@ function semiSubSteps(semi: VesselStepsInput['semiSub']): Pick<Record<VesselStep
 
 // The step open on entering the section: the first step with a problem,
 // else the first step of a calculation nothing is chosen for yet, else none
-// — every block folded to its line.
-export function firstOpenStep(steps: Record<VesselStepId, VesselStep>, fresh: boolean, kind: ObjectKind = 'vessel'): VesselStepId | undefined {
+// — every block folded to its line. A new platform's first step is its
+// library when it keeps platforms of the kind; with none there's nothing to
+// choose, and it starts at its card.
+export function firstOpenStep(steps: Record<VesselStepId, VesselStep>, fresh: boolean, kind: ObjectKind = 'vessel', librarySaved = 0): VesselStepId | undefined {
   const required = requiredSteps(kind)
   const problem = required.find((id) => steps[id].status === 'error' || steps[id].status === 'warn')
-  return problem ?? (fresh ? required[0] : undefined)
+  if (problem) return problem
+  if (!fresh) return undefined
+  return kind !== 'vessel' && required[0] === 'library' && librarySaved === 0 ? 'card' : required[0]
 }

@@ -24,7 +24,7 @@ import { appliedVessel, appliedVesselOf, libraryFile, newUserVesselId, vesselDat
 import { resolveShipFrame } from '@/lib/stabilityConditions'
 import { deckForVesselDrops } from '@/lib/vesselDeck'
 import { cn, fmtNumber, pluralRu } from '@/lib/utils'
-import { objectKindOf } from '@/lib/objectKind'
+import { OBJECT_KIND_GENITIVE, OBJECT_KIND_SHORT, objectKindOf, type ObjectKind } from '@/lib/objectKind'
 
 // «Судно из библиотеки» (spec 8.1): the built-in vessels and the user's own.
 // Without cargo the vessel goes onto the open calculation; with cargo the
@@ -39,7 +39,8 @@ import { objectKindOf } from '@/lib/objectKind'
 // one made before.
 //
 // A platform (spec 2026-11-06, 5) has the user's own platforms of its kind
-// here, none built in; a vessel's list has no platforms.
+// here, none built in; a vessel's list has no platforms. For a platform this
+// is its first step (spec 14): which one — a saved one, or a new one.
 export function VesselLibrary({
   onNewCalculation,
   onApplyToCurrent,
@@ -50,7 +51,7 @@ export function VesselLibrary({
   const vesselTemplateId = useCalculator((s) => s.deck.vesselTemplateId)
   const kind = useCalculator((s) => objectKindOf(s.deck))
   const platform = kind !== 'vessel'
-  const W = platform ? PLATFORM_WORDS : VESSEL_WORDS
+  const W = platform ? platformWords(kind) : VESSEL_WORDS
   const all = useVesselLibrary((s) => s.vessels)
   const own = all.filter((t) => (t.objectKind ?? 'vessel') === kind)
   const broken = useVesselLibrary((s) => s.broken)
@@ -383,20 +384,30 @@ const VESSEL_WORDS = {
   saved: (l: string) => `Судно «${l}» сохранено в библиотеку`,
   deleted: (l: string) => `Судно «${l}» удалено из библиотеки`,
 }
-const PLATFORM_WORDS: typeof VESSEL_WORDS = {
-  title: 'Платформа из библиотеки',
-  list: 'Платформы из библиотеки',
-  empty: 'Своих платформ этого вида пока нет. Заполните карточку и палубу и сохраните сюда — следующий расчёт начнётся с них.',
-  save: 'Сохранить палубу как платформу',
-  update: 'Обновить платформу из расчёта',
-  rename: 'Переименовать платформу',
-  name: 'Название платформы',
-  madeWith: 'с этой платформой',
-  asked: (l: string) => `Платформа «${l}»`,
-  renamed: (l: string) => `Платформа переименована: «${l}»`,
-  updated: (l: string) => `Платформа «${l}» обновлена из расчёта`,
-  saved: (l: string) => `Платформа «${l}» сохранена в библиотеку`,
-  deleted: (l: string) => `Платформа «${l}» удалена из библиотеки`,
+// A platform's, by its kind (spec 2026-11-06, 14): a ППБУ's library speaks
+// of ППБУ. The abbreviations don't decline; each is a «установка», feminine,
+// as a platform is.
+function platformWords(kind: ObjectKind): typeof VESSEL_WORDS {
+  const short = kind === 'fixed' ? undefined : OBJECT_KIND_SHORT[kind]
+  const the = short ?? 'платформу'
+  const it = short ?? 'Платформа'
+  return {
+    title: `${short ?? 'Платформа'} из библиотеки`,
+    list: `${short ?? 'Платформы'} из библиотеки`,
+    empty: short
+      ? `Своих ${short} пока нет. Заполните карточку, данные установки и палубу и сохраните её сюда — следующий расчёт начнётся с них.`
+      : 'Своих стационарных платформ пока нет. Заполните карточку и палубу и сохраните её сюда — следующий расчёт начнётся с них.',
+    save: `Сохранить ${the} в библиотеку`,
+    update: `Обновить ${the} из расчёта`,
+    rename: `Переименовать ${the}`,
+    name: `Название ${OBJECT_KIND_GENITIVE[kind]}`,
+    madeWith: short ? `с этой ${short}` : 'с этой платформой',
+    asked: (l: string) => `${it} «${l}»`,
+    renamed: (l: string) => `${it} переименована: «${l}»`,
+    updated: (l: string) => `${it} «${l}» обновлена из расчёта`,
+    saved: (l: string) => `${it} «${l}» сохранена в библиотеку`,
+    deleted: (l: string) => `${it} «${l}» удалена из библиотеки`,
+  }
 }
 
 function vesselSummary(tpl: VesselTemplate): string {

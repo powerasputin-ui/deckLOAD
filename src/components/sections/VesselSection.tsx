@@ -26,6 +26,7 @@ import type { StatusLineInput } from '@/lib/statusLine'
 import type { ZoneLoadCheck } from '@/lib/packing'
 import { useCalculator, UNIT_LABEL } from '@/store/calculator'
 import { useVesselSteps } from '@/store/vesselSteps'
+import { useVesselLibrary } from '@/store/vesselLibrary'
 import { cn } from '@/lib/utils'
 
 // «Судно» (spec 8.1, revision 2026-10-30) as steps to fill in, in order —
@@ -80,9 +81,15 @@ export function VesselSection({
   const kind = objectKindOf(deck)
   const platform = kind !== 'vessel'
   const required = requiredSteps(kind)
+  // The library is read before the first step is picked: a new platform
+  // starts at it only when it keeps platforms of the kind. Read once, here,
+  // before anything shown subscribes to it (its own block reads it too).
+  useState(() => useVesselLibrary.getState().hydrate())
+  const librarySaved = useVesselLibrary((s) => s.vessels.filter((t) => (t.objectKind ?? 'vessel') === kind).length)
   const steps = vesselSteps({
     kind,
     platformName: deck.platformName,
+    librarySaved,
     vesselLabel: applied?.label,
     fresh,
     deck: {
@@ -107,7 +114,7 @@ export function VesselSection({
   })
 
   // Picked once, on entering: nothing opens or folds under the user's hands.
-  const [firstOpen] = useState(() => firstOpenStep(steps, fresh, kind))
+  const [firstOpen] = useState(() => firstOpenStep(steps, fresh, kind, librarySaved))
   const chosen = useVesselSteps((s) => s.byProject[projectId])
   const setChosen = useVesselSteps((s) => s.set)
   const isOpen = (id: VesselStepId) => (chosen ? !!chosen[id] : id === firstOpen)
@@ -126,34 +133,37 @@ export function VesselSection({
 
   // A vessel chosen in step 1 is done with it: that block folds and the
   // step the vessel leaves to look at opens — its deck strength when its
-  // sources disagree, else its deck. A new calculation for it opens on its
-  // own pick, from its deck.
+  // sources disagree, else its deck. A platform leaves the day's report, what
+  // the library doesn't keep (a fixed one, its deck). A new calculation for
+  // it opens on its own pick, from its deck.
   const applyToCurrent = (tpl: VesselTemplate) => {
     onApplyVesselToCurrent(tpl)
-    setChosen(projectId, { [tpl.limits?.deckStrengthTPerM2 ? 'card' : 'deck']: true })
+    const next: VesselStepId = platform
+      ? kind === 'semi-sub'
+        ? 'semi-report'
+        : kind === 'jack-up'
+          ? 'jack-report'
+          : 'deck'
+      : tpl.limits?.deckStrengthTPerM2
+        ? 'card'
+        : 'deck'
+    setChosen(projectId, { [next]: true })
   }
 
-  // A platform (spec 2026-11-06, 5): its card, deck and zones, the library
-  // after them; no vessel stability, no lashing points.
+  // A platform (spec 2026-11-06, 14): from what it is — which one, its card,
+  // its manual's data — to its deck and zones, and the day's report last;
+  // no vessel stability, no lashing points.
   if (platform) {
     return (
       <FoldingBlocksContext.Provider value={folding}>
+        <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={applyToCurrent} />
         <VesselCard />
+        {kind === 'semi-sub' && <SemiSubDataBlock />}
+        {kind === 'jack-up' && <JackUpDataBlock />}
         <DeckBlock />
         <LoadZonesBlock zoneLoads={zoneLoads} />
-        {kind === 'semi-sub' && (
-          <>
-            <SemiSubDataBlock />
-            <SemiSubReportBlock result={semiSub} />
-          </>
-        )}
-        {kind === 'jack-up' && (
-          <>
-            <JackUpDataBlock />
-            <JackUpReportBlock result={jackUp} />
-          </>
-        )}
-        <VesselLibrary onNewCalculation={onNewCalculationForVessel} onApplyToCurrent={applyToCurrent} />
+        {kind === 'semi-sub' && <SemiSubReportBlock result={semiSub} />}
+        {kind === 'jack-up' && <JackUpReportBlock result={jackUp} />}
         <p className="px-4 pb-2 pt-5 text-xs font-medium text-ink-2">Дополнительно</p>
         {kind === 'semi-sub' && <SemiSubTransfersBlock />}
         {kind === 'jack-up' && <JackUpTransfersBlock />}

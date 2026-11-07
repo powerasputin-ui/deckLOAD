@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Anchor, BookOpen, ChevronDown, Copy, Eraser, FilePlus2, List, Pencil, Save, Search, Trash2, Upload } from 'lucide-react'
+import { Anchor, ArrowLeftRight, BookOpen, ChevronDown, Copy, Eraser, Factory, List, Pencil, Save, Search, Ship, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,22 +18,35 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { useProjects } from '@/store/projects'
-import { UNIT_LABEL } from '@/store/calculator'
+import { UNIT_LABEL, useCalculator } from '@/store/calculator'
+import { OBJECT_KIND_HINT, OBJECT_KIND_LABEL, OBJECT_KIND_SHORT, OBJECT_KINDS, objectKindOf, type ObjectKind } from '@/lib/objectKind'
 import { cn, fmtNumber } from '@/lib/utils'
-import { MENU_CLOSES_AT_ONCE, MenuItem, MenuSeparator } from './menu'
+import { MENU_CLOSES_AT_ONCE, MenuItem, MenuLabel, MenuSeparator } from './menu'
+
+// What a new calculation is of, as the menu offers it (spec 2026-11-06, 14).
+const NEW_OF: Record<ObjectKind, string> = { vessel: 'Судно', 'semi-sub': 'ППБУ', 'jack-up': 'СПБУ', fixed: 'Стационарная' }
 
 // The calculation's name with everything done to calculations as a whole
 // (spec 5.2): new, duplicate, rename, all calculations, file, example, clear,
 // delete. Clearing and deleting ask first, with the wording they always had.
+// A new calculation is of a kind — a vessel, a ППБУ, a СПБУ, a fixed
+// platform — as on the start screen; the open one's kind is changed here
+// too, rarely, never in its steps (spec 2026-11-06, 14).
 export function ProjectMenu({
   onOpenFile,
   onSaveFile,
   onClear,
+  onNewCalculation,
+  onChangeKind,
 }: {
   onOpenFile: () => void
   onSaveFile: () => void
   // Empties the current calculation (the store reset lives in the page).
   onClear: () => void
+  // A new calculation of this kind, opened at its first step.
+  onNewCalculation: (kind: ObjectKind) => void
+  // The open calculation is now of this kind; its deck and cargo stay.
+  onChangeKind: (kind: ObjectKind) => void
 }) {
   const projects = useProjects((s) => s.projects)
   const activeId = useProjects((s) => s.activeId)
@@ -43,9 +56,10 @@ export function ProjectMenu({
   const deleteProject = useProjects((s) => s.deleteProject)
   const active = projects.find((p) => p.id === activeId)
   const name = active?.name ?? 'Расчёт'
+  const kind = useCalculator((s) => objectKindOf(s.deck))
 
   const [open, setOpen] = useState(false)
-  const [dialog, setDialog] = useState<null | 'rename' | 'all' | 'clear' | 'delete'>(null)
+  const [dialog, setDialog] = useState<null | 'rename' | 'kind' | 'all' | 'clear' | 'delete'>(null)
   const pick = (action: () => void) => () => {
     setOpen(false)
     action()
@@ -65,16 +79,23 @@ export function ProjectMenu({
             <ChevronDown className="h-4 w-4 shrink-0 text-ink-2" aria-hidden="true" />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className={cn('w-64 p-1', MENU_CLOSES_AT_ONCE)}>
-          <MenuItem
-            icon={<FilePlus2 />}
-            onSelect={pick(() => {
-              createProject()
-              toast.success('Создан новый расчёт')
-            })}
-          >
-            Новый расчёт
-          </MenuItem>
+        <PopoverContent align="start" className={cn('w-72 p-1', MENU_CLOSES_AT_ONCE)}>
+          <MenuLabel>Новый расчёт</MenuLabel>
+          <div role="group" aria-label="Новый расчёт" className="grid grid-cols-2 gap-0.5">
+            {OBJECT_KINDS.map((k) => (
+              <button
+                key={k}
+                type="button"
+                aria-label={`Новый расчёт: ${NEW_OF[k]}`}
+                onClick={pick(() => onNewCalculation(k))}
+                className="flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+              >
+                <span className="shrink-0 text-ink-2 [&_svg]:h-4 [&_svg]:w-4">{k === 'vessel' ? <Ship /> : <Factory />}</span>
+                <span className="truncate">{NEW_OF[k]}</span>
+              </button>
+            ))}
+          </div>
+          <MenuSeparator />
           <MenuItem
             icon={<Copy />}
             disabled={!active}
@@ -88,6 +109,9 @@ export function ProjectMenu({
           </MenuItem>
           <MenuItem icon={<Pencil />} disabled={!active} onSelect={pick(() => setDialog('rename'))}>
             Переименовать…
+          </MenuItem>
+          <MenuItem icon={<ArrowLeftRight />} disabled={!active} onSelect={pick(() => setDialog('kind'))} hint={OBJECT_KIND_SHORT[kind]}>
+            Тип расчёта…
           </MenuItem>
           <MenuItem icon={<List />} onSelect={pick(() => setDialog('all'))} hint={String(projects.length)}>
             Все расчёты…
@@ -125,6 +149,16 @@ export function ProjectMenu({
           onSave={(next) => {
             renameProject(active.id, next)
             setDialog(null)
+          }}
+        />
+      )}
+      {active && dialog === 'kind' && (
+        <KindDialog
+          kind={kind}
+          onCancel={() => setDialog(null)}
+          onChange={(next) => {
+            setDialog(null)
+            onChangeKind(next)
           }}
         />
       )}
@@ -167,6 +201,48 @@ export function ProjectMenu({
         />
       )}
     </>
+  )
+}
+
+// «Тип расчёта» (spec 2026-11-06, 14): what the open calculation is of. Its
+// deck and cargo stay, and the other kind's data waits in it for a change
+// back.
+function KindDialog({ kind, onCancel, onChange }: { kind: ObjectKind; onCancel: () => void; onChange: (kind: ObjectKind) => void }) {
+  const [value, setValue] = useState(kind)
+  return (
+    <Dialog open onOpenChange={(v) => !v && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Тип расчёта</DialogTitle>
+          <DialogDescription>
+            Обычно тип задают, создавая расчёт. Сменить его можно и сейчас: палуба и груз останутся, а данные прежнего типа хранятся в
+            расчёте и вернутся, если сменить тип обратно.
+          </DialogDescription>
+        </DialogHeader>
+        <div role="radiogroup" aria-label="Тип расчёта" className="space-y-1.5">
+          {OBJECT_KINDS.map((k) => (
+            <label
+              key={k}
+              className={cn('flex cursor-pointer items-start gap-2.5 rounded-md border p-2', value === k ? 'border-line-strong bg-accent' : 'border-line')}
+            >
+              <input type="radio" name="calculation-kind" value={k} checked={value === k} onChange={() => setValue(k)} className="mt-1 h-4 w-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{OBJECT_KIND_LABEL[k]}</span>
+                <span className="block text-xs text-ink-2">{OBJECT_KIND_HINT[k]}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            Отмена
+          </Button>
+          <Button onClick={() => onChange(value)} disabled={value === kind}>
+            Сменить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

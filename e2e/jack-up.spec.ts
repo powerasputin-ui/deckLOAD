@@ -46,7 +46,7 @@ test('a jack-up: a heavy box by a leg overloads it; afloat, the KG and draught f
   await expect(page.locator('[data-status-item="legs"]')).toHaveText(/^Опора до 4[12]\d\d из 4100 т$/)
 
   // Afloat: the draught and the KG follow the 300 t.
-  await sectionBar(page).getByRole('button', { name: /^Платформа/ }).click()
+  await sectionBar(page).getByRole('button', { name: /^СПБУ/ }).click()
   await unfoldVesselBlocks(page)
   await page.getByRole('radiogroup', { name: 'Положение установки' }).getByRole('radio', { name: 'На плаву' }).click()
   await setNumber(report.getByLabel('Осадка, м', { exact: true }), '4')

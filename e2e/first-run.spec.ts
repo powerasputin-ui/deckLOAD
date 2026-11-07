@@ -80,6 +80,32 @@ test.describe('First run', () => {
       await expect(startScreen(page)).toHaveCount(0)
     })
 
+    // Spec 2026-11-06, 14: whoever starts from a ППБУ is told of the ППБУ,
+    // not of a vessel, and works on it from its first step.
+    test('«Начать с платформы» → ППБУ: the tour and the section speak of the ППБУ, no vessel in sight', async ({ page }) => {
+      await page.goto('/')
+      const screen = startScreen(page)
+      await screen.getByRole('button', { name: 'Начать с платформы' }).click()
+      await screen.getByRole('group', { name: 'Какая платформа' }).getByRole('button', { name: /^ППБУ/ }).click()
+      const first = page.getByRole('dialog', { name: 'ППБУ' })
+      await expect(first).toContainText('Шаг 1 из 5')
+      await expect(first).toContainText('Выберите ППБУ из библиотеки или задайте новую')
+      await expect(first).not.toContainText('судно')
+      await skipTour(page)
+      await expect(sectionBar(page).getByRole('button', { name: /^ППБУ/ })).toHaveAttribute('aria-current', 'page')
+      await expect(page.getByRole('heading', { name: 'Карточка ППБУ' }).getByRole('button')).toHaveAttribute('aria-expanded', 'true')
+      const steps = await page.locator('[data-fold] > h3').allInnerTexts()
+      expect(steps.slice(0, 6).map((t) => t.split('\n').find((line) => !/^\d$/.test(line.trim())))).toEqual([
+        'ППБУ из библиотеки',
+        'Карточка ППБУ',
+        'Данные установки',
+        'Палуба',
+        'Зоны нагрузки',
+        'Суточный отчёт',
+      ])
+      await expect(page.locator('.section-content')).not.toContainText('Судно')
+    })
+
     test('Esc closes the start screen on the example', async ({ page }) => {
       await page.goto('/')
       await expect(startScreen(page)).toBeVisible()

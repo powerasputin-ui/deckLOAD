@@ -29,11 +29,12 @@ test('A.1: the header, the calculation and its files', async ({ page }) => {
   // The calculation's menu.
   await page.getByRole('button', { name: /^Меню расчёта/ }).click()
   const menu = page.getByRole('dialog')
-  for (const item of ['Новый расчёт', 'Дублировать', 'Переименовать…', 'Открыть файл…', 'Сохранить файл…', 'Открыть пример', 'Очистить расчёт…', 'Удалить расчёт…']) {
+  for (const item of ['Новый расчёт: Судно', 'Новый расчёт: ППБУ', 'Новый расчёт: СПБУ', 'Новый расчёт: Стационарная', 'Дублировать', 'Переименовать…', 'Открыть файл…', 'Сохранить файл…', 'Открыть пример', 'Очистить расчёт…', 'Удалить расчёт…']) {
     await expect(menu.getByRole('button', { name: item, exact: true })).toBeVisible()
   }
-  // With how many there are.
+  // With how many there are; the calculation's kind beside its item.
   await expect(menu.getByRole('button', { name: /^Все расчёты…/ })).toBeVisible()
+  await expect(menu.getByRole('button', { name: /^Тип расчёта…/ })).toContainText('Судно')
   await page.keyboard.press('Escape')
   // The top bar, and «Скачать PDF» in «Отчёт» too.
   await expect(page.getByRole('button', { name: 'Скачать PDF' })).toBeVisible()

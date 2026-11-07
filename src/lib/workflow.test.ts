@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sectionMarks, type WorkflowState } from './workflow'
+import { sectionMarks, sectionTitle, type WorkflowState } from './workflow'
 
 const base: WorkflowState = {
   deck: { width: 8, length: 20, unit: 'm' },
@@ -58,5 +58,14 @@ describe('section marks', () => {
 
   it('«Отчёт» is done while the downloaded PDF is up to date', () => {
     expect(sectionMarks({ ...base, pdfUpToDate: true }).report.kind).toBe('done')
+  })
+})
+
+// Spec 2026-11-06, 14: the first section is named by what the calculation
+// is of.
+describe('section titles', () => {
+  it('name the first section by the kind, the rest as they are', () => {
+    expect(['vessel', 'semi-sub', 'jack-up', 'fixed'].map((k) => sectionTitle('vessel', k as never))).toEqual(['Судно', 'ППБУ', 'СПБУ', 'Платформа'])
+    expect(sectionTitle('cargo', 'semi-sub')).toBe('Грузы')
   })
 })

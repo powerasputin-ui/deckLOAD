@@ -14,10 +14,11 @@ test('a fixed platform: its card, cargo on board, arriving and leaving, one deck
   await start.getByRole('group', { name: 'Какая платформа' }).getByRole('button', { name: /^Стационарная платформа/ }).click()
   await expect(start).toBeHidden()
 
-  // «Платформа», at its card.
+  // «Платформа», at its card; no kind to choose again in it (spec 14).
   await expect(sectionBar(page).getByRole('button', { name: /^Платформа/ })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { name: 'Карточка платформы' }).getByRole('button')).toHaveAttribute('aria-expanded', 'true')
   await unfoldVesselBlocks(page)
-  await expect(page.getByRole('radiogroup', { name: 'Тип объекта' }).getByRole('radio', { name: 'Стационарная' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radiogroup', { name: 'Тип объекта' })).toHaveCount(0)
   const name = page.getByLabel('Название', { exact: true })
   await name.fill('МСП-1')
   await name.press('Enter')

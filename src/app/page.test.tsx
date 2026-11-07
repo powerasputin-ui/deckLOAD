@@ -1828,9 +1828,10 @@ describe('Home (page.tsx)', () => {
       expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
     })
 
-    // Spec 2026-11-06, 4: «Начать с платформы» asks which one, then opens
-    // «Платформа» on a calculation of that kind, at its card.
-    it('the start screen starts a platform: the kind is asked, and «Платформа» opens at its card', () => {
+    // Spec 2026-11-06, 4 and 14: «Начать с платформы» asks which one, then
+    // opens its section — named by the kind — on a calculation of that kind,
+    // at its card while the library keeps none of it; no vessel anywhere.
+    it('the start screen starts a ППБУ: the kind is asked, and «ППБУ» opens at its card, its steps from the ППБУ', () => {
       render(<Home />)
       fireEvent.click(screen.getByRole('button', { name: 'Справка' }))
       fireEvent.click(screen.getByRole('button', { name: 'Показать стартовый экран' }))
@@ -1840,28 +1841,60 @@ describe('Home (page.tsx)', () => {
       fireEvent.click(within(choice).getByRole('button', { name: /^ППБУ/ }))
       expect(screen.queryByRole('dialog', { name: 'DeckLoad' })).toBeNull()
       expect(useCalculator.getState().deck.objectKind).toBe('semi-sub')
-      expect(screen.getByRole('heading', { name: 'Платформа', level: 2 })).toBeTruthy()
-      expect(screen.getByRole('heading', { name: 'Карточка платформы' })).toBeTruthy()
-      expect(screen.getByRole('heading', { name: 'Платформа из библиотеки' })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'ППБУ', level: 2 })).toBeTruthy()
+      expect(sectionButton('ППБУ')).toBeTruthy()
+      // From the ППБУ: which one, its card, its manual's data, then the deck,
+      // the zones and the day's report.
+      const steps = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+      const order = ['ППБУ из библиотеки', 'Карточка ППБУ', 'Данные установки', 'Палуба', 'Зоны нагрузки', 'Суточный отчёт'].map((t) => steps.findIndex((x) => x?.includes(t)))
+      expect(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]))).toBe(true)
+      expect(screen.getByRole('button', { name: /Карточка ППБУ/ })).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.queryByRole('radiogroup', { name: 'Тип объекта' })).toBeNull()
+      expect(screen.queryByText('Судно')).toBeNull()
       expect(screen.queryByRole('heading', { name: 'Остойчивость' })).toBeNull()
       expect(screen.queryByRole('heading', { name: 'Точки крепления' })).toBeNull()
     })
 
-    it('the card changes the kind and keeps the deck and the cargo', () => {
+    // Spec 2026-11-06, 14: the kind is the calculation's; the cards don't
+    // switch it — the calculation's menu does, rarely, keeping the deck and
+    // the cargo.
+    it('the calculation\'s menu changes its kind and keeps the deck and the cargo; the card has no switch', () => {
       render(<Home />)
       const before = useCalculator.getState()
       openSection('Судно')
-      const kinds = screen.getByRole('radiogroup', { name: 'Тип объекта' })
-      fireEvent.click(within(kinds).getByRole('radio', { name: 'Стационарная' }))
+      expect(screen.queryByRole('radiogroup', { name: 'Тип объекта' })).toBeNull()
+      projectMenuItem('Тип расчёта…')
+      const dialog = screen.getByRole('dialog', { name: 'Тип расчёта' })
+      expect(within(dialog).getByRole('button', { name: 'Сменить' })).toBeDisabled()
+      fireEvent.click(within(dialog).getByRole('radio', { name: /^Стационарная платформа/ }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Сменить' }))
       const after = useCalculator.getState()
       expect(after.deck.objectKind).toBe('fixed')
       expect(after.deck.width).toBe(before.deck.width)
       expect(after.items).toEqual(before.items)
       expect(screen.getByRole('heading', { name: 'Карточка платформы' })).toBeTruthy()
       expect(sectionButton('Платформа')).toBeTruthy()
-      fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Тип объекта' })).getByRole('radio', { name: 'Судно' }))
+      projectMenuItem('Тип расчёта…')
+      fireEvent.click(within(screen.getByRole('dialog', { name: 'Тип расчёта' })).getByRole('radio', { name: /^Судно/ }))
+      fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
       expect(useCalculator.getState().deck.objectKind).toBeUndefined()
       expect(screen.getByRole('heading', { name: 'Карточка судна' })).toBeTruthy()
+    })
+
+    // Spec 2026-11-06, 14: a new calculation is of a kind, as on the start
+    // screen, and opens at its first step.
+    it('the calculation\'s menu makes a new calculation of each kind, opened in its section', () => {
+      render(<Home />)
+      const count = () => useProjects.getState().projects.length
+      const before = count()
+      projectMenuItem('Новый расчёт: СПБУ')
+      expect(count()).toBe(before + 1)
+      expect(useCalculator.getState().deck.objectKind).toBe('jack-up')
+      expect(screen.getByRole('heading', { name: 'СПБУ', level: 2 })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /Карточка СПБУ/ })).toHaveAttribute('aria-expanded', 'true')
+      projectMenuItem('Новый расчёт: Судно')
+      expect(useCalculator.getState().deck.objectKind).toBeUndefined()
+      expect(screen.getByRole('heading', { name: 'Судно из библиотеки' })).toBeTruthy()
     })
 
     // Audit 2026-11-05: with a library vessel already on the deck it still said
@@ -2022,7 +2055,7 @@ describe('Home (page.tsx)', () => {
       render(<Home />)
       const count = () => useProjects.getState().projects.length
       const before = count()
-      projectMenuItem('Новый расчёт')
+      projectMenuItem('Новый расчёт: Судно')
       expect(count()).toBe(before + 1)
 
       projectMenuItem('Переименовать…')

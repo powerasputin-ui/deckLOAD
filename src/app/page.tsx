@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 import { cargoNumbers } from '@/lib/cargoPalette'
 import { Badge } from '@/components/ui/badge'
-import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, undoCalculator, redoCalculator, PALETTE, autoPlacementKey, DEMO_DECK } from '@/store/calculator'
+import { useCalculator, UNIT_LABEL, convertLength, clearCalculatorHistory, closeCalculatorHistoryStep, undoCalculator, redoCalculator, PALETTE, autoPlacementKey, DEMO_DECK } from '@/store/calculator'
 import { toMillimetre } from '@/lib/units'
 import { useProjects, scheduleAutosave, downloadCorruptedStorage } from '@/store/projects'
 import {
@@ -61,7 +61,7 @@ import { CargoTable } from '@/components/cargo/CargoTable'
 import { StampHint } from '@/components/cargo/StampHint'
 import { ReportSection } from '@/components/sections/ReportSection'
 import { sectionMarks, type SectionId } from '@/lib/workflow'
-import { isPlatform, staysOnDeck, type ObjectKind } from '@/lib/objectKind'
+import { isPlatform, OBJECT_KIND_LABEL, OBJECT_KIND_SHORT, OBJECT_KINDS, objectKindOf, staysOnDeck, type ObjectKind } from '@/lib/objectKind'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
 import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
@@ -155,42 +155,49 @@ const PREVIEW_DATE = new Date(0)
 
 // The five-step tour (spec 10.2). Each `selector` targets a `data-tour`
 // attribute on the real element in the frame — the tour never needs its own
-// copy of what it points at.
-const TOUR_STEPS: TourStep[] = [
-  {
-    id: 'vessel',
-    selector: '[data-tour="section-vessel"]',
-    title: 'Судно',
-    body: 'Выберите судно из библиотеки или задайте свою палубу. Платформа — ППБУ или стационарная — выбирается в карточке.',
-  },
-  {
-    id: 'cargo',
-    selector: '[data-tour="section-cargo"]',
-    title: 'Грузы',
-    body: 'Добавьте груз. Номер груза один и тот же на палубе, в списке и в PDF.',
-  },
-  {
-    id: 'deck',
-    selector: '[data-tour="deck-view"]',
-    title: 'Палуба',
-    body: 'Грузы расставляются сами. Перетащите штабель, чтобы закрепить его, или выделите и правьте справа.',
-  },
-  {
-    id: 'status',
-    selector: '[data-tour="status-line"]',
-    title: 'Итог и проверки',
-    body: 'Здесь вес, рейсы, остойчивость и всё, что требует внимания. Подробности — в разделе «Проверки».',
-  },
-  {
-    id: 'pdf',
-    selector: '[data-tour="export-pdf"]',
-    title: 'Скачать PDF',
-    body: 'План погрузки для передачи на судно.',
-  },
-]
-
-
-
+// copy of what it points at. It speaks of what the calculation is of (spec
+// 2026-11-06, 14): a ППБУ's first step is the ППБУ, not a vessel.
+const TOUR_FIRST: Record<ObjectKind, string> = {
+  vessel: 'Выберите судно из библиотеки или задайте свою палубу.',
+  'semi-sub': 'Выберите ППБУ из библиотеки или задайте новую: карточка, данные из руководства, палуба и суточный отчёт.',
+  'jack-up': 'Выберите СПБУ из библиотеки или задайте новую: карточка, опоры и пределы из руководства, палуба и суточный отчёт.',
+  fixed: 'Выберите платформу из библиотеки или задайте новую: карточка, палуба и зоны нагрузки.',
+}
+const TOUR_STATUS: Record<ObjectKind, string> = {
+  vessel: 'Здесь вес, рейсы, остойчивость и всё, что требует внимания. Подробности — в разделе «Проверки».',
+  'semi-sub': 'Здесь вес на палубе, VDL и KG после рейса и всё, что требует внимания. Подробности — в разделе «Проверки».',
+  'jack-up': 'Здесь вес на палубе, VDL, нагрузки на опоры или KG и всё, что требует внимания. Подробности — в разделе «Проверки».',
+  fixed: 'Здесь вес на палубе и всё, что требует внимания. Подробности — в разделе «Проверки».',
+}
+function tourSteps(kind: ObjectKind): TourStep[] {
+  const platform = kind !== 'vessel'
+  return [
+    { id: 'vessel', selector: '[data-tour="section-vessel"]', title: OBJECT_KIND_SHORT[kind], body: TOUR_FIRST[kind] },
+    {
+      id: 'cargo',
+      selector: '[data-tour="section-cargo"]',
+      title: 'Грузы',
+      body: platform
+        ? 'Добавьте груз: что на борту, что придёт и что уйдёт. Номер груза один и тот же на палубе, в списке и в PDF.'
+        : 'Добавьте груз. Номер груза один и тот же на палубе, в списке и в PDF.',
+    },
+    {
+      id: 'deck',
+      selector: '[data-tour="deck-view"]',
+      title: 'Палуба',
+      body: 'Грузы расставляются сами. Перетащите штабель, чтобы закрепить его, или выделите и правьте справа.',
+    },
+    { id: 'status', selector: '[data-tour="status-line"]', title: 'Итог и проверки', body: TOUR_STATUS[kind] },
+    {
+      id: 'pdf',
+      selector: '[data-tour="export-pdf"]',
+      title: 'Скачать PDF',
+      body: platform ? `План палубы — для передачи на ${kind === 'fixed' ? 'платформу' : 'установку'}.` : 'План погрузки для передачи на судно.',
+    },
+  ]
+}
+// One list per kind, made once: the tour follows its step by identity.
+const TOUR_BY_KIND = Object.fromEntries(OBJECT_KINDS.map((k) => [k, tourSteps(k)])) as Record<ObjectKind, TourStep[]>
 
 export default function Home() {
   const { clientReady, entered, startFromHelp, handleCloseStart, handleShowStart, tourActive, handleCloseTour, handleShowTour } = useFirstRun()
@@ -1478,7 +1485,24 @@ export default function Home() {
     <div className="h-screen flex flex-col bg-paper overflow-hidden" inert={!entered}>
       <TopBar
         projectMenu={
-          <ProjectMenu onOpenFile={() => importInputRef.current?.click()} onSaveFile={handleExportJson} onClear={handleNewCalculation} />
+          <ProjectMenu
+            onOpenFile={() => importInputRef.current?.click()}
+            onSaveFile={handleExportJson}
+            onClear={handleNewCalculation}
+            onNewCalculation={(kind) => {
+              // As the start screen does: a calculation of its kind, at its
+              // first step (spec 2026-11-06, 14).
+              createProject(undefined, kind !== 'vessel' ? { objectKind: kind } : undefined)
+              openSection('vessel')
+              toast.success(`Создан новый расчёт: ${OBJECT_KIND_LABEL[kind]}`)
+            }}
+            onChangeKind={(kind) => {
+              closeCalculatorHistoryStep()
+              setDeck({ objectKind: kind !== 'vessel' ? kind : undefined })
+              openSection('vessel', kind !== 'vessel' ? 'card' : 'library')
+              toast.success(`Тип расчёта: ${OBJECT_KIND_LABEL[kind]}`)
+            }}
+          />
         }
         helpMenu={<HelpMenu onStartTour={handleShowTour} onShowStart={handleShowStart} />}
         activeSection={activeSection}
@@ -1673,7 +1697,7 @@ export default function Home() {
           {!hasCargo && !toolArmed && activeSection !== 'vessel' && (
             <EmptyDeck
               vesselChosen={appliedVessel(deck) !== undefined}
-              platform={platform}
+              kind={objectKindOf(deck)}
               onChooseVessel={() => openSection('vessel', platform ? 'card' : 'library')}
               onAddCargo={() => openSection('cargo')}
               onOpenExample={() => {
@@ -1889,7 +1913,7 @@ export default function Home() {
           <CargoTable placedAcrossTrips={placedAcrossTrips} unit={deck.unit} hoveredItemId={hoveredItemId} onHover={handleHover} />
         </CargoDrawer>
       )}
-      <ProductTour steps={TOUR_STEPS} active={tourActive} onClose={handleCloseTour} />
+      <ProductTour steps={TOUR_BY_KIND[objectKindOf(deck)]} active={tourActive} onClose={handleCloseTour} />
       <AlertDialog open={modeSwitchPrompt !== null} onOpenChange={(open) => { if (!open) setModeSwitchPrompt(null) }}>
         <AlertDialogContent>
           {modeSwitchPrompt?.to === 'auto' ? (

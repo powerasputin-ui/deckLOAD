@@ -43,8 +43,8 @@ test('Сценарий 18: проекты', async ({ page }) => {
   await page.goto('/')
   await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
 
-  await projectMenuItem(page, 'Новый расчёт')
-  await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
+  await projectMenuItem(page, 'Новый расчёт: Судно')
+  await expect(unitsCount(page)).toHaveText('0/0 ед.')
   await projectMenuItem(page, 'Переименовать…')
   const name = page.getByRole('textbox', { name: 'Название расчёта' })
   await name.fill('Рейс на Сабетту')

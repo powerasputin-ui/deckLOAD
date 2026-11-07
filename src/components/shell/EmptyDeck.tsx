@@ -2,13 +2,14 @@
 
 import { BookOpen, Factory, PackagePlus, Ship } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { OBJECT_KIND_GENITIVE, type ObjectKind } from '@/lib/objectKind'
 
 // An empty deck (spec 10.3): the next step from here — a vessel, the cargo
 // or the example. A bar along the top of the deck view, like the stamp's
 // hint, so the deck itself stays free for its outline, obstacles and photo.
 export function EmptyDeck({
   vesselChosen = false,
-  platform = false,
+  kind = 'vessel',
   onChooseVessel,
   onAddCargo,
   onOpenExample,
@@ -16,12 +17,13 @@ export function EmptyDeck({
   // A vessel from the library is already on the deck: the step is to change
   // it, not to choose one.
   vesselChosen?: boolean
-  // A platform's deck (spec 2026-11-06): its step is its own card.
-  platform?: boolean
+  // What the deck is of (spec 2026-11-06): a platform's step is its own data.
+  kind?: ObjectKind
   onChooseVessel: () => void
   onAddCargo: () => void
   onOpenExample: () => void
 }) {
+  const platform = kind !== 'vessel'
   return (
     <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4">
       <section
@@ -33,7 +35,7 @@ export function EmptyDeck({
         </h2>
         <Button variant="outline" size="sm" className="h-7" onClick={onChooseVessel}>
           {platform ? <Factory className="mr-1 h-4 w-4" aria-hidden="true" /> : <Ship className="mr-1 h-4 w-4" aria-hidden="true" />}
-          {platform ? 'Данные платформы' : vesselChosen ? 'Сменить судно' : 'Выбрать судно'}
+          {platform ? `Данные ${OBJECT_KIND_GENITIVE[kind]}` : vesselChosen ? 'Сменить судно' : 'Выбрать судно'}
         </Button>
         <Button variant="outline" size="sm" className="h-7" onClick={onAddCargo}>
           <PackagePlus className="mr-1 h-4 w-4" aria-hidden="true" />

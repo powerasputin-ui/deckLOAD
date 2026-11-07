@@ -13,9 +13,24 @@ test.describe('Projects', () => {
   test('creating a new project switches to it', async ({ page }) => {
     await page.goto('/')
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
-    await projectMenuItem(page, 'Новый расчёт')
-    await expect(page.getByText('Создан новый расчёт')).toBeVisible()
-    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
+    await projectMenuItem(page, 'Новый расчёт: Судно')
+    await expect(page.getByText('Создан новый расчёт: Судно')).toBeVisible()
+    // A new calculation opens at its first step, as from the start screen.
+    await expect(page.getByRole('heading', { name: 'Судно из библиотеки' })).toBeVisible()
+    await expect(headerBadge(page)).toHaveText('0/0 ед.')
+  })
+
+  // Spec 2026-11-06, 14: a new calculation is of a kind; a ППБУ's opens in
+  // «ППБУ», with no vessel in its steps.
+  test('a new ППБУ from the menu opens in «ППБУ» at its card', async ({ page }) => {
+    await page.goto('/')
+    await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
+    await projectMenuItem(page, 'Новый расчёт: ППБУ')
+    await expect(page.getByText('Создан новый расчёт: ППБУ')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'ППБУ', level: 2 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Карточка ППБУ' }).getByRole('button')).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('heading', { name: 'ППБУ из библиотеки' })).toBeVisible()
+    await expect(page.getByRole('radiogroup', { name: 'Тип объекта' })).toHaveCount(0)
   })
 
   test('switching between projects updates cargo list', async ({ page }) => {
@@ -25,8 +40,8 @@ test.describe('Projects', () => {
     // transient "0/0" from the very first paint.
     await expect(headerBadge(page)).toHaveText(/\/22 ед\./)
     const initial = await headerBadge(page).textContent()
-    await projectMenuItem(page, 'Новый расчёт')
-    await expect(page.getByText('Добавьте груз из каталога или задайте свой')).toBeVisible()
+    await projectMenuItem(page, 'Новый расчёт: Судно')
+    await expect(headerBadge(page)).toHaveText('0/0 ед.')
 
     await projectMenuItem(page, 'Все расчёты…')
     await page.getByRole('dialog').getByText('Демо-расчёт', { exact: true }).click()
@@ -70,4 +85,29 @@ test.describe('Projects', () => {
     await projectMenuItem(page, 'Все расчёты…')
     await expect(page.getByRole('dialog').getByRole('listitem')).toHaveCount(1)
   })
+})
+
+// Spec 2026-11-06, 14: with a ППБУ in the library, a new ППБУ starts at it;
+// taking it fills the card, the data and the deck, and opens the day's
+// report — what changes every day.
+test('a saved ППБУ: the next ППБУ calculation starts at the library, and taking it opens the day\'s report', async ({ page }) => {
+  await page.goto('/')
+  await expect(unitsCount(page)).toHaveText(/\/22 ед\./)
+  await projectMenuItem(page, 'Новый расчёт: ППБУ')
+  const block = (title: string) => page.getByRole('heading', { name: title, exact: true }).getByRole('button')
+  await block('ППБУ из библиотеки').click()
+  await page.getByRole('button', { name: 'Сохранить ППБУ в библиотеку' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Сохранить ППБУ в библиотеку' })
+  await dialog.getByLabel('Название ППБУ').fill('Полярная звезда')
+  await dialog.getByRole('button', { name: 'Сохранить' }).click()
+  await expect(page.getByText('ППБУ «Полярная звезда» сохранена в библиотеку')).toBeVisible()
+
+  await projectMenuItem(page, 'Новый расчёт: ППБУ')
+  // Open, its saved ППБУ in sight (folded, its line would read «новая · в
+  // библиотеке 1»).
+  await expect(block('ППБУ из библиотеки')).toHaveAttribute('aria-expanded', 'true')
+  await page.getByRole('list', { name: 'ППБУ из библиотеки' }).getByRole('button', { name: /^Полярная звезда/ }).click()
+  await expect(block('ППБУ из библиотеки')).toContainText('«Полярная звезда»')
+  await expect(block('Суточный отчёт')).toHaveAttribute('aria-expanded', 'true')
+  await expect(block('Карточка ППБУ')).toHaveAttribute('aria-expanded', 'false')
 })

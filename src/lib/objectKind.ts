@@ -21,6 +21,24 @@ export const OBJECT_KIND_LABEL: Record<ObjectKind, string> = {
   fixed: 'Стационарная платформа',
 }
 
+// The kind as the section's tab and title name it (spec 2026-11-06, 14):
+// the calculation is of a vessel, of a ППБУ, of a СПБУ, of a platform.
+export const OBJECT_KIND_SHORT: Record<ObjectKind, string> = {
+  vessel: 'Судно',
+  'semi-sub': 'ППБУ',
+  'jack-up': 'СПБУ',
+  fixed: 'Платформа',
+}
+
+// «Карточка …», «Данные …»: the kind in the genitive; the abbreviations
+// don't decline.
+export const OBJECT_KIND_GENITIVE: Record<ObjectKind, string> = {
+  vessel: 'судна',
+  'semi-sub': 'ППБУ',
+  'jack-up': 'СПБУ',
+  fixed: 'платформы',
+}
+
 // The kind as a line under its name, where the choice is made.
 export const OBJECT_KIND_HINT: Record<ObjectKind, string> = {
   vessel: 'Судно снабжения, баржа, буровое судно',

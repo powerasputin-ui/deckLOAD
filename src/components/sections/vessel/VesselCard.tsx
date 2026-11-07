@@ -4,13 +4,12 @@ import { useId, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PanelBlock } from '@/components/shell/SectionPanel'
 import { NumberField } from '@/components/calculator/NumberField'
 import { isWholeDeckZone, useCalculator, UNIT_LABEL, convertLength } from '@/store/calculator'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import { cn, fmtNumber } from '@/lib/utils'
-import { isObjectKind, objectKindOf, type ObjectKind } from '@/lib/objectKind'
+import { OBJECT_KIND_GENITIVE, objectKindOf } from '@/lib/objectKind'
 
 // The vessel's card (spec 8.1): what the calculation is planned for and the
 // limits that hold for it — the library vessel's, or the user's own deck's.
@@ -18,10 +17,10 @@ import { isObjectKind, objectKindOf, type ObjectKind } from '@/lib/objectKind'
 // (it used to wait in «Зоны нагрузки»); the cargo limit can be changed and
 // cleared; «Откуда данные» says what is real and what estimated.
 //
-// What the deck is of is chosen here too (spec 2026-11-06, 4): a vessel, a
-// semi-submersible or a fixed platform. A platform's card has its name and
-// the deck's allowed load in place of the vessel's figures; changing the
-// kind keeps the deck, the cargo and the other kind's data.
+// A platform's card (spec 2026-11-06, 5) has its name and the deck's
+// allowed load in place of the vessel's figures. What the calculation is of
+// isn't chosen here (spec 14): it is chosen when the calculation is made,
+// and changed, rarely, from the calculation's menu.
 export function VesselCard() {
   const deck = useCalculator((s) => s.deck)
   const setDeck = useCalculator((s) => s.setDeck)
@@ -39,20 +38,7 @@ export function VesselCard() {
   const platform = kind !== 'vessel'
 
   return (
-    <PanelBlock title={platform ? 'Карточка платформы' : 'Карточка судна'} fold="card">
-      <ToggleGroup
-        type="single"
-        value={kind}
-        onValueChange={(v) => isObjectKind(v) && setDeck({ objectKind: v === 'vessel' ? undefined : v })}
-        aria-label="Тип объекта"
-        className="grid w-full grid-cols-2 gap-1"
-      >
-        {KIND_CHOICES.map(([value, label]) => (
-          <ToggleGroupItem key={value} value={value} className="h-8 text-xs">
-            {label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+    <PanelBlock title={`Карточка ${OBJECT_KIND_GENITIVE[kind]}`} fold="card">
       {platform ? (
         <PlatformName key={deck.platformName ?? applied?.label ?? ''} id={`${uid}-name`} value={deck.platformName ?? applied?.label ?? ''} onCommit={(v) => setDeck({ platformName: v || undefined })} />
       ) : (
@@ -152,13 +138,6 @@ export function VesselCard() {
     </PanelBlock>
   )
 }
-
-const KIND_CHOICES: readonly [ObjectKind, string][] = [
-  ['vessel', 'Судно'],
-  ['semi-sub', 'ППБУ'],
-  ['jack-up', 'СПБУ'],
-  ['fixed', 'Стационарная'],
-]
 
 // The platform's name, applied on Enter or on leaving the field.
 function PlatformName({ id, value, onCommit }: { id: string; value: string; onCommit: (v: string) => void }) {

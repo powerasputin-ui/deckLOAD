@@ -31,7 +31,7 @@ test('«Судно» folds its blocks to their lines, fits on the screen folded,
 test('a new calculation opens on choosing the vessel, and a library vessel then on its deck strength', async ({ page }) => {
   await page.goto('/')
   await expect(sectionBar(page)).toBeVisible()
-  await projectMenuItem(page, 'Новый расчёт')
+  await projectMenuItem(page, 'Новый расчёт: Судно')
   await enterVessel(page)
   await expect(block(page, 'Судно из библиотеки')).toHaveAttribute('aria-expanded', 'true')
   await page.getByText('Алексей Кузнецов (IMO 9692648)').click()
