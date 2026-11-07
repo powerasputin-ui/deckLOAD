@@ -118,7 +118,9 @@ test('Закрепить штабель: 2 действия — выделить
   expect(a.count).toBe(2)
 })
 
-// Placed by hand: a dangerous cargo tied down too weakly, and a box.
+// Placed by hand: a dangerous cargo tied down — its forces not worked out
+// without the vessel's speed and GM (decided 2026-11-07), its IMDG warning
+// standing — and a box.
 const WEAKLY_TIED = {
   id: 'weak',
   name: 'Крепление',
@@ -164,7 +166,8 @@ test('Найти причину предупреждения: 2 действия
   await a.click(page.locator('[data-status-item="warnings"]'))
   await a.click(page.locator('[data-check="lashing"] > button'))
   // The reason, and the stack at fault: the other one steps back.
-  await expect(page.getByRole('list', { name: 'Крепление: подробности' })).toContainText('«Газ»: не держит по расчёту сил')
+  await expect(page.getByRole('list', { name: 'Крепление: подробности' })).toContainText('«Газ»: опасный груз — крепление и сегрегация по IMDG Code')
+  await expect(page.getByRole('list', { name: 'Крепление: подробности' })).toContainText('«Газ»: силы не проверены')
   await expect(deck(page).locator('g[data-cargo-name="Газ"]')).not.toHaveAttribute('data-dimmed', 'true')
   await expect(deck(page).locator('g[data-cargo-name="Ящик"]')).toHaveAttribute('data-dimmed', 'true')
   expect(a.count).toBe(2)

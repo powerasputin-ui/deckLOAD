@@ -70,7 +70,9 @@ test.describe('Ship stability workspace', () => {
 
     // Auto mode puts the new cargo against the board offset near (0, 0) —
     // far off the centreline — so the ship lists.
-    await expect(ws.getByText(/\d+([.,]\d+)?°\s*на (левый|правый) борт/)).toBeVisible()
+    await expect(ws.getByText(/^\d+([.,]\d+)?°\s*на (левый|правый) борт$/)).toBeVisible()
+    // Over 2° with no limit of the vessel's own: a warning (decided 2026-11-07).
+    await expect(ws.getByText(/^Крен \d+([.,]\d+)?° на (левый|правый) борт больше 2°/).first()).toBeVisible()
   })
 
   test('KN curves pasted with their line of angles give the GZ reference, marked as an estimate', async ({ page }) => {

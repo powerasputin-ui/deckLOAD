@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/ThemeProvider'
 import { fitCamera } from '@/lib/cameraFit'
 import { cargoToneForNumber } from '@/lib/cargoPalette'
-import { deckDrawnTransposed, hullSideEdges, sideLabels, type DrawingEdge, type HullSide } from '@/lib/deckDrawing'
+import { deckDrawnMirrored, deckDrawnTransposed, hullSideEdges, sideLabels, type DrawingEdge, type HullSide } from '@/lib/deckDrawing'
 import type { ObjectKind } from '@/lib/objectKind'
 import { DRAG_THRESHOLD_PX, isStackSelected, type StackSelection } from '@/lib/stackSelection'
 import { THEME_TOKENS } from '@/lib/theme'
@@ -495,10 +495,16 @@ export default function Deck3DView({
   // and 3D shows each side where 2D shows it. The camera then looks from the
   // plan's bottom edge (+z), the way one looks at the drawing.
   const transposed = deckDrawnTransposed(deckWidth, deckLength)
-  const planMatrix = useMemo(
-    () => (transposed ? new THREE.Matrix4().set(0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1) : new THREE.Matrix4()),
-    [transposed]
-  )
+  // And where 2D runs the deck's x the other way so the plan is the deck
+  // seen from above (deckDrawnMirrored, decided 2026-11-07), the scene does
+  // too: the deck's x, about its centre, turned round before the transpose.
+  const mirrored = deckDrawnMirrored(deckWidth, deckLength, deckForwardIsPositiveY)
+  const planMatrix = useMemo(() => {
+    const m = mirrored ? -1 : 1
+    return transposed
+      ? new THREE.Matrix4().set(0, 0, 1, 0, 0, 1, 0, 0, m, 0, 0, 0, 0, 0, 0, 1)
+      : new THREE.Matrix4().set(m, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+  }, [transposed, mirrored])
   const planRef = useRef<THREE.Group>(null)
   // The top of the tallest stack (the side names stand that high).
   const tallest = useMemo(

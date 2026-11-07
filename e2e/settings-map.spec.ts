@@ -88,7 +88,7 @@ test('A.5: lashing — in the inspector, the deck\'s own points in «Судно�
   for (const name of ['Точки крепления', 'Зона отступа', 'Добавить точку крепления']) await expect(lashing.getByRole('button', { name })).toBeVisible()
   await expect(lashing.getByTestId('lashing-count')).toBeVisible()
   await lashing.getByRole('button', { name: 'Зона отступа' }).click()
-  for (const side of ['Верх', 'Право', 'Низ', 'Лево']) await expect(lashing.getByLabel(`${side} (м)`)).toBeVisible()
+  for (const side of ['Левый борт', 'Правый борт', 'Нос', 'Корма']) await expect(lashing.getByLabel(`${side} (м)`)).toBeVisible()
   await page.keyboard.press('Escape')
   await openSection(page, 'Судно')
   await expect(section(page, 'Точки крепления на палубе').getByRole('button', { name: 'Поставить точку' })).toBeVisible()

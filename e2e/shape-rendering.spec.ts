@@ -62,10 +62,14 @@ test.describe('Non-rectangular cargo shape rendering', () => {
 
     const before = parsePoints((await triangle.getAttribute('points')) ?? '')
     expect(before).toHaveLength(3)
-    // Unrotated: apex-up, base-down — two points share the base's Y.
-    const beforeYs = before.map((p) => p[1])
-    const beforeSharedY = beforeYs.some((y, i) => beforeYs.indexOf(y) !== i)
-    expect(beforeSharedY).toBe(true)
+    const shared = (pts: number[][], axis: 0 | 1) => pts.map((p) => p[axis]).some((v, i, all) => all.indexOf(v) !== i)
+    // Unturned, its apex points to the deck's y = 0, as the packer has it.
+    // The new deck is drawn transposed (its length across the screen, the
+    // stern on the left), so the apex points left and the base stands up:
+    // two points share an X. It used to be drawn apex-up whatever the
+    // deck's transpose (decided 2026-11-07).
+    expect(shared(before, 0)).toBe(true)
+    expect(shared(before, 1)).toBe(false)
 
     // Select it, then rotate it from the mini-panel over it.
     await triangle.click({ force: true })
@@ -73,14 +77,11 @@ test.describe('Non-rectangular cargo shape rendering', () => {
 
     const after = parsePoints((await triangle.getAttribute('points')) ?? '')
     expect(after).toHaveLength(3)
-    // A true 90° turn swaps which pair of points is level: the base is now
-    // a vertical edge, so two points share an X instead of a Y. The old
-    // buggy render kept redrawing the same "apex-up, base horizontal"
-    // formula with swapped width/height, which would still show two points
-    // sharing a Y here — this is exactly what distinguishes a real rotation
-    // from a squish.
-    const afterXs = after.map((p) => p[0])
-    const afterSharedX = afterXs.some((x, i) => afterXs.indexOf(x) !== i)
-    expect(afterSharedX).toBe(true)
+    // A true 90° turn swaps which pair of points is level: the base now lies
+    // flat, two points share a Y. A render that redrew the same formula with
+    // width and height swapped would keep the same pair level — exactly what
+    // tells a real rotation from a squish.
+    expect(shared(after, 1)).toBe(true)
+    expect(shared(after, 0)).toBe(false)
   })
 })

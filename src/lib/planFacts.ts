@@ -392,6 +392,7 @@ export function stackProblems(p: {
       )
     }
   }
-  if (record && lashingVerdict(record, deck, items) === 'short') problems.push('Не хватает крепления')
+  if (record && lashingVerdict(record, deck, items, securingGmOf(evaluateDeckTripStability(deck, trip, items))) === 'short')
+    problems.push('Не хватает крепления')
   return problems
 }

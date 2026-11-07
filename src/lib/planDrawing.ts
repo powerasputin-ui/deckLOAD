@@ -12,7 +12,7 @@
 // deck's dimensions and a scale bar. The lock of a pinned stack is the
 // calculation's own business and stays off the paper; the grid too.
 import { CARGO_INK, cargoToneForNumber } from './cargoPalette'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix, type DrawingEdge, type HullSide } from './deckDrawing'
+import { deckDrawnMirrored, deckDrawnTransposed, footprintOutlineOnDrawing, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix, type DrawingEdge, type HullSide } from './deckDrawing'
 import type { ObjectKind } from './objectKind'
 import { drawsAsPipe, footprintIsPipe, pipeLabelLine, pipeLines, pipeStrips, stripAcross } from './pipeDrawing'
 import {
@@ -29,7 +29,6 @@ import {
   erodePolygon,
   pipePyramidSpreadMargin,
   restrictionZonePolygon,
-  rotateOutline90,
   zoneIdsOverlapping,
   type LoadZone,
   type PlacedItem,
@@ -153,11 +152,15 @@ export function buildPlanDrawing(input: PlanDrawingInput): PlanDrawing {
     w: drawnW * k,
     h: drawnH * k,
   }
-  // Deck x runs left → right (top → bottom when transposed), deck y top →
-  // bottom (left → right when transposed) — DeckVisualization's deckToScreen.
-  const at = (x: number, y: number): Pt => (transposed ? { x: box.x + y * k, y: box.y + x * k } : { x: box.x + x * k, y: box.y + y * k })
+  // Deck x runs left → right (top → bottom when transposed), the other way
+  // when mirrored; deck y top → bottom (left → right when transposed) —
+  // DeckVisualization's deckToScreen: the deck seen from above in every
+  // orientation (deckDrawnMirrored, decided 2026-11-07).
+  const mirrored = deckDrawnMirrored(deck.width, deck.length, deck.deckForwardIsPositiveY ?? true)
+  const viewX = (x: number) => (mirrored ? deck.width - x : x)
+  const at = (x: number, y: number): Pt => (transposed ? { x: box.x + y * k, y: box.y + viewX(x) * k } : { x: box.x + viewX(x) * k, y: box.y + y * k })
   const span = (width: number, length: number) => (transposed ? { w: length * k, h: width * k } : { w: width * k, h: length * k })
-  const rectOf = (r: { x: number; y: number; width: number; length: number }) => ({ ...at(r.x, r.y), ...span(r.width, r.length) })
+  const rectOf = (r: { x: number; y: number; width: number; length: number }) => ({ ...at(mirrored ? r.x + r.width : r.x, r.y), ...span(r.width, r.length) })
 
   // The deck and the area inside the board offset.
   const outline = deck.outline && deck.outline.length >= 3 ? deck.outline : undefined
@@ -230,7 +233,7 @@ export function buildPlanDrawing(input: PlanDrawingInput): PlanDrawing {
     const overload = exceeded.size > 0 && zoneIdsOverlapping({ x: p.x, y: p.y, width: p.width, length: p.length }, zones).some((id) => exceeded.has(id))
     const problem = overload || !!p.conflict
     const stroke: Stroke = problem ? { color: PROBLEM, width: 1.2 } : { color: CARGO_INK, width: 0.6 }
-    const pile = footprint(p, rect, k, transposed, tone, stroke)
+    const pile = footprint(p, rect, k, { transposed, mirrored }, tone, stroke)
     shapes.push(...pile.shapes)
     if (p.conflict) shapes.push(...hatch(rectPoints(rect), PROBLEM, 1, 3, 45))
 
@@ -380,11 +383,12 @@ function footprint(
   p: PlacedItem,
   r: Box,
   k: number,
-  transposed: boolean,
+  view: { transposed: boolean; mirrored: boolean },
   fill: string,
   stroke: Stroke
 ): { shapes: PlanShape[]; pipe: boolean } {
   const { x, y, w, h } = r
+  const { transposed } = view
   const shape = p.shape
   if (shape === 'cylinder' || shape === 'pipe-nest') {
     // The drafting look, as on screen (src/lib/pipeDrawing.ts): square ends,
@@ -418,22 +422,22 @@ function footprint(
     }
   }
   if (shape === 'custom' && p.outline && p.outline.length >= 3) {
-    const origWidth = p.rotated ? h / k : w / k
-    const origLength = p.rotated ? w / k : h / k
-    const local = p.rotated ? rotateOutline90(p.outline, origWidth, origLength) : p.outline
-    return { shapes: [{ kind: 'poly', points: local.map((q) => ({ x: x + q.x * k, y: y + q.y * k })), fill, stroke }], pipe: false }
+    return { shapes: [{ kind: 'poly', points: footprintOutlineOnDrawing(p.outline, r, k, view, !!p.rotated), fill, stroke }], pipe: false }
   }
   if (shape === 'circle' || shape === 'oval') return { shapes: [{ kind: 'ellipse', cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2, fill, stroke }], pipe: false }
   if (shape === 'triangle') {
-    const origW = p.rotated ? h : w
-    const origL = p.rotated ? w : h
+    // Its apex toward the deck's y = 0, turned as it stands, laid on the
+    // sheet as the deck is — FootprintShape's triangle.
+    const across = (transposed ? h : w) / k
+    const along = (transposed ? w : h) / k
+    const origW = p.rotated ? along : across
+    const origL = p.rotated ? across : along
     const local = [
       { x: origW / 2, y: 0 },
       { x: 0, y: origL },
       { x: origW, y: origL },
     ]
-    const pts = p.rotated ? rotateOutline90(local, origW, origL) : local
-    return { shapes: [{ kind: 'poly', points: pts.map((q) => ({ x: x + q.x, y: y + q.y })), fill, stroke }], pipe: false }
+    return { shapes: [{ kind: 'poly', points: footprintOutlineOnDrawing(local, r, k, view, !!p.rotated), fill, stroke }], pipe: false }
   }
   if (shape === 'diamond') {
     const points = [

@@ -462,7 +462,7 @@ describe('Home (page.tsx)', () => {
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false } })
       useCalculator.getState().addItem({ name: 'Газ', width: 1, length: 1, height: 1, quantity: 1, category: 'Опасный груз' })
       useCalculator.getState().addItem({ name: 'Еда', width: 1, length: 1, height: 1, quantity: 1, category: 'Провизия' })
       useCalculator.getState().addSeparationRule({ categoryA: 'Опасный груз', categoryB: 'Провизия', minDistance: 3 })
@@ -517,7 +517,7 @@ describe('Home (page.tsx)', () => {
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false } })
       useCalculator.getState().addItem({ name: 'Блок', width: 2, length: 2, height: 1, quantity: 2, weight: 20000 })
     })
     const block = useCalculator.getState().items.find((it) => it.name === 'Блок')!
@@ -553,7 +553,7 @@ describe('Home (page.tsx)', () => {
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false } })
       useCalculator.getState().addItem({ name: 'Блок', width: 2, length: 2, height: 1, quantity: 1, weight: 8000 })
       useCalculator.getState().addLoadZone({ x: 0, y: 0, width: 4, length: 4, maxLoadPerArea: 1 })
     })
@@ -1026,8 +1026,39 @@ describe('Home (page.tsx)', () => {
       expect(bowLine()).toBe('Нос на схеме: справа')
       fireEvent.click(screen.getByRole('button', { name: 'Сменить' }))
       expect(bowLine()).toBe('Нос на схеме: слева')
-      expect(sideEdges()).toEqual({ port: 'top', starboard: 'bottom', bow: 'left', stern: 'right' })
+      // Seen from above with the bow on the left, port is at the bottom
+      // (decided 2026-11-07: it was drawn as the mirror image).
+      expect(sideEdges()).toEqual({ port: 'bottom', starboard: 'top', bow: 'left', stern: 'right' })
       expect(bowLabel()).toBe('↑ НОС')
+    })
+
+    // Decided 2026-11-07: the plan is the deck seen from above in every
+    // orientation — with the bow at the bottom, port is on the right.
+    it('draws a stack by the port side on the right when the bow is at the bottom, on the left when it is at the top', () => {
+      render(<Home />)
+      clearDemoCargo()
+      fireEvent.click(screen.getByText('Ручной'))
+      act(() => {
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: true } })
+        useCalculator.getState().addItem({ name: 'Блок', width: 2, length: 2, height: 1, quantity: 1, weight: 1000 })
+      })
+      const block = useCalculator.getState().items.find((it) => it.name === 'Блок')!
+      act(() => {
+        useCalculator.getState().addManualPlacement({ id: 'a', itemId: block.id, name: 'Блок', x: 1, y: 1, width: 2, length: 2, layers: 1, rotated: false, color: block.color })
+      })
+      const centre = () => {
+        const deckRect = document.querySelector('svg[data-deck-plan] rect[data-deck-background="true"]')!
+        return Number(deckRect.getAttribute('x')) + Number(deckRect.getAttribute('width')) / 2
+      }
+      const stackX = () => {
+        const r = document.querySelector('svg[data-deck-plan] g[data-stack-key="m-a"] rect')!
+        return Number(r.getAttribute('x')) + Number(r.getAttribute('width')) / 2
+      }
+      expect(stackX()).toBeGreaterThan(centre())
+      expect(sideEdges()).toEqual({ port: 'right', starboard: 'left', bow: 'bottom', stern: 'top' })
+      act(() => useCalculator.setState({ deck: { ...useCalculator.getState().deck, deckForwardIsPositiveY: false } }))
+      expect(stackX()).toBeLessThan(centre())
+      expect(sideEdges()).toEqual({ port: 'left', starboard: 'right', bow: 'top', stern: 'bottom' })
     })
 
     it('asks to check the bow on a library vessel whose data does not give it', () => {
@@ -1581,7 +1612,7 @@ describe('Home (page.tsx)', () => {
       clearDemoCargo()
       act(() => {
         useCalculator.setState({
-          deck: { ...useCalculator.getState().deck, unit: 'm', width: 10, length: 10, gap: 0, boardOffset: 0, clearance: 0, outline: undefined, restrictionZones: [], loadZones: [], maxDeckCargoT: 3 },
+          deck: { ...useCalculator.getState().deck, unit: 'm', width: 10, length: 10, deckForwardIsPositiveY: false, gap: 0, boardOffset: 0, clearance: 0, outline: undefined, restrictionZones: [], loadZones: [], maxDeckCargoT: 3 },
         })
         useCalculator.getState().addItem({ name: 'Блок', width: 5, length: 5, height: 1, quantity: 6, weight: 1000 })
       })
@@ -3693,8 +3724,9 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       proto.getScreenCTM = origGetScreenCTM
     }
   }
-  // Deck is fixed at 10x10 (deck units) with the default clearance for
-  // both tests below, so the same offX/offY/scale (and thus the same
+  // Deck is fixed at 10x10 (deck units), the bow at the top so that the
+  // deck's x runs left to right (deckDrawnMirrored), with the default
+  // clearance for both tests below, so the same offX/offY/scale (and thus the same
   // clientX/clientY -> deck-space mapping) applies to both. scale =
   // min((900-64)/10, (560-64)/10) = min(83.6, 49.6) = 49.6; deck not
   // "rotated" (length == width); offX = (900 - 10*49.6)/2 = 202,
@@ -3707,7 +3739,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 4, weight: 100 })
       useCalculator.getState().addItem({ name: 'B', width: 2, length: 1, height: 1, quantity: 3, weight: 200 })
     })
@@ -3773,7 +3805,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
       useCalculator.getState().addItem({ name: 'Box', width: 1, length: 1, height: 1, quantity: 2 })
     })
     openSection('Грузы')
@@ -3818,7 +3850,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
       // A: quantity 4, only 2 used by the composition -> 2 genuinely remain.
       // Pre-fix, the flat filter would have summed this ONE placement's
       // full `pin.layers` (5, the total) as "A placed", wrongly reporting
@@ -3858,7 +3890,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     clearDemoCargo()
     fireEvent.click(screen.getByText('Ручной'))
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
       useCalculator.getState().addItem({ name: 'A', width: 2, length: 1, height: 1, quantity: 6, weight: 100 })
     })
     const itemA = useCalculator.getState().items.find((it) => it.name === 'A')!
@@ -4569,7 +4601,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
   // than one distinct itemId when every constituent is pipe-shaped.
   function setupPipeDeck() {
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 25 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 25 } })
     })
   }
 
@@ -5821,7 +5853,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     render(<Home />)
     clearDemoCargo()
     act(() => {
-      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10 } })
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false } })
       useCalculator.getState().addItem({ name: 'Ящик', width: 2, length: 1, quantity: 1, height: 1 })
     })
     const item = useCalculator.getState().items[0]
@@ -5900,7 +5932,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const deckSvg = () => document.querySelector('svg[data-deck-plan]')!
     function setupAuto(extra: Partial<CargoItemLike>[] = []) {
       act(() => {
-        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
         useCalculator.getState().addItem({ name: 'BoxA', width: 2, length: 1, quantity: 1, height: 1 })
         for (const it of extra) useCalculator.getState().addItem({ width: 2, length: 1, quantity: 1, height: 1, ...it })
       })
@@ -6006,7 +6038,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       render(<Home />)
       clearDemoCargo()
       act(() => {
-        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
         useCalculator.getState().addItem({ name: 'Box', width: 2, length: 1, quantity: 5, height: 1 })
       })
       const item = useCalculator.getState().items[0]
@@ -6159,7 +6191,7 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
     const quantityOf = (name: string) => useCalculator.getState().items.find((it) => it.name === name)!.quantity
     function setup(names: string[] = ['BoxA'], quantity = 1) {
       act(() => {
-        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, clearance: 5 } })
+        useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 10, length: 10, deckForwardIsPositiveY: false, clearance: 5 } })
         for (const name of names) useCalculator.getState().addItem({ name, width: 2, length: 1, quantity, height: 1, weight: 1500 })
       })
     }

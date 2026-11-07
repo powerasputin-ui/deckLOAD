@@ -25,6 +25,10 @@ const PROBLEMS = {
     clearance: 6,
     loadZones: [{ id: 'z1', x: 0.5, y: 18, width: 7, length: 9, maxLoadPerArea: 0.3 }],
     lashingPoints: [{ id: 'l1', x: 0.4, y: 0.4, label: 'Точка 1', placementId: 'a', itemId: 'c', cornerX: 1, cornerY: 1, mslKg: 500, verticalAngleDeg: 45, deviceType: 'chain_g80_10' }],
+    // The user's own accelerations: the balance of forces is worked out,
+    // and the 500 kg point can't hold 20 t (by the CSS Code's tables it
+    // would wait for the vessel's speed and GM — decided 2026-11-07).
+    vesselMotion: { preset: 'custom', ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3 },
   },
   items: [{ id: 'c', name: 'Контейнер 20ft', width: 6.06, length: 2.44, height: 2.59, quantity: 3, color: '#0ea5e9', allowRotation: false, weight: 20000 }],
   manualPlacements: [],

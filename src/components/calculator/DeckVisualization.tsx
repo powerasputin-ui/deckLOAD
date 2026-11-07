@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, useCallback, useEffect, forwardRef } from 'r
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/ThemeProvider'
 import { THEME_TOKENS } from '@/lib/theme'
-import { deckDrawnTransposed, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix } from '@/lib/deckDrawing'
+import { deckCornerOfScreenCorner, deckDrawnMirrored, deckDrawnTransposed, footprintOutlineOnDrawing, hullSideEdges, scaleBarSteps, sideLabels, zoneLevelSuffix } from '@/lib/deckDrawing'
 import type { ObjectKind } from '@/lib/objectKind'
 import { DeckDrawingFrame, DRAWING_MARGINS_PX } from './DeckDrawingFrame'
 import { ZoomIn, ZoomOut, Maximize, Plug, Ruler, Ratio } from 'lucide-react'
@@ -18,7 +18,6 @@ import {
   erodePolygon,
   dedupePolygonVertices,
   lashingPointExclusionRects,
-  rotateOutline90,
   resolveSnappedDragPosition,
   checkZoneLoads,
   zoneIdsOverlapping,
@@ -977,6 +976,12 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // (x, y, width, length) — and everything derived from them elsewhere, e.g.
   // stability.ts's TCG/LCG — never change; only the on-screen picture does.
   const rotated = deckDrawnTransposed(deckWidth, deckLength)
+  // The deck's x runs the other way on the drawing in two of the four
+  // orientations, so the plan is the deck seen from above in all of them
+  // (deckDrawing.ts, decided 2026-11-07). Like the transpose it only moves
+  // the picture: deck-local coordinates never change.
+  const mirrored = deckDrawnMirrored(deckWidth, deckLength, deckForwardIsPositiveY)
+  const viewX = useCallback((x: number) => (mirrored ? deckWidth - x : x), [mirrored, deckWidth])
   // Room around the deck for the drawing's labels (DeckDrawingFrame), in
   // viewBox units for this window's scale: two rows on the left, the top and
   // the bottom, one on the right.
@@ -1153,9 +1158,9 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       const p = pt.matrixTransform(ctm.inverse())
       const dx = (p.x - offX) / scale
       const dy = (p.y - offY) / scale
-      return rotated ? { x: dy, y: dx } : { x: dx, y: dy }
+      return rotated ? { x: viewX(dy), y: dx } : { x: viewX(dx), y: dy }
     },
-    [offX, offY, scale, rotated]
+    [offX, offY, scale, rotated, viewX]
   )
 
   const toX = (v: number) => offX + v * scale
@@ -1163,7 +1168,10 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // Build a screen point from deck-local (x, y), applying the same transpose
   // as screenToDeck's inverse above — the single pairing point for anything
   // that currently does `{ x: toX(p.x), y: toY(p.y) }`.
-  const deckToScreen = (x: number, y: number) => ({ sx: toX(rotated ? y : x), sy: toY(rotated ? x : y) })
+  const deckToScreen = (x: number, y: number) => ({ sx: toX(rotated ? y : viewX(x)), sy: toY(rotated ? viewX(x) : y) })
+  // The top-left corner on screen of a deck-local rectangle at (x, y), `width`
+  // across: mirrored, that is its corner at x + width.
+  const rectOrigin = (x: number, y: number, width: number) => deckToScreen(mirrored ? x + width : x, y)
   const SNAP_PIXEL_RADIUS = 9
   // Every vertex worth aligning a newly-added or dragged point to: the
   // deck's own outline (if it's a custom polygon, not the plain rectangle)
@@ -1199,7 +1207,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   // put. Use this to translate a screen-visual corner key into the logical
   // (deck-space) corner key before applying x/y/width/length deltas.
   const cornerKey = (k: 'nw' | 'ne' | 'sw' | 'se'): 'nw' | 'ne' | 'sw' | 'se' =>
-    rotated ? ({ nw: 'nw', se: 'se', ne: 'sw', sw: 'ne' } as const)[k] : k
+    deckCornerOfScreenCorner(k, rotated, mirrored)
   const fmt = fmtNumber
   // ViewBox units per screen pixel: labels drawn on the deck are sized in
   // screen pixels (12 px), whatever the window and zoom.
@@ -1215,7 +1223,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
     const start = dragState?.moved ? dragState.startPlace : pinDrag?.moved ? pinDrag.startPlace : null
     const anchor = start ? { ...selectionAnchor, x: start.x, y: start.y } : selectionAnchor
     const k = measuredScreenPx * zoom
-    const { sx, sy } = deckToScreen(anchor.x, anchor.y)
+    const { sx, sy } = rectOrigin(anchor.x, anchor.y, anchor.width)
     return {
       left: (box.width - frame.w * measuredScreenPx) / 2 + (sx - pan.x) * k,
       top: (box.height - frame.h * measuredScreenPx) / 2 + (sy - pan.y) * k,
@@ -2440,7 +2448,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
       if (numbers.length === 0) return []
       const spread = pipePyramidSpreadMargin(p, p.stackedCount)
       const deckRect = { x: p.x - spread.onWidth, y: p.y - spread.onLength, width: p.width + spread.onWidth * 2, length: p.length + spread.onLength * 2 }
-      const { sx, sy } = deckToScreen(deckRect.x, deckRect.y)
+      const { sx, sy } = rectOrigin(deckRect.x, deckRect.y, deckRect.width)
       return [
         {
           key: stackKeyOf(p, idx),
@@ -2624,7 +2632,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             pointer-events stay off unless the position/scale editor is
             armed, so it never intercepts ordinary cargo-placement clicks. */}
         {backgroundImage && effectiveBgRect && (() => {
-          const { sx, sy } = deckToScreen(effectiveBgRect.x, effectiveBgRect.y)
+          const { sx, sy } = rectOrigin(effectiveBgRect.x, effectiveBgRect.y, effectiveBgRect.width)
           const bw = screenSpanW(effectiveBgRect.width, effectiveBgRect.length)
           const bh = screenSpanH(effectiveBgRect.width, effectiveBgRect.length)
           return (
@@ -2774,7 +2782,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {loadZones?.map((z) => {
           const zw = screenSpanW(z.width, z.length)
           const zh = screenSpanH(z.width, z.length)
-          const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
+          const { sx: zx, sy: zy } = rectOrigin(z.x, z.y, z.width)
           const isSelected = selectedZoneId === z.id
           const interactive = !!onUpdateLoadZone
           // Carrying more than its limit (spec 6.3): hatched red — the stacks
@@ -2849,7 +2857,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 ? selectedManualIds?.includes(p.manualId ?? '') ?? false
                 : !!placementId && selectedPinIds.includes(placementId)
             const canDrag = isSelected && !!placementId
-            const { sx: zx, sy: zy } = deckToScreen(p.x - margin.left, p.y - margin.top)
+            const { sx: zx, sy: zy } = rectOrigin(p.x - margin.left, p.y - margin.top, p.width + margin.left + margin.right)
             const zw = screenSpanW(p.width + margin.left + margin.right, p.length + margin.top + margin.bottom)
             const zh = screenSpanH(p.width + margin.left + margin.right, p.length + margin.top + margin.bottom)
             const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
@@ -2901,7 +2909,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
         {restrictionZones?.map((z) => {
           const poly = restrictionZonePolygon(z)
           const points = poly.map((p) => { const { sx, sy } = deckToScreen(p.x, p.y); return `${sx},${sy}` }).join(' ')
-          const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
+          const { sx: zx, sy: zy } = rectOrigin(z.x, z.y, z.width)
           const zw = screenSpanW(z.width, z.length)
           const zh = screenSpanH(z.width, z.length)
           const isSelected = selectedRestrictionZoneId === z.id
@@ -3317,7 +3325,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             visual boundary so the rect's current extent is legible even
             past the deck's own edges. */}
         {editingBackgroundImage && effectiveBgRect && (() => {
-          const { sx, sy } = deckToScreen(effectiveBgRect.x, effectiveBgRect.y)
+          const { sx, sy } = rectOrigin(effectiveBgRect.x, effectiveBgRect.y, effectiveBgRect.width)
           const bw = screenSpanW(effectiveBgRect.width, effectiveBgRect.length)
           const bh = screenSpanH(effectiveBgRect.width, effectiveBgRect.length)
           const corners: { key: 'nw' | 'ne' | 'sw' | 'se'; cx: number; cy: number }[] = [
@@ -3543,7 +3551,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           // actually sits.
           const drawX = renderX - spreadMargin.onWidth
           const drawY = renderY - spreadMargin.onLength
-          const { sx: drawSx, sy: drawSy } = deckToScreen(drawX, drawY)
+          const { sx: drawSx, sy: drawSy } = rectOrigin(drawX, drawY, visWidth)
           return (
             <PlacedRect
               key={stackKeyOf(p, idx)}
@@ -3559,6 +3567,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               h={itemPh}
               scale={scale}
               deckTransposed={rotated}
+              deckMirrored={mirrored}
               hovered={isHover}
               selected={isSelected}
               selectionColor={palette.accent}
@@ -3611,7 +3620,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             const withLevel = limit + zoneLevelSuffix(z.elevationM)
             const text = fits(withLevel) ? withLevel : limit
             if (!fits(text) || zh <= 18 * labelPx) return null
-            const { sx: zx, sy: zy } = deckToScreen(z.x, z.y)
+            const { sx: zx, sy: zy } = rectOrigin(z.x, z.y, z.width)
             return (
               <text
                 key={`zone-label-${z.id}`}
@@ -3658,7 +3667,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const spread = pipePyramidSpreadMargin(p, p.stackedCount)
           const visWidth = p.width + spread.onWidth * 2
           const visLength = p.length + spread.onLength * 2
-          const { sx, sy } = deckToScreen(p.x - spread.onWidth, p.y - spread.onLength)
+          const { sx, sy } = rectOrigin(p.x - spread.onWidth, p.y - spread.onLength, p.width + spread.onWidth * 2)
           const fontSize = 12 * labelPx
           return (
             <g key={`label-over-${key}`} data-stack-label="over" data-stack-keys={key}>
@@ -3960,7 +3969,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             mode === 'manual' ? manualPlacements : pinnedPlacements
           const target = placements.find((p) => p.id === mergeTargetId)
           if (!target) return null
-          const { sx, sy } = deckToScreen(target.x, target.y)
+          const { sx, sy } = rectOrigin(target.x, target.y, target.width)
           const tw = screenSpanW(target.width, target.length)
           const th = screenSpanH(target.width, target.length)
           const fontSize = 12 * labelPx
@@ -3983,7 +3992,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
             with the reason over it, where a click would be refused. */}
         {activeStamp && stampDims && hoverPos && !dragState && (() => {
           const clamped = stampCornerAt(hoverPos, stampDims)
-          const { sx: stampSx, sy: stampSy } = deckToScreen(clamped.x, clamped.y)
+          const { sx: stampSx, sy: stampSy } = rectOrigin(clamped.x, clamped.y, stampDims.w)
           const tw = screenSpanW(stampDims.w, stampDims.l)
           const th = screenSpanH(stampDims.w, stampDims.l)
           const geometric = placementProblem(stampTarget(clamped), stampSurroundings())
@@ -4012,6 +4021,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               outline={activeStamp.outline}
               rotated={stampTurned}
               scale={scale}
+              deckView={{ transposed: rotated, mirrored }}
             />
             {problem && (
               <g data-stamp-problem={problem}>
@@ -4291,6 +4301,7 @@ function FootprintShape({
   pipeDivideAxis,
   px,
   detail = true,
+  deckView = { transposed: false, mirrored: false },
 }: {
   shape?: PlacedItem['shape']
   x: number
@@ -4303,10 +4314,9 @@ function FootprintShape({
   strokeWidth: number
   strokeDasharray?: string
   // Custom hand-drawn shapes: `outline` is the local, UNROTATED silhouette
-  // (spans [0,origWidth]x[0,origLength]); `w`/`h` here are always the
-  // POST-rotation bbox in screen px, so the original box is recovered by
-  // swapping when `rotated` — same logic worldPolygon uses, kept in sync by
-  // sharing rotateOutline90 rather than re-deriving it.
+  // in deck units (spans [0,origWidth]x[0,origLength]); `w`/`h` here are the
+  // drawn box in screen px. footprintOutlineOnDrawing turns it as the
+  // packer's worldPolygon does and lays it on the box as the deck is drawn.
   outline?: { x: number; y: number }[]
   rotated?: boolean
   scale?: number
@@ -4321,6 +4331,10 @@ function FootprintShape({
   px?: number
   // The outline alone (the selection's halo draws the shape a second time).
   detail?: boolean
+  // How the deck is drawn: a shape not symmetric both ways (a drawn
+  // outline, a triangle) goes through the same transpose and mirror as the
+  // deck (footprintOutlineOnDrawing, decided 2026-11-07).
+  deckView?: { transposed: boolean; mirrored: boolean }
 }) {
   const common = { fill, fillOpacity, stroke, strokeWidth, strokeDasharray }
   // A drum standing on its end is round from above.
@@ -4361,10 +4375,9 @@ function FootprintShape({
     )
   }
   if (shape === 'custom' && outline && outline.length >= 3 && scale) {
-    const origWidth = rotated ? h / scale : w / scale
-    const origLength = rotated ? w / scale : h / scale
-    const local = rotated ? rotateOutline90(outline, origWidth, origLength) : outline
-    const points = local.map((p) => `${x + p.x * scale},${y + p.y * scale}`).join(' ')
+    const points = footprintOutlineOnDrawing(outline, { x, y, w, h }, scale, deckView, !!rotated)
+      .map((p) => `${p.x},${p.y}`)
+      .join(' ')
     return <polygon points={points} strokeLinejoin="round" {...common} />
   }
   if (shape === 'circle' || shape === 'oval') {
@@ -4373,22 +4386,23 @@ function FootprintShape({
   if (shape === 'triangle') {
     // Unlike the box/diamond/ellipse cases, an apex-up triangle is NOT
     // symmetric under a 90° turn — redrawing the same "apex at top-center,
-    // base at bottom" formula with w/h merely swapped (what a naive port of
-    // the box case would do) produces a squashed/stretched apex-up triangle
-    // instead of an actually-rotated (apex-sideways) one, which reads as a
-    // different shape and size entirely. Define the triangle once in its
-    // own unrotated local frame and reuse rotateOutline90 (the same helper
-    // the custom-outline branch above already relies on) to get the real
-    // rotated silhouette.
-    const origW = rotated ? h : w
-    const origL = rotated ? w : h
+    // base at bottom" formula with w/h merely swapped would draw a different
+    // shape. It is defined once in its own unturned frame on the deck — its
+    // apex toward the deck's y = 0, as the packer's polygon has it — turned
+    // as the cargo stands, and laid on the drawing as the deck is.
+    const k = scale ?? 1
+    const across = (deckView.transposed ? h : w) / k
+    const along = (deckView.transposed ? w : h) / k
+    const origW = rotated ? along : across
+    const origL = rotated ? across : along
     const local: { x: number; y: number }[] = [
       { x: origW / 2, y: 0 },
       { x: 0, y: origL },
       { x: origW, y: origL },
     ]
-    const pts = rotated ? rotateOutline90(local, origW, origL) : local
-    const points = pts.map((p) => `${x + p.x},${y + p.y}`).join(' ')
+    const points = footprintOutlineOnDrawing(local, { x, y, w, h }, k, deckView, !!rotated)
+      .map((p) => `${p.x},${p.y}`)
+      .join(' ')
     return <polygon points={points} strokeLinejoin="round" {...common} />
   }
   if (shape === 'diamond') {
@@ -4431,6 +4445,7 @@ function PlacedRect({
   dimmed,
   scale,
   deckTransposed,
+  deckMirrored,
 }: {
   stackKey: string
   // Where its label goes (labelLayout.ts): written here when it fits.
@@ -4454,6 +4469,8 @@ function PlacedRect({
   // stack on a transposed (real-ship-shaped) deck divides along the wrong
   // side.
   deckTransposed?: boolean
+  // The deck's x runs against the screen (deckDrawnMirrored).
+  deckMirrored?: boolean
   hovered: boolean
   // «Вид» → «Названия грузов»: the name under the number, where it fits.
   showLabels: boolean
@@ -4590,6 +4607,7 @@ function PlacedRect({
             outline={item.outline}
             rotated={item.rotated}
             scale={scale}
+            deckView={{ transposed: !!deckTransposed, mirrored: !!deckMirrored }}
             detail={false}
           />
         </g>
@@ -4608,6 +4626,7 @@ function PlacedRect({
         outline={item.outline}
         rotated={item.rotated}
         scale={scale}
+        deckView={{ transposed: !!deckTransposed, mirrored: !!deckMirrored }}
         pipeRowCount={pipeSpread?.rowCount ?? nestSpread?.pipesPerRow}
         pipeDivideAxis={pipeSpread?.axis ?? nestSpread?.axis}
         px={labelPx}

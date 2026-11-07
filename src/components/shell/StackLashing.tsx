@@ -165,13 +165,16 @@ export function StackLashing({
       {zoned ? (
         <div className="space-y-1">
           <p className="text-xs text-ink-2">Свободное место вокруг штабеля: другой груз ближе не встанет</p>
+          {/* By the hull's sides, not the screen's: the plan turns with the
+              bow (decided 2026-11-07). The margin's top and bottom are the
+              deck's ends, its left and right the deck's port and starboard. */}
           <div className="grid grid-cols-2 gap-1">
             {(
               [
-                ['top', 'Верх'],
-                ['right', 'Право'],
-                ['bottom', 'Низ'],
-                ['left', 'Лево'],
+                ['left', 'Левый борт'],
+                ['right', 'Правый борт'],
+                ['bottom', forward ? 'Нос' : 'Корма'],
+                ['top', forward ? 'Корма' : 'Нос'],
               ] as const
             ).map(([side, label]) => (
               <SideField key={side} label={label} unit={u} value={placement.clearanceMargin?.[side] ?? 0} onCommit={(v) => setSide(side, v)} />

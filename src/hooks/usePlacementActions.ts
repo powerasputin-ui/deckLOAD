@@ -427,7 +427,7 @@ export function usePlacementActions({
       else if (e.key === 'ArrowDown') sy = 1
       else if (!isSpace) return
       const step = convertLength(e.shiftKey ? NUDGE_STEP_BIG_M : NUDGE_STEP_M, 'm', deck.unit)
-      const { dx, dy } = drawingToDeckMove(sx * step, sy * step, deck.width, deck.length)
+      const { dx, dy } = drawingToDeckMove(sx * step, sy * step, deck.width, deck.length, deck.deckForwardIsPositiveY ?? true)
 
       // A purely auto-placed stack selected (no pin yet): the key changes
       // it, so it's pinned first and the change follows (actOnAutoStack).
