@@ -262,7 +262,7 @@ describe('buildPlanPdf', () => {
     expect(model.trips).toHaveLength(1)
     const sheet = model.trips[0]
     expect(sheet.title).toBe('Рейс 1 из 1')
-    expect(CARGO_HEAD_FOR('м')).toEqual(['№', 'Груз', 'Кол-во, шт', 'Д×Ш×В, м', 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей'])
+    expect(CARGO_HEAD_FOR('м')).toEqual(['№', 'Груз', 'Кол-во, шт', 'Вдоль×поперёк×выс., м', 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей'])
     expect(sheet.cargo.map((r) => r.cells)).toEqual([
       ['1', 'Контейнер 20ft', '4', '2.44×6.06×2.59', '2.2', '8.8', '1', '4'],
       ['2', 'Паллета EUR', '12', '0.8×1.2×1.5', '0.5', '6', '1', '12'],

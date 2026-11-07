@@ -48,6 +48,17 @@ describe('section marks', () => {
     expect(sectionMarks({ ...base, checks: { errors: 0, warnings: 0 } }).checks.kind).toBe('none')
   })
 
+  // Decided 2026-11-07: the demo had 5 of 6 checks «—» under a green tick.
+  it('«Проверки» gets no tick while a check is left undone for lack of data', () => {
+    const items = [{ quantity: 1 }]
+    expect(sectionMarks({ ...base, items, checks: { errors: 0, warnings: 0, unchecked: 5 } }).checks).toEqual({ kind: 'unchecked', count: 5 })
+    // ✕ and ⚠ say more, so they go first.
+    expect(sectionMarks({ ...base, items, checks: { errors: 0, warnings: 1, unchecked: 5 } }).checks).toEqual({ kind: 'warnings', count: 1 })
+    expect(sectionMarks({ ...base, items, checks: { errors: 0, warnings: 0, unchecked: 0 } }).checks.kind).toBe('done')
+    // Without cargo there is nothing checked yet: no mark at all.
+    expect(sectionMarks({ ...base, checks: { errors: 0, warnings: 0, unchecked: 5 } }).checks.kind).toBe('none')
+  })
+
   it('«Проверки» shows ✕ and ⚠ without cargo too, as the status line does', () => {
     expect(sectionMarks({ ...base, checks: { errors: 0, warnings: 1 } }).checks).toEqual({ kind: 'warnings', count: 1 })
   })

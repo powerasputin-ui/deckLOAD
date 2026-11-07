@@ -1,6 +1,6 @@
 'use client'
 
-import { Box, Check, CircleX, Download, MousePointerClick, Redo2, Square, TriangleAlert, Undo2, Wand2 } from 'lucide-react'
+import { Box, Check, CircleX, Download, Minus, MousePointerClick, Redo2, Square, TriangleAlert, Undo2, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { SECTION_ORDER, sectionTitle, type SectionId, type SectionMark } from '@/lib/workflow'
@@ -141,6 +141,18 @@ function MarkBadge({ mark }: { mark: SectionMark }) {
         <span aria-hidden="true">{mark.count}</span>
         <span className="sr-only">
           — {mark.count} {pluralRu(mark.count, 'ошибка', 'ошибки', 'ошибок')}
+        </span>
+      </span>
+    )
+  }
+  if (mark.kind === 'unchecked') {
+    // «—» as the list shows a check not made, with how many.
+    return (
+      <span className="flex items-center gap-0.5 text-ink-2">
+        <Minus className="h-4 w-4" aria-hidden="true" />
+        <span aria-hidden="true">{mark.count}</span>
+        <span className="sr-only">
+          — {mark.count} {pluralRu(mark.count, 'проверка не выполнена', 'проверки не выполнены', 'проверок не выполнено')}
         </span>
       </span>
     )

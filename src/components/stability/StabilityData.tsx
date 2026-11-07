@@ -28,6 +28,7 @@ import {
 import { parseKnTable } from '@/lib/tablePaste'
 import { appliedVessel } from '@/lib/vesselLibrary'
 import { DRAWING_EDGE_WORD, hullSideEdges } from '@/lib/deckDrawing'
+import { DEFAULT_LIST_WARN_DEG } from '@/lib/stabilityConditions'
 import { cn, fmtNumber, pluralRu } from '@/lib/utils'
 
 const EMPTY_VESSEL: VesselStabilityData = { particulars: DEFAULT_VESSEL_PARTICULARS, hydrostatics: { points: [] }, variableWeights: [] }
@@ -191,10 +192,21 @@ function VesselGroup({ particulars: p, open }: { particulars: VesselParticulars;
           onCommit={(v) => set({ downfloodingAngleDeg: v })}
           onClear={() => set({ downfloodingAngleDeg: undefined })}
         />
+        <NumberInput
+          label="Наибольший крен"
+          unit="°"
+          value={p.maxListDeg}
+          min={0}
+          max={30}
+          placeholder={`${DEFAULT_LIST_WARN_DEG}° — порог`}
+          onCommit={(v) => set({ maxListDeg: v })}
+          onClear={() => set({ maxListDeg: undefined })}
+        />
       </div>
       <Hint>
         Длина L — для воды в трубах, без неё берётся LBP, и воды выходит меньше. Предельная осадка — летняя, по свидетельству о грузовой марке.
-        Угол заливания ограничивает площади под кривой GZ в справке по KN.
+        Угол заливания ограничивает площади под кривой GZ в справке по KN. Наибольший крен — по документам судна или компании: больше него —
+        ошибка; без него крен больше {DEFAULT_LIST_WARN_DEG}° — предупреждение (в IS Code предела крена нет).
       </Hint>
       <SelectField
         label="Критерии для справки по KN"

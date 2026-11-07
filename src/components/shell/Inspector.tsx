@@ -24,7 +24,8 @@ export interface InspectedStack {
   kind: 'pin' | 'auto' | 'manual'
   name: string
   number?: number
-  // «6.06 × 2.44 × 2.59 м», the cargo's own width × length × height.
+  // «2.44 × 6.06 × 2.59 м»: along the vessel × across × height, as the
+  // cargo table has it (decided 2026-11-07; it was width first here).
   size: string
   // The cargo's category, «Смешанный груз» for a stack of different ones.
   category?: string
@@ -32,6 +33,9 @@ export interface InspectedStack {
   stackWeight: string
   layers: number
   maxLayers: number
+  // A pile of pipes (decided 2026-11-07): its units are pipes, not tiers —
+  // 20 pipes lie in 5 tiers, as its label on the deck says («5 яр.»).
+  pipes?: { tiers: number }
   // A cargo in it doesn't allow rotation (spec 6.3).
   rotate: { ok: boolean; reason?: string }
   addLayer: { ok: boolean; reason?: string }
@@ -49,6 +53,13 @@ export interface InspectedStack {
   units: number
   // What is wrong with this stack, in a line each.
   problems: string[]
+}
+
+// The words for a stack's units: tiers of cargo, or the pipes of a pile.
+export function stackUnitWords(stack: Pick<InspectedStack, 'pipes'>) {
+  return stack.pipes
+    ? { title: 'Трубы в куче', add: 'Добавить трубу', remove: 'Убрать трубу', count: (n: number) => pluralRu(n, 'труба', 'трубы', 'труб') }
+    : { title: 'Ярусы', add: 'Добавить ярус', remove: 'Убрать ярус', count: (n: number) => pluralRu(n, 'ярус', 'яруса', 'ярусов') }
 }
 
 // What can be done with the selected stack. «Закрепить» and «Вернуть в
@@ -211,6 +222,7 @@ function StackDetails({
   onClose: () => void
 }) {
   const auto = stack.kind !== 'manual'
+  const words = stackUnitWords(stack)
   return (
     <>
       <Header onClose={onClose}>
@@ -226,7 +238,7 @@ function StackDetails({
 
       <div className="thin-scrollbar flex-1 overflow-y-auto">
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 border-b px-4 py-3 text-sm">
-          <dt className="text-ink-2">Ш × Д × В</dt>
+          <dt className="text-ink-2">Вдоль × поперёк × выс.</dt>
           <dd className="tabular-nums">{stack.size}</dd>
           {stack.category && (
             <>
@@ -246,14 +258,14 @@ function StackDetails({
 
         <PositionFields position={stack.position} moveTo={actions.moveTo} />
 
-        <section className="space-y-1.5 border-b px-4 py-3" aria-label="Ярусы">
+        <section className="space-y-1.5 border-b px-4 py-3" aria-label={words.title}>
           <div className="flex items-center gap-2">
-            <span className="flex-1 text-sm font-medium">Ярусы</span>
+            <span className="flex-1 text-sm font-medium">{words.title}</span>
             <Button
               variant="outline"
               size="icon"
               className="h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11"
-              aria-label="Убрать ярус"
+              aria-label={words.remove}
               disabled={!stack.removeLayer.ok}
               onClick={actions.removeLayer}
             >
@@ -266,14 +278,18 @@ function StackDetails({
               variant="outline"
               size="icon"
               className="h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11"
-              aria-label="Добавить ярус"
+              aria-label={words.add}
               disabled={!stack.addLayer.ok}
               onClick={actions.addLayer}
             >
               <Plus className="h-4 w-4" />
             </Button>
           </div>
-          <p className="text-xs text-ink-2">макс. {stack.maxLayers} по высоте</p>
+          <p className="text-xs text-ink-2" data-testid="stack-units-hint">
+            {stack.pipes
+              ? `${stack.pipes.tiers} ${pluralRu(stack.pipes.tiers, 'ярус', 'яруса', 'ярусов')} · макс. ${stack.maxLayers} ${words.count(stack.maxLayers)} по высоте`
+              : `макс. ${stack.maxLayers} по высоте`}
+          </p>
           {!stack.addLayer.ok && stack.addLayer.reason && <p className="text-xs text-ink-2">{stack.addLayer.reason}</p>}
         </section>
 
@@ -286,7 +302,7 @@ function StackDetails({
                   {c.number !== undefined && <CargoNumberTile number={c.number} className="h-5 min-w-5 px-1 text-xs" />}
                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
                   <span className="tabular-nums text-ink-2">
-                    {c.layers} {pluralRu(c.layers, 'ярус', 'яруса', 'ярусов')}
+                    {c.layers} {words.count(c.layers)}
                   </span>
                 </li>
               ))}

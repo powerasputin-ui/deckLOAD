@@ -20,8 +20,6 @@ import {
   computeFootprintPressures,
   zoneAreaWithinOutline,
   zoneIdsOverlapping,
-  checkLashingBalance,
-  CSS_SAFETY_FACTOR,
   requiredLashingCount,
   lashingMethodologyFor,
   assessLashingRequirement,
@@ -44,8 +42,6 @@ import {
   restrictionZoneExclusions,
   erodePolygon,
   dedupePolygonVertices,
-  DEFAULT_VESSEL_MOTION,
-  VESSEL_MOTION_PRESETS,
   decomposePipePyramid,
   isPipeShape,
   pipePyramidSpreadMargin,
@@ -58,7 +54,6 @@ import {
   type PinnedPlacement,
   type LoadZone,
   type SeparationRule,
-  type LashingPoint,
   type RestrictionZone,
   computeGridStep,
 } from './packing'
@@ -2497,77 +2492,6 @@ describe('assessLashingRequirement', () => {
   it('dangerous-goods categories: still not-applicable (not insufficient-data) even with no weight/BL at all', () => {
     const a = assessLashingRequirement('Взрывоопасный', 0, 0)
     expect(a.status).toBe('not-applicable')
-  })
-})
-
-describe('checkLashingBalance', () => {
-  const placement = { x: 0, y: 0, width: 2, length: 2, weight: 2000 }
-  const lashing = (partial: Partial<LashingPoint> & { id: string }): LashingPoint => ({
-    x: -5, y: 0, cornerX: 0, cornerY: 0, verticalAngleDeg: 0, mslKg: 300, ...partial,
-  })
-
-  it('returns null when nothing is attached (unsecured cargo is informational, not a failure)', () => {
-    expect(checkLashingBalance(placement, [], DEFAULT_VESSEL_MOTION)).toBeNull()
-    expect(
-      checkLashingBalance(placement, [{ id: 'l1', x: 1, y: 1 }], DEFAULT_VESSEL_MOTION)
-    ).toBeNull()
-  })
-
-  it('passes when friction + lashing MSL comfortably covers the required force', () => {
-    const lashings = [lashing({ id: 'l1' }), lashing({ id: 'l2', x: 0, y: -5, cornerX: 0, cornerY: 0 })]
-    const result = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
-    expect(result).not.toBeNull()
-    expect(result!.ok).toBe(true)
-  })
-
-  it('fails when a single weak lashing cannot cover the required force even with friction', () => {
-    const weak = [lashing({ id: 'l1', mslKg: 1 })]
-    const heavy = { ...placement, weight: 100000 }
-    const result = checkLashingBalance(heavy, weak, DEFAULT_VESSEL_MOTION)
-    expect(result).not.toBeNull()
-    expect(result!.ok).toBe(false)
-  })
-
-  // CSS Code Annex 13: a device counts at CS = MSL / 1.5. 2000 kg under
-  // «coastal» needs 700 kg across; friction gives 600 kg, so a horizontal
-  // lashing must give 100 kg — an MSL of 150 kg, not 100.
-  it('counts each lashing at its calculated strength, MSL / 1.5', () => {
-    const across = (mslKg: number) => checkLashingBalance(placement, [lashing({ id: 'l1', mslKg })], DEFAULT_VESSEL_MOTION)!.transverse
-    expect(CSS_SAFETY_FACTOR).toBe(1.5)
-    expect(across(150).availableKg).toBeCloseTo(700, 6)
-    expect(across(149).ok).toBe(false)
-    expect(across(151).ok).toBe(true)
-  })
-
-  it('a marginal transverse case passes under "coastal" but fails under "open-sea" (higher ay)', () => {
-    const lashings = [lashing({ id: 'l1' })]
-    const coastal = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
-    const openSea = checkLashingBalance(placement, lashings, { ...VESSEL_MOTION_PRESETS['open-sea'], preset: 'open-sea' })
-    expect(coastal!.transverse.ok).toBe(true)
-    expect(openSea!.transverse.ok).toBe(false)
-  })
-
-  // REGRESSION: `weight` on a placement is per-unit; `layers` says how many
-  // units share this footprint (see PlacedItem.weight's doc comment in
-  // packing.ts). Before this fix, `layers` wasn't part of the parameter
-  // type at all — a 3-tier stack's real inertial force (3x one unit's) was
-  // checked against only 1x, so an under-secured multi-tier stack could
-  // read "ok: true" when it genuinely wasn't. A single lashing point that
-  // is only barely enough for ONE unit must fail once the same footprint
-  // is declared as a multi-tier stack.
-  it("a lashing barely sufficient for ONE tier fails once `layers` says the stack is taller (real weight is layers×heavier)", () => {
-    const oneLashing = [lashing({ id: 'l1', mslKg: 250 })]
-    const singleTier = checkLashingBalance({ ...placement, weight: 2000, layers: 1 }, oneLashing, DEFAULT_VESSEL_MOTION)
-    const threeTier = checkLashingBalance({ ...placement, weight: 2000, layers: 3 }, oneLashing, DEFAULT_VESSEL_MOTION)
-    expect(singleTier!.ok).toBe(true)
-    expect(threeTier!.ok).toBe(false)
-  })
-
-  it('omitting `layers` entirely still works and behaves as a single tier (backward-compatible default)', () => {
-    const lashings = [lashing({ id: 'l1' })]
-    const withoutLayers = checkLashingBalance(placement, lashings, DEFAULT_VESSEL_MOTION)
-    const withLayersOne = checkLashingBalance({ ...placement, layers: 1 }, lashings, DEFAULT_VESSEL_MOTION)
-    expect(withoutLayers).toEqual(withLayersOne)
   })
 })
 

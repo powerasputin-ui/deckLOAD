@@ -24,7 +24,7 @@ const old: DeckConfig = {
   annotations: [{ id: 'a', kind: 'note', text: 'Кран', x: 1, y: 1 }],
   backgroundImage: 'data:image/jpeg;base64,AAAA',
   backgroundImageOpacity: 0.5,
-  vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
+  vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'custom' },
   icing: true,
   deckStrengthChoiceTPerM2: 5,
   vesselTemplateId: 'old',

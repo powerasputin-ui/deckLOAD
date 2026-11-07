@@ -232,26 +232,31 @@ function normalizeLoadZones(value: unknown): DeckConfig['loadZones'] {
   return zones.length > 0 ? zones : undefined
 }
 
-const VALID_VESSEL_MOTION_PRESETS = new Set<VesselMotionPreset>(['open-sea', 'coastal', 'sheltered', 'custom'])
-
-// Coerce persisted vessel motion (acceleration coefficients + friction used
-// by the lashing check) — was never added to this allowlist, so it silently
-// vanished on the very next project reload even though the feature itself
-// worked fine in the same session (same bug class as loadZones/outline
-// above before those were fixed).
+// Coerce persisted vessel motion (the accelerations and friction the
+// lashing check is judged for) — was never added to this allowlist once, so
+// it silently vanished on the very next project reload even though the
+// feature itself worked fine in the same session (same bug class as
+// loadZones/outline above before those were fixed).
+//
+// Decided 2026-11-07: the three presets a calculation could carry — open
+// sea, coastal, sheltered — were no rule's figures; a calculation that had
+// one is judged by the CSS Code's annex 13 instead. The user's own
+// accelerations stay theirs.
 function normalizeVesselMotion(value: unknown): DeckConfig['vesselMotion'] {
   if (!value || typeof value !== 'object') return undefined
   const vm = value as Record<string, unknown>
-  const preset =
-    typeof vm.preset === 'string' && VALID_VESSEL_MOTION_PRESETS.has(vm.preset as VesselMotionPreset)
-      ? (vm.preset as VesselMotionPreset)
-      : 'coastal'
+  const preset: VesselMotionPreset = vm.preset === 'custom' ? 'custom' : 'css'
+  const positive = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
   return {
-    ax: toFiniteNonNegative(vm.ax, 0.2),
-    ay: toFiniteNonNegative(vm.ay, 0.35),
-    az: toFiniteNonNegative(vm.az, 0.2),
-    friction: toFiniteNonNegative(vm.friction, 0.3),
     preset,
+    ax: preset === 'custom' ? toFiniteNonNegative(vm.ax, 0) : 0,
+    ay: preset === 'custom' ? toFiniteNonNegative(vm.ay, 0) : 0,
+    az: preset === 'custom' ? toFiniteNonNegative(vm.az, 0) : 0,
+    friction: toFiniteNonNegative(vm.friction, 0.3),
+    speedKn: positive(vm.speedKn),
+    lengthM: positive(vm.lengthM),
+    breadthM: positive(vm.breadthM),
+    gmM: positive(vm.gmM),
   }
 }
 
@@ -321,6 +326,7 @@ function normalizeVesselParticulars(value: unknown): VesselStabilityData['partic
     windageLeverM: typeof p.windageLeverM === 'number' && Number.isFinite(p.windageLeverM) ? p.windageLeverM : undefined,
     blockCoefficient: typeof p.blockCoefficient === 'number' && Number.isFinite(p.blockCoefficient) ? p.blockCoefficient : undefined,
     maxDraftM: toOptionalPositive(p.maxDraftM),
+    maxListDeg: toOptionalPositive(p.maxListDeg),
     loadLineLengthM: toOptionalPositive(p.loadLineLengthM),
     criteriaSet: p.criteriaSet === 'is-code-a' || p.criteriaSet === 'osv-b245' ? p.criteriaSet : undefined,
     otherExposedDeckAreaM2: toOptionalNonNegative(p.otherExposedDeckAreaM2),

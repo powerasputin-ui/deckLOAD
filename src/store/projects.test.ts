@@ -316,7 +316,7 @@ describe('projects store', () => {
         annotations: [{ id: 'a1', x: 6, y: 3, text: 'Осторожно', kind: 'note', leaderX: 5, leaderY: 2 }],
         maxDeckCargoT: 2550,
         tenFootContainerCapacity: 14,
-        vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' },
+        vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.25, preset: 'custom', speedKn: 12 },
       },
       items: [
         { id: 'i1', name: 'Груз', width: 1, length: 1, height: 0, quantity: 1, color: '#0ea5e9', allowRotation: true, category: 'hazard' },
@@ -357,7 +357,7 @@ describe('projects store', () => {
     expect(reloaded.deck.tenFootContainerCapacity).toBe(14)
     expect(reloaded.items[0].category).toBe('hazard')
     expect(reloaded.separationRules).toEqual([{ id: 'r1', categoryA: 'hazard', categoryB: 'standard', minDistance: 5 }])
-    expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' })
+    expect(reloaded.deck.vesselMotion).toEqual({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.25, preset: 'custom', speedKn: 12, lengthM: undefined, breadthM: undefined, gmM: undefined })
   })
 
   // Spec 2026-11-06, 9: a platform keeps its kind and its cargo's status
@@ -1052,6 +1052,30 @@ describe('projects store', () => {
     useProjects.getState().hydrate()
     const reloaded = useProjects.getState().projects[0]
     expect(reloaded.deck.annotations).toEqual([{ id: 'a1', x: 2, y: 2, text: 'Осторожно', kind: undefined, leaderX: undefined, leaderY: undefined }])
+  })
+
+  // Decided 2026-11-07: the old presets were no rule's figures.
+  it('reads an old preset — open sea, coastal, sheltered — as the CSS Code\'s annex 13, keeping the friction', () => {
+    useProjects.getState().hydrate()
+    const project = useProjects.getState().projects[0]
+    useProjects.getState().saveSnapshot({
+      id: project.id,
+      deck: { width: 20, length: 8, unit: 'm', gap: 0.1, boardOffset: 0.2, clearance: 0, vesselMotion: { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.2, preset: 'open-sea' as never } },
+      items: [],
+      manualPlacements: [],
+      pinnedPlacementsByTrip: {},
+      separationRules: [],
+      mode: 'auto',
+      sortStrategy: 'area-desc',
+      globalRotation: true,
+      showFreeSpace: true,
+      showGrid: true,
+      showLabels: true,
+      showCargoContents: true,
+    })
+    useProjects.setState({ projects: [], activeId: null, hydrated: false })
+    useProjects.getState().hydrate()
+    expect(useProjects.getState().projects[0].deck.vesselMotion).toMatchObject({ preset: 'css', ax: 0, ay: 0, az: 0, friction: 0.2 })
   })
 
   it('falls back to a valid default when vesselMotion is absent or malformed', () => {

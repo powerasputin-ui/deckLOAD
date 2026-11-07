@@ -92,7 +92,7 @@ test('A.5: lashing — in the inspector, the deck\'s own points in «Судно�
   await page.keyboard.press('Escape')
   await openSection(page, 'Судно')
   await expect(section(page, 'Точки крепления на палубе').getByRole('button', { name: 'Поставить точку' })).toBeVisible()
-  await expect((await openCheck(page, 'lashing')).getByLabel('Условия плавания')).toBeVisible()
+  await expect((await openCheck(page, 'lashing')).getByLabel('Ускорения для крепления')).toBeVisible()
 })
 
 test('A.6: the bow with the deck; the vessel\'s data in the stability workspace', async ({ page }) => {

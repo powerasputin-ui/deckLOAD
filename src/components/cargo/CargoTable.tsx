@@ -14,6 +14,7 @@ import { closeCalculatorHistoryStep, undoCalculator, useCalculator, UNIT_LABEL, 
 import type { CargoItem, PlacedItem } from '@/lib/packing'
 import { cargoTotals, DEFAULT_CATEGORIES, LAYERS_RULE, placedByItem, rangeOf, SIZE_AXES } from '@/lib/cargoTable'
 import { isPipeCargo } from '@/lib/stabilityConditions'
+import { pipeHeavierThanSteel } from '@/lib/cargoValidation'
 import { cn, fmtNumber, fmtTonnes, pluralRu } from '@/lib/utils'
 
 // The cargo table (spec 7.4): every cargo with all its fields, edited like a
@@ -244,7 +245,7 @@ export function CargoTable({
                 )}
                 <th scope="col" className="w-56 px-1 py-1.5 text-right font-medium">
                   <abbr title={SIZE_AXES} className="no-underline">
-                    Д×Ш×В, {u}
+                    Вдоль × поперёк × выс., {u}
                   </abbr>
                 </th>
                 <th scope="col" className="w-20 px-1 py-1.5 text-right font-medium">Вес ед., т</th>
@@ -298,13 +299,13 @@ export function CargoTable({
                       <td className="px-1 py-1">
                         <div className="flex items-start gap-1">
                           <div className="flex-1">
-                            {numberCell(row, 'length', 'Длина', it.length, (v) => updateItem(it.id, { length: v }), { min: 0.01 })}
+                            {numberCell(row, 'length', 'Вдоль', it.length, (v) => updateItem(it.id, { length: v }), { min: 0.01 })}
                           </div>
                           <span className="pt-1 text-ink-2" aria-hidden="true">
                             ×
                           </span>
                           <div className="flex-1">
-                            {numberCell(row, 'width', 'Ширина', it.width, (v) => updateItem(it.id, { width: v }), { min: 0.01 })}
+                            {numberCell(row, 'width', 'Поперёк', it.width, (v) => updateItem(it.id, { width: v }), { min: 0.01 })}
                           </div>
                           <span className="pt-1 text-ink-2" aria-hidden="true">
                             ×
@@ -397,7 +398,7 @@ export function CargoTable({
                       <tr className="border-b border-line bg-paper">
                         <td />
                         <td colSpan={platform ? 11 : 10} className="px-1 py-2">
-                          <MoreFields item={it} unitLabel={u} onUpdate={(patch) => updateItem(it.id, patch)} onSetOverride={(o) => setItemStabilityOverride(it.id, o)} />
+                          <MoreFields item={it} unit={unit} unitLabel={u} onUpdate={(patch) => updateItem(it.id, patch)} onSetOverride={(o) => setItemStabilityOverride(it.id, o)} />
                         </td>
                       </tr>
                     )}
@@ -458,11 +459,13 @@ function IconButton({
 // the stack-height limit alone is in metres whatever the unit.
 function MoreFields({
   item,
+  unit,
   unitLabel,
   onUpdate,
   onSetOverride,
 }: {
   item: CargoItem
+  unit: Unit
   unitLabel: string
   onUpdate: (patch: Partial<CargoItem>) => void
   onSetOverride: (o: CargoItem['stabilityOverride']) => void
@@ -475,6 +478,7 @@ function MoreFields({
   }
   const hasOverride = o?.vcgAboveDeckM !== undefined || o?.tcgOffsetM !== undefined || o?.lcgOffsetM !== undefined
   const pipe = isPipeCargo(item)
+  const heavier = pipeHeavierThanSteel(item, unit)
   return (
     <div className="flex flex-wrap items-end gap-3">
       <MoreNumber label={`VCG над палубой, ${unitLabel}`} value={o?.vcgAboveDeckM} placeholder="авто" onChange={(v) => set({ vcgAboveDeckM: v })} />
@@ -497,6 +501,11 @@ function MoreFields({
             : item.pipeInnerDiameterMm
               ? 'Вода в трубах считается по внутреннему диаметру и укладке'
               : 'Без внутреннего диаметра вода в трубах не считается'}
+        </p>
+      )}
+      {heavier !== undefined && (
+        <p className="basis-full text-xs text-warn" data-testid="pipe-mass-check">
+          {`Вес единицы ${fmtNumber(item.weight ?? 0)} кг больше, чем у стальной трубы этих размеров (${fmtNumber(Math.round(heavier))} кг) — сверьте с сертификатом`}
         </p>
       )}
     </div>

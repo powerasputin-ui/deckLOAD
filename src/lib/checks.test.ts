@@ -49,7 +49,7 @@ describe('buildChecks', () => {
       ['lashing', 'none', 'Точки крепления не заданы'],
       ['stability', 'none', 'Нет данных судна'],
     ])
-    expect(checkCounts(buildChecks(f))).toEqual({ errors: 0, warnings: 0 })
+    expect(checkCounts(buildChecks(f))).toEqual({ errors: 0, warnings: 0, unchecked: 6 })
   })
 
   // Spec 2026-11-06, 6: a platform's plan is one deck after the supply run —
@@ -74,7 +74,7 @@ describe('buildChecks', () => {
     const list = buildChecks(facts({ platform: true, semiSub }))
     expect(list.map((c) => c.title)).toEqual(['Вместимость', 'Нагрузка на палубу', 'Зоны т/м²', 'Сепарация', 'VDL', 'KG', 'Балласт'])
     expect(check(facts({ platform: true, semiSub }), 'semi-kg')).toMatchObject({ status: 'error', target: 'vessel', targetStep: 'semi-report' })
-    expect(checkCounts(list)).toEqual({ errors: 1, warnings: 0 })
+    expect(checkCounts(list)).toMatchObject({ errors: 1, warnings: 0 })
   })
 
   it('a self-elevating unit\'s checks stand in the list, with their settings at the daily report', () => {
@@ -190,12 +190,25 @@ describe('buildChecks', () => {
     it('judges only stacks with lashing points', () => {
       expect(check(facts({ lashing: { securedStacks: 4, shortStacks: 0, dangerousGoodsStacks: 0 } }), 'lashing')).toMatchObject({
         status: 'ok',
-        detail: 'Крепления хватает: 4 штабеля',
+        detail: 'Держит по расчёту сил (CSS Code, прил. 13): 4 штабеля',
       })
       expect(check(facts({ lashing: { securedStacks: 4, shortStacks: 1, dangerousGoodsStacks: 0 } }), 'lashing')).toMatchObject({
         status: 'warn',
-        detail: 'Не хватает крепления: 1 штабель',
+        detail: 'Точек меньше, чем по РД, без обоснования: 1 штабель',
       })
+    })
+
+    // Decided 2026-11-07: lashings that don't hold by the CSS Code's balance
+    // of forces are an error; a balance not worked out for lack of data is
+    // «—», no tick.
+    it('is an error when the balance of forces fails, and «—» when it isn\'t worked out', () => {
+      expect(check(facts({ lashing: { securedStacks: 4, shortStacks: 2, balanceFailStacks: 1, dangerousGoodsStacks: 0 } }), 'lashing')).toMatchObject({
+        status: 'error',
+        detail: 'Не держит по расчёту сил: 1 штабель · Точек меньше, чем по РД, без обоснования: 1 штабель',
+      })
+      expect(
+        check(facts({ lashing: { securedStacks: 3, shortStacks: 0, uncheckedStacks: 2, uncheckedReason: 'нет: скорость, GM', dangerousGoodsStacks: 0 } }), 'lashing')
+      ).toMatchObject({ status: 'none', detail: 'Силы не проверены: 2 штабеля — нет: скорость, GM' })
     })
 
     it('warns about dangerous goods even without lashing points', () => {
@@ -273,14 +286,23 @@ describe('buildChecks', () => {
 })
 
 describe('checkCounts', () => {
-  it('counts ✕ and ⚠, never «—»', () => {
+  it('counts ✕ and ⚠ apart from «—»', () => {
     const f = facts({
       unplacedUnits: 2,
       maxDeckCargoT: 10,
       deckStrength: 'pending',
       lashing: { securedStacks: 0, shortStacks: 0, dangerousGoodsStacks: 1 },
     })
-    expect(checkCounts(buildChecks(f))).toEqual({ errors: 2, warnings: 2 })
+    const list = buildChecks(f)
+    expect(checkCounts(list)).toEqual({ errors: 2, warnings: 2, unchecked: list.filter((c) => c.status === 'none').length })
+  })
+
+  // Decided 2026-11-07: «—» is counted, so the tab shows it instead of a tick.
+  it('counts the checks not made for lack of data', () => {
+    const list = buildChecks(facts({ separationRuleCount: 0 }))
+    const unchecked = list.filter((c) => c.status === 'none').map((c) => c.id)
+    expect(unchecked).toContain('separation')
+    expect(checkCounts(list).unchecked).toBe(unchecked.length)
   })
 })
 

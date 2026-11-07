@@ -13,7 +13,7 @@
 // vessel/flag-state specific — there is no single formula to substitute.
 //
 // Pure functions/types only, no React/store imports — mirrors packing.ts's
-// checkZoneLoads/checkLashingBalance (compute live from current state,
+// checkZoneLoads/securingBalance (compute live from current state,
 // nothing cached here).
 
 import type { CompositionSegment, LoadZone, StabilityOverride } from './packing'
@@ -57,6 +57,10 @@ export interface VesselParticulars {
   minGM?: number
   // Summer load line draught, from the load line certificate.
   maxDraftM?: number
+  // The largest static list the vessel sails with, by its own documents or
+  // the company's (decided 2026-11-07: the IS Code has none; unset, a list
+  // over DEFAULT_LIST_WARN_DEG is a warning).
+  maxListDeg?: number
   // Length L as the load line convention defines it. The trapped-water
   // rule (IS Code B 2.4) sets its freeboard limits as fractions of it;
   // LBP stands in when this is unset, which understates the water.

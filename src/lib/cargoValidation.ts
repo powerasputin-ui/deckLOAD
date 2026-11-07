@@ -14,6 +14,7 @@
 // arithmetic here doesn't risk a cycle either.
 import { placementTotalWeightKg, type CompositionCatalogItem } from './placementComposition'
 import type { CompositionSegment } from './packing'
+import { toMeters, type Unit } from './units'
 
 export function sanitizeCargoWidth(value: unknown, fallback = 1): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
@@ -109,4 +110,38 @@ export function wouldExceedDeckCapacity(
     return sum + (p.weight ?? 0) * Math.max(1, p.layers ?? 1)
   }, 0)
   return currentKg + addedWeightKg > maxKg
+}
+
+// Steel, kg/m³, and the most a pipe may weigh over its nominal mass (API 5L
+// allows +10 % on a single length).
+const STEEL_KG_M3 = 7850
+const PIPE_MASS_TOLERANCE = 1.1
+
+// The heaviest a lying pipe of these sizes can be: its whole wall, from the
+// outer diameter to the bore, of steel — a coating, concrete or insulation,
+// is lighter than steel, so no such pipe weighs more. Unset without a bore
+// or for cargo that isn't a pipe. Decided 2026-11-07: two catalogue pipes
+// weigh more by the ДВТК document than this allows (Ø219,1×14,3: 1300 kg
+// against 894 kg of steel); the document's figures stay — heavier is the
+// safe side — and the line says to check them.
+export function pipeSteelCeilingKg(
+  item: { shape?: string; width: number; length: number; height: number; pipeInnerDiameterMm?: number },
+  unit: Unit
+): number | undefined {
+  if (item.shape !== 'cylinder' || !(item.pipeInnerDiameterMm !== undefined && item.pipeInnerDiameterMm > 0)) return undefined
+  const lengthM = toMeters(Math.max(item.width, item.length), unit)
+  const outerM = toMeters(Math.min(item.width, item.length), unit)
+  const boreM = item.pipeInnerDiameterMm / 1000
+  if (!(outerM > boreM) || !(lengthM > 0)) return undefined
+  return (Math.PI / 4) * (outerM * outerM - boreM * boreM) * lengthM * STEEL_KG_M3
+}
+
+// A stated weight no pipe of its sizes can have: more than its steel
+// ceiling, past the mill's tolerance.
+export function pipeHeavierThanSteel(
+  item: { shape?: string; width: number; length: number; height: number; pipeInnerDiameterMm?: number; weight?: number },
+  unit: Unit
+): number | undefined {
+  const ceiling = pipeSteelCeilingKg(item, unit)
+  return ceiling !== undefined && item.weight !== undefined && item.weight > ceiling * PIPE_MASS_TOLERANCE ? ceiling : undefined
 }

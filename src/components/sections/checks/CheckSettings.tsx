@@ -8,7 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { NumberField } from '@/components/calculator/NumberField'
 import { useCalculator } from '@/store/calculator'
 import { DEFAULT_CATEGORIES } from '@/lib/cargoTable'
-import { DEFAULT_VESSEL_MOTION, VESSEL_MOTION_PRESETS, type VesselMotionPreset } from '@/lib/packing'
+import { DEFAULT_VESSEL_MOTION, type VesselMotion, type VesselMotionPreset } from '@/lib/packing'
+import { CSS_RANGE, cssAccelerations } from '@/lib/securing'
+import { accelerationsLine } from '@/lib/securingWords'
 import { fmtNumber } from '@/lib/utils'
 
 // The settings that live in their checks (spec 8.7, «Расчёт: проверки»):
@@ -140,34 +142,36 @@ function CategorySelect({
 }
 
 const MOTION_LABEL: Record<VesselMotionPreset, string> = {
-  'open-sea': 'Открытое море',
-  coastal: 'Прибрежное плавание',
-  sheltered: 'Защищённые воды',
-  custom: 'Свои ускорения',
+  css: 'По CSS Code, приложение 13',
+  custom: 'Свои (из Наставления по креплению)',
 }
 
-// «Крепление»: the voyage the securing is judged for — the accelerations
-// across and along the ship, in g, and the friction under the cargo. The
-// lashing check used to assume coastal waters without saying so; coastal
-// stays the default, and the check says it.
+// «Крепление»: the accelerations a stack's securing is judged for, and the
+// friction under the cargo (securing.ts). By the CSS Code's annex 13 they
+// come from the vessel's length, breadth, speed and GM — the length and
+// breadth from the vessel's data, the GM from the trip's stability, each
+// asked here when there is none. Decided 2026-11-07: three presets stood
+// here — open sea, coastal, sheltered — whose figures were no rule's and
+// ran at half the annex's or less.
 export function VesselMotionPicker() {
   const motion = useCalculator((s) => s.deck.vesselMotion)
+  const particulars = useCalculator((s) => s.deck.vessel?.particulars)
   const setVesselMotion = useCalculator((s) => s.setVesselMotion)
   const uid = useId()
-  const current = motion ?? DEFAULT_VESSEL_MOTION
+  const current: VesselMotion = motion ?? DEFAULT_VESSEL_MOTION
+  const vesselLength = particulars && particulars.lengthBpp > 0 ? particulars.lengthBpp : undefined
+  const vesselBreadth = particulars && particulars.breadth > 0 ? particulars.breadth : undefined
+  const css = cssAccelerations(
+    { lengthM: vesselLength ?? current.lengthM, breadthM: vesselBreadth ?? current.breadthM, speedKn: current.speedKn, gmM: current.gmM },
+    undefined
+  )
 
   return (
     <div className="space-y-1.5">
       <label htmlFor={`${uid}-motion`} className="text-xs text-ink-2">
-        Условия плавания
+        Ускорения для крепления
       </label>
-      <Select
-        value={current.preset}
-        onValueChange={(v) => {
-          const preset = v as VesselMotionPreset
-          setVesselMotion(preset === 'custom' ? { preset } : { ...VESSEL_MOTION_PRESETS[preset], preset })
-        }}
-      >
+      <Select value={current.preset} onValueChange={(v) => setVesselMotion({ preset: v as VesselMotionPreset })}>
         <SelectTrigger id={`${uid}-motion`} aria-describedby={`${uid}-motion-hint`} className="h-8 w-full text-xs">
           <SelectValue />
         </SelectTrigger>
@@ -179,29 +183,75 @@ export function VesselMotionPicker() {
           ))}
         </SelectContent>
       </Select>
-      <p id={`${uid}-motion-hint`} className="text-xs text-ink-2">
-        {!motion && 'По умолчанию — прибрежное плавание. '}
-        Ускорения: поперёк {fmtNumber(current.ay)} g, вдоль {fmtNumber(current.ax)} g; трение {fmtNumber(current.friction)}
-      </p>
-      {current.preset === 'custom' && (
-        <div className="grid grid-cols-3 gap-1.5">
-          <MotionField label="Поперёк, g" value={current.ay} onCommit={(v) => setVesselMotion({ ay: v })} />
-          <MotionField label="Вдоль, g" value={current.ax} onCommit={(v) => setVesselMotion({ ax: v })} />
-          <MotionField label="Трение" value={current.friction} onCommit={(v) => setVesselMotion({ friction: v })} />
-        </div>
+      {current.preset === 'css' ? (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
+            <MotionField label="Скорость, уз" value={current.speedKn} max={40} step={0.5} onCommit={(v) => setVesselMotion({ speedKn: v })} onClear={() => setVesselMotion({ speedKn: undefined })} />
+            <MotionField label="GM, м" value={current.gmM} max={20} step={0.05} onCommit={(v) => setVesselMotion({ gmM: v })} onClear={() => setVesselMotion({ gmM: undefined })} />
+            {vesselLength === undefined && (
+              <MotionField label="Длина L, м" value={current.lengthM} max={400} step={1} onCommit={(v) => setVesselMotion({ lengthM: v })} onClear={() => setVesselMotion({ lengthM: undefined })} />
+            )}
+            {vesselBreadth === undefined && (
+              <MotionField label="Ширина B, м" value={current.breadthM} max={80} step={0.1} onCommit={(v) => setVesselMotion({ breadthM: v })} onClear={() => setVesselMotion({ breadthM: undefined })} />
+            )}
+          </div>
+          <p id={`${uid}-motion-hint`} className="text-xs text-ink-2">
+            {[
+              vesselLength !== undefined && `L ${fmtNumber(vesselLength)} м`,
+              vesselBreadth !== undefined && `B ${fmtNumber(vesselBreadth)} м`,
+            ]
+              .filter(Boolean)
+              .join(', ')}
+            {(vesselLength !== undefined || vesselBreadth !== undefined) && ' — из данных судна. '}
+            GM берётся из остойчивости рейса, если она посчитана; без неё — из поля. Таблицы годятся для L {CSS_RANGE.lengthM[0]}–
+            {CSS_RANGE.lengthM[1]} м, {CSS_RANGE.speedKn[0]}–{CSS_RANGE.speedKn[1]} уз, B/GM от {CSS_RANGE.minBOverGM}; груз на палубе
+            считается «высоко», с запасом. Плюс ветер и заливание по 1 кН/м².
+            {css.status === 'ok' && ` При этих данных у носа: ${accelerationsLine(css.accelerations)}.`}
+            {css.status === 'outside' && ` Вне таблиц: ${css.reason} — выберите свои ускорения.`}
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-1.5">
+            <MotionField label="Поперёк, g" value={current.ay} onCommit={(v) => setVesselMotion({ ay: v })} />
+            <MotionField label="Вдоль, g" value={current.ax} onCommit={(v) => setVesselMotion({ ax: v })} />
+            <MotionField label="Вертик., g" value={current.az} onCommit={(v) => setVesselMotion({ az: v })} />
+          </div>
+          <p id={`${uid}-motion-hint`} className="text-xs text-ink-2">
+            Из Наставления по креплению груза судна или расчёта буксировки; вертикальное — без веса (1 g). Плюс ветер и заливание по 1 кН/м².
+          </p>
+        </>
       )}
+      <div className="grid grid-cols-3 gap-1.5">
+        <MotionField label="Трение μ" value={current.friction} max={1} onCommit={(v) => setVesselMotion({ friction: v })} />
+      </div>
+      <p className="text-xs text-ink-2">Трение: сталь по дереву или резине 0,3; сталь по стали сухо 0,1, мокро 0.</p>
     </div>
   )
 }
 
-function MotionField({ label, value, onCommit }: { label: string; value: number; onCommit: (v: number) => void }) {
+function MotionField({
+  label,
+  value,
+  onCommit,
+  onClear,
+  max = 2,
+  step = 0.05,
+}: {
+  label: string
+  value: number | undefined
+  onCommit: (v: number) => void
+  onClear?: () => void
+  max?: number
+  step?: number
+}) {
   const id = useId()
   return (
     <div className="space-y-0.5">
       <label htmlFor={id} className="text-xs text-ink-2">
         {label}
       </label>
-      <NumberField id={id} min={0} max={2} step={0.05} value={value} onCommit={onCommit} className="h-7 text-xs" />
+      <NumberField id={id} min={0} max={max} step={step} value={value} onCommit={onCommit} onClear={onClear} className="h-7 text-xs" />
     </div>
   )
 }

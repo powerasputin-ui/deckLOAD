@@ -500,7 +500,7 @@ function pruneOrphanLashingPoints(
 // attached to, taken at the moment the point was created — it never
 // recomputes on its own. Without this, dragging/nudging the cargo left the
 // line pointing at the OLD position (visually detached, and feeding
-// checkLashingBalance stale geometry that no longer describes the actual
+// the balance of forces (securing.ts) stale geometry that no longer describes the actual
 // placement) — the fastening looked "broken" the moment you moved anything.
 // Shifts every lashing point attached to `id` by the same x/y delta the
 // placement itself just moved, so the corner keeps tracking it. A plain
@@ -875,7 +875,16 @@ export const PRESETS: Record<string, { label: string; items: Partial<CargoItem>[
       { name: 'Труба Ø813×30,2 НУБП-72', width: 12.38, length: 0.957, height: 0.957, allowRotation: true, weight: 15000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
       { name: 'Труба Ø813×30,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 11000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 752.6 },
       { name: 'Труба Ø813×32,2 НУБП-45', width: 12.38, length: 0.903, height: 0.903, allowRotation: true, weight: 13000, shape: 'cylinder', color: '#57534e', maxLayers: 1, pipeInnerDiameterMm: 748.6 },
-      // Ø219.1, bare (без покрытия) — OD is the steel diameter itself
+      // Ø219.1, bare (без покрытия) — OD is the steel diameter itself.
+      // The ×14,3 row's 1300 kg is the document's, and more than its steel
+      // can weigh (894 kg for 12.38 m; the ×12,7 row's 820 kg is its steel
+      // within 3 %). Kept, decided 2026-11-07: without the ДВТК tables at
+      // hand it can't be told which figure is wrong, and heavier is the safe
+      // side for the weight, the zones, the stability and the lashing; the
+      // catalogue says to check it (cargoValidation's pipeHeavierThanSteel).
+      // The same for ТШ406,4×22,2 below: 6000 kg against at most ~5290 kg
+      // of steel and concrete of up to 3400 kg/m³ — not caught by the
+      // check, whose outer diameter takes the concrete in.
       { name: 'Труба Ø219,1×14,3 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 1300, shape: 'cylinder', color: '#334155', maxLayers: 1, pipeInnerDiameterMm: 190.5 },
       { name: 'Труба Ø219,1×12,7 (без НУБП)', width: 12.38, length: 0.219, height: 0.219, allowRotation: true, weight: 820, shape: 'cylinder', color: '#334155', maxLayers: 1, pipeInnerDiameterMm: 193.7 },
       // ТШ406.4 × 22.2 with 45 mm concrete → OD 406.4 + 2×45 = 496.4 mm

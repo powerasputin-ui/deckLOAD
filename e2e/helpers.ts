@@ -165,8 +165,8 @@ export async function addOwnCargo(
   const form = page.getByRole('form', { name: 'Свой груз' })
   const fields: [keyof typeof cargo, string][] = [
     ['name', 'Название'],
-    ['length', 'Длина'],
-    ['width', 'Ширина'],
+    ['length', 'Вдоль'],
+    ['width', 'Поперёк'],
     ['height', 'Высота'],
     ['weightT', 'Вес единицы, т'],
     ['quantity', 'Количество'],
@@ -223,7 +223,7 @@ export async function closeCargoTable(page: Page) {
   await expect(page.getByRole('table', { name: 'Таблица грузов' })).toBeHidden()
 }
 
-// A cell of the cargo table — «Количество», «Длина», «Вес единицы, т»…
+// A cell of the cargo table — «Количество», «Вдоль», «Вес единицы, т»…
 export async function cargoCell(page: Page, label: string, name: string): Promise<Locator> {
   return (await openCargoTable(page)).getByLabel(`${label}, ${name}`, { exact: true })
 }

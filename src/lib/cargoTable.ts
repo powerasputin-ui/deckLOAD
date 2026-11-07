@@ -5,8 +5,12 @@ import type { CargoItem, PlacedItem } from './packing'
 import { segmentsOf } from './placementComposition'
 
 // The cargo's sides name the deck's axes, as the deck's own «Длина» and
-// «Ширина (борт–борт)» do — the way it stands until it's turned.
-export const SIZE_AXES = 'Длина — вдоль судна, ширина — от борта к борту, как у палубы; высота — над палубой. Так груз стоит, пока его не повернут.'
+// «Ширина (борт–борт)» do — the way it stands until it's turned. Decided
+// 2026-11-07: one order and the axes' own words wherever a cargo's size on
+// the deck is shown — «Д×Ш×В 2.44 × 6.06» of a 20-foot container read as a
+// wrong length, and the inspector had width first. The catalogue keeps the
+// cargo's own size, longest side first: it names the cargo, not how it stands.
+export const SIZE_AXES = 'Вдоль — по длине судна, поперёк — от борта к борту, как у палубы; высота — над палубой. Так груз стоит, пока его не повернут.'
 
 // The categories offered in every category field; the cargo's own ones are
 // added to them.

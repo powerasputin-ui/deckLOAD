@@ -323,8 +323,8 @@ export function checkZoneLoads(
 // must hold — mirrors computeZoneLoads's own "counts fully toward every
 // zone it touches" rule). A footprint outside every zone isn't evaluated
 // (returns nothing for it) — same "not evaluated is not a failure"
-// convention as checkLashingBalance's null return, since there is no
-// deck-wide default limit in the data model to fall back to (the vessel
+// convention as the balance of forces for a stack with no lashing points
+// — since there is no deck-wide default limit in the data model to fall back to (the vessel
 // template's own deckStrengthTPerM2 is never persisted onto the deck after
 // the template is applied — inventing a fallback here would be exactly
 // the kind of fabricated number this audit is about removing, not adding).
@@ -512,8 +512,8 @@ export const LASHING_DEVICES: Record<LashingDeviceType, { label: string; mslKg: 
   custom: { label: 'Другое (вручную)', mslKg: 0 },
 }
 
-// A SEPARATE, additive check from checkLashingBalance below — that one is
-// an IMO CSS Code Annex 13 static-force balance per attached point; this is
+// A SEPARATE, additive check from the balance of forces (securing.ts) —
+// that one is the IMO CSS Code annex 13's per stack; this is
 // the real РД 31.11.21.23-96 п. 2.2.3 rule a class-approved project actually
 // used for pipe штабели: the number of lashings for one stack is 0.3 of its
 // weight (t) divided by the wire's own breaking load (t). The two
@@ -595,110 +595,35 @@ export function assessLashingRequirement(
   return { status: 'calculated', methodology, requiredCount: requiredLashingCount(stackWeightKg, breakingLoadKN) }
 }
 
-// Vessel motion coefficients (in g) used by the simplified static-equivalent
-// lashing check below, plus the deck/cargo friction coefficient. Presets
-// stand in for a full GM/roll-period calculation, which real-world lashing
-// software also avoids asking casual users for.
-export type VesselMotionPreset = 'open-sea' | 'coastal' | 'sheltered' | 'custom'
+// The accelerations a stack's securing is judged for (securing.ts): the CSS
+// Code annex 13's, from the vessel's length, breadth, speed and GM, or the
+// user's own — from the vessel's cargo securing manual, or for a tow or a
+// vessel the annex's tables don't reach. Decided 2026-11-07: the three
+// presets that stood here (open sea 0.5 g across, coastal 0.35 g, sheltered
+// 0.2 g) were no rule's figures, and ran at half the annex's or less.
+export type VesselMotionPreset = 'css' | 'custom'
 
 export interface VesselMotion {
+  preset: VesselMotionPreset
+  // The user's own accelerations, in g (custom): along, across, vertical.
   ax: number
   ay: number
   az: number
+  // Friction under the cargo — annex 13: steel on timber or rubber 0.3,
+  // steel on steel dry 0.1, wet 0.
   friction: number
-  preset: VesselMotionPreset
+  // For the annex's tables: the service speed, and the vessel's length,
+  // breadth and GM where its own data has none (the trip's GM, when its
+  // stability is worked out, comes first).
+  speedKn?: number
+  lengthM?: number
+  breadthM?: number
+  gmM?: number
 }
 
-export const VESSEL_MOTION_PRESETS: Record<Exclude<VesselMotionPreset, 'custom'>, Omit<VesselMotion, 'preset'>> = {
-  'open-sea': { ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3 },
-  coastal: { ax: 0.2, ay: 0.35, az: 0.2, friction: 0.3 },
-  sheltered: { ax: 0.1, ay: 0.2, az: 0.1, friction: 0.3 },
-}
-
-export const DEFAULT_VESSEL_MOTION: VesselMotion = { ...VESSEL_MOTION_PRESETS.coastal, preset: 'coastal' }
-
-export interface LashingDirectionCheck {
-  requiredKg: number
-  availableKg: number
-  ok: boolean
-}
-
-export interface LashingCheck {
-  transverse: LashingDirectionCheck
-  longitudinal: LashingDirectionCheck
-  ok: boolean
-}
+export const DEFAULT_VESSEL_MOTION: VesselMotion = { preset: 'css', ax: 0, ay: 0, az: 0, friction: 0.3 }
 
 const G = 9.80665
-
-// IMO CSS Code Annex 13: a securing device counts in a balance of forces at
-// its calculated strength, CS = MSL / 1.5 — the margin for the load shared
-// unevenly between devices and for imperfect fitting. Taking MSL at face
-// value overstated the securing by half again.
-export const CSS_SAFETY_FACTOR = 1.5
-
-// Simplified static-equivalent method (IMO CSS Code Annex 13 style): for each
-// direction, the weight's own inertial force under the vessel's motion
-// coefficient must be resisted by friction plus every attached lashing's
-// component in that direction, each lashing at CS = MSL / 1.5. Still
-// simpler than Annex 13 itself: the motion presets stand in for its
-// acceleration tables, and neither tipping nor wind and sea on deck cargo
-// is counted. Non-blocking — same contract as
-// checkZoneLoads: pure function, returns a descriptive struct, never
-// mutates, caller decides how (or whether) to surface it. Returns null when
-// there's nothing attached to check (an unsecured item isn't a "failure",
-// it's just not evaluated — callers should track that separately).
-export function checkLashingBalance(
-  placement: { x: number; y: number; width: number; length: number; weight?: number; layers?: number },
-  lashings: LashingPoint[],
-  motion: VesselMotion
-): LashingCheck | null {
-  const attached = lashings.filter(
-    (l) => l.cornerX !== undefined && l.cornerY !== undefined && (l.mslKg ?? 0) > 0
-  )
-  if (attached.length === 0) return null
-  // `weight` is per-unit (see PlacedItem.weight's doc comment); a 3-tier
-  // stack's real inertial force is 3x one unit's, not 1x — checking against
-  // the unweighted per-unit force let an under-secured multi-tier stack
-  // read as "OK" when it wasn't. Same class of bug already fixed once in
-  // stability.ts's buildCargoWeightMoments.
-  const weightKg = (placement.weight ?? 0) * Math.max(1, placement.layers ?? 1)
-  const frictionForce = motion.friction * weightKg * G
-
-  let transverseAvail = frictionForce
-  let longitudinalAvail = frictionForce
-  for (const l of attached) {
-    const cornerX = l.cornerX!
-    const cornerY = l.cornerY!
-    const dx = l.x - cornerX
-    const dy = l.y - cornerY
-    const dist = Math.hypot(dx, dy)
-    if (dist <= 1e-9) continue
-    const verticalRad = ((l.verticalAngleDeg ?? 45) * Math.PI) / 180
-    const horizontalComponent = Math.cos(verticalRad) // fraction of the device's strength acting in the deck plane
-    // Deck-plane direction of the lashing, split into transverse (X, relative
-    // to the ship's centerline running along Y) and longitudinal (Y) parts.
-    const ux = Math.abs(dx / dist)
-    const uy = Math.abs(dy / dist)
-    const csPlane = ((l.mslKg ?? 0) / CSS_SAFETY_FACTOR) * horizontalComponent * G
-    transverseAvail += csPlane * ux
-    longitudinalAvail += csPlane * uy
-  }
-  const transverseRequired = weightKg * G * motion.ay
-  const longitudinalRequired = weightKg * G * motion.ax
-
-  const transverse: LashingDirectionCheck = {
-    requiredKg: transverseRequired / G,
-    availableKg: transverseAvail / G,
-    ok: transverseAvail >= transverseRequired,
-  }
-  const longitudinal: LashingDirectionCheck = {
-    requiredKg: longitudinalRequired / G,
-    availableKg: longitudinalAvail / G,
-    ok: longitudinalAvail >= longitudinalRequired,
-  }
-  return { transverse, longitudinal, ok: transverse.ok && longitudinal.ok }
-}
 
 // A rule requiring at least `minDistance` (edge-to-edge, meters) between any
 // cargo of `categoryA` and any cargo of `categoryB`. Symmetric: a rule for

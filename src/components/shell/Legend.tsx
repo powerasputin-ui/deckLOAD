@@ -251,17 +251,17 @@ const DECK_ENTRIES: Entry[] = [
   },
   {
     key: 'lashing-ok',
-    label: 'Точка крепления: крепление удерживает штабель',
+    label: 'Точка крепления: держит по расчёту сил (CSS Code, прил. 13)',
     Sample: () => <LashingSample ok />,
   },
   {
     key: 'lashing-short',
-    label: 'Точка крепления: сил крепления не хватает',
+    label: 'Точка крепления: не держит по расчёту сил',
     Sample: () => <LashingSample ok={false} />,
   },
   {
     key: 'lashing-loose',
-    label: 'Точка крепления, не привязанная к штабелю',
+    label: 'Точка крепления: не привязана к штабелю, или силы не проверены — нет данных',
     Sample: () => (
       <>
         <circle cx={W / 2} cy={H / 2} r={6} fill={lashingPointColor(null)} stroke="#fff" strokeWidth={1.5} />

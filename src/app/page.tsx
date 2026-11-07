@@ -64,7 +64,8 @@ import { sectionMarks, type SectionId } from '@/lib/workflow'
 import { isPlatform, OBJECT_KIND_LABEL, OBJECT_KIND_SHORT, OBJECT_KINDS, objectKindOf, staysOnDeck, type ObjectKind } from '@/lib/objectKind'
 import type { StatusLineInput } from '@/lib/statusLine'
 import { buildChecks, checkCounts, checkDetails, type CheckAction, type CheckId } from '@/lib/checks'
-import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, stackProblems } from '@/lib/planFacts'
+import { deckStabilityMissing, evaluateDeckTripStability, gatherPlanFacts, lashingVerdict, securingGmOf, stackProblems, stackSecuring } from '@/lib/planFacts'
+import { drawsAsPipe, pipeTiers } from '@/lib/pipeDrawing'
 import { NO_DECK_HEIGHT } from '@/lib/stabilityConditions'
 import type { VesselStepId } from '@/lib/vesselSteps'
 import { openVesselStep } from '@/store/vesselSteps'
@@ -607,17 +608,6 @@ export default function Home() {
   const appliedVariant = variants.length > 0 ? variantsSnapshot.applied : undefined
   // Pins for the currently-open trip only — each trip is its own deck instance.
   const pinnedPlacements = pinnedPlacementsByTrip[clampedTripIndex] ?? []
-  // Stacks whose lashing falls short — the amber chain on the deck (6.3).
-  const lashingShortIds = useMemo(
-    () =>
-      new Set(
-        // A platform has no lashing check (spec 2026-11-06, 6).
-        (platform ? [] : mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? []))
-          .filter((r) => lashingVerdict(r, deck, items) === 'short')
-          .map((r) => r.id)
-      ),
-    [platform, mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items]
-  )
   // The one purely auto-placed stack selected on the deck (no pin yet), if
   // any. Keys and the sidebar's «Крепление груза» act on it like on a pin:
   // the first change pins it, locked, and applies there.
@@ -724,6 +714,19 @@ export default function Home() {
     const { worst } = tripStability
     return { valueM: worst.stability.GM_fluid, status: tripStability.verdict, estimated: worst.stability.extrapolated, state: worst.state }
   }, [tripStability])
+
+  // The open trip's GM for its securing (CSS Code, annex 13): the larger of
+  // departure and arrival.
+  const securingGm = securingGmOf(tripStability)
+  // Each secured stack's balance of forces on the open trip, by its record's
+  // id — the deck's green and red points; and the stacks whose lashing falls
+  // short, the amber chain on the deck (6.3).
+  const securingById = useMemo(() => {
+    // A platform has no lashing check (spec 2026-11-06, 6).
+    const records = platform ? [] : mode === 'manual' ? manualPlacements : (pinnedPlacementsByTrip[clampedTripIndex] ?? [])
+    return new Map(records.map((r) => [r.id, { securing: stackSecuring(r, deck, items, securingGm), short: lashingVerdict(r, deck, items, securingGm) === 'short' }]))
+  }, [platform, mode, manualPlacements, pinnedPlacementsByTrip, clampedTripIndex, deck, items, securingGm])
+  const lashingShortIds = useMemo(() => new Set([...securingById].filter(([, v]) => v.short).map(([id]) => id)), [securingById])
 
   // «Отчёт» is ticked while the PDF downloaded in this tab still matches the
   // calculation (spec 5.3). The store replaces a slice whenever it changes, so
@@ -1275,24 +1278,31 @@ export default function Home() {
     const addReason = item && !(item.height > 0) ? 'У груза не задана высота' : add.reason
     const unit = UNIT_LABEL[deck.unit]
     const rotateBlocked = rotationBlockReason(record ?? source)
+    const pipePile = item && item.shape === 'cylinder' && drawsAsPipe({ shape: item.shape, width: item.width, length: item.length, height: item.height }) ? item : undefined
     const stack: InspectedStack = {
       kind,
       name: source.name,
       number: cargoNumberByItemId.get(source.itemId),
       size: item
-        ? `${fmtNumber(item.width)} × ${fmtNumber(item.length)} × ${fmtNumber(item.height)} ${unit}`
-        : `${fmtNumber(source.width)} × ${fmtNumber(source.length)} ${unit}`,
+        ? `${fmtNumber(item.length)} × ${fmtNumber(item.width)} × ${fmtNumber(item.height)} ${unit}`
+        : `${fmtNumber(source.length)} × ${fmtNumber(source.width)} ${unit}`,
       category: placementCategoryLabel(record ?? source, items),
       unitWeight: !record?.composition && item?.weight ? `${fmtNumber(item.weight)} кг` : undefined,
       stackWeight: `${fmtTonnes(record ? placementTotalWeightKg(record, items) : (source.weight ?? 0) * layers)} т`,
       layers,
       maxLayers: add.maxPhys,
+      // A pile of lying pipes counts pipes, laid in its tiers (decided
+      // 2026-11-07); a штабель is one unit with tiers of its own.
+      pipes: pipePile ? { tiers: pipeTiers({ shape: pipePile.shape, nest: undefined }, layers) } : undefined,
       rotate: rotateBlocked ? { ok: false, reason: rotateBlocked } : { ok: true },
       addLayer: addBlocked ? { ok: false, reason: addReason } : { ok: true },
       removeLayer:
         layers > 1
           ? { ok: true }
-          : { ok: false, reason: `Минимум 1 ярус — штабель убирается кнопкой «${kind === 'manual' ? 'Убрать с палубы' : 'Удалить'}»` },
+          : {
+              ok: false,
+              reason: `Минимум ${pipePile ? '1 труба' : '1 ярус'} — ${pipePile ? 'куча' : 'штабель'} убирается кнопкой «${kind === 'manual' ? 'Убрать с палубы' : 'Удалить'}»`,
+            },
       composition: record?.composition?.map((seg) => ({
         number: cargoNumberByItemId.get(seg.itemId),
         name: items.find((it) => it.id === seg.itemId)?.name ?? 'Неизвестный груз',
@@ -1841,7 +1851,7 @@ export default function Home() {
                   if (corner) toast.success('Крепление добавлено')
                 }}
                 onUpdateLashingPoint={updateLashingPoint}
-                vesselMotion={deck.vesselMotion}
+                securingOf={(id) => securingById.get(id)?.securing}
                 onUpdateLoadZone={updateLoadZone}
                 powerSockets={deck.powerSockets}
                 placingPowerSocket={placingPowerSocket}
@@ -1897,7 +1907,7 @@ export default function Home() {
               stack={inspected?.stack}
               actions={inspectedActions}
               selection={inspectedSelection}
-              lashing={platform ? undefined : <StackLashing autoStack={selectedAutoStack} onPatchAutoStack={patchAutoStack} />}
+              lashing={platform ? undefined : <StackLashing autoStack={selectedAutoStack} onPatchAutoStack={patchAutoStack} tripGmM={securingGm} />}
               onShowChecks={() => openSection('checks')}
               onClose={closeInspector}
             />

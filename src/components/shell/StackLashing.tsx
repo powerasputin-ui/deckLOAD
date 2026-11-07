@@ -18,7 +18,8 @@ import {
   type WireRopeType,
 } from '@/lib/packing'
 import { segmentLashingInputs, type ComposablePlacement } from '@/lib/placementComposition'
-import { lashingShortfall } from '@/lib/planFacts'
+import { stackSecuring } from '@/lib/planFacts'
+import { accelerationsLine, balanceLine } from '@/lib/securingWords'
 import { cn } from '@/lib/utils'
 
 // Stable empty-array reference for the zustand selector — a fresh `[]` every
@@ -43,9 +44,13 @@ export type PlacementPatch = {
 export function StackLashing({
   autoStack,
   onPatchAutoStack,
+  tripGmM,
 }: {
   autoStack?: PlacedItem
   onPatchAutoStack?: (placed: PlacedItem, patch: PlacementPatch) => void
+  // The open trip's GM, for the accelerations of its securing (CSS Code,
+  // annex 13); unset when its stability isn't worked out.
+  tripGmM?: number
 }) {
   const points = useCalculator((s) => s.deck.lashingPoints ?? EMPTY_POINTS)
   const items = useCalculator((s) => s.items)
@@ -119,9 +124,11 @@ export function StackLashing({
     0
   )
   const calculated = assessments.some((s) => s.assessment.status === 'calculated')
-  // Enough points can still be too weak: the same verdict the check gives.
+  // Enough points can still be too weak: the balance of forces the check
+  // and the deck's points give (CSS Code, annex 13).
   const record = selectedManual ?? selectedPin
-  const balanceFails = !!record && !!lashingShortfall(record, deck, items)?.balanceFails
+  const securing = record ? stackSecuring(record, deck, items, tripGmM) : undefined
+  const forward = deck.deckForwardIsPositiveY ?? true
 
   return (
     <div className="space-y-2.5">
@@ -255,11 +262,27 @@ export function StackLashing({
           <p className={cn('text-xs', own.length < required ? 'text-danger' : 'text-ink-2')} data-testid="lashing-count">
             {calculated ? `Нужно ${required}, задано ${own.length}` : `Задано точек: ${own.length}`}
           </p>
-          {balanceFails && (
-            <p className="text-xs text-danger" data-testid="lashing-balance">
-              Не держит по расчёту сил (IMO CSS Code, упрощённо): нужны точки прочнее или под другим углом — на палубе его точки
-              красные
+          {securing?.status === 'unchecked' && (
+            <p className="text-xs text-ink-2" data-testid="lashing-balance">
+              Силы не проверены: {securing.reason}. Данные для расчёта — в «Проверки» → «Крепление»
             </p>
+          )}
+          {securing?.status === 'checked' && (
+            <div className="space-y-0.5 text-xs" data-testid="lashing-balance">
+              <p className={securing.result.ok ? 'text-ink-2' : 'text-danger'}>
+                {securing.result.ok
+                  ? 'Держит по расчёту сил'
+                  : 'Не держит по расчёту сил: нужны точки прочнее, больше или под другим углом — на палубе его точки красные'}
+                {` (${securing.source === 'css' ? 'CSS Code, прил. 13' : 'свои ускорения'}: ${accelerationsLine(securing.accelerations)}; ветер и заливание по 1 кН/м²)`}
+              </p>
+              <ul aria-label="Баланс сил" className="space-y-0.5">
+                {securing.result.balances.map((b) => (
+                  <li key={`${b.kind}${b.toward}`} className={b.ok ? 'text-ink-2' : 'text-danger'}>
+                    {balanceLine(b, forward)}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {own.length > 0 && (
             <ul className="space-y-1.5" aria-label="Точки крепления штабеля">

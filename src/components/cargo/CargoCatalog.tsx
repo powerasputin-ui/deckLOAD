@@ -8,6 +8,7 @@ import { useCalculator, PRESETS, PALETTE, PRESET_TEMPLATE_COLORS, UNIT_LABEL, co
 import { polygonArea, type CargoItem, type CargoShape } from '@/lib/packing'
 import { computePipeNest, REAL_CRATE_HEIGHT_M_OD1073M } from '@/lib/pipeNest'
 import { ownSize, searchCatalog, templateInUnit, type CatalogGroup } from '@/lib/cargoCatalog'
+import { pipeHeavierThanSteel } from '@/lib/cargoValidation'
 import { parseNumberInput } from '@/lib/numberInput'
 import { cn, fmtNumber, fmtTonnes } from '@/lib/utils'
 
@@ -103,12 +104,16 @@ export function CargoCatalog() {
                   const index = PRESETS[g.key].items.indexOf(tpl)
                   const size = `${ownSize(inUnit).map(fmtNumber).join('×')} ${u}`
                   const weight = tpl.weight ? `${fmtTonnes(tpl.weight)} т` : 'вес не задан'
+                  // A weight no pipe of these sizes can have (decided 2026-11-07).
+                  const ceiling = tpl.width !== undefined && tpl.length !== undefined && tpl.height !== undefined
+                    ? pipeHeavierThanSteel({ ...tpl, width: tpl.width, length: tpl.length, height: tpl.height }, 'm')
+                    : undefined
                   return (
                     <li key={tpl.name}>
                       <button
                         type="button"
                         // The name first, then what the line under it says.
-                        aria-label={[tpl.name, size, weight, count > 0 && `в списке ${count}`].filter(Boolean).join(', ')}
+                        aria-label={[tpl.name, size, weight, ceiling !== undefined && 'масса больше возможной для стали этих размеров', count > 0 && `в списке ${count}`].filter(Boolean).join(', ')}
                         onClick={() => choose(tpl, index)}
                         className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
@@ -118,6 +123,11 @@ export function CargoCatalog() {
                           <span className="block text-xs text-ink-2 tabular-nums">
                             {size} · {weight}
                           </span>
+                          {ceiling !== undefined && (
+                            <span className="block text-xs text-warn" data-testid="pipe-mass-check">
+                              Тяжелее стальной трубы этих размеров (до {fmtTonnes(ceiling)} т) — сверьте с сертификатом
+                            </span>
+                          )}
                         </span>
                         {count > 0 && <span className="shrink-0 text-xs text-ink-2 tabular-nums">в списке {count}</span>}
                       </button>

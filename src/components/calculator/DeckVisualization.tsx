@@ -22,9 +22,6 @@ import {
   resolveSnappedDragPosition,
   checkZoneLoads,
   zoneIdsOverlapping,
-  checkLashingBalance,
-  CSS_SAFETY_FACTOR,
-  DEFAULT_VESSEL_MOTION,
   violatesSeparationForCategories,
   pipePyramidSpreadMargin,
   decomposePipePyramid,
@@ -44,7 +41,6 @@ import {
   type DeckAnnotation,
   type AnnotationKind,
   nearestPointOnPolygon,
-  type VesselMotion,
   type ClearanceMargin,
   type RestrictionZone,
   type RestrictionZoneShape,
@@ -53,6 +49,8 @@ import {
   polygonArea,
 } from '@/lib/packing'
 import { segmentsOf } from '@/lib/placementComposition'
+import type { StackSecuring } from '@/lib/planFacts'
+import { securingTitle } from '@/lib/securingWords'
 import { UNIT_LABEL, autoPlacementKey } from '@/store/calculator'
 import { DRAG_THRESHOLD_PX } from '@/lib/stackSelection'
 import { capitalised, placementProblem, type PlacementSurroundings, type PlacementTarget } from '@/lib/placementProblem'
@@ -200,7 +198,9 @@ interface DeckVisualizationProps {
     corner?: { placementId: string; cornerX: number; cornerY: number }
   ) => void
   onUpdateLashingPoint?: (id: string, patch: { x?: number; y?: number }) => void
-  vesselMotion?: VesselMotion
+  // A secured stack's balance of forces (CSS Code, annex 13 — planFacts'
+  // stackSecuring), by its placement record's id: what colours its points.
+  securingOf?: (placementId: string) => StackSecuring | undefined
   // Power-socket markers — visual only, never affect collision/placement.
   powerSockets?: PowerSocket[]
   placingPowerSocket?: boolean
@@ -325,7 +325,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
   placingLashingPoint,
   onPlaceLashingPoint,
   onUpdateLashingPoint,
-  vesselMotion,
+  securingOf,
   onUpdateLoadZone,
   drawingCustomShape,
   onFinishDrawing,
@@ -3685,7 +3685,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
           const isAttached = pt.placementId !== undefined && pt.cornerX !== undefined && pt.cornerY !== undefined
           const isSelected = selectedLashingId === pt.id
           // Live length readout while actively dragging this anchor — same
-          // Math.hypot(dx,dy) distance checkLashingBalance already computes
+          // Math.hypot(dx,dy) distance the balance of forces (securing.ts) computes
           // for its direction unit vectors (packing.ts), just surfaced here
           // as a plain number instead of feeding a force calculation.
           const dragDistance =
@@ -3693,12 +3693,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               ? Math.hypot(pt.x - pt.cornerX!, pt.y - pt.cornerY!)
               : null
           const interactive = !!onUpdateLashingPoint
-          let check: ReturnType<typeof checkLashingBalance> = null
+          // The stack's balance of forces, when the point is tied to one on
+          // this trip's deck — matched by the actual placement id, not just
+          // itemId: two placements can share a cargo type.
+          let securing: StackSecuring | undefined
           if (isAttached) {
-            // Match by the actual placement id, not just itemId — two pinned
-            // placements can share the same cargo type, and matching on
-            // itemId alone would silently grab whichever one happens to come
-            // first, checking the wrong cargo's weight/position.
             const placement = renderedItems.find((p) => {
               if (mode === 'manual') return p.manualId === pt.placementId
               const pin = pinnedPlacements.find(
@@ -3706,11 +3705,11 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
               )
               return pin?.id === pt.placementId
             })
-            if (placement) {
-              const attachedHere = (lashingPoints ?? []).filter((l) => l.placementId === pt.placementId)
-              check = checkLashingBalance(placement, attachedHere, vesselMotion ?? DEFAULT_VESSEL_MOTION)
-            }
+            if (placement) securing = securingOf?.(pt.placementId!)
           }
+          // Green and red only for a balance worked out; not worked out for
+          // lack of data, the plain colour (no data, no green).
+          const check = securing?.status === 'checked' ? { ok: securing.result.ok } : null
           return (
             <g key={`lash-${pt.id}`}>
               {isAttached && (
@@ -3738,7 +3737,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                 </text>
               )}
               <circle
-                data-lashing-check={check ? (check.ok ? 'ok' : 'fail') : undefined}
+                data-lashing-check={check ? (check.ok ? 'ok' : 'fail') : isAttached ? 'unchecked' : undefined}
                 cx={px}
                 cy={py}
                 r={6}
@@ -3758,11 +3757,7 @@ export const DeckVisualization = forwardRef<SVGSVGElement, DeckVisualizationProp
                     : undefined
                 }
               >
-                {check && (
-                  <title>
-                    {`Груз ${check.ok ? 'закреплён' : 'НЕ закреплён'} — поперечно: ${check.transverse.availableKg.toFixed(0)}/${check.transverse.requiredKg.toFixed(0)} кг, продольно: ${check.longitudinal.availableKg.toFixed(0)}/${check.longitudinal.requiredKg.toFixed(0)} кг (крепление — MSL ÷ ${CSS_SAFETY_FACTOR} по CSS Code)`}
-                  </title>
-                )}
+                {securing && securing.status !== 'none' && <title>{securingTitle(securing, deckForwardIsPositiveY)}</title>}
               </circle>
               {!isAttached && (
                 <>

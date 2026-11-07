@@ -28,6 +28,8 @@ export type SectionMark =
   | { kind: 'done' }
   | { kind: 'errors'; count: number }
   | { kind: 'warnings'; count: number }
+  // Checks not made for lack of data («—» in the list): no tick for them.
+  | { kind: 'unchecked'; count: number }
 
 export interface WorkflowState {
   vesselTemplateId?: string
@@ -36,7 +38,7 @@ export interface WorkflowState {
   // Units on the deck, every trip counted.
   placedUnits: number
   // ✕ and ⚠ from the checks; undefined while they aren't counted.
-  checks?: { errors: number; warnings: number }
+  checks?: { errors: number; warnings: number; unchecked?: number }
   // A PDF was downloaded in this tab after the last change.
   pdfUpToDate: boolean
 }
@@ -59,12 +61,14 @@ export function sectionMarks(s: WorkflowState): Record<SectionId, SectionMark> {
     !sameLength(toMeters(s.deck.length, s.deck.unit), NEW_DECK_M.length)
 
   // ✕ and ⚠ show whatever the cargo (a deck-strength limit not chosen is a
-  // warning before any cargo); «done» needs cargo to have been checked.
+  // warning before any cargo); «done» needs cargo to have been checked, by
+  // every check: one left «—» for lack of data shows as «— N», not a tick —
+  // no data, no green (decided 2026-11-07; spec 5.3 said a tick then).
   let checks: SectionMark = none
   if (s.checks) {
     if (s.checks.errors > 0) checks = { kind: 'errors', count: s.checks.errors }
     else if (s.checks.warnings > 0) checks = { kind: 'warnings', count: s.checks.warnings }
-    else if (hasCargo) checks = done
+    else if (hasCargo) checks = (s.checks.unchecked ?? 0) > 0 ? { kind: 'unchecked', count: s.checks.unchecked! } : done
   }
 
   return {

@@ -73,8 +73,8 @@ test('Сценарий 2: размеры, отступы, предельная �
     await expect(page.getByLabel('Ширина')).toHaveValue(/^32\.8/, { timeout: 1000 })
   }).toPass({ timeout: 10000 })
   const table = await openCargoTable(page)
-  await expect(table.getByRole('columnheader', { name: /^Д×Ш×В, фт$/ })).toBeVisible()
-  await expect(table.getByLabel('Ширина, Контейнер 20ft', { exact: true })).toHaveValue(/^19\.88/)
+  await expect(table.getByRole('columnheader', { name: /^Вдоль × поперёк × выс\., фт$/ })).toBeVisible()
+  await expect(table.getByLabel('Поперёк, Контейнер 20ft', { exact: true })).toHaveValue(/^19\.88/)
 })
 
 // The outline's vertex handle at the top right of the drawing.

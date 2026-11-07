@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { MENU_CLOSES_AT_ONCE, MenuItem } from './menu'
-import { RotateCwOff, type InspectedStack, type StackActions } from './Inspector'
+import { RotateCwOff, stackUnitWords, type InspectedStack, type StackActions } from './Inspector'
 
 const ICON_BUTTON = 'h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11'
 
@@ -20,6 +20,7 @@ export function MiniPanel({ stack, actions }: { stack: InspectedStack; actions: 
     action()
   }
   const auto = stack.kind !== 'manual'
+  const words = stackUnitWords(stack)
   return (
     <div
       role="toolbar"
@@ -40,12 +41,12 @@ export function MiniPanel({ stack, actions }: { stack: InspectedStack; actions: 
         </Button>
       </span>
       <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-line" />
-      <span title={stack.removeLayer.ok ? 'Убрать ярус' : stack.removeLayer.reason}>
+      <span title={stack.removeLayer.ok ? words.remove : stack.removeLayer.reason}>
         <Button
           variant="ghost"
           size="icon"
           className={ICON_BUTTON}
-          aria-label="Убрать ярус"
+          aria-label={words.remove}
           disabled={!stack.removeLayer.ok}
           onClick={actions.removeLayer}
         >
@@ -54,16 +55,16 @@ export function MiniPanel({ stack, actions }: { stack: InspectedStack; actions: 
       </span>
       <span
         className="min-w-7 text-center text-sm font-semibold tabular-nums"
-        title={`Ярусов: ${stack.layers}, макс. ${stack.maxLayers} по высоте`}
+        title={stack.pipes ? `Труб: ${stack.layers} в ${stack.pipes.tiers} яр., макс. ${stack.maxLayers} по высоте` : `Ярусов: ${stack.layers}, макс. ${stack.maxLayers} по высоте`}
       >
         {stack.layers}
       </span>
-      <span title={stack.addLayer.ok ? 'Добавить ярус' : stack.addLayer.reason}>
+      <span title={stack.addLayer.ok ? words.add : stack.addLayer.reason}>
         <Button
           variant="ghost"
           size="icon"
           className={ICON_BUTTON}
-          aria-label="Добавить ярус"
+          aria-label={words.add}
           disabled={!stack.addLayer.ok}
           onClick={actions.addLayer}
         >

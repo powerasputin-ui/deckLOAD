@@ -288,6 +288,11 @@ export function resolveShipFrame(frame: DeckShipFrameInput | undefined): { frame
   }
 }
 
+// A static list over this, with no limit of the vessel's own, is a warning
+// (decided 2026-11-07): no rule's figure — the IS Code has none — but a
+// list a deck officer would trim out before sailing.
+export const DEFAULT_LIST_WARN_DEG = 2
+
 export const NO_HYDROSTATICS = 'Нет гидростатики судна'
 export const NO_DECK_HEIGHT = 'Не задана высота палубы над килем'
 
@@ -454,6 +459,19 @@ function evaluateState(input: TripStabilityInput, state: LoadingState): StateSta
         warnings.push(`Осадку по грузовой марке не проверить: таблица гидростатики кончается на осадке ${m2(top.draftM)} м, марка — ${m2(maxDraft)} м`)
     } else if (draughts.midM !== null && draughts.midM > maxDraft + 1e-9)
       errors.push(`Осадка ${m2(draughts.midM)} м больше предельной ${m2(maxDraft)} м по грузовой марке`)
+  }
+  // A static list (decided 2026-11-07): the IS Code has no limit on it, and
+  // its criteria already take it — the righting arms are shortened by
+  // TCG·cos θ — but a vessel goes to sea upright: a list over the vessel's
+  // own limit is an error, over DEFAULT_LIST_WARN_DEG without one, a
+  // warning. The packer doesn't balance the cargo across the deck.
+  if (stability.listSide !== 'none') {
+    const own = vessel.particulars.maxListDeg
+    const side = stability.listSide === 'port' ? 'на левый борт' : 'на правый борт'
+    const list = stability.listDeg.toFixed(1)
+    if (own !== undefined && stability.listDeg > own + 1e-9) errors.push(`Крен ${list}° ${side} больше допустимого ${own}°`)
+    else if (own === undefined && stability.listDeg > DEFAULT_LIST_WARN_DEG + 1e-9)
+      warnings.push(`Крен ${list}° ${side} больше ${DEFAULT_LIST_WARN_DEG}° — в рейс выходят без крена (порог по умолчанию, свой — «Наибольший крен» в данных судна)`)
   }
   if (stability.extrapolated) warnings.push(`Водоизмещение ${tonnes(stability.displacementKg)} т вне таблицы гидростатики — числа оценочные`)
   // Where the deck stands along the hull only moves the cargo's LCG — the

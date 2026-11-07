@@ -474,7 +474,7 @@ export interface PlanPdfModel {
   totals: { rows: string[][]; total: string[]; lashing: PdfLashing }
 }
 
-export const CARGO_HEAD_FOR = (unit: string) => ['№', 'Груз', 'Кол-во, шт', `Д×Ш×В, ${unit}`, 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей']
+export const CARGO_HEAD_FOR = (unit: string) => ['№', 'Груз', 'Кол-во, шт', `Вдоль×поперёк×выс., ${unit}`, 'Вес ед., т', 'Вес всего, т', 'Ярусов', 'Штабелей']
 // The cargo table's columns, pt: «Груз» takes the rest. Numbers are right-aligned.
 export const CARGO_COLUMN_WIDTHS: (number | undefined)[] = [34, undefined, 62, 110, 62, 70, 52, 60]
 export const CARGO_RIGHT_ALIGNED = [0, 2, 3, 4, 5, 6, 7]
@@ -653,7 +653,14 @@ export function tripChecks(f: PlanFacts, tripIndex: number): Check[] {
     trips: [trip],
     tenFoot: f.tenFoot ? { capacity: f.tenFoot.capacity, byTrip: [f.tenFoot.byTrip[tripIndex] ?? 0] } : undefined,
     lashing: found
-      ? { securedStacks: trip.securedStacks ?? f.lashing.securedStacks, shortStacks: found.lashingShort.length, dangerousGoodsStacks: found.dangerousGoods.length }
+      ? {
+          securedStacks: trip.securedStacks ?? f.lashing.securedStacks,
+          shortStacks: found.lashingShort.length,
+          balanceFailStacks: found.lashingShort.filter((l) => l.balanceFails).length,
+          uncheckedStacks: found.lashingUnchecked?.length ?? 0,
+          uncheckedReason: found.lashingUnchecked?.[0]?.reason,
+          dangerousGoodsStacks: found.dangerousGoods.length,
+        }
       : f.lashing,
     attention: found
       ? {
@@ -942,6 +949,7 @@ export function layOutPlanPdf(pdf: jsPDF, model: PlanPdfModel, cargoHead: string
       lines(
         [
           '* «Норматив» — формула РД 31.11.21.23-96 применена по назначению (категория «Металлопродукция»). «Инженерная оценка» — та же формула как ориентир для другого груза, не нормативный расчёт крепления.',
+          '** Силы крепления — баланс по CSS Code, приложение 13: сдвиг поперёк и вдоль, опрокидывание, каждая сторона отдельно; ускорения по таблицам приложения (груз «на палубе, высоко») или свои, ветер и заливание по 1 кН/м², CS = MSL / 1,5. Итог — в проверке «Крепление».',
         ],
         7.5,
         INK_2

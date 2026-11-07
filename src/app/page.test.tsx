@@ -489,6 +489,29 @@ describe('Home (page.tsx)', () => {
 
   // Stage 1 (spec 6.3): a stack whose lashing falls short wears an amber
   // chain; one an old file merged without keeping its make-up, «?».
+  // Decided 2026-11-07: a pile of pipes counts its pipes, and says the
+  // tiers its label on the deck says.
+  it('the inspector of a pipe pile counts pipes, not tiers', () => {
+    render(<Home />)
+    clearDemoCargo()
+    fireEvent.click(screen.getByText('Ручной'))
+    act(() => {
+      useCalculator.setState({ deck: { ...useCalculator.getState().deck, width: 12, length: 12 } })
+      useCalculator.getState().addItem({ name: 'Труба', width: 9.5, length: 0.25, height: 0.25, quantity: 20, weight: 700, shape: 'cylinder' })
+    })
+    const pipe = useCalculator.getState().items.find((it) => it.name === 'Труба')!
+    act(() => {
+      useCalculator.getState().addManualPlacement({ id: 'm1', itemId: pipe.id, name: 'Труба', x: 1, y: 1, width: 9.5, length: 1.5, layers: 20, rotated: false, color: pipe.color })
+      useCalculator.setState({ selectedManualIds: ['m1'] })
+    })
+    const inspector = screen.getByRole('complementary', { name: 'Инспектор' })
+    const pile = within(inspector).getByRole('region', { name: 'Трубы в куче' })
+    // 20 pipes lie 6 + 5 + 4 + 3 + 2: five tiers.
+    expect(within(pile).getByTestId('stack-units-hint').textContent).toMatch(/^5 ярусов · макс\. \d+ (труба|трубы|труб) по высоте$/)
+    expect(within(pile).getByRole('button', { name: 'Убрать трубу' })).toBeTruthy()
+    expect(within(inspector).queryByRole('region', { name: 'Ярусы' })).toBeNull()
+  })
+
   it('marks a stack whose lashing falls short with a chain, and one of unknown make-up with «?»', () => {
     render(<Home />)
     clearDemoCargo()
@@ -512,10 +535,13 @@ describe('Home (page.tsx)', () => {
     expect(stack('b').querySelector('[data-mark="unknown-makeup"]')).toBeTruthy()
     expect(stack('a').querySelector('[data-mark="unknown-makeup"]')).toBeNull()
 
-    // One 100 kg lashing can't hold 20 t.
+    // One 100 kg lashing can't hold 20 t — at the user's own accelerations;
+    // by the CSS Code's tables, without the vessel's data, it isn't judged.
     act(() => {
       useCalculator.getState().addLashingPoint({ x: 0.5, y: 0.5, placementId: 'a', cornerX: 1, cornerY: 1, mslKg: 100, verticalAngleDeg: 45 })
     })
+    expect(stack('a').querySelector('[data-mark="lashing-short"]')).toBeNull()
+    act(() => useCalculator.getState().setVesselMotion({ preset: 'custom', ax: 0.3, ay: 0.5, az: 0.3 }))
     expect(stack('a').querySelector('[data-mark="lashing-short"]')).toBeTruthy()
     expect(stack('b').querySelector('[data-mark="lashing-short"]')).toBeNull()
   })
@@ -1167,6 +1193,7 @@ describe('Home (page.tsx)', () => {
             { id: 'p1', x: 0.5, y: 0.5, label: 'Точка 1', placementId: 'm1', itemId: it.id, cornerX: 1, cornerY: 1, mslKg: 5000, verticalAngleDeg: 45, deviceType: 'chain_g80_10' },
             { id: 'p2', x: 5, y: 5, label: 'Рым' },
           ],
+          vesselMotion: { preset: 'custom', ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3 },
         },
         selectedManualIds: ['m1'],
       })
@@ -1176,6 +1203,11 @@ describe('Home (page.tsx)', () => {
     // hold it.
     expect(lashing.getByTestId('lashing-count').textContent).toBe('Нужно 2, задано 1')
     expect(lashing.getByTestId('lashing-balance').textContent).toMatch(/^Не держит по расчёту сил/)
+    // Each of the six balances, the failing ones first to read: pushed to
+    // port the one point (pulling to port) goes slack.
+    expect(within(lashing.getByRole('list', { name: 'Баланс сил' })).getAllByRole('listitem').map((li) => li.textContent)).toContain(
+      'Сдвиг к левому борту: держит 294 из 493 кН'
+    )
     expect(lashing.getByLabelText(/^Обоснование/)).toBeTruthy()
     const points = lashing.getByRole('list', { name: 'Точки крепления штабеля' })
     expect(within(points).getAllByRole('listitem')).toHaveLength(1)
@@ -1494,16 +1526,31 @@ describe('Home (page.tsx)', () => {
       expect(within(openCheckRow('separation')).getByRole('group', { name: 'Новое правило' })).toBeTruthy()
     })
 
-    it('the lashing check says coastal waters are assumed until other conditions are chosen', () => {
+    // Decided 2026-11-07: the lashing is judged by the CSS Code's annex 13,
+    // from the vessel's length, breadth, speed and GM — no invented
+    // «coastal» default.
+    it('the lashing check takes the CSS Code\'s accelerations from the vessel\'s length, breadth, speed and GM', () => {
       render(<Home />)
       openSection('Проверки')
       const row = openCheckRow('lashing')
-      const motion = within(row).getByLabelText('Условия плавания')
-      expect(document.getElementById(motion.getAttribute('aria-describedby')!)!.textContent).toBe(
-        'По умолчанию — прибрежное плавание. Ускорения: поперёк 0.35 g, вдоль 0.20 g; трение 0.30'
-      )
-      act(() => useCalculator.getState().setVesselMotion({ ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3, preset: 'open-sea' }))
-      expect(document.getElementById(motion.getAttribute('aria-describedby')!)!.textContent).toBe('Ускорения: поперёк 0.50 g, вдоль 0.30 g; трение 0.30')
+      const motion = within(row).getByLabelText('Ускорения для крепления')
+      const hint = () => document.getElementById(motion.getAttribute('aria-describedby')!)!.textContent
+      expect(hint()).toMatch(/Таблицы годятся для L 50–200 м, 9–24 уз, B\/GM от 3/)
+      expect(hint()).not.toMatch(/При этих данных/)
+      const commit = (label: string, value: string) => {
+        const field = within(row).getByLabelText(label)
+        fireEvent.change(field, { target: { value } })
+        fireEvent.keyDown(field, { key: 'Enter' })
+      }
+      commit('Скорость, уз', '12')
+      commit('GM, м', '2')
+      if (within(row).queryByLabelText('Длина L, м')) commit('Длина L, м', '80')
+      if (within(row).queryByLabelText('Ширина B, м')) commit('Ширина B, м', '16')
+      const vm = useCalculator.getState().deck.vesselMotion!
+      expect(vm).toMatchObject({ preset: 'css', speedKn: 12, gmM: 2 })
+      // L 80 m at 12 kn: ×1.034; B/GM 8: ×1.40 across. At the bow, 7.4 m/s²
+      // across, 3.8 along, 9.2 vertical before them.
+      if (!useCalculator.getState().deck.vessel) expect(hint()).toContain('При этих данных у носа: поперёк 1.09 g, вдоль 0.40 g, вертикально 0.97 g')
     })
 
     it('«Требуют внимания»: a stack of unknown makeup is kept as it is, or deleted with «Отменить»', () => {
@@ -6143,7 +6190,10 @@ it('handleLayerChangePinned("-") pins the freed unit as its own placement (regre
       const panel = within(inspector()!)
       expect(panel.getByRole('heading', { name: /BoxA/ })).toBeTruthy()
       expect(panel.getByText('Расставлен автоматически')).toBeTruthy()
-      expect(panel.getByText('2 × 1 × 1 м')).toBeTruthy()
+      // Along × across × height, as the cargo table (decided 2026-11-07):
+      // BoxA is 2 across and 1 along.
+      expect(panel.getByText('Вдоль × поперёк × выс.')).toBeTruthy()
+      expect(panel.getByText('1 × 2 × 1 м')).toBeTruthy()
       expect(panel.getByText('1500 кг')).toBeTruthy()
       expect(panel.getByText('1.5 т')).toBeTruthy()
       expect(panel.getByText('макс. 5 по высоте')).toBeTruthy()

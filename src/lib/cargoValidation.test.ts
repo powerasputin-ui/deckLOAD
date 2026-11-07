@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  pipeHeavierThanSteel,
+  pipeSteelCeilingKg,
   sanitizeCargoWidth,
   sanitizeCargoLength,
   sanitizeCargoHeight,
@@ -275,5 +277,29 @@ describe('normalizeProject and updateItem agree on garbage CargoItem input', () 
     // invalid patch value (keeping the item's prior value) instead of
     // substituting normalizeProject's load-time fallback — so those are
     // intentionally NOT compared 1:1 here, only the optional fields are.
+  })
+})
+
+// Decided 2026-11-07: a pipe can't weigh more than its whole wall of steel.
+describe('pipeSteelCeilingKg, pipeHeavierThanSteel', () => {
+  // As the catalogue has them: 12.38 m long, the outer diameter across.
+  const pipe = (od: number, boreMm: number, weight: number) => ({ shape: 'cylinder', width: 12.38, length: od, height: od, pipeInnerDiameterMm: boreMm, weight })
+
+  it('weighs the wall as steel: Ø219 with a 190.5 mm bore is at most 891 kg over 12.38 m', () => {
+    // π/4 · (0.219² − 0.1905²) · 12.38 · 7850.
+    expect(pipeSteelCeilingKg(pipe(0.219, 190.5, 0), 'm')).toBeCloseTo((Math.PI / 4) * (0.219 ** 2 - 0.1905 ** 2) * 12.38 * 7850, 6)
+  })
+
+  it('flags the catalogue\'s Ø219,1×14,3 at 1300 kg, not its Ø219,1×12,7 at 820 kg nor the concrete-coated ТШ406,4', () => {
+    expect(pipeHeavierThanSteel(pipe(0.219, 190.5, 1300), 'm')).toBeCloseTo(890.8, 0)
+    expect(pipeHeavierThanSteel(pipe(0.219, 193.7, 820), 'm')).toBeUndefined()
+    // Its outer diameter takes the concrete in: the ceiling is far above.
+    expect(pipeHeavierThanSteel(pipe(0.496, 362, 6000), 'm')).toBeUndefined()
+  })
+
+  it('reads the deck\'s unit, and says nothing without a bore or for a box', () => {
+    expect(pipeHeavierThanSteel({ ...pipe(21.9, 190.5, 1300), width: 1238 }, 'cm')).toBeCloseTo(890.8, 0)
+    expect(pipeSteelCeilingKg({ ...pipe(0.219, 190.5, 1300), pipeInnerDiameterMm: undefined }, 'm')).toBeUndefined()
+    expect(pipeSteelCeilingKg({ ...pipe(0.219, 190.5, 1300), shape: 'rect' }, 'm')).toBeUndefined()
   })
 })

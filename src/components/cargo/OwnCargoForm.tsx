@@ -103,12 +103,12 @@ export function OwnCargoForm({ onDone }: { onDone: () => void }) {
       <fieldset className="space-y-1">
         <legend className="text-xs text-ink-2">
           <abbr title={SIZE_AXES} className="no-underline">
-            Д×Ш×В, {u}
+            Вдоль × поперёк × высота, {u}
           </abbr>
         </legend>
         <div className="grid grid-cols-3 gap-2">
-          {field('length', 'Длина')}
-          {field('width', 'Ширина')}
+          {field('length', 'Вдоль')}
+          {field('width', 'Поперёк')}
           {field('height', 'Высота', 'не задана')}
         </div>
       </fieldset>

@@ -254,6 +254,29 @@ describe('the verdict', () => {
     expect(r.arrivalSameAsDeparture).toBe(false)
   })
 
+  // Decided 2026-11-07: the IS Code has no limit on a static list, but a
+  // vessel goes to sea upright.
+  it('warns of a list over 2° with no limit of the vessel\'s own, and fails one over its own', () => {
+    // The box at the port side: 4 m off the centreline. Departure: TCG
+    // 100 × 4 / 1600 = 0.25 m against GM 4.125 → 3.47°; arrival: 0.333 m
+    // against 3.167 → 6.01°.
+    const listed = { placements: [{ itemId: 'box', x: 0, y: 9, width: 2, length: 2, height: 2, layers: 1, weight: 100_000 }] }
+    const r = evaluateTripStability(input(listed))!
+    expect(r.departure.stability.listDeg).toBeCloseTo(3.468, 3)
+    expect(r.departure.reasons).toContainEqual({
+      status: 'warn',
+      text: 'Крен 3.5° на левый борт больше 2° — в рейс выходят без крена (порог по умолчанию, свой — «Наибольший крен» в данных судна)',
+    })
+    expect(r.verdict).toBe('warn')
+    // Its own limit of 4°: departure is within it, arrival over it.
+    const own = evaluateTripStability(input({ ...listed, vessel: vessel({ particulars: { ...vessel().particulars, maxListDeg: 4 } }) }))!
+    expect(own.departure.reasons.some((x) => x.text.startsWith('Крен'))).toBe(false)
+    expect(own.arrival.reasons).toContainEqual({ status: 'error', text: 'Крен 6.0° на левый борт больше допустимого 4°' })
+    expect(own.verdict).toBe('error')
+    // Upright, nothing is said.
+    expect(evaluateTripStability(input())!.departure.reasons.some((x) => x.text.startsWith('Крен'))).toBe(false)
+  })
+
   it('fails below the limit, naming the GM, the limit and the draught', () => {
     const r = evaluateTripStability(input({ vessel: vessel({ limit: { kind: 'min-gm-by-draft', rows: [{ arg: 2, value: 3.5 }, { arg: 6, value: 3.5 }] } }) }))!
     expect(r.verdict).toBe('error')

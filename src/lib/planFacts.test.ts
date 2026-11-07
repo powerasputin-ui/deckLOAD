@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { gatherPlanFacts, type PlanInput } from './planFacts'
-import { packMultiTrip, packingResultFromManual, type CargoItem, type ManualPlacement, type PinnedPlacement } from './packing'
+import { DEFAULT_VESSEL_MOTION, packMultiTrip, packingResultFromManual, type CargoItem, type ManualPlacement, type PinnedPlacement } from './packing'
 import { VESSEL_TEMPLATES } from './vesselTemplates'
 import type { DeckConfig } from '@/store/calculator'
 
@@ -93,7 +93,7 @@ describe('gatherPlanFacts', () => {
 
     it('judges only stacks with points attached', () => {
       const facts = gatherPlanFacts(manualPlan(deck(), items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
-      expect(facts.lashing).toEqual({ securedStacks: 0, shortStacks: 0, dangerousGoodsStacks: 0 })
+      expect(facts.lashing).toMatchObject({ securedStacks: 0, shortStacks: 0, uncheckedStacks: 0, dangerousGoodsStacks: 0 })
     })
 
     it('is short with fewer points than required and no justification', () => {
@@ -101,24 +101,46 @@ describe('gatherPlanFacts', () => {
       // 0.3 × 100 t / 20.7 t, rounded up).
       const d = deck({ lashingPoints: [point('p1')] })
       const facts = gatherPlanFacts(manualPlan(d, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
-      expect(facts.lashing).toEqual({ securedStacks: 1, shortStacks: 1, dangerousGoodsStacks: 0 })
+      expect(facts.lashing).toMatchObject({ securedStacks: 1, shortStacks: 1, balanceFailStacks: 0, dangerousGoodsStacks: 0 })
 
       const justified = manual({ id: 'm1', itemId: 'pipe', weight: 100_000, lashingJustification: 'Стоит в клети' })
       expect(gatherPlanFacts(manualPlan(d, items, [justified])).lashing.shortStacks).toBe(0)
 
       const enough = deck({ lashingPoints: [point('p1'), point('p2')] })
-      expect(gatherPlanFacts(manualPlan(enough, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })])).lashing).toEqual({
+      expect(gatherPlanFacts(manualPlan(enough, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })])).lashing).toMatchObject({
         securedStacks: 1,
         shortStacks: 0,
         dangerousGoodsStacks: 0,
       })
     })
 
+    // The user's own accelerations: the balance is worked out.
+    const own = { preset: 'custom' as const, ax: 0.3, ay: 0.5, az: 0.3, friction: 0.3 }
+
     it('is short when the force balance fails, whatever the count', () => {
       const weak = { ...point('p1'), mslKg: 100 }
-      const d = deck({ lashingPoints: [weak, { ...weak, id: 'p2' }] })
+      const d = deck({ lashingPoints: [weak, { ...weak, id: 'p2' }], vesselMotion: own })
       const facts = gatherPlanFacts(manualPlan(d, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
-      expect(facts.lashing.shortStacks).toBe(1)
+      expect(facts.lashing).toMatchObject({ shortStacks: 1, balanceFailStacks: 1, uncheckedStacks: 0 })
+    })
+
+    // Decided 2026-11-07: by the CSS Code's annex 13 it takes the vessel's
+    // length, breadth, speed and GM; without them nothing passes or fails.
+    it('leaves the balance unchecked, not passed, without the figures the annex needs', () => {
+      const d = deck({ lashingPoints: [point('p1'), point('p2')] })
+      const facts = gatherPlanFacts(manualPlan(d, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
+      expect(facts.lashing).toMatchObject({ securedStacks: 1, shortStacks: 0, balanceFailStacks: 0, uncheckedStacks: 1, uncheckedReason: 'нет: длина судна, ширина судна, скорость, GM' })
+      const withShip = deck({ lashingPoints: [point('p1'), point('p2')], vesselMotion: { ...DEFAULT_VESSEL_MOTION, speedKn: 12, lengthM: 80, breadthM: 16, gmM: 2 } })
+      const judged = gatherPlanFacts(manualPlan(withShip, items, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
+      // 100 t across at about 1.1 g against two 50 t points and friction: it slides.
+      expect(judged.lashing).toMatchObject({ uncheckedStacks: 0, balanceFailStacks: 1 })
+    })
+
+    it('has nothing to judge on cargo without a weight', () => {
+      const d = deck({ lashingPoints: [point('p1')], vesselMotion: own })
+      const light = [item({ id: 'pipe', category: 'Металлопродукция', weight: undefined })]
+      const facts = gatherPlanFacts(manualPlan(d, light, [manual({ id: 'm1', itemId: 'pipe' })]))
+      expect(facts.lashing).toMatchObject({ uncheckedStacks: 1, uncheckedReason: 'нет веса груза', balanceFailStacks: 0 })
     })
 
     it('counts stacks holding dangerous goods', () => {

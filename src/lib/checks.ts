@@ -84,6 +84,9 @@ export interface TripFindings {
   // Secured stacks short of securing: fewer points than required with no
   // justification written, or the force balance failing.
   lashingShort: { stack: StackRef; required: number; attached: number; balanceFails: boolean }[]
+  // Secured stacks whose balance of forces isn't worked out for lack of a
+  // figure (CSS Code, annex 13: the vessel's speed, GM…), and which.
+  lashingUnchecked?: { stack: StackRef; reason: string }[]
   dangerousGoods: StackRef[]
   // «Требуют внимания», on the deck…
   unknownMakeup: { stack: StackRef; recordId: string }[]
@@ -120,6 +123,12 @@ export interface PlanFacts {
     // count with no justification written.
     securedStacks: number
     shortStacks: number
+    // Of them, those whose balance of forces fails (CSS Code, annex 13).
+    balanceFailStacks?: number
+    // Secured stacks whose balance isn't worked out for lack of data, and
+    // the first one's reason.
+    uncheckedStacks?: number
+    uncheckedReason?: string
     // Stacks holding dangerous goods: their securing and segregation follow
     // the IMDG Code, which the app doesn't calculate.
     dangerousGoodsStacks: number
@@ -232,17 +241,28 @@ export function buildChecks(f: PlanFacts): Check[] {
     } else checks.push({ ...base, status: 'ok', detail: 'Нарушений нет' })
   }
 
-  // Крепление — a vessel's: a platform's motions aren't the norm's.
+  // Крепление — a vessel's: a platform's motions aren't the norm's. A stack
+  // whose lashings don't hold by the balance of forces (CSS Code, annex 13)
+  // is an error; fewer points than the norm's count with nothing said, a
+  // warning; a balance not worked out for lack of data, «—» (decided
+  // 2026-11-07: it said «Крепления хватает» on accelerations at half the
+  // annex's, and on cargo with no weight).
   if (!f.platform) {
     const base = { id: 'lashing' as const, title: 'Крепление', target: 'checks' as const }
     const { securedStacks, shortStacks, dangerousGoodsStacks } = f.lashing
-    const warnings = [
-      shortStacks > 0 && `Не хватает крепления: ${shortStacks} ${stacksWord(shortStacks)}`,
+    const failing = f.lashing.balanceFailStacks ?? 0
+    const unchecked = f.lashing.uncheckedStacks ?? 0
+    const parts = [
+      failing > 0 && `Не держит по расчёту сил: ${failing} ${stacksWord(failing)}`,
+      shortStacks - failing > 0 && `Точек меньше, чем по РД, без обоснования: ${shortStacks - failing} ${stacksWord(shortStacks - failing)}`,
       dangerousGoodsStacks > 0 && 'Опасный груз: крепление и сегрегация — по IMDG Code, отдельно',
+      unchecked > 0 && `Силы не проверены: ${unchecked} ${stacksWord(unchecked)} — ${f.lashing.uncheckedReason ?? 'нет данных'}`,
     ].filter((w): w is string => !!w)
-    if (warnings.length > 0) checks.push({ ...base, status: 'warn', detail: warnings.join(' · ') })
+    if (failing > 0) checks.push({ ...base, status: 'error', detail: parts.join(' · ') })
+    else if (shortStacks > 0 || dangerousGoodsStacks > 0) checks.push({ ...base, status: 'warn', detail: parts.join(' · ') })
     else if (securedStacks === 0) checks.push({ ...base, status: 'none', detail: 'Точки крепления не заданы' })
-    else checks.push({ ...base, status: 'ok', detail: `Крепления хватает: ${securedStacks} ${stacksWord(securedStacks)}` })
+    else if (unchecked > 0) checks.push({ ...base, status: 'none', detail: parts.join(' · ') })
+    else checks.push({ ...base, status: 'ok', detail: `Держит по расчёту сил (CSS Code, прил. 13): ${securedStacks} ${stacksWord(securedStacks)}` })
   }
 
   // Остойчивость — a vessel's, by its booklet.
@@ -316,11 +336,14 @@ function stabilityLines(trips: TripFacts[], multiTrip: boolean): NonNullable<Che
     })
 }
 
-// ✕ and ⚠ in the list; «—» counts as neither (8.4).
-export function checkCounts(checks: readonly Check[]): { errors: number; warnings: number } {
+// ✕ and ⚠ in the list, and «—»: a check not made for lack of data (8.4).
+// The status line counts only ✕ and ⚠; the «Проверки» tab shows «—» too, so
+// a plan with checks left undone gets no tick (decided 2026-11-07).
+export function checkCounts(checks: readonly Check[]): { errors: number; warnings: number; unchecked: number } {
   return {
     errors: checks.filter((c) => c.status === 'error').length,
     warnings: checks.filter((c) => c.status === 'warn').length,
+    unchecked: checks.filter((c) => c.status === 'none').length,
   }
 }
 
@@ -398,8 +421,10 @@ export function checkDetails(f: PlanFacts, id: CheckId): CheckDetails {
             l.attached < l.required && `нужно ${l.required}, задано ${l.attached}`,
             l.balanceFails && 'не держит по расчёту сил',
           ].filter((w): w is string => !!w)
-          add(i, 'warn', `«${l.stack.name}»: ${why.join('; ')}`, l.stack)
+          add(i, l.balanceFails ? 'error' : 'warn', `«${l.stack.name}»: ${why.join('; ')}`, l.stack)
         }
+        // Not at fault, so not lit up.
+        for (const u of found?.lashingUnchecked ?? []) add(i, 'info', `«${u.stack.name}»: силы не проверены — ${u.reason}`)
         for (const d of found?.dangerousGoods ?? [])
           add(i, 'warn', `«${d.name}»: опасный груз — крепление и сегрегация по IMDG Code`, d)
         break

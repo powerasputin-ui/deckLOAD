@@ -10,7 +10,6 @@ import { jackUpForPlan } from './jackUpPlan'
 import type { DeckConfig } from '@/store/calculator'
 import {
   assessLashingRequirement,
-  checkLashingBalance,
   computeFootprintPressures,
   computeZoneLoads,
   isWholeDeckZone,
@@ -27,10 +26,11 @@ import {
   type PlacedItem,
   type SeparationRule,
 } from './packing'
-import { placementCategorySet, placementTotalLayers, placementTotalWeightKg, segmentLashingInputs } from './placementComposition'
+import { placementCategorySet, placementTotalHeightM, placementTotalVCG, placementTotalWeightKg, segmentLashingInputs, type ComposablePlacement } from './placementComposition'
 import { evaluateTripStability, stabilityMissing, weightlessUnits, type TripStabilityResult } from './stabilityConditions'
 import { appliedVessel } from './vesselLibrary'
-import { UNIT_LABEL } from './units'
+import { toMeters, UNIT_LABEL } from './units'
+import { CSS_G, cssAccelerations, securingBalance, type Accelerations, type SecuringResult } from './securing'
 import { fmtNumber } from './utils'
 import { autoPlacementKey } from './stackSelection'
 import type { PlanFacts, StackRef, TripFacts, TripFindings, TripStability } from './checks'
@@ -64,14 +64,17 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
   const tripFacts = trips.map((t, i): TripFacts => {
     // The trip's own placement records: what flags and lashing points sit on.
     const tripRecords = (mode === 'manual' ? (i === 0 ? p.manualPlacements : []) : pinsOf(i)).filter((r) => !isQuarantined(r))
-    const found = tripFindings(t, tripRecords, mode === 'auto' ? pinsOf(i) : [], deck, items, p.separationRules)
+    const evaluation = evaluateDeckTripStability(deck, t, items)
+    // The trip's GM sets its securing's accelerations (CSS Code, annex 13).
+    const gm = securingGmOf(evaluation)
+    const found = tripFindings(t, tripRecords, mode === 'auto' ? pinsOf(i) : [], deck, items, p.separationRules, gm)
     return {
       weightKg: t.totalWeight,
       overloadedZones: found.zones.length,
       overPressureStacks: found.pressure.length,
-      securedStacks: tripRecords.filter((r) => lashingVerdict(r, deck, items) !== 'none').length,
+      securedStacks: tripRecords.filter((r) => lashingVerdict(r, deck, items, gm) !== 'none').length,
       separationViolations: found.separation.length,
-      stability: tripStability(t, deck, items),
+      stability: tripStability(evaluation),
       stabilityMissing: deckStabilityMissing(deck, t),
       weightlessUnits: weightlessUnits(t.placed, items),
       found,
@@ -100,6 +103,9 @@ export function gatherPlanFacts(p: PlanInput): PlanFacts {
     lashing: {
       securedStacks: records.filter((r) => !isQuarantined(r) && lashingVerdict(r, deck, items) !== 'none').length,
       shortStacks: sum((f) => f.lashingShort.length),
+      balanceFailStacks: sum((f) => f.lashingShort.filter((l) => l.balanceFails).length),
+      uncheckedStacks: sum((f) => f.lashingUnchecked?.length ?? 0),
+      uncheckedReason: tripFacts.flatMap((t) => t.found!.lashingUnchecked ?? [])[0]?.reason,
       dangerousGoodsStacks: sum((f) => f.dangerousGoods.length),
     },
     hasVessel: !!deck.vessel,
@@ -131,7 +137,8 @@ function tripFindings(
   pins: readonly PinnedPlacement[],
   deck: DeckConfig,
   items: CargoItem[],
-  separationRules: readonly SeparationRule[]
+  separationRules: readonly SeparationRule[],
+  tripGmM?: number
 ): TripFindings {
   const ref = (pl: { itemId: string; x: number; y: number; name: string }): StackRef => ({ key: autoPlacementKey(pl), name: pl.name })
   const zones = deck.loadZones ?? []
@@ -161,8 +168,12 @@ function tripFindings(
       separationRules
     ).map((v) => ({ a: ref(t.placed[v.a]), b: ref(t.placed[v.b]), distance: v.distance, minDistance: v.minDistance })),
     lashingShort: records.flatMap((r) => {
-      const s = lashingShortfall(r, deck, items)
+      const s = lashingShortfall(r, deck, items, tripGmM)
       return s ? [{ stack: ref(r), ...s }] : []
+    }),
+    lashingUnchecked: records.flatMap((r) => {
+      const s = stackSecuring(r, deck, items, tripGmM)
+      return s.status === 'unchecked' ? [{ stack: ref(r), reason: s.reason }] : []
     }),
     dangerousGoods: t.placed
       .filter((pl) => segmentLashingInputs(pl, items).some((seg) => lashingMethodologyFor(seg.category) === 'dangerous-goods'))
@@ -189,8 +200,7 @@ function tenFootUnits(t: PackingResult): number {
 }
 
 // The booklet check of one trip, at departure and arrival.
-function tripStability(t: PackingResult, deck: DeckConfig, items: CargoItem[]): TripStability | undefined {
-  const evaluation = evaluateDeckTripStability(deck, t, items)
+function tripStability(evaluation: TripStabilityResult | undefined): TripStability | undefined {
   if (!evaluation) return undefined
   return {
     verdict: evaluation.verdict,
@@ -226,35 +236,103 @@ function deckStrengthState(deck: DeckConfig): PlanFacts['deckStrength'] {
   return (deck.loadZones ?? []).some((z) => isWholeDeckZone(z, deck.width, deck.length)) ? undefined : 'unchecked'
 }
 
+// The GM a trip's securing is judged by (securing.ts): the larger of
+// departure and arrival — the larger the GM, the larger the accelerations.
+export function securingGmOf(evaluation: TripStabilityResult | undefined): number | undefined {
+  if (!evaluation) return undefined
+  return Math.max(evaluation.departure.stability.GM_fluid, evaluation.arrival.stability.GM_fluid)
+}
+
+// A stack's securing by the balance of forces (CSS Code, annex 13 —
+// securing.ts): 'none' without lashing points; 'unchecked' when a figure it
+// needs isn't there (no data, no green); 'checked' with the six balances.
+export type StackSecuring =
+  | { status: 'none' }
+  | { status: 'unchecked'; reason: string }
+  | { status: 'checked'; result: SecuringResult; accelerations: Accelerations; source: 'css' | 'custom' }
+
+type SecuredRecord = ComposablePlacement & { id: string; x: number; y: number; width: number; length: number }
+
+// Where the stack's centre is along the vessel, 0 at the aft perpendicular
+// and 1 at the forward one — unknown without the vessel's length and the
+// deck's place on it.
+function alongShipFraction(deck: DeckConfig, r: SecuredRecord): number | undefined {
+  const v = deck.vessel?.particulars
+  const L = v?.lengthBpp
+  const offset = deck.shipFrame?.originOffsetFromMidshipsM
+  if (!v || !(L !== undefined && L > 0) || offset === undefined || !Number.isFinite(offset)) return undefined
+  const along = toMeters(r.y + r.length / 2, deck.unit) - toMeters(deck.length, deck.unit) / 2
+  const lcg = offset + ((deck.deckForwardIsPositiveY ?? true) ? along : -along)
+  return (v.longitudinalOrigin === 'midships' ? lcg + L / 2 : lcg) / L
+}
+
+export function stackSecuring(r: SecuredRecord, deck: DeckConfig, items: CargoItem[], tripGmM?: number): StackSecuring {
+  const own = (deck.lashingPoints ?? []).filter((pt) => pt.placementId === r.id)
+  if (own.length === 0) return { status: 'none' }
+  const m = (v: number) => toMeters(v, deck.unit)
+  const lashings = own
+    .filter((pt) => pt.cornerX !== undefined && pt.cornerY !== undefined && (pt.mslKg ?? 0) > 0)
+    .map((pt) => ({ cornerX: m(pt.cornerX!), cornerY: m(pt.cornerY!), anchorX: m(pt.x), anchorY: m(pt.y), mslKg: pt.mslKg!, verticalAngleDeg: pt.verticalAngleDeg ?? 45 }))
+  const massKg = placementTotalWeightKg(r, items)
+  if (!(massKg > 0)) return { status: 'unchecked', reason: 'нет веса груза' }
+  if (lashings.length === 0) return { status: 'unchecked', reason: 'у точек не задан MSL' }
+  const motion = deck.vesselMotion ?? DEFAULT_VESSEL_MOTION
+  let accelerations: Accelerations
+  if (motion.preset === 'custom') {
+    if (!(motion.ay > 0) && !(motion.ax > 0)) return { status: 'unchecked', reason: 'свои ускорения не заданы' }
+    accelerations = { ax: motion.ax * CSS_G, ay: motion.ay * CSS_G, az: motion.az * CSS_G }
+  } else {
+    const particulars = deck.vessel?.particulars
+    const css = cssAccelerations(
+      {
+        lengthM: particulars && particulars.lengthBpp > 0 ? particulars.lengthBpp : motion.lengthM,
+        breadthM: particulars && particulars.breadth > 0 ? particulars.breadth : motion.breadthM,
+        speedKn: motion.speedKn,
+        gmM: tripGmM ?? motion.gmM,
+      },
+      alongShipFraction(deck, r)
+    )
+    if (css.status === 'missing') return { status: 'unchecked', reason: `нет: ${css.missing.join(', ')}` }
+    if (css.status === 'outside') return { status: 'unchecked', reason: `вне таблиц CSS Code: ${css.reason} — задайте свои ускорения` }
+    accelerations = css.accelerations
+  }
+  const heightM = m(placementTotalHeightM(r, items))
+  const result = securingBalance(
+    { massKg, x: m(r.x), y: m(r.y), width: m(r.width), length: m(r.length), heightM, cgHeightM: Math.min(heightM, m(placementTotalVCG(r, items))) },
+    lashings,
+    accelerations,
+    motion.friction
+  )
+  return { status: 'checked', result, accelerations, source: motion.preset === 'custom' ? 'custom' : 'css' }
+}
+
 // A stack's lashing: 'none' without lashing points (not judged); 'short' when
-// the force balance (IMO CSS Code, simplified — the check behind the green
-// and red points on the deck) fails, or when it has fewer points than the
+// the balance of forces (CSS Code, annex 13 — the check behind the green and
+// red points on the deck) fails, or when it has fewer points than the
 // required count and no justification (the sidebar asks for one, and it
 // goes into the PDF).
 export function lashingVerdict(
   r: ManualPlacement | PinnedPlacement,
   deck: DeckConfig,
-  items: CargoItem[]
+  items: CargoItem[],
+  tripGmM?: number
 ): 'none' | 'ok' | 'short' {
   if (!(deck.lashingPoints ?? []).some((pt) => pt.placementId === r.id)) return 'none'
-  return lashingShortfall(r, deck, items) ? 'short' : 'ok'
+  return lashingShortfall(r, deck, items, tripGmM) ? 'short' : 'ok'
 }
 
 // How a secured stack falls short, or null when it doesn't (or has no
-// lashing points to judge).
+// lashing points to judge). A balance not worked out for lack of data is
+// no shortfall — the check says it apart.
 export function lashingShortfall(
   r: ManualPlacement | PinnedPlacement,
   deck: DeckConfig,
-  items: CargoItem[]
+  items: CargoItem[],
+  tripGmM?: number
 ): { required: number; attached: number; balanceFails: boolean } | null {
   const attached = (deck.lashingPoints ?? []).filter((pt) => pt.placementId === r.id)
   if (attached.length === 0) return null
-  const layers = Math.max(1, placementTotalLayers(r))
-  const balance = checkLashingBalance(
-    { x: r.x, y: r.y, width: r.width, length: r.length, weight: placementTotalWeightKg(r, items) / layers, layers },
-    attached,
-    deck.vesselMotion ?? DEFAULT_VESSEL_MOTION
-  )
+  const securing = stackSecuring(r, deck, items, tripGmM)
   const breakingLoadKN = WIRE_ROPE_SPECS[r.lashingWireType ?? DEFAULT_WIRE_ROPE_TYPE].breakingLoadKN
   const required = Math.max(
     0,
@@ -264,7 +342,7 @@ export function lashingShortfall(
     })
   )
   const tooFew = attached.length < required && !r.lashingJustification?.trim()
-  const balanceFails = !!balance && !balance.ok
+  const balanceFails = securing.status === 'checked' && !securing.result.ok
   return tooFew || balanceFails ? { required, attached: attached.length, balanceFails } : null
 }
 
