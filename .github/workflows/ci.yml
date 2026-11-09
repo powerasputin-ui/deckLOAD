@@ -26,6 +26,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # vitest runs on `node` from the PATH, not on Bun, so this job's Node is
+      # the environment the unit tests see: pinned to the one the tests are
+      # written against, rather than to whatever the runner image ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
