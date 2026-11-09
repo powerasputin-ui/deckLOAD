@@ -142,6 +142,8 @@ export interface JackUpResult {
 }
 
 const t = (v: number) => fmtNumber(Math.round(v))
+// A load below nothing, with a typographic minus.
+const minus = (v: number) => (Math.round(v) < 0 ? `−${t(-v)}` : t(v))
 const m = (v: number) => v.toFixed(2)
 
 export function evaluateJackUp(
@@ -298,6 +300,20 @@ function elevated(
     if (nowhere) return { ...base, status: 'none', detail: `Прочий приход: не указано, где «${nowhere.name || 'строка без названия'}» — у опоры или в центре опор` }
     const noReport = legs.find((l) => l.reportT === undefined)
     if (noReport) return { ...base, status: 'none', detail: `Нет нагрузки на опору «${noReport.name}» из суточного отчёта` }
+    // A leg the run would take below nothing lifts off: the unit stands on
+    // the others, and the plane the shares come from no longer holds — no
+    // margin, an error, whatever the limit (audit 2026-11-09: 400 t at a
+    // corner of the deck, outside the legs, gave a leg −200 t under a tick).
+    // A leg's share is negative for cargo beyond the legs from it. Below
+    // nothing by a whole tonne, as the loads are shown: a leg at −0.3 t
+    // reads 0 t, and an error over «0 т» would say nothing.
+    const lifted = legs.filter((l) => Math.round(l.afterT ?? 0) < 0)
+    if (lifted.length > 0)
+      return {
+        ...base,
+        status: 'error',
+        detail: `${lifted.map((l) => `«${l.name}» ${minus(l.afterT!)} т`).join(', ')} — опора отрывается: груз за контуром опор, а с ней и линейная модель долей неверна`,
+      }
     const most = legs.reduce((a, b) => ((b.afterT ?? 0) > (a.afterT ?? 0) ? b : a))
     if (e.maxLegLoadT === undefined) return { ...base, status: 'none', detail: `наибольшая — «${most.name}»: ${t(most.afterT!)} т; допустимая не задана` }
     const over = legs.filter((l) => (l.afterT ?? 0) > e.maxLegLoadT! + 1e-9)

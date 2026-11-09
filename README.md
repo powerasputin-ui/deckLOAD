@@ -27,14 +27,18 @@ bun run start                # порт из PORT (по умолчанию 3000)
 
 ```sh
 bunx tsc --noEmit            # типы
-bun run lint                 # ESLint
+bun run lint                 # ESLint, без единого предупреждения
 bun run test:ci              # unit-тесты (Vitest)
+bun run test:cov             # они же с покрытием по файлам: coverage/index.html
 bun run test:e2e             # сценарии в браузере (Playwright)
 ```
 
 Для e2e нужен Chromium: `bunx playwright install chromium`, либо путь к уже
 установленному в `E2E_CHROMIUM_PATH`. Сервер для e2e Playwright собирает и
-поднимает сам на порту 3210 (другой — в `E2E_PORT`).
+поднимает сам на порту 3210 (другой — в `E2E_PORT`). Если на порту уже работает
+DeckLoad другой сборки — например, сервер, оставшийся от прошлого прогона, —
+набор не запустится: остановите его (или `E2E_ANY_BUILD=1`, чтобы проверить
+именно его).
 
 CI (GitHub Actions) на каждый push в `main` прогоняет то же самое, а на Windows
 ещё и запускает `bun run start` с Bun, поставленным через npm.

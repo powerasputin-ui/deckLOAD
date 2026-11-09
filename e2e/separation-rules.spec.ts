@@ -99,8 +99,9 @@ test.describe('Category separation rules', () => {
           const raw = window.localStorage.getItem('deckload-projects')
           if (!raw) return null
           const data = JSON.parse(raw)
-          const projects: any[] = Array.isArray(data.projects) ? data.projects : []
-          const active = projects.find((p: any) => p.id === data.activeId) ?? projects[0]
+          type Stored = { id?: string; pinnedPlacementsByTrip?: unknown }
+          const projects: Stored[] = Array.isArray(data.projects) ? data.projects : []
+          const active = projects.find((p) => p.id === data.activeId) ?? projects[0]
           return (active?.pinnedPlacementsByTrip ?? null) as Record<string, { x: number; y: number; width: number; length: number }[]> | null
         })
       // The applied variant pins trip 1's layout; cargo it leaves out goes on

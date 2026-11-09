@@ -79,6 +79,34 @@ describe('evaluateJackUp, elevated', () => {
     expect(check(r, 'jack-vdl')).toMatchObject({ status: 'ok', detail: 'на опорах 2900 т при допустимом 3500 т · в шторм 2900 т при допустимом 3000 т' })
   })
 
+  // Audit 2026-11-09: a leg taken below nothing showed under a tick.
+  it('fails a leg the cargo lifts off — beyond the legs, its share is negative — whatever the limit', () => {
+    // Light legs, and 400 t at the deck's corner, 15 m beyond the legs on
+    // either axis from the far leg: (0; 0) against legs at x 5…25, y 12…28.
+    const light = { ...unit, report: { ...unit.report, legLoadsT: { a: 100, b: 100, c: 100, d: 100 } } }
+    const r = evaluateJackUp(light, [{ weightT: 400, vcgM: 0, x: 0, y: 0 }], [], deck, true)
+    const after = r.legs!.map((l) => l.afterT!)
+    // The shares still hold the load: 400 t in all, its moment about both axes.
+    expect(after.reduce((s, v) => s + v, 0)).toBeCloseTo(800, 9)
+    const lifted = r.legs!.filter((l) => l.afterT! < 0)
+    expect(lifted.map((l) => l.name)).toEqual(['Опора 1'])
+    expect(check(r, 'jack-legs')).toMatchObject({ status: 'error' })
+    expect(check(r, 'jack-legs').detail).toMatch(/^«Опора 1» −\d+ т — опора отрывается/)
+    // With no limit given it is an error all the same.
+    const noLimit = evaluateJackUp({ ...light, elevated: { ...light.elevated, maxLegLoadT: undefined } }, [{ weightT: 400, vcgM: 0, x: 0, y: 0 }], [], deck, true)
+    expect(check(noLimit, 'jack-legs').status).toBe('error')
+    // Over the legs' centre the same 400 t lifts nothing.
+    expect(check(evaluateJackUp(light, [{ weightT: 400, vcgM: 0, x: 15, y: 20 }], [], deck, true), 'jack-legs').status).toBe('ok')
+    // Below nothing by a whole tonne, as the loads are shown: a leg left at
+    // −0.3 t reads 0 t, and is not called lifted.
+    const first = after[0]
+    const unlimited = { ...light, elevated: { ...light.elevated, maxLegLoadT: undefined } }
+    const touching = { ...unlimited, report: { ...unlimited.report, legLoadsT: { ...unlimited.report.legLoadsT, a: 100 - first - 0.3 } } }
+    const t = evaluateJackUp(touching, [{ weightT: 400, vcgM: 0, x: 0, y: 0 }], [], deck, true)
+    expect(t.legs![0].afterT).toBeCloseTo(-0.3, 9)
+    expect(check(t, 'jack-legs').status).toBe('none')
+  })
+
   it('names the legs over their load, and the VDL over its storm limit', () => {
     // 300 t: 112.5 t on each near leg, 37.5 t on each far one.
     const r = evaluateJackUp({ ...unit, elevated: { ...unit.elevated, maxLegLoadT: 4_100 } }, [{ weightT: 300, vcgM: 0, x: 20, y: 20 }], [], deck, true)

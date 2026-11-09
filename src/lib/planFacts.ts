@@ -297,8 +297,15 @@ export function stackSecuring(r: SecuredRecord, deck: DeckConfig, items: CargoIt
     accelerations = css.accelerations
   }
   const heightM = m(placementTotalHeightM(r, items))
+  // Without a height the wind, the sloshing and the tipping would come out
+  // as nothing — no data, no green.
+  if (!(heightM > 0)) return { status: 'unchecked', reason: 'нет высоты груза' }
+  // The centre of gravity as given, even above the stack's top (an override
+  // the height doesn't hold): cut to the top, the tipping moment came out
+  // smaller — not on the safe side (audit 2026-11-09).
+  const cgHeightM = Math.max(0, m(placementTotalVCG(r, items)))
   const result = securingBalance(
-    { massKg, x: m(r.x), y: m(r.y), width: m(r.width), length: m(r.length), heightM, cgHeightM: Math.min(heightM, m(placementTotalVCG(r, items))) },
+    { massKg, x: m(r.x), y: m(r.y), width: m(r.width), length: m(r.length), heightM, cgHeightM },
     lashings,
     accelerations,
     motion.friction

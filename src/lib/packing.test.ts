@@ -1431,6 +1431,10 @@ describe('auto placement stays inside sloped deck edges and out of sloped obstac
     })
   }
 
+  // Some 3000 stacks, each against every obstacle's polygon: about 0.4 s as
+  // a rule, but past the default 5 s under coverage instrumentation or on a
+  // slow CI runner (audit 2026-11-09) — a fail that says nothing about the
+  // packer. Its own budget, then.
   it('no stack reaches into a triangle, a diamond or an oval obstacle', () => {
     const zones = [
       { id: 't', name: 'Треугольник', shapeType: 'triangle' as const, x: 2, y: 3, width: 6, length: 7 },
@@ -1445,7 +1449,7 @@ describe('auto placement stays inside sloped deck edges and out of sloped obstac
       const intruders = r.placed.filter((p) => !separated(corners(p), poly))
       expect(intruders, z.name).toEqual([])
     }
-  })
+  }, 30_000)
 })
 
 describe('polygonInsideRects', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { gatherPlanFacts, type PlanInput } from './planFacts'
+import { gatherPlanFacts, stackSecuring, type PlanInput } from './planFacts'
 import { DEFAULT_VESSEL_MOTION, packMultiTrip, packingResultFromManual, type CargoItem, type ManualPlacement, type PinnedPlacement } from './packing'
 import { VESSEL_TEMPLATES } from './vesselTemplates'
 import type { DeckConfig } from '@/store/calculator'
@@ -77,6 +77,18 @@ describe('gatherPlanFacts', () => {
     expect(facts.trips[0].overloadedZones).toBe(1)
   })
 
+  // Audit 2026-11-09: a zone's load taken without the stack's tiers passed
+  // every test.
+  it('loads a zone with every tier of a stack', () => {
+    // A 1 t box three tiers high on a 1 m² zone: 3 t/m² — over 2.5, under 3.5.
+    const zoned = (limit: number) => deck({ clearance: 5, loadZones: [{ id: 'z', x: 0, y: 0, width: 1, length: 1, maxLoadPerArea: limit }] })
+    const items = [item({ id: 'box', quantity: 3, maxLayers: 3 })]
+    const pile = [manual({ id: 'm1', itemId: 'box', layers: 3 })]
+    expect(gatherPlanFacts(manualPlan(zoned(2.5), items, pile)).trips[0].overloadedZones).toBe(1)
+    expect(gatherPlanFacts(manualPlan(zoned(3.5), items, pile)).trips[0].overloadedZones).toBe(0)
+    expect(gatherPlanFacts(manualPlan(zoned(2.5), items, pile)).trips[0].found!.zones[0].densityTPerM2).toBeCloseTo(3, 9)
+  })
+
   it('counts pairs of stacks closer than a separation rule allows', () => {
     const items = [item({ id: 'acid', category: 'Химикаты' }), item({ id: 'food', category: 'Продукты' })]
     const placements = [manual({ id: 'm1', itemId: 'acid' }), manual({ id: 'm2', itemId: 'food', x: 3 })]
@@ -141,6 +153,26 @@ describe('gatherPlanFacts', () => {
       const light = [item({ id: 'pipe', category: 'Металлопродукция', weight: undefined })]
       const facts = gatherPlanFacts(manualPlan(d, light, [manual({ id: 'm1', itemId: 'pipe' })]))
       expect(facts.lashing).toMatchObject({ uncheckedStacks: 1, uncheckedReason: 'нет веса груза', balanceFailStacks: 0 })
+    })
+
+    // Audit 2026-11-09.
+    it('has nothing to judge on cargo without a height: its wind and tipping would be nothing', () => {
+      const d = deck({ lashingPoints: [point('p1')], vesselMotion: own })
+      const flat = [item({ id: 'pipe', height: 0, weight: 100_000 })]
+      const facts = gatherPlanFacts(manualPlan(d, flat, [manual({ id: 'm1', itemId: 'pipe', weight: 100_000 })]))
+      expect(facts.lashing).toMatchObject({ uncheckedStacks: 1, uncheckedReason: 'нет высоты груза' })
+    })
+
+    it('tips the stack about its centre of gravity as given, even above its top', () => {
+      // 10 t, 1 m tall, 2 m along, its centre given 3 m up: the moment is
+      // 10 · 0.5 g · 3 + wind 2 kN at 0.5 m + sloshing 2 kN at 0.5 m.
+      const high = [item({ id: 'box', width: 1, length: 2, height: 1, weight: 10_000, stabilityOverride: { vcgAboveDeckM: 3 } })]
+      const d = deck({ lashingPoints: [{ ...point('p1'), cornerX: 1, cornerY: 1 }], vesselMotion: own })
+      const s = stackSecuring({ id: 'm1', itemId: 'box', x: 1, y: 1, width: 1, length: 2, layers: 1 }, d, high)
+      expect(s.status).toBe('checked')
+      if (s.status !== 'checked') return
+      const tipping = s.result.balances.find((b) => b.kind === 'tipping' && b.toward === '+x')!
+      expect(tipping.demand).toBeCloseTo(10 * 0.5 * 9.81 * 3 + 2 * 0.5 + 2 * 0.5, 9)
     })
 
     it('counts stacks holding dangerous goods', () => {

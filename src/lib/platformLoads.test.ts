@@ -62,6 +62,25 @@ describe('platformLoads', () => {
     expect(withUnweighed({ checks: [{ status: 'ok' as const, detail: 'ok' }] }, 0).checks[0].status).toBe('ok')
   })
 
+  // Audit 2026-11-09: what leaves was pinned by no test.
+  it('takes the cargo leaving whole — every unit of its line — one tier high on the deck\'s lowest level', () => {
+    const away = item({ id: 'o', name: 'Отгрузка', height: 2, quantity: 3, weight: 4_000, platformStatus: 'outgoing' })
+    const plain = platformLoads(deck(), trip(deck(), [away]), [away])
+    // 3 × 4 t at 38 + 1 m.
+    expect(plain.leaving).toEqual([{ weightT: 12, vcgM: 39 }])
+    // A bay 1.5 m down on the deck: it is taken off from there, the least
+    // moment taken off.
+    const withBay = deck({ loadZones: [{ id: 'z', x: 0, y: 0, width: 5, length: 5, maxLoadPerArea: 10, elevationM: -1.5 }] })
+    expect(platformLoads(withBay, trip(withBay, [away]), [away]).leaving).toEqual([{ weightT: 12, vcgM: 37.5 }])
+  })
+
+  it('counts units with no weight whole, whatever a stored count says', () => {
+    const d = deck()
+    const pipes = item({ id: 'p', name: 'Трубы', weight: undefined, quantity: 1 })
+    const half: PinnedPlacement = { id: 'h', itemId: 'p', name: 'Трубы', color: '#000', x: 1, y: 1, width: 2, length: 2, layers: 0.5, rotated: false }
+    expect(platformLoads(d, trip(d, [pipes], [half]), [pipes]).unweighed).toBe(1)
+  })
+
   it('gives a jack-up the same parts, at their place for the legs', () => {
     const d = deck({
       objectKind: 'jack-up',

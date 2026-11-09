@@ -111,6 +111,18 @@ describe('the balance of forces', () => {
     expect(flat(1500)).toBeCloseTo((1500 * 9.81) / 1000 / 1.5, 9)
   })
 
+  // Audit 2026-11-09: a 60° limit moved to 45° passed every test.
+  it('counts a lashing up to 60° in sliding, at μ·sin α + cos α', () => {
+    for (const angle of [50, 60]) {
+      const r = securingBalance(box, [toPort(0, { verticalAngleDeg: angle })], a, 0.3)
+      const rad = (angle * Math.PI) / 180
+      expect(r.balances.find((b) => b.kind === 'sliding' && b.toward === '+x')!.capacity).toBeCloseTo(
+        0.3 * 98.1 + (98.1 / 1.5) * (0.3 * Math.sin(rad) + Math.cos(rad)),
+        9
+      )
+    }
+  })
+
   it('leaves a lashing steeper than 60° out of sliding, but not out of tipping', () => {
     const steep = securingBalance({ ...box, heightM: 4, cgHeightM: 2 }, [toPort(0, { verticalAngleDeg: 70 })], a, 0.3)
     expect(steep.balances.find((b) => b.kind === 'sliding' && b.toward === '+x')!.capacity).toBeCloseTo(0.3 * 98.1, 6)

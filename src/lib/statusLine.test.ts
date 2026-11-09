@@ -92,6 +92,13 @@ describe('status line', () => {
     expect(items.find((i) => i.id === 'legs')).toMatchObject({ text: 'Опора до 4038 из 4030 т', tone: 'danger' })
     const afloat = { mode: 'afloat' as const, netT: 0, kgAfterM: 11.86, kgMaxM: 12.35, checks: [] }
     expect(statusItems({ ...base, platform: true, jackUp: afloat }).find((i) => i.id === 'kg')!.text).toBe('KG 11.86 из 12.35 м')
+    // Audit 2026-11-09: a leg taken below nothing lifts off, and the line
+    // says that rather than the most loaded leg.
+    const lifted = { ...elevated, legs: [legs[0], { ...legs[1], afterT: -200 }] }
+    expect(statusItems({ ...base, platform: true, jackUp: lifted }).find((i) => i.id === 'legs')).toMatchObject({ text: 'Отрыв опоры: −200 т', tone: 'danger' })
+    // Under a tonne below nothing it reads 0 t, as the check counts it.
+    const touching = { ...elevated, legs: [legs[0], { ...legs[1], afterT: -0.3 }] }
+    expect(statusItems({ ...base, platform: true, jackUp: touching }).find((i) => i.id === 'legs')!.text).toMatch(/^Опора до /)
   })
 
   it('counts trips only when there is more than one', () => {

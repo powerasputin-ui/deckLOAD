@@ -151,10 +151,20 @@ export function statusItems(s: StatusLineInput): StatusItem[] {
   const loads = (jack?.legs ?? []).flatMap((l) => (l.afterT !== undefined ? [l.afterT] : []))
   if (jack?.mode === 'elevated' && loads.length > 0 && loads.length === jack.legs!.length) {
     const legsCheck = jack.checks.find((c) => c.id === 'jack-legs')
+    // A leg taken below nothing lifts off: that, not the most loaded leg, is
+    // what the line says (audit 2026-11-09) — by a whole tonne, as the
+    // jack-legs check counts it.
+    const least = Math.round(Math.min(...loads))
     items.push({
       id: 'legs',
-      text: `Опора до ${Math.round(Math.max(...loads))}${jack.maxLegLoadT !== undefined ? ` из ${Math.round(jack.maxLegLoadT)}` : ''} т`,
-      title: 'Наибольшая нагрузка на опору после рейса и допустимая — статика, оценка для планирования',
+      text:
+        least < 0
+          ? `Отрыв опоры: −${-least} т`
+          : `Опора до ${Math.round(Math.max(...loads))}${jack.maxLegLoadT !== undefined ? ` из ${Math.round(jack.maxLegLoadT)}` : ''} т`,
+      title:
+        least < 0
+          ? 'Нагрузка на опору после рейса ниже нуля: опора отрывается, груз за контуром опор'
+          : 'Наибольшая нагрузка на опору после рейса и допустимая — статика, оценка для планирования',
       target: 'vessel',
       tone: toneOf(legsCheck?.status),
     })

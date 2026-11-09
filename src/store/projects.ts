@@ -1322,28 +1322,33 @@ function saveToStorage(projects: Project[], activeId: string | null): boolean {
   }
 }
 
-// "Скачать копию" on page.tsx's corrupted-storage warning. Writes are locked
-// while that warning is up, so the unreadable record is still sitting
-// untouched under STORAGE_KEY and is read straight from there.
-export function downloadCorruptedStorage(): void {
+// The saved record exactly as it is in the browser, downloaded as a file
+// named `<stem>-<date>.txt` (text: it may not even be valid JSON). False
+// when there is nothing to read.
+export function downloadSavedData(stem: string): boolean {
   let raw: string | null = null
   try {
     raw = window.localStorage.getItem(STORAGE_KEY)
   } catch {
-    // fall through to the error below
+    // nothing readable: false below
   }
-  if (raw === null) {
-    toast.error('Не удалось прочитать сохранённые данные')
-    return
-  }
+  if (raw === null) return false
   const url = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = `deckload-damaged-data-${new Date().toISOString().slice(0, 10)}.txt`
+  a.download = `${stem}-${new Date().toISOString().slice(0, 10)}.txt`
   document.body.appendChild(a)
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+  return true
+}
+
+// "Скачать копию" on page.tsx's corrupted-storage warning. Writes are locked
+// while that warning is up, so the unreadable record is still sitting
+// untouched under STORAGE_KEY and is read straight from there.
+export function downloadCorruptedStorage(): void {
+  if (!downloadSavedData('deckload-damaged-data')) toast.error('Не удалось прочитать сохранённые данные')
 }
 
 export const useProjects = create<ProjectsState>((set, get) => ({

@@ -28,6 +28,10 @@ export interface PlatformLoads {
   heightMissing: boolean
 }
 
+// Whole units, at least one: a count the line says (audit 2026-11-09 — a
+// fractional count from an imported file read «не учтено 0.5 ед.»).
+const units = (layers: number) => Math.max(1, Math.round(Number.isFinite(layers) ? layers : 1))
+
 export function platformLoads(deck: DeckConfig, trip: PackingResult | undefined, items: readonly CargoItem[]): PlatformLoads {
   const { frame, heightMissing } = resolveShipFrame(deck.shipFrame)
   const status = new Map(items.map((it) => [it.id, platformStatusOf(it)]))
@@ -47,7 +51,7 @@ export function platformLoads(deck: DeckConfig, trip: PackingResult | undefined,
       if (status.get(p.itemId) !== 'incoming') continue
       const [w] = buildCargoWeightMoments([p], widthM, lengthM, frame, forward, itemsM, levels)
       if (w) arriving.push({ weightT: w.weightKg / 1000, vcgM: w.vcgM, x, y })
-      else unweighed += Math.max(1, p.layers)
+      else unweighed += units(p.layers)
       continue
     }
     // A mixed pile: each part on its own, at its own height in the pile.
@@ -55,9 +59,11 @@ export function platformLoads(deck: DeckConfig, trip: PackingResult | undefined,
     for (const part of segmentWeights(p, itemsM)) {
       if (status.get(part.itemId) !== 'incoming') continue
       if (part.weightKg > 0) arriving.push({ weightT: part.weightKg / 1000, vcgM: base + part.vcgM, x, y })
-      else unweighed += part.layers
+      else unweighed += units(part.layers)
     }
   }
+  // A cargo leaving leaves whole — every unit of its line: a part of it
+  // staying is a line of its own (the cargo list splits it).
   const leaving: Weight[] = itemsM
     .filter((it) => status.get(it.id) === 'outgoing' && it.quantity > 0 && (it.weight ?? 0) > 0)
     .map((it) => ({

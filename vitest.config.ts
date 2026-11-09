@@ -13,6 +13,15 @@ export default defineConfig({
     // calculator directly. (The e2e suite doesn't use this build-time flag —
     // it seeds the "seen" localStorage flags instead, see playwright.config.ts.)
     env: { NEXT_PUBLIC_SKIP_INTRO: '1' },
+    // `bun run test:cov`: what the unit tests run, by file (coverage/index.html).
+    // Only the app's own code; the stylesheet isn't code, and the provider
+    // fails to parse it.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.css'],
+      reporter: ['text-summary', 'html'],
+    },
   },
   resolve: {
     alias: {
